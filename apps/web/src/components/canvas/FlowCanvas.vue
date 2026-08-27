@@ -415,6 +415,7 @@ defineExpose({
       :min-zoom="0.25"
       :max-zoom="4"
       :delete-key-code="null"
+      :zoom-on-double-click="false"
       :is-valid-connection="validateConnection"
       :fit-view-on-init="true"
       @nodes-change="onNodesChange"
