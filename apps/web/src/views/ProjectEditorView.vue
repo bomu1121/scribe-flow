@@ -21,6 +21,7 @@ const projectId = computed(() => String(route.params.id));
 const projectName = ref("");
 const description = ref("");
 const graph = ref<WorkflowGraph>(emptyGraph());
+const loaded = ref(false);
 const selectedNodeId = ref<string | null>(null);
 const saveState = ref<SaveState>("loading");
 const consoleNotice = ref("画布交互按 n8n 行为照搬清单实现；运行引擎将在 M3 接入。");
@@ -42,6 +43,8 @@ onMounted(async () => {
   } catch (err) {
     saveState.value = "error";
     showNotice(err instanceof Error ? err.message : "加载工程失败");
+  } finally {
+    loaded.value = true;
   }
 });
 
@@ -195,6 +198,7 @@ function runningPlaceholder() {
     <div class="sf-editor-main">
       <NodePalette @add="(type) => flowCanvasRef?.addNodeAtCenter(type)" />
       <FlowCanvas
+        v-if="loaded"
         ref="flowCanvasRef"
         :key="projectId"
         :initial-graph="graph"
@@ -203,6 +207,9 @@ function runningPlaceholder() {
         @notice="showNotice"
         @history-change="historyState = $event"
       />
+      <div v-else class="sf-editor-loading">
+        <span>{{ saveState === "error" ? "工程加载失败" : "正在加载画布…" }}</span>
+      </div>
       <InspectorPanel :node="selectedNode" @update="onNodeUpdate" @commit="onNodeCommit" />
     </div>
 
@@ -303,6 +310,14 @@ function runningPlaceholder() {
   flex: 1;
   min-height: 0;
   display: flex;
+}
+
+.sf-editor-loading {
+  flex: 1;
+  display: grid;
+  place-items: center;
+  color: var(--color-text-secondary);
+  font-size: 13px;
 }
 
 .sf-editor-console {

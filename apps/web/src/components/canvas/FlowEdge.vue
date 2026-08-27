@@ -4,8 +4,8 @@ import { BaseEdge, getBezierPath, Position, type EdgeProps } from "@vue-flow/cor
 
 const props = defineProps<EdgeProps>();
 
-const path = computed<string>(() =>
-  (getBezierPath({
+const edgePath = computed(() =>
+  getBezierPath({
     sourceX: props.sourceX,
     sourceY: props.sourceY,
     sourcePosition: props.sourcePosition as Position,
@@ -13,14 +13,20 @@ const path = computed<string>(() =>
     targetY: props.targetY,
     targetPosition: props.targetPosition as Position,
     curvature: 0.28,
-  }) as unknown) as string,
+  }),
 );
+
+const path = computed(() => String(edgePath.value[0]));
+const labelX = computed(() => Number(edgePath.value[1]));
+const labelY = computed(() => Number(edgePath.value[2]));
 </script>
 
 <template>
   <BaseEdge
     :id="props.id"
     :path="path"
+    :label-x="labelX"
+    :label-y="labelY"
     :style="{
       stroke: props.selected ? 'var(--edge-selected-color)' : 'var(--edge-color)',
       strokeWidth: 1.5,

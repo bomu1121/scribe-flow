@@ -445,6 +445,8 @@ defineExpose({
 <style scoped>
 .sf-flow-canvas {
   position: relative;
+  flex: 1;
+  min-width: 0;
   height: 100%;
   background: var(--color-canvas);
 }
