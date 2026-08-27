@@ -1,0 +1,131 @@
+import type { ViewportTransform } from "@vue-flow/core";
+import type { GraphEdge, GraphNode, NodeRunStatus, NodeType, WorkflowGraph } from "@scribe-flow/shared";
+
+export const SCRIBE_NODE_TYPE = "scribe";
+export const SCRIBE_EDGE_TYPE = "scribe";
+
+export interface NodeContextActions {
+  duplicate: () => void;
+  remove: () => void;
+  runNode: () => void;
+  runFromNode: () => void;
+  copyOutput: () => void;
+}
+
+export interface ScribeNodeData {
+  nodeType: NodeType;
+  label?: string;
+  status?: NodeRunStatus;
+  summary?: string;
+  url?: string;
+  fileName?: string;
+  text?: string;
+  promptBlockId?: string;
+  promptOverride?: string;
+  model?: string;
+  outputName?: string;
+  title?: string;
+  /** 运行时注入的右键菜单动作，不会持久化。 */
+  ctx?: NodeContextActions;
+}
+
+/** 与 Vue Flow 的 Node/Edge 输入结构保持兼容的最小画布节点类型。 */
+export interface ScribeFlowNode {
+  id: string;
+  type?: string;
+  position: { x: number; y: number };
+  selected?: boolean;
+  data: ScribeNodeData;
+  [key: string]: unknown;
+}
+
+export interface ScribeFlowEdge {
+  id: string;
+  source: string;
+  target: string;
+  sourceHandle?: string;
+  targetHandle?: string;
+  type?: string;
+  selected?: boolean;
+  [key: string]: unknown;
+}
+
+export function toFlowNodes(graph: WorkflowGraph, ctxFactory: (nodeId: string) => NodeContextActions): ScribeFlowNode[] {
+  return graph.nodes.map((node) => ({
+    id: node.id,
+    type: SCRIBE_NODE_TYPE,
+    position: { ...node.position },
+    selected: false,
+    data: {
+      ...(node.data as Record<string, unknown>),
+      nodeType: node.type,
+      ctx: ctxFactory(node.id),
+    } as ScribeNodeData,
+  }));
+}
+
+export function toFlowEdges(graph: WorkflowGraph): ScribeFlowEdge[] {
+  return graph.edges.map((edge) => ({
+    id: edge.id,
+    source: edge.source,
+    target: edge.target,
+    sourceHandle: edge.sourceHandle,
+    targetHandle: edge.targetHandle,
+    type: SCRIBE_EDGE_TYPE,
+    selected: false,
+  }));
+}
+
+export function toBusinessGraph(nodes: ScribeFlowNode[], edges: ScribeFlowEdge[], viewport: ViewportTransform): WorkflowGraph {
+  const businessNodes: GraphNode[] = nodes.map((node) => {
+    const data = { ...node.data } as Record<string, unknown>;
+    delete data.nodeType;
+    delete data.ctx;
+    return {
+      id: node.id,
+      type: node.data.nodeType,
+      position: { x: node.position.x, y: node.position.y },
+      data,
+    } as GraphNode;
+  });
+
+  const businessEdges: GraphEdge[] = edges.map((edge) => ({
+    id: edge.id,
+    source: edge.source,
+    target: edge.target,
+    sourceHandle: edge.sourceHandle ?? undefined,
+    targetHandle: edge.targetHandle ?? undefined,
+  }));
+
+  return {
+    schemaVersion: 1,
+    nodes: businessNodes,
+    edges: businessEdges,
+    viewport: { x: viewport.x, y: viewport.y, zoom: viewport.zoom },
+  };
+}
+
+export function cloneGraph(graph: WorkflowGraph): WorkflowGraph {
+  return JSON.parse(JSON.stringify(graph)) as WorkflowGraph;
+}
+
+export function emptyNodeData(type: NodeType): Record<string, unknown> {
+  switch (type) {
+    case "source.bili":
+      return { label: "B站链接", url: "" };
+    case "source.file":
+      return { label: "本地文件" };
+    case "source.text":
+      return { label: "文本", text: "" };
+    case "process.transcribe":
+      return { label: "转写" };
+    case "process.refine":
+      return { label: "AI 校对" };
+    case "process.prompt":
+      return { label: "AI 提示词", promptBlockId: "builtin.insight", outputName: "" };
+    case "process.merge":
+      return { label: "合并", title: "" };
+    case "process.output":
+      return { label: "输出", fileName: "笔记.md" };
+  }
+}

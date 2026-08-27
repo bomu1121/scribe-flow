@@ -1,8 +1,10 @@
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { health } from "./routes/health";
+import { projectsApi } from "./routes/projects";
+import type { AppDatabase } from "./db/client";
 
-export function createApp() {
+export function createApp(db: AppDatabase) {
   const app = new Hono();
 
   app.use(
@@ -14,6 +16,7 @@ export function createApp() {
   );
 
   app.route("/api/health", health);
+  app.route("/api/projects", projectsApi(db));
 
   app.notFound((c) => c.json({ error: "接口不存在" }, 404));
 

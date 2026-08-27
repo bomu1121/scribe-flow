@@ -15,3 +15,5 @@ export const projects = sqliteTable("projects", {
   createdAt: integer("created_at").notNull(),
   updatedAt: integer("updated_at").notNull(),
 });
+
+export type ProjectRow = typeof projects.$inferSelect;

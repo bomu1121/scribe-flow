@@ -1,9 +1,11 @@
 import { serve } from "@hono/node-server";
 import { createApp } from "./app";
 import { loadEnv } from "./env";
+import { createDatabase } from "./db/client";
 
 const env = loadEnv();
-const app = createApp();
+const db = createDatabase(env.dataDir);
+const app = createApp(db);
 
 serve(
   {

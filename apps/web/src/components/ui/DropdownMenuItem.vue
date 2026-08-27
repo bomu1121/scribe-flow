@@ -2,10 +2,12 @@
 import { DropdownMenuItem } from "reka-ui";
 
 withDefaults(defineProps<{ danger?: boolean; disabled?: boolean }>(), { danger: false, disabled: false });
+
+const emit = defineEmits<{ select: [] }>();
 </script>
 
 <template>
-  <DropdownMenuItem :disabled="disabled" class="sf-menu-item" :class="{ 'sf-menu-item--danger': danger }">
+  <DropdownMenuItem :disabled="disabled" class="sf-menu-item" :class="{ 'sf-menu-item--danger': danger }" @select="emit('select')">
     <slot />
   </DropdownMenuItem>
 </template>
