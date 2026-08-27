@@ -1,17 +1,75 @@
 <script setup lang="ts">
-import { computed } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import { FileOutput, FileText, FileUp, GitMerge, Link2, Mic, Sparkles, WandSparkles } from "lucide-vue-next";
 import { Handle, Position, type NodeProps } from "@vue-flow/core";
 import { ContextMenuContent, ContextMenuItem, ContextMenuPortal, ContextMenuRoot, ContextMenuSeparator, ContextMenuTrigger } from "reka-ui";
-import { NODE_PORTS, NODE_TYPE_LABELS, type NodeType } from "@scribe-flow/shared";
+import { NODE_PORTS, NODE_TYPE_LABELS, type NodeType, type VideoPreview } from "@scribe-flow/shared";
 import Select, { type SelectOption } from "@/components/ui/Select.vue";
 import { usePromptsStore } from "@/stores/prompts";
+import { api } from "@/lib/api";
 import type { ScribeNodeData } from "@/utils/flow";
 
 const props = defineProps<NodeProps<ScribeNodeData>>();
 
 const promptsStore = usePromptsStore();
 const data = computed(() => props.data);
+
+// 链接即时解析（检查点）：输入后防抖查询封面/标题/分 P
+const preview = ref<VideoPreview | null>(null);
+const previewLoading = ref(false);
+const previewError = ref("");
+let previewTimer: ReturnType<typeof setTimeout> | null = null;
+
+function schedulePreview(url: string) {
+  if (previewTimer) clearTimeout(previewTimer);
+  preview.value = null;
+  previewError.value = "";
+
+  const value = url.trim();
+  if (!value) return;
+  if (!/bilibili\.com|b23\.tv|\bBV[0-9A-Za-z]+|\bav\d+/i.test(value)) {
+    previewError.value = "需要 B 站视频链接（支持 BV 号或 av 号）";
+    return;
+  }
+
+  previewLoading.value = true;
+  previewTimer = setTimeout(async () => {
+    try {
+      const result = await api.post<VideoPreview>("/api/videos/preview", { url: value });
+      preview.value = result;
+      if (result.pages.length > 0) {
+        const first = result.pages[0];
+        patch({ pageInfo: { cid: first.cid, page: first.page, part: first.part, duration: first.duration } });
+      }
+    } catch (err) {
+      previewError.value = err instanceof Error ? err.message : "解析失败，请检查链接";
+    } finally {
+      previewLoading.value = false;
+    }
+  }, 500);
+}
+
+onMounted(() => {
+  if (props.data.url) schedulePreview(props.data.url);
+});
+
+onBeforeUnmount(() => {
+  if (previewTimer) clearTimeout(previewTimer);
+});
+
+function onUrlInput(event: Event) {
+  const value = (event.target as HTMLInputElement).value;
+  patch({ url: value });
+  schedulePreview(value);
+}
+
+function fmtDuration(sec: number): string {
+  const h = Math.floor(sec / 3600);
+  const m = Math.floor((sec % 3600) / 60);
+  const s = sec % 60;
+  if (h > 0) return `${h}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+  return `${m}:${String(s).padStart(2, "0")}`;
+}
 
 const nodeType = computed<NodeType>(() => props.data.nodeType);
 const ports = computed(() => NODE_PORTS[nodeType.value]);
@@ -95,15 +153,27 @@ function commit() {
               class="sf-node-input"
               :value="data.url"
               placeholder="粘贴 B 站视频链接（支持分 P）"
-              @input="patch({ url: ($event.target as HTMLInputElement).value })"
+              @input="onUrlInput"
               @blur="commit"
             />
+            <div v-if="previewLoading" class="sf-node-preview sf-node-preview--loading tnum">正在解析视频信息…</div>
+            <div v-else-if="preview" class="sf-node-preview">
+              <img :src="preview.cover" class="sf-node-cover" alt="视频封面" referrerpolicy="no-referrer" loading="lazy" />
+              <div class="sf-node-preview-info">
+                <span class="sf-node-preview-title">{{ preview.title }}</span>
+                <span class="sf-node-preview-meta tnum">
+                  {{ preview.uploader }} · {{ fmtDuration(preview.duration) }} · {{ preview.pages.length }}P
+                </span>
+                <span v-if="data.pageInfo" class="sf-node-preview-page tnum">
+                  已选 P{{ data.pageInfo.page }} · {{ data.pageInfo.part }}
+                </span>
+              </div>
+            </div>
+            <div v-else-if="previewError" class="sf-node-preview sf-node-preview--error">{{ previewError }}</div>
+            <div v-else class="sf-node-hint tnum">输入链接后自动解析封面、UP 主与分 P 信息</div>
             <button type="button" class="sf-node-batch" disabled title="M2 接入">
               从收藏夹 / 稍后再看批量选择视频（M2 接入）
             </button>
-            <div class="sf-node-hint tnum">
-              {{ data.pageInfo ? `已选 P${data.pageInfo.page} · ${data.pageInfo.part}` : "解析与分 P 勾选将在 M2 接入" }}
-            </div>
           </template>
 
           <template v-else-if="nodeType === 'source.file'">
@@ -372,6 +442,64 @@ function commit() {
   outline: none;
   border-color: var(--color-brand);
   box-shadow: 0 0 0 3px var(--color-brand-soft);
+}
+
+.sf-node-preview {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 8px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-muted);
+}
+
+.sf-node-preview--loading {
+  justify-content: center;
+  color: var(--color-text-tertiary);
+  font-size: 11.5px;
+}
+
+.sf-node-preview--error {
+  color: var(--color-error);
+  font-size: 11.5px;
+}
+
+.sf-node-cover {
+  width: 96px;
+  aspect-ratio: 16 / 9;
+  object-fit: cover;
+  border-radius: var(--radius-sm);
+  flex-shrink: 0;
+  background: var(--color-ink-soft);
+}
+
+.sf-node-preview-info {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.sf-node-preview-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-text);
+  line-height: 1.4;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.sf-node-preview-meta {
+  font-size: 11px;
+  color: var(--color-text-secondary);
+}
+
+.sf-node-preview-page {
+  font-size: 10.5px;
+  color: var(--color-brand);
 }
 
 .sf-node-batch {
