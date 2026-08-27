@@ -1,0 +1,19 @@
+{
+  "name": "scribe-flow",
+  "private": true,
+  "version": "0.1.0",
+  "description": "ScribeFlow — 笔记处理画布流：把素材加工成笔记的可编排工作流 Web 应用",
+  "packageManager": "pnpm@11.7.0",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "dev": "pnpm --parallel --filter @scribe-flow/web --filter @scribe-flow/server dev",
+    "dev:web": "pnpm --filter @scribe-flow/web dev",
+    "dev:server": "pnpm --filter @scribe-flow/server dev",
+    "build": "pnpm -r build",
+    "typecheck": "pnpm -r typecheck",
+    "test": "pnpm -r test",
+    "lint:slop": "node scripts/slop-lint.mjs"
+  }
+}

@@ -1,0 +1,150 @@
+/**
+ * ScribeFlow 设计令牌 —— 纸面工作台 × 工程制图
+ * 浅色优先；B 站蓝只用于交互信号；画布克制安静。
+ * 所有组件必须引用这里的变量，禁止散写颜色。
+ */
+:root {
+  /* 结构色 */
+  --color-bg: #f4f5f6;
+  --color-canvas: #f8f9fa;
+  --color-surface: #ffffff;
+  --color-surface-muted: #f7f8f9;
+  --color-border: #e4e7eb;
+  --color-border-strong: #cdd3da;
+  --color-text: #16181d;
+  --color-text-secondary: #545b66;
+  --color-text-tertiary: #8a929e;
+
+  /* 交互信号 */
+  --color-brand: #00aeec;
+  --color-brand-hover: #0d9bcf;
+  --color-brand-pressed: #0b88c4;
+  --color-brand-soft: #e6f7fe;
+  --color-brand-border: #b8e8fb;
+  --color-on-brand: #ffffff;
+
+  /* 墨色（导航/强标题） */
+  --color-ink: #16181d;
+  --color-ink-soft: #f0f1f3;
+
+  /* 语义 */
+  --color-success: #18a058;
+  --color-success-soft: #e7f6ee;
+  --color-success-border: #b7e4ca;
+  --color-warning: #d9822b;
+  --color-warning-soft: #fcf0e2;
+  --color-warning-border: #f0d3ae;
+  --color-error: #d23f4e;
+  --color-error-soft: #fbecee;
+  --color-error-border: #f0c3c9;
+  --color-on-error: #ffffff;
+  --color-info: #0b88c4;
+  --color-info-soft: #e6f5fc;
+  --color-info-border: #b8e2f2;
+
+  /* 来源身份（B 站粉等只在徽章里用） */
+  --color-accent-pink: #fb7299;
+  --color-accent-pink-soft: #feeef3;
+  --color-accent-indigo: #6366f1;
+  --color-accent-indigo-soft: #eef0fe;
+
+  /* 画布 */
+  --node-radius: 10px;
+  --node-border: var(--color-border);
+  --node-selected-border: var(--color-brand);
+  --node-running-border: var(--color-brand);
+  --edge-color: #c6ccd4;
+  --edge-selected-color: var(--color-brand);
+  --edge-running-color: var(--color-brand);
+  --handle-color: #aeb6bf;
+  --handle-hover-color: var(--color-brand);
+  --canvas-dot-color: rgba(22, 24, 29, 0.04);
+
+  /* 字体 */
+  --font-family:
+    "Geist Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+    "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans SC", sans-serif;
+  --font-mono: "Geist Mono", "Cascadia Code", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+
+  /* 尺寸 */
+  --radius-xs: 4px;
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 10px;
+  --radius-xl: 14px;
+  --sidebar-width: 208px;
+  --header-height: 52px;
+  --content-max: 1080px;
+
+  /* 阴影（两档，禁止发光） */
+  --shadow-xs: 0 1px 2px rgba(22, 24, 29, 0.04);
+  --shadow-card: 0 1px 2px rgba(22, 24, 29, 0.05), 0 4px 12px rgba(22, 24, 29, 0.04);
+  --shadow-overlay: 0 8px 24px rgba(22, 24, 29, 0.12);
+
+  /* 动效 */
+  --ease-out: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --dur-1: 120ms;
+  --dur-2: 180ms;
+  --dur-3: 240ms;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  font-family: var(--font-family);
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--color-text);
+  background: var(--color-bg);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+::selection {
+  background: rgba(0, 174, 236, 0.16);
+}
+
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--color-border);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-border-strong);
+}
+
+.tnum {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+button {
+  font-family: inherit;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

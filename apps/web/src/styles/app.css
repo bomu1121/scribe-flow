@@ -1,0 +1,20 @@
+@import "tailwindcss";
+
+/* 应用级补充样式：全部引用设计令牌，不使用散落色值 */
+.app-root {
+  height: 100vh;
+  display: grid;
+  grid-template-columns: var(--sidebar-width) minmax(0, 1fr);
+  background: var(--color-bg);
+}
+
+:focus-visible {
+  outline: 2px solid var(--color-brand);
+  outline-offset: 2px;
+}
+
+.page-scroll {
+  height: 100%;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+}
