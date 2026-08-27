@@ -122,7 +122,7 @@ export function emptyNodeData(type: NodeType): Record<string, unknown> {
     case "process.refine":
       return { label: "AI 校对" };
     case "process.prompt":
-      return { label: "AI 提示词", promptBlockId: "builtin.insight", outputName: "" };
+      return { label: "AI 加工", promptBlockId: undefined, outputName: "" };
     case "process.merge":
       return { label: "合并", title: "" };
     case "process.output":

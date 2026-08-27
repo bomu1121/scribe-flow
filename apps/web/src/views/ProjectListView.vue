@@ -142,10 +142,10 @@ function onImportFile(event: Event) {
     <div v-else class="sf-empty">
       <div class="sf-empty-icon"><FolderOpen :size="22" /></div>
       <div class="sf-empty-title">还没有工程</div>
-      <div class="sf-empty-desc">创建一个空白工程，或从「视频观点笔记」模板开始。</div>
+      <div class="sf-empty-desc">创建一个空白工程，或从「视频转笔记（单线）」模板开始。</div>
     </div>
 
-    <Dialog v-model:open="showCreate" title="新建工程" description="选择起始方式。模板会预置一组可编辑的节点与连线。" width="560px">
+    <Dialog v-model:open="showCreate" title="新建工程" description="工作流模板只决定加工路径。观点提炼、技术文案提炼、信息溯源等提示词块，在画布的「AI 加工」节点中选择。" width="560px">
       <div class="sf-tpl-grid">
         <button type="button" class="sf-tpl-card" :disabled="creating" @click="createFromTemplate()">
           <span class="sf-tpl-name">空白工程</span>

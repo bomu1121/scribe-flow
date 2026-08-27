@@ -97,7 +97,7 @@ scribe-flow/
 | `src/project.ts` | `ProjectMeta`、`WorkflowGraph`（schemaVersion=1）、`ProjectTemplate` |
 | `src/run.ts` | `RunStatus`、`NodeRunStatus`（先定义，M3 实现） |
 | `src/prompt.ts` | `PromptBlock`（内置 3 个的中文提示词，从旧仓 `src/stores/templates.ts` 迁移） |
-| `src/templates.ts` | 4 个工程模板 fixture：视频观点笔记 / 技术教程拆解 / 多提示词对照 / 已有文稿加工 |
+| `src/templates.ts` | 4 个工程模板 fixture：视频转笔记（单线）/ 视频多路笔记 / 文稿多路对照 / 文稿转笔记（提示词块不预绑，在 AI 加工节点选择） |
 | `src/zod.ts` | graph 的 zod schema（后端导入校验共用） |
 
 ### 2.2 apps/web 脚手架
@@ -211,7 +211,7 @@ GET    /api/projects/:id/export     导出 .scribe-flow.json（不含 Cookie、�
 - 载入 `/api/projects`；卡片网格 + 新建按钮（下拉：空白 / 4 模板）。
 - 卡片 hover：打开/复制/导出/删除；删除用 AlertDialog（文案：`确认删除工程「X」？工程内的运行记录会一并删除。`）。
 - 「最近运行」区先显示空态占位（M3 接数据）。
-- 空态：`还没有工程。创建一个空白工程，或从「视频观点笔记」模板开始。`
+- 空态：`还没有工程。创建一个空白工程，或从「视频转笔记（单线）」模板开始。`
 
 ### 3.3 画布编辑器 `/project/:id`（本里程碑主体）
 
@@ -271,7 +271,7 @@ GET    /api/projects/:id/export     导出 .scribe-flow.json（不含 Cookie、�
 - [x] 11 小地图/缩放控件/适应视图：小地图与控件渲染，适应视图按钮实测
 - [x] 14 自动保存指示：改名后 500ms 防抖保存到后端，刷新页面后名称保留
 - [x] 工程 CRUD + 导入导出闭环；刷新后画布不丢：API 全链路实测（导出 6 节点工程 → 删除 → 导入还原 6 节点）；页面刷新实测
-- [x] 4 个模板均可一键创建：视频观点笔记 5 节点/技术教程拆解 6 节点/多提示词对照 6 节点/已有文稿加工 4 节点
+- [x] 4 个模板均可一键创建：视频转笔记（单线）5 节点/视频多路笔记 6 节点/文稿多路对照 6 节点/文稿转笔记 4 节点；提示词块归属 AI 加工节点选择，不预绑在工程模板
 - [x] 全程中文文案、UTF-8、令牌化颜色、slop-lint 通过：乱码扫描 0 命中，`pnpm lint:slop` 45 文件通过
 
 ---

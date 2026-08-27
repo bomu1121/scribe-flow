@@ -7,7 +7,7 @@ export interface RunMeta {
   createdAt: number;
   finishedAt?: number;
   elapsedMs?: number;
-  /** 产出的文档摘要，如「视频观点笔记 · 2.1k 字」。 */
+  /** 产出的文档摘要，如「视频转笔记 · 2.1k 字」。 */
   summary?: string;
 }
 
