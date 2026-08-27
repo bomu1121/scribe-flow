@@ -2,9 +2,8 @@
 import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { ArrowLeft, Check, Copy, Download, LayoutPanelTop, Maximize, MoreHorizontal, Play, Redo2, StopCircle, Trash2, Undo2 } from "lucide-vue-next";
-import { emptyGraph, type GraphNode, type WorkflowGraph } from "@scribe-flow/shared";
+import { emptyGraph, type WorkflowGraph } from "@scribe-flow/shared";
 import FlowCanvas from "@/components/canvas/FlowCanvas.vue";
-import InspectorPanel from "@/components/canvas/InspectorPanel.vue";
 import NodePalette from "@/components/canvas/NodePalette.vue";
 import Button from "@/components/ui/Button.vue";
 import DropdownMenu from "@/components/ui/DropdownMenu.vue";
@@ -22,7 +21,6 @@ const projectName = ref("");
 const description = ref("");
 const graph = ref<WorkflowGraph>(emptyGraph());
 const loaded = ref(false);
-const selectedNodeId = ref<string | null>(null);
 const saveState = ref<SaveState>("loading");
 const consoleNotice = ref("画布交互按 n8n 行为照搬清单实现；运行引擎将在 M3 接入。");
 const historyState = ref({ canUndo: false, canRedo: false });
@@ -30,8 +28,6 @@ const flowCanvasRef = ref<InstanceType<typeof FlowCanvas> | null>(null);
 const noticeTimer = ref<ReturnType<typeof setTimeout> | null>(null);
 
 let saveTimer: ReturnType<typeof setTimeout> | null = null;
-
-const selectedNode = computed<GraphNode | null>(() => graph.value.nodes.find((node) => node.id === selectedNodeId.value) ?? null);
 
 onMounted(async () => {
   try {
@@ -92,14 +88,6 @@ function onRename() {
       saveState.value = "saved";
     })
     .catch((err) => showNotice(err instanceof Error ? err.message : "重命名失败"));
-}
-
-function onNodeUpdate(id: string, patch: Record<string, unknown>) {
-  flowCanvasRef.value?.updateNodeData(id, patch);
-}
-
-function onNodeCommit() {
-  flowCanvasRef.value?.commitHistory();
 }
 
 async function duplicateProject() {
@@ -203,20 +191,17 @@ function runningPlaceholder() {
         :key="projectId"
         :initial-graph="graph"
         @update:graph="onGraphUpdate"
-        @select="selectedNodeId = $event"
         @notice="showNotice"
         @history-change="historyState = $event"
       />
       <div v-else class="sf-editor-loading">
         <span>{{ saveState === "error" ? "工程加载失败" : "正在加载画布…" }}</span>
       </div>
-      <InspectorPanel :node="selectedNode" @update="onNodeUpdate" @commit="onNodeCommit" />
     </div>
 
     <footer class="sf-editor-console">
       <span class="sf-console-dot" />
       <span class="sf-console-text">{{ consoleNotice || "就绪" }}</span>
-      <span class="sf-console-meta tnum">运行引擎 M3 接入 · 队列状态在此显示</span>
     </footer>
   </div>
 </template>
@@ -347,11 +332,5 @@ function runningPlaceholder() {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-}
-
-.sf-console-meta {
-  font-size: 11px;
-  color: var(--color-text-tertiary);
-  flex-shrink: 0;
 }
 </style>

@@ -1,5 +1,5 @@
 import type { ViewportTransform } from "@vue-flow/core";
-import type { GraphEdge, GraphNode, NodeRunStatus, NodeType, WorkflowGraph } from "@scribe-flow/shared";
+import type { AsrEngine, GraphEdge, GraphNode, NodeRunStatus, NodeType, PageRef, WorkflowGraph } from "@scribe-flow/shared";
 
 export const SCRIBE_NODE_TYPE = "scribe";
 export const SCRIBE_EDGE_TYPE = "scribe";
@@ -10,6 +10,10 @@ export interface NodeContextActions {
   runNode: () => void;
   runFromNode: () => void;
   copyOutput: () => void;
+  /** 卡片内表单更新节点数据。 */
+  updateData: (patch: Record<string, unknown>) => void;
+  /** 卡片内表单失焦时提交一次撤销历史。 */
+  commit: () => void;
 }
 
 export interface ScribeNodeData {
@@ -18,8 +22,10 @@ export interface ScribeNodeData {
   status?: NodeRunStatus;
   summary?: string;
   url?: string;
+  pageInfo?: PageRef;
   fileName?: string;
   text?: string;
+  asrEngine?: AsrEngine;
   promptBlockId?: string;
   promptOverride?: string;
   model?: string;

@@ -87,6 +87,8 @@ function ctxFor(nodeId: string) {
     runNode: () => emit("notice", "运行引擎将在 M3 接入"),
     runFromNode: () => emit("notice", "运行引擎将在 M3 接入"),
     copyOutput: () => emit("notice", "节点输出将在 M3 运行后可用"),
+    updateData: (patch: Record<string, unknown>) => updateNodeData(nodeId, patch),
+    commit: () => commitHistory(),
   };
 }
 
@@ -362,10 +364,21 @@ function pickSearchType(type: NodeType) {
   addNodeAtCenter(type);
 }
 
+const NODE_LAYOUT_WIDTH: Record<NodeType, number> = {
+  "source.bili": 380,
+  "source.file": 320,
+  "source.text": 340,
+  "process.transcribe": 224,
+  "process.refine": 224,
+  "process.prompt": 320,
+  "process.merge": 224,
+  "process.output": 320,
+};
+
 // ---------- 布局 ----------
 
 async function autoLayout() {
-  const children = nodesRef.value.map((node) => ({ id: node.id, width: 220, height: 90 }));
+  const children = nodesRef.value.map((node) => ({ id: node.id, width: NODE_LAYOUT_WIDTH[node.data.nodeType] ?? 224, height: 120 }));
   const edges = edgesRef.value.map((edge) => ({ id: edge.id, sources: [edge.source], targets: [edge.target] }));
   try {
     const ELK = (await import("elkjs/lib/elk.bundled.js")).default;

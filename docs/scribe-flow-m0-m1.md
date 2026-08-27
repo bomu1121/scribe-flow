@@ -7,7 +7,7 @@
 ## 当前进度
 
 - ✅ **M0 全部验收**：pnpm 单仓、CI、设计令牌、应用外壳、UI 弹窗原语、反 slop 自检；提交 `e554097` 已推送 `origin/main`。
-- ✅ **M1 全部验收（2026-08-27 更新）**：后端工程 CRUD、工程列表页、Vue Flow 画布编辑器（节点/连线/检查器/撤销重做/自动布局/自动保存）、导入导出闭环；15 条 n8n 交互照搬清单已用真实 Chrome + CDP 逐项自动化验证通过，详见下方勾选清单。
+- ✅ **M1 全部验收（2026-08-27 更新）**：后端工程 CRUD、工程列表页、Vue Flow 画布编辑器（节点/连线/卡片内表单/撤销重做/自动布局/自动保存）、导入导出闭环；15 条 n8n 交互照搬清单已用真实 Chrome + CDP 逐项自动化验证通过，详见下方勾选清单。
 - 下一步：M2 来源节点真实化（B 站解析/登录快捷选择/本地上传）。
 
 ---
@@ -231,10 +231,10 @@ GET    /api/projects/:id/export     导出 .scribe-flow.json（不含 Cookie、�
 - `source.bili/file → audio`，`source.text → transcript`，`process.transcribe: audio→transcript`，`process.refine/prompt: transcript→transcript/noteBlock`，`merge/output` 按端口契约。
 - `isValidConnection`：类型不匹配时目标 Handle 灰显 + `cursor: not-allowed`；匹配时蓝色高亮。
 
-**检查器（右 280–320px）**
-- 未选中：工程信息 + 默认运行配置（默认 AI/ASR/并发，只读占位，M3 可改）。
-- 选中节点：名称/说明 + 类型专属字段骨架；本里程碑完成 B 站节点 URL 输入与本地预览调用占位（M2 接真实解析）、文本节点粘贴、AI 节点提示词块下拉（数据来自 `prompts` store）、输出命名。
-- Tab：`属性` / `运行记录`（占位空态）。
+**节点卡片内操作（替代右检查器，画布占满宽度）**
+- 卡片按内容自适应：B站来源 380px、本地文件 320px、文本 340px、AI 加工 320px、输出 320px；转写/校对/合并 224px。
+- 卡片内表单：可编辑节点名、URL、文稿、ASR 引擎、提示词块下拉（数据来自 `prompts` store）、输出名、模型覆盖、输出文件名；失焦提交撤销历史。
+- 来源卡片内置批量选视频入口占位（M2 接真实解析与选择器）。
 
 **画布操作（15 条照搬清单 1–11 项）**
 - 平移/缩放/触控板、多选、框选、吸附：Vue Flow 参数化，不自定义几何。
@@ -248,8 +248,8 @@ GET    /api/projects/:id/export     导出 .scribe-flow.json（不含 Cookie、�
 - 导出：`GET /export` → Blob 下载 `<工程名>.scribe-flow.json`。
 - 导入：文件选择（json 后缀校验）→ `POST /import` → 跳转新工程；失败弹窗显示中文原因。
 
-**运行控制台（底部占位）**
-- 状态条 + 可展开面板骨架；M3 接 SSE。
+**底部状态条（占位）**
+- 一行状态条，仅显示通知/未来运行进度，不留空占位；M3 接 SSE。
 
 ### 3.4 测试
 
