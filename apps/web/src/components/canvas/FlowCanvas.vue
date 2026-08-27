@@ -247,7 +247,17 @@ function selectedNodeIds(): string[] {
 }
 
 function deleteSelection() {
-  removeNodes(selectedNodeIds());
+  const nodeIds = selectedNodeIds();
+  const edgeIds = edgesRef.value.filter((edge) => edge.selected).map((edge) => edge.id);
+  if (nodeIds.length === 0 && edgeIds.length === 0) return;
+
+  nodesRef.value = nodesRef.value.filter((node) => !nodeIds.includes(node.id));
+  edgesRef.value = edgesRef.value.filter(
+    (edge) => !edgeIds.includes(edge.id) && !nodeIds.includes(edge.source) && !nodeIds.includes(edge.target),
+  );
+  pushHistory();
+  emitGraph();
+  emit("select", null);
 }
 
 function duplicateSelection() {
@@ -416,6 +426,9 @@ defineExpose({
       :max-zoom="4"
       :delete-key-code="null"
       :zoom-on-double-click="false"
+      :snap-to-grid="true"
+      :snap-grid="[8, 8]"
+      multi-selection-key-code="Shift"
       :is-valid-connection="validateConnection"
       :fit-view-on-init="true"
       @nodes-change="onNodesChange"
