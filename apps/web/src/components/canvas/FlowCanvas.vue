@@ -18,7 +18,7 @@ import { NODE_TYPE_LABELS, PORT_TYPES, canConnect, nextEdgeId, nextNodeId, type 
 import ScribeNode from "./ScribeNode.vue";
 import FlowEdge from "./FlowEdge.vue";
 import Dialog from "@/components/ui/Dialog.vue";
-import Input from "@/components/ui/Input.vue";
+import { Input } from "@/components/ui/input";
 import {
   cloneGraph,
   emptyNodeData,

@@ -4,7 +4,7 @@ import { useRouter } from "vue-router";
 import { FileUp, FolderOpen, MoreHorizontal, Plus } from "lucide-vue-next";
 import { WORKFLOW_TEMPLATES, type ProjectListItem } from "@scribe-flow/shared";
 import AlertDialog from "@/components/ui/AlertDialog.vue";
-import Button from "@/components/ui/Button.vue";
+import { Button } from "@/components/ui/button";
 import Dialog from "@/components/ui/Dialog.vue";
 import DropdownMenu from "@/components/ui/DropdownMenu.vue";
 import DropdownMenuItem from "@/components/ui/DropdownMenuItem.vue";
@@ -95,11 +95,11 @@ function onImportFile(event: Event) {
         <p class="sf-page-sub">工作流以工程形式保存：画布编排、运行记录随工程归档。</p>
       </div>
       <div class="sf-head-actions">
-        <Button @click="fileInput?.click()">
+        <Button variant="outline" @click="fileInput?.click()">
           <FileUp :size="15" />
           导入工程
         </Button>
-        <Button variant="primary" @click="showCreate = true">
+        <Button variant="default" @click="showCreate = true">
           <Plus :size="15" />
           新建工程
         </Button>

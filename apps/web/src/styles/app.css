@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@import "tw-animate-css";
 
 /*
  * Tailwind v4 主题映射：把我们自己的设计令牌映射为 shadcn-vue 语义色。
@@ -33,6 +34,17 @@
   display: grid;
   grid-template-columns: var(--sidebar-width) minmax(0, 1fr);
   background: var(--color-bg);
+}
+
+/* shadcn-vue v4 基础层：边框与 outline 默认使用语义令牌 */
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+  }
 }
 
 /*

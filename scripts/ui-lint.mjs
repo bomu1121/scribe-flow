@@ -32,9 +32,12 @@ for await (const file of walk(SCAN_DIR)) {
   if (!usesPortal) continue;
 
   const styleTags = [...text.matchAll(/<style([^>]*)>/g)].map((m) => m[1] ?? "");
+  const hasScopedStyle = styleTags.some((attrs) => /\bscoped\b/.test(attrs));
   const hasGlobalStyle = styleTags.some((attrs) => !/\bscoped\b/.test(attrs));
-  if (!hasGlobalStyle) {
-    failures.push(`${file.replace(ROOT, "")}: 使用 Portal 但没有全局 <style> 块`);
+  // utility-first 组件（shadcn-vue registry 风格）没有 style 块是允许的；
+  // 但如果写了 scoped 样式，则必须同时提供全局样式承载传送层规则。
+  if (hasScopedStyle && !hasGlobalStyle) {
+    failures.push(`${file.replace(ROOT, "")}: 使用 Portal 且只有 scoped 样式，Teleport 弹层会丢失样式`);
   }
 
   // z-index 硬编码检查（仅检查使用了 Portal 的文件里的样式内容）

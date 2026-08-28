@@ -5,7 +5,7 @@ import { ArrowLeft, Check, Copy, Download, LayoutPanelTop, Maximize, MoreHorizon
 import { emptyGraph, type WorkflowGraph } from "@scribe-flow/shared";
 import FlowCanvas from "@/components/canvas/FlowCanvas.vue";
 import NodePalette from "@/components/canvas/NodePalette.vue";
-import Button from "@/components/ui/Button.vue";
+import { Button } from "@/components/ui/button";
 import DropdownMenu from "@/components/ui/DropdownMenu.vue";
 import DropdownMenuItem from "@/components/ui/DropdownMenuItem.vue";
 import { useProjectsStore } from "@/stores/projects";
@@ -133,15 +133,15 @@ function runningPlaceholder() {
       </div>
 
       <div class="sf-editor-bar-actions">
-        <Button variant="primary" @click="runningPlaceholder">
+        <Button variant="default" @click="runningPlaceholder">
           <Play :size="14" />
           运行全部
         </Button>
-        <Button @click="runningPlaceholder">
+        <Button variant="outline" @click="runningPlaceholder">
           <Play :size="14" />
           从选中节点运行
         </Button>
-        <Button @click="runningPlaceholder">
+        <Button variant="outline" @click="runningPlaceholder">
           <StopCircle :size="14" />
           停止
         </Button>

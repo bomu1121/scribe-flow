@@ -5,7 +5,7 @@ import { Handle, Position, type NodeProps } from "@vue-flow/core";
 import { ContextMenuContent, ContextMenuItem, ContextMenuPortal, ContextMenuRoot, ContextMenuSeparator, ContextMenuTrigger } from "reka-ui";
 import { NODE_PORTS, NODE_TYPE_LABELS, type NodeType, type VideoPreview } from "@scribe-flow/shared";
 import Select, { type SelectOption } from "@/components/ui/Select.vue";
-import Input from "@/components/ui/Input.vue";
+import { Input } from "@/components/ui/input";
 import { usePromptsStore } from "@/stores/prompts";
 import { api } from "@/lib/api";
 import type { ScribeNodeData } from "@/utils/flow";
