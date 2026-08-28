@@ -9,6 +9,7 @@
 - 实施清单：[docs/scribe-flow-m0-m1.md](docs/scribe-flow-m0-m1.md)
 - UI 框架选型调研：[docs/ui-framework-selection.md](docs/ui-framework-selection.md)
 - shadcn-vue 官方使用规则：[docs/shadcn-vue-rules.md](docs/shadcn-vue-rules.md)
+- 开发记录与完整项目文档：[docs/development-log.md](docs/development-log.md)
 
 ## 技术栈
 

@@ -334,7 +334,6 @@ function commit() {
 
 .sf-node.is-selected {
   border-color: var(--node-selected-border);
-  background: color-mix(in srgb, var(--color-brand) 3%, var(--color-surface));
   box-shadow: var(--shadow-card);
 }
 
