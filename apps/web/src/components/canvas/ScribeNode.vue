@@ -6,6 +6,7 @@ import { ContextMenuContent, ContextMenuItem, ContextMenuPortal, ContextMenuRoot
 import { NODE_PORTS, NODE_TYPE_LABELS, type NodeType, type VideoPreview } from "@scribe-flow/shared";
 import Select, { type SelectOption } from "@/components/ui/Select.vue";
 import { Input } from "@/components/ui/input";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { usePromptsStore } from "@/stores/prompts";
 import { api } from "@/lib/api";
 import type { ScribeNodeData } from "@/utils/flow";
@@ -99,12 +100,6 @@ const promptOptions = computed<SelectOption[]>(() =>
   promptsStore.allBlocks.map((block) => ({ label: `${block.name}${block.builtin ? "（内置）" : ""}`, value: block.id })),
 );
 
-const asrOptions: SelectOption[] = [
-  { label: "跟随默认设置", value: "default" },
-  { label: "MiMo-V2.5（云端）", value: "mimo" },
-  { label: "OpenAI 兼容端点", value: "openai-compatible" },
-];
-
 function patch(p: Record<string, unknown>) {
   props.data.ctx?.updateData(p);
 }
@@ -192,15 +187,16 @@ function commit() {
           <template v-else-if="nodeType === 'process.transcribe'">
             <label class="sf-node-field">
               <span class="sf-node-field-label">ASR 引擎</span>
-              <div class="sf-node-select">
-                <Select
-                  :model-value="data.asrEngine ?? null"
-                  :options="asrOptions"
-                  placeholder="跟随默认设置"
-                  size="sm"
-                  @update:model-value="(v) => { patch({ asrEngine: v === 'default' ? undefined : v }); commit(); }"
-                />
-              </div>
+              <ToggleGroup
+                type="single"
+                variant="outline"
+                size="sm"
+                :model-value="data.asrEngine ?? 'mimo'"
+                @update:model-value="(v: unknown) => { patch({ asrEngine: typeof v === 'string' ? v : undefined }); commit(); }"
+              >
+                <ToggleGroupItem value="mimo">MiMo-V2.5</ToggleGroupItem>
+                <ToggleGroupItem value="openai-compatible">OpenAI 兼容</ToggleGroupItem>
+              </ToggleGroup>
             </label>
           </template>
 
