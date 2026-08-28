@@ -94,6 +94,7 @@ Tailwind v4 用 `@theme inline` 把语义色映射到设计令牌，组件层只
 2. `components/ui/Input.vue`：按 shadcn-vue registry 重写为 utility 实现，支持 `class` 合并、`h-8 text-xs` 等紧凑形态。
 3. `components/ui/Select.vue`：按 registry 重写触发器/值/内容/项/滚动按钮全套；保留一个非 scoped `<style>` 只放 Teleport 后的开合动画（遵循浮层样式铁律）。
 4. 节点卡片内所有输入框改用统一 `Input` 组件；下拉全部走统一 `Select` 组件。
+5. 聚焦样式采用「单层规则」：组件自己有 `focus-visible` 环（`data-slot` 组件），全局基线只给自定义元素提供 outline，并显式排除 `input/button/select-trigger/select-item`，避免组件环 + 全局 outline 的双层粗边框。
 
 ---
 

@@ -35,9 +35,13 @@
   background: var(--color-bg);
 }
 
-:focus-visible {
+/*
+ * 键盘可达性基线：自定义元素（导航/节点库/图标按钮等）保留 outline 聚焦提示。
+ * 已定义聚焦环的 UI 原语（data-slot 组件）必须被排除，避免出现双层边框。
+ */
+:focus-visible:not([data-slot="input"]):not([data-slot="button"]):not([data-slot="select-trigger"]):not([data-slot="select-item"]) {
   outline: 2px solid var(--color-brand);
-  outline-offset: 2px;
+  outline-offset: 1px;
 }
 
 .page-scroll {
