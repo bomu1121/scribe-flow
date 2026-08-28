@@ -54,7 +54,8 @@ const model = defineModel<string | number | null>({ default: null });
   </SelectRoot>
 </template>
 
-<style scoped>
+<style>
+/* 浮层经 Teleport 挂到 body：样式必须全局，不能 scoped */
 .sf-select-trigger {
   display: inline-flex;
   align-items: center;
@@ -102,7 +103,7 @@ const model = defineModel<string | number | null>({ default: null });
 }
 
 .sf-select-content {
-  z-index: 1100;
+  z-index: var(--z-select);
   min-width: 160px;
   max-height: 320px;
   padding: 4px;

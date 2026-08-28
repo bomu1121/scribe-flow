@@ -54,11 +54,12 @@ const emit = defineEmits<{ confirm: []; cancel: [] }>();
   </AlertDialogRoot>
 </template>
 
-<style scoped>
+<style>
+/* 浮层经 Teleport 挂到 body：样式必须全局，不能 scoped */
 .sf-alert-overlay {
   position: fixed;
   inset: 0;
-  z-index: 1000;
+  z-index: var(--z-overlay);
   background: rgba(15, 17, 21, 0.4);
   animation: sf-fade-in var(--dur-2) var(--ease-out);
 }
@@ -68,7 +69,7 @@ const emit = defineEmits<{ confirm: []; cancel: [] }>();
   top: 50%;
   left: 50%;
   transform: translate(-50%, -50%);
-  z-index: 1001;
+  z-index: var(--z-dialog);
   width: min(420px, calc(100vw - 32px));
   padding: 20px;
   background: var(--color-surface);

@@ -20,9 +20,10 @@ import {
   </DropdownMenuRoot>
 </template>
 
-<style scoped>
+<style>
+/* 浮层经 Teleport 挂到 body：样式必须全局，不能 scoped */
 .sf-menu-content {
-  z-index: 1150;
+  z-index: var(--z-dropdown);
   min-width: 160px;
   padding: 4px;
   border: 1px solid var(--color-border);

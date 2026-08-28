@@ -58,6 +58,7 @@ scribe-flow/
 │  └─ scribe-flow-m0-m1.md      # 本清单
 ├─ scripts/
 │  └─ slop-lint.mjs             # 反 slop grep 自检
+│  └─ ui-lint.mjs                # 浮层样式铁律自检（Portal 必须全局样式 + z-index 令牌）
 └─ .github/workflows/ci.yml
 ```
 
@@ -151,6 +152,10 @@ apps/server/src/
 - 顶栏：页面标题 + 右侧「运行中 N」胶囊（M3 生效，先占位）。
 - 令牌落地：`tokens.css` 按方案 6.2 全量定义（含画布令牌：`--node-radius`、`--edge-color`、`--edge-running`）。
 - UI 组件原语用 reka-ui + Tailwind 封装为 `components/ui`，M0 先交付 button/input/dialog/alert-dialog/select/tabs/dropdown-menu/popover/badge 七个。
+- **浮层样式铁律（2026-08-27 事故复盘）**：Reka UI 的 `*Portal` 会把内容 Teleport 到 `<body>`，Vue scoped 样式不会带上 `data-v` 作用域属性，导致弹层样式整体失效（曾造成下拉框透明无边框）。因此：
+  - 任何使用 Portal 的 SFC，弹层样式必须写在**非 scoped** 的 `<style>` 块里（类名保留 `sf-` 前缀防冲突）；
+  - 浮层 z-index 只能使用 `--z-overlay/dialog/select/popover/dropdown/context` 令牌，禁止散写；
+  - `pnpm lint:ui`（`scripts/ui-lint.mjs`）静态扫描这两条规则，已接入 CI，新增 Portal 组件不合规即构建失败。
 
 ### 2.5 反 slop 自检脚本
 

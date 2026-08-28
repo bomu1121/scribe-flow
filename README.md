@@ -51,6 +51,7 @@ pnpm typecheck      # 全仓类型检查
 pnpm test           # 单元测试
 pnpm build          # 构建
 pnpm lint:slop      # 去 AI 味自检（渐变/玻璃拟态/emoji/辉光等反模式扫描）
+pnpm lint:ui        # 浮层样式铁律自检（Portal 组件必须使用全局样式与 z-index 令牌）
 ```
 
 ## 设计约定

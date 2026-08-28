@@ -620,8 +620,20 @@ function commit() {
   background: var(--handle-hover-color);
 }
 
+@keyframes sf-pulse {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0.35;
+  }
+}
+</style>
+
+<style>
+/* 右键菜单经 Teleport 挂到 body：必须用全局样式，不能 scoped */
 .sf-node-menu {
-  z-index: 1300;
+  z-index: var(--z-context);
   min-width: 148px;
   padding: 4px;
   border: 1px solid var(--color-border);
@@ -660,14 +672,5 @@ function commit() {
   height: 1px;
   margin: 4px 6px;
   background: var(--color-border);
-}
-
-@keyframes sf-pulse {
-  from {
-    opacity: 1;
-  }
-  to {
-    opacity: 0.35;
-  }
 }
 </style>

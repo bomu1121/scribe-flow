@@ -76,6 +76,14 @@
   --header-height: 52px;
   --content-max: 1080px;
 
+  /* 浮层层级（Teleport 组件必须统一从这里取值，禁止散写 z-index） */
+  --z-overlay: 1000;
+  --z-dialog: 1010;
+  --z-select: 1120;
+  --z-popover: 1130;
+  --z-dropdown: 1150;
+  --z-context: 1300;
+
   /* 阴影（两档，禁止发光） */
   --shadow-xs: 0 1px 2px rgba(22, 24, 29, 0.04);
   --shadow-card: 0 1px 2px rgba(22, 24, 29, 0.05), 0 4px 12px rgba(22, 24, 29, 0.04);

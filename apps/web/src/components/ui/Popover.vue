@@ -17,9 +17,10 @@ withDefaults(defineProps<{ align?: "start" | "center" | "end" }>(), { align: "st
   </PopoverRoot>
 </template>
 
-<style scoped>
+<style>
+/* 浮层经 Teleport 挂到 body：样式必须全局，不能 scoped */
 .sf-popover-content {
-  z-index: 1120;
+  z-index: var(--z-popover);
   max-width: 360px;
   padding: 12px;
   border: 1px solid var(--color-border);

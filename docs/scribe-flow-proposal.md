@@ -353,6 +353,12 @@
 - 动效 120–240ms；尊重 `prefers-reduced-motion`。
 - 延续全部反 slop 条款 + 3.5 节 5 条画布条款；交付自检 grep 扫渐变/辉光/emoji/玻璃拟态。
 
+### 6.4 浮层样式铁律（基础设施规则）
+
+- Reka UI 的 `*Portal` 组件会把内容 Teleport 到 `<body>`；Vue scoped 样式不会作用到这些节点。因此所有弹层（Select / Dialog / AlertDialog / DropdownMenu / Popover / ContextMenu）样式必须写在**非 scoped** 的 `<style>` 块，类名以 `sf-` 前缀隔离。
+- 浮层 z-index 只允许使用 `--z-overlay / --z-dialog / --z-select / --z-popover / --z-dropdown / --z-context` 令牌，禁止散写。
+- `scripts/ui-lint.mjs` 静态执行上述两条检查，并接入 CI；新增任何 Portal 组件不合规即失败。
+
 ---
 
 ## 7. 技术架构
