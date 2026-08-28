@@ -337,7 +337,7 @@ function commit() {
 
 .sf-node.is-selected {
   border-color: var(--node-selected-border);
-  box-shadow: 0 0 0 1px var(--node-selected-border);
+  box-shadow: var(--shadow-card);
 }
 
 .sf-node.is-running {
