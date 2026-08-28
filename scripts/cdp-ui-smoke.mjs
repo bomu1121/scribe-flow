@@ -277,12 +277,30 @@ async function run() {
     check("运行记录页出现本次运行", await evalJs("document.querySelectorAll('.el-table__row').length > 0"));
     const m3RunList = await fetch(`${API_URL}/api/runs?projectId=${m3Id}`).then((r) => r.json());
     m3RunId = m3RunList?.items?.[0]?.id ?? "";
+
+    // M4：运行详情日志弹窗
+    if (m3RunId) {
+      await navigate(`${APP_URL}project/${m3Id}/run/${m3RunId}`);
+      await waitFor("!!document.querySelector('.sf-markdown')");
+      check("运行详情渲染输出文档", await evalJs("document.querySelector('.sf-markdown-text').textContent.includes('M3 UI 验收文稿')"));
+      await evalJs("[...document.querySelectorAll('.sf-run-actions button')].find((b) => b.textContent.includes('查看日志'))?.click(); true");
+      await waitFor("!!document.querySelector('.sf-log-item')", 5000);
+      check("日志弹窗展示节点日志", await evalJs("document.querySelectorAll('.sf-log-item').length >= 2"));
+      await pressEscape();
+    }
+
     await navigate(`${APP_URL}settings`);
     await waitFor("!!document.querySelector('.sf-settings-form')");
     check("设置页 AI 表单渲染", await evalJs("document.querySelectorAll('.sf-settings-form .el-input').length >= 3"));
     await evalJs("document.querySelectorAll('.sf-settings-nav-item')[1].click(); true");
     await waitFor("!!document.querySelector('.sf-settings-form .el-segmented')", 5000);
     check("设置页 ASR 分段控件渲染", true);
+    await evalJs("document.querySelectorAll('.sf-settings-nav-item')[3].click(); true");
+    await waitFor("document.querySelectorAll('.sf-block-card').length >= 3", 5000);
+    check("提示词块库渲染内置 3 块", await evalJs("document.querySelectorAll('.sf-block-card').length >= 3"));
+    await evalJs("document.querySelectorAll('.sf-settings-nav-item')[5].click(); true");
+    await waitFor("!!document.querySelector('.sf-data-grid')", 5000);
+    check("数据与工程页渲染数据信息", await evalJs("document.querySelectorAll('.sf-data-cell').length >= 3"));
     if (m3RunId) await fetch(`${API_URL}/api/runs/${m3RunId}`, { method: "DELETE" }).catch(() => undefined);
     await fetch(`${API_URL}/api/projects/${m3Id}`, { method: "DELETE" }).catch(() => undefined);
     check("清理 M3 UI 验收工程", true);

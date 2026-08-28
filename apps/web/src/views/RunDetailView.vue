@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
 import { useRoute, useRouter } from "vue-router";
-import { ElButton, ElTable, ElTag } from "element-plus";
-import { ArrowLeft, FileText } from "lucide-vue-next";
-import type { RunDetail, RunNodeResult } from "@scribe-flow/shared";
+import { ElButton, ElDialog, ElMessage, ElOption, ElSelect, ElTable, ElTag } from "element-plus";
+import { ArrowLeft, Copy, FileText, RefreshCw, ScrollText } from "lucide-vue-next";
+import type { RunDetail, RunNodeLog, RunNodeResult } from "@scribe-flow/shared";
 import { api } from "@/lib/api";
 
 const route = useRoute();
@@ -11,6 +11,9 @@ const router = useRouter();
 const run = ref<RunDetail | null>(null);
 const markdown = ref("");
 const loading = ref(false);
+const logs = ref<RunNodeLog[]>([]);
+const logsVisible = ref(false);
+const logsNodeId = ref("");
 
 const runId = String(route.params.runId);
 const projectId = String(route.params.id);
@@ -42,6 +45,14 @@ const statusMeta: Record<string, { label: string; type: "primary" | "success" | 
   skipped: { label: "跳过", type: "info" },
 };
 
+const logKindLabels: Record<RunNodeLog["kind"], string> = {
+  input: "输入文稿",
+  "ai-request": "AI 请求",
+  "ai-response": "AI 响应",
+  info: "信息",
+  error: "错误",
+};
+
 function fmt(ms?: number): string {
   if (!ms) return "—";
   return ms < 1000 ? `${ms}ms` : `${(ms / 1000).toFixed(1)}s`;
@@ -56,6 +67,36 @@ function downloadMarkdown() {
   a.download = `run-${runId.slice(-6)}.md`;
   a.click();
   URL.revokeObjectURL(url);
+}
+
+async function copyMarkdown() {
+  try {
+    await navigator.clipboard.writeText(markdown.value);
+    ElMessage.success("已复制到剪贴板");
+  } catch {
+    ElMessage.error("复制失败，请手动选择文本");
+  }
+}
+
+async function openLogs(nodeId = "") {
+  logsVisible.value = true;
+  logsNodeId.value = nodeId;
+  try {
+    const data = await api.get<{ items: RunNodeLog[] }>(`/api/runs/${runId}/logs${nodeId ? `?nodeId=${encodeURIComponent(nodeId)}` : ""}`);
+    logs.value = data.items ?? [];
+  } catch (err) {
+    logs.value = [];
+    ElMessage.error(err instanceof Error ? err.message : "日志加载失败");
+  }
+}
+
+async function retryNode(node: RunNodeResult) {
+  try {
+    const created = await api.post<{ id: string }>(`/api/runs/${runId}/nodes/${node.nodeId}/retry`);
+    ElMessage.success(`已启动重跑：#${created.id.slice(-6)}`);
+  } catch (err) {
+    ElMessage.error(err instanceof Error ? err.message : "重跑失败");
+  }
 }
 </script>
 
@@ -72,7 +113,11 @@ function downloadMarkdown() {
           {{ run ? `${run.projectName ?? ""} · 耗时 ${fmt(run.elapsedMs)} · ${new Date(run.createdAt).toLocaleString("zh-CN")}` : "加载中…" }}
         </p>
       </div>
-      <el-button v-if="outputNode || markdown" size="small" :disabled="!markdown" @click="downloadMarkdown"><FileText :size="14" /><span>下载 Markdown</span></el-button>
+      <div class="sf-run-actions">
+        <el-button size="small" plain @click="openLogs('')"><ScrollText :size="14" /><span>查看日志</span></el-button>
+        <el-button size="small" plain :disabled="!markdown" @click="copyMarkdown"><Copy :size="14" /><span>复制</span></el-button>
+        <el-button v-if="outputNode || markdown" size="small" type="primary" :disabled="!markdown" @click="downloadMarkdown"><FileText :size="14" /><span>下载 Markdown</span></el-button>
+      </div>
     </div>
 
     <div v-if="loading" class="sf-empty"><div class="sf-empty-title">加载中…</div></div>
@@ -96,6 +141,12 @@ function downloadMarkdown() {
             <span v-else>{{ row.summary || "—" }}</span>
           </template>
         </el-table-column>
+        <el-table-column label="操作" width="110" align="right">
+          <template #default="{ row }: { row: RunNodeResult }">
+            <el-button size="small" text @click="openLogs(row.nodeId)">日志</el-button>
+            <el-button v-if="row.status === 'error'" size="small" text type="primary" @click="retryNode(row)"><RefreshCw :size="13" /><span>重跑</span></el-button>
+          </template>
+        </el-table-column>
       </el-table>
 
       <section class="sf-markdown">
@@ -104,6 +155,23 @@ function downloadMarkdown() {
         <div v-else class="sf-markdown-empty">本次运行没有文本产物。</div>
       </section>
     </template>
+
+    <el-dialog v-model="logsVisible" title="运行日志" width="640px" align-center>
+      <el-select v-model="logsNodeId" class="sf-log-filter" size="small" placeholder="全部节点" clearable @change="(v) => openLogs(String(v ?? ''))">
+        <el-option v-for="node in run?.nodeResults ?? []" :key="node.nodeId" :label="node.nodeLabel || node.nodeType" :value="node.nodeId" />
+      </el-select>
+      <div class="sf-log-list">
+        <article v-for="log in logs" :key="log.id" class="sf-log-item">
+          <header class="sf-log-head">
+            <span class="sf-log-node">{{ log.nodeLabel || log.nodeId }}</span>
+            <span class="sf-log-kind">{{ logKindLabels[log.kind] }}</span>
+            <span class="sf-log-time tnum">{{ new Date(log.createdAt).toLocaleTimeString("zh-CN") }}</span>
+          </header>
+          <pre class="sf-log-content">{{ log.content }}</pre>
+        </article>
+        <div v-if="logs.length === 0" class="sf-log-empty">暂无日志</div>
+      </div>
+    </el-dialog>
   </div>
 </template>
 
@@ -129,6 +197,12 @@ function downloadMarkdown() {
   display: flex;
   align-items: center;
   gap: 8px;
+}
+
+.sf-run-actions {
+  display: flex;
+  gap: 8px;
+  flex-shrink: 0;
 }
 
 .sf-page-title {
@@ -180,13 +254,13 @@ function downloadMarkdown() {
 
 .sf-markdown-text {
   margin: 0;
-  padding: 20px;
+  padding: 24px 28px;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-lg);
   background: var(--color-surface);
   font-family: var(--font-mono);
-  font-size: 12.5px;
-  line-height: 1.7;
+  font-size: 13px;
+  line-height: 1.8;
   white-space: pre-wrap;
   color: var(--color-text);
 }
@@ -198,5 +272,66 @@ function downloadMarkdown() {
   color: var(--color-text-tertiary);
   font-size: 13px;
   text-align: center;
+}
+
+.sf-log-filter {
+  width: 220px;
+  margin-bottom: 10px;
+}
+
+.sf-log-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-height: 420px;
+  overflow-y: auto;
+}
+
+.sf-log-item {
+  padding: 10px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-muted);
+}
+
+.sf-log-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.sf-log-node {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.sf-log-kind {
+  font-size: 11px;
+  color: var(--color-brand);
+}
+
+.sf-log-time {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--color-text-tertiary);
+}
+
+.sf-log-content {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  line-height: 1.6;
+  color: var(--color-text-secondary);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.sf-log-empty {
+  padding: 24px 0;
+  text-align: center;
+  color: var(--color-text-tertiary);
+  font-size: 12.5px;
 }
 </style>

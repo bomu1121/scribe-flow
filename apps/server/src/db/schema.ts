@@ -76,3 +76,27 @@ export const appSettings = sqliteTable("app_settings", {
 });
 
 export type AppSettingRow = typeof appSettings.$inferSelect;
+
+/** 提示词块：内置块在 shared 中，这里只存自定义块。 */
+export const promptBlocks = sqliteTable("prompt_blocks", {
+  id: text("id").primaryKey(),
+  name: text("name").notNull(),
+  prompt: text("prompt").notNull(),
+  builtin: integer("builtin").notNull().default(0),
+  createdAt: integer("created_at").notNull(),
+  updatedAt: integer("updated_at").notNull(),
+});
+
+export type PromptBlockRow = typeof promptBlocks.$inferSelect;
+
+/** 运行节点日志（文稿片段 / AI 请求与响应等）。 */
+export const runNodeLogs = sqliteTable("run_node_logs", {
+  id: text("id").primaryKey(),
+  runId: text("run_id").notNull(),
+  nodeId: text("node_id").notNull(),
+  kind: text("kind", { enum: ["input", "ai-request", "ai-response", "info", "error"] }).notNull(),
+  content: text("content").notNull(),
+  createdAt: integer("created_at").notNull(),
+});
+
+export type RunNodeLogRow = typeof runNodeLogs.$inferSelect;

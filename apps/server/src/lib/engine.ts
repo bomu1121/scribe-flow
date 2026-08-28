@@ -15,7 +15,7 @@ import {
   type WorkflowGraph,
 } from "@scribe-flow/shared";
 import type { AppDatabase } from "../db/client";
-import { biliCookies, projects, runNodeResults, runs } from "../db/schema";
+import { biliCookies, projects, runNodeLogs, runNodeResults, runs } from "../db/schema";
 import { chatCompletion, transcribeAudio } from "./ai";
 import { downloadBiliAudio, toAsrWav } from "./media";
 import { getAiConfig, getAsrConfig, getSettings } from "./settings";
@@ -310,10 +310,12 @@ export class RunEngine {
       case "process.transcribe": {
         if (!inputs.audioPath) throw new Error("没有可转写的音频输入");
         await this.progress(active, node.id, 10, "调用云 ASR");
+        await this.log(active, node.id, "info", `音频输入：${inputs.audioPath}`);
         const config = getAsrConfig(this.db);
         if (!config.apiKey) throw new Error("未配置语音识别密钥，请到设置页填写");
         const text = await transcribeAudio(config, inputs.audioPath);
         if (!text.trim()) throw new Error("转写结果为空");
+        await this.log(active, node.id, "ai-response", text);
         return { output: { kind: "text", text, size: text.length }, summary: `${text.length} 字` };
       }
 
@@ -333,8 +335,11 @@ export class RunEngine {
             ? "你是文字校对编辑。修正转写文稿中的错别字、重复与语气词，保持原意与信息完整，只输出校对后的文稿。"
             : "你是内容编辑。按用户要求整理文稿，只输出整理结果。");
         const model = String(data.model ?? "").trim() || aiConfig.model;
+        await this.log(active, node.id, "input", inputs.text);
+        await this.log(active, node.id, "ai-request", `${model}\n\n${system}`);
         const text = await chatCompletion({ ...aiConfig, model }, system, inputs.text);
         if (!text.trim()) throw new Error("AI 返回为空");
+        await this.log(active, node.id, "ai-response", text);
         const kind = node.type === "process.prompt" ? "noteBlock" : "text";
         return { output: { kind, text, size: text.length }, summary: `${text.length} 字` };
       }
@@ -343,6 +348,7 @@ export class RunEngine {
         if (!inputs.text) throw new Error("没有可合并的笔记块");
         const title = String(data.title ?? "").trim() || "合并笔记";
         const markdown = `# ${title}\n\n${inputs.text}`;
+        await this.log(active, node.id, "input", inputs.text);
         return { output: { kind: "noteDoc", text: markdown, size: markdown.length }, summary: `${markdown.length} 字` };
       }
 
@@ -355,6 +361,7 @@ export class RunEngine {
         const outPath = join(dir, fileName);
         await writeFile(outPath, inputs.text, "utf8");
         const rel = `${outputDir}/${active.id}/${fileName}`;
+        await this.log(active, node.id, "info", `输出文件：${rel}`);
         return { output: { kind: "noteDoc", text: inputs.text, path: rel, size: inputs.text.length }, summary: `${fileName} · ${inputs.text.length} 字` };
       }
 
@@ -366,6 +373,14 @@ export class RunEngine {
   private async progress(active: ActiveRun, nodeId: string, progress: number, message: string) {
     if (active.cancelled) throw new Error("运行已取消");
     this.emit(active, { type: "node.progress", runId: active.id, nodeId, progress, message });
+  }
+
+  private async log(active: ActiveRun, nodeId: string, kind: "input" | "ai-request" | "ai-response" | "info" | "error", content: string) {
+    if (!content) return;
+    await this.db
+      .insert(runNodeLogs)
+      .values({ id: randomUUID(), runId: active.id, nodeId, kind, content: content.slice(0, 8000), createdAt: Date.now() })
+      .run();
   }
 
   private async updateNode(

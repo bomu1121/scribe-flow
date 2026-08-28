@@ -1,12 +1,15 @@
 import { spawn } from "node:child_process";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readdir, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Hono } from "hono";
+import { ne } from "drizzle-orm";
 import { z } from "zod";
 import type { AppDatabase } from "../db/client";
+import { runs } from "../db/schema";
 import { chatCompletion, transcribeAudio } from "../lib/ai";
 import { getAiConfig, getAsrConfig, getSettings, updateSettings } from "../lib/settings";
+import type { RunEngine } from "../lib/engine";
 
 const updateSchema = z.object({
   ai: z
@@ -41,7 +44,7 @@ async function runFfmpeg(args: string[]): Promise<void> {
   });
 }
 
-export function settingsApi(db: AppDatabase) {
+export function settingsApi(db: AppDatabase, engine: RunEngine, dataDir: string) {
   const api = new Hono();
 
   api.get("/", (c) => c.json(getSettings(db)));
@@ -80,6 +83,35 @@ export function settingsApi(db: AppDatabase) {
     } finally {
       await rm(dir, { recursive: true, force: true }).catch(() => undefined);
     }
+  });
+
+  api.get("/data", async (c) => {
+    const rows = db.select().from(runs).all();
+    const finished = rows.filter((r) => r.status !== "running").length;
+    const outputDir = join(dataDir, getSettings(db).general.outputDir || "outputs");
+    let outputFiles = 0;
+    let outputBytes = 0;
+    try {
+      const runDirs = (await readdir(outputDir, { withFileTypes: true }).catch(() => [])).filter((e) => e.isDirectory());
+      for (const dir of runDirs) {
+        const files = await readdir(join(outputDir, dir.name)).catch(() => []);
+        outputFiles += files.length;
+        for (const file of files) {
+          outputBytes += (await stat(join(outputDir, dir.name, file)).catch(() => ({ size: 0 }))).size;
+        }
+      }
+    } catch {
+      // 输出目录不存在
+    }
+    return c.json({ dataDir, runCount: rows.length, finishedRunCount: finished, outputFiles, outputBytes });
+  });
+
+  api.post("/clear-runs", async (c) => {
+    const rows = db.select().from(runs).where(ne(runs.status, "running")).all();
+    for (const row of rows) {
+      await engine.deleteRun(row.id);
+    }
+    return c.json({ deleted: rows.length });
   });
 
   return api;

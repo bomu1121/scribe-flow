@@ -1,11 +1,16 @@
 <script setup lang="ts">
 import { onMounted, reactive, ref } from "vue";
-import { ElButton, ElInput, ElMessage, ElOption, ElSegmented, ElSelect } from "element-plus";
-import { PlugZap } from "lucide-vue-next";
-import type { AiProvider, AsrEngine } from "@scribe-flow/shared";
+import { ElButton, ElInput, ElMessage, ElMessageBox, ElOption, ElSegmented, ElSelect, ElTag } from "element-plus";
+import { PlugZap, Save, Trash2 } from "lucide-vue-next";
+import type { AiProvider, AsrEngine, PromptBlock } from "@scribe-flow/shared";
+import { api } from "@/lib/api";
 import { useSettingsStore } from "@/stores/settings";
+import { usePromptsStore } from "@/stores/prompts";
+import { useRunsStore } from "@/stores/runs";
 
 const store = useSettingsStore();
+const promptsStore = usePromptsStore();
+const runsStore = useRunsStore();
 
 const groups = [
   { key: "ai", label: "AI 模型" },
@@ -43,6 +48,77 @@ const asrOptions = [
   { label: "OpenAI 兼容", value: "openai-compatible" },
 ];
 
+const blockForm = reactive({ id: "", name: "", prompt: "" });
+const dataInfo = ref<{ dataDir: string; runCount: number; finishedRunCount: number; outputFiles: number; outputBytes: number } | null>(null);
+
+function editBlock(block: PromptBlock) {
+  blockForm.id = block.id;
+  blockForm.name = block.name;
+  blockForm.prompt = block.prompt;
+}
+
+function resetBlockForm() {
+  blockForm.id = "";
+  blockForm.name = "";
+  blockForm.prompt = "";
+}
+
+async function saveBlock() {
+  try {
+    if (blockForm.id) await promptsStore.updateBlock(blockForm.id, { name: blockForm.name, prompt: blockForm.prompt });
+    else await promptsStore.addBlock(blockForm.name, blockForm.prompt);
+    resetBlockForm();
+    ElMessage.success("提示词块已保存");
+  } catch (err) {
+    ElMessage.error(err instanceof Error ? err.message : "保存失败");
+  }
+}
+
+async function removeBlock(block: PromptBlock) {
+  try {
+    await ElMessageBox.confirm(`删除提示词块「${block.name}」？引用它的节点将无法再选中该块。`, "删除提示词块", {
+      confirmButtonText: "删除",
+      cancelButtonText: "取消",
+      type: "warning",
+      confirmButtonClass: "el-button--danger",
+    });
+  } catch {
+    return;
+  }
+  try {
+    await promptsStore.removeBlock(block.id);
+    if (blockForm.id === block.id) resetBlockForm();
+    ElMessage.success("已删除");
+  } catch (err) {
+    ElMessage.error(err instanceof Error ? err.message : "删除失败");
+  }
+}
+
+async function loadDataInfo() {
+  dataInfo.value = await api.get("/api/settings/data");
+}
+
+async function clearFinishedRuns() {
+  try {
+    await ElMessageBox.confirm("删除全部已结束的运行及其产物文件？进行中的运行不受影响。", "清理运行记录", {
+      confirmButtonText: "清理",
+      cancelButtonText: "取消",
+      type: "warning",
+      confirmButtonClass: "el-button--danger",
+    });
+  } catch {
+    return;
+  }
+  try {
+    const result = await api.post<{ deleted: number }>("/api/settings/clear-runs");
+    ElMessage.success(`已清理 ${result.deleted} 条运行记录`);
+    await runsStore.load();
+    await loadDataInfo();
+  } catch (err) {
+    ElMessage.error(err instanceof Error ? err.message : "清理失败");
+  }
+}
+
 function fillForm() {
   if (!store.settings) return;
   form.aiProvider = store.settings.ai.provider;
@@ -58,6 +134,7 @@ function fillForm() {
 onMounted(async () => {
   await store.load();
   fillForm();
+  await promptsStore.load();
 });
 
 function switchProvider(provider: AiProvider) {
@@ -208,6 +285,58 @@ async function testAsr() {
         </div>
       </template>
 
+      <template v-else-if="active === 'prompts'">
+        <h2 class="sf-settings-title">提示词块库</h2>
+        <p class="sf-settings-desc">内置块只读；自定义块由 AI 加工节点引用，修改后下一次运行生效。</p>
+        <div class="sf-blocks">
+          <article v-for="block in promptsStore.allBlocks" :key="block.id" class="sf-block-card">
+            <header class="sf-block-head">
+              <span class="sf-block-name">{{ block.name }}</span>
+              <el-tag v-if="block.builtin" size="small" type="info">内置</el-tag>
+              <span class="sf-block-actions">
+                <template v-if="!block.builtin">
+                  <el-button size="small" text @click="editBlock(block)">编辑</el-button>
+                  <el-button size="small" text class="sf-danger-text" @click="removeBlock(block)"><Trash2 :size="13" /></el-button>
+                </template>
+              </span>
+            </header>
+            <p class="sf-block-prompt">{{ block.prompt.slice(0, 120) }}{{ block.prompt.length > 120 ? "…" : "" }}</p>
+          </article>
+        </div>
+
+        <div class="sf-block-form">
+          <h3 class="sf-block-form-title">{{ blockForm.id ? "编辑自定义块" : "新增自定义块" }}</h3>
+          <label class="sf-field">
+            <span class="sf-field-label">名称</span>
+            <el-input v-model="blockForm.name" class="sf-field-control" placeholder="如：会议纪要提炼" />
+          </label>
+          <label class="sf-field">
+            <span class="sf-field-label">提示词</span>
+            <el-input v-model="blockForm.prompt" type="textarea" :rows="6" class="sf-field-control" placeholder="输入系统提示词…" />
+          </label>
+          <div class="sf-settings-actions">
+            <el-button class="sf-btn" type="primary" :disabled="!blockForm.name.trim() || !blockForm.prompt.trim()" @click="saveBlock"><Save :size="14" /><span>保存提示词块</span></el-button>
+            <el-button v-if="blockForm.id" class="sf-btn" plain @click="resetBlockForm"><span>取消编辑</span></el-button>
+          </div>
+        </div>
+      </template>
+
+      <template v-else-if="active === 'data'">
+        <h2 class="sf-settings-title">数据与工程</h2>
+        <p class="sf-settings-desc">运行记录与产物文件都保存在本地数据目录。</p>
+        <div class="sf-settings-form">
+          <div class="sf-data-grid">
+            <div class="sf-data-cell"><span class="sf-data-label">数据目录</span><span class="sf-data-value tnum">{{ dataInfo?.dataDir ?? "—" }}</span></div>
+            <div class="sf-data-cell"><span class="sf-data-label">运行记录</span><span class="sf-data-value tnum">{{ dataInfo?.runCount ?? "—" }} 条（可清理 {{ dataInfo?.finishedRunCount ?? 0 }} 条）</span></div>
+            <div class="sf-data-cell"><span class="sf-data-label">输出文件</span><span class="sf-data-value tnum">{{ dataInfo?.outputFiles ?? "—" }} 个</span></div>
+          </div>
+          <div class="sf-settings-actions">
+            <el-button class="sf-btn" plain @click="loadDataInfo"><span>刷新</span></el-button>
+            <el-button class="sf-btn" type="danger" plain @click="clearFinishedRuns"><span>清理已结束运行</span></el-button>
+          </div>
+        </div>
+      </template>
+
       <template v-else>
         <h2 class="sf-settings-title">{{ groups.find((g) => g.key === active)?.label }}</h2>
         <p class="sf-settings-desc">该分组将在后续里程碑接入。</p>
@@ -319,5 +448,93 @@ async function testAsr() {
   color: var(--color-text-tertiary);
   font-size: 13px;
   text-align: center;
+}
+
+.sf-blocks {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 20px;
+}
+
+.sf-block-card {
+  padding: 12px 14px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+}
+
+.sf-block-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.sf-block-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.sf-block-actions {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+}
+
+.sf-block-prompt {
+  margin: 6px 0 0;
+  font-size: 12px;
+  color: var(--color-text-secondary);
+  line-height: 1.6;
+}
+
+.sf-block-form {
+  padding: 16px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background: var(--color-surface);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  max-width: 560px;
+}
+
+.sf-block-form-title {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.sf-data-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.sf-data-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 12px 14px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+}
+
+.sf-data-label {
+  font-size: 11px;
+  color: var(--color-text-tertiary);
+}
+
+.sf-data-value {
+  font-size: 12px;
+  color: var(--color-text);
+  word-break: break-all;
+}
+
+.sf-danger-text {
+  color: var(--color-error);
 }
 </style>

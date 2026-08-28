@@ -9,12 +9,13 @@ import {
   type NodeOutput,
   type RunEvent,
   type RunMeta,
+  type RunNodeLog,
   type RunNodeResult,
   type RunScope,
   type StartRunRequest,
 } from "@scribe-flow/shared";
 import type { AppDatabase } from "../db/client";
-import { projects, runNodeResults, runs, type RunRow } from "../db/schema";
+import { projects, runNodeLogs, runNodeResults, runs, type RunRow } from "../db/schema";
 import { nextRunId, type RunEngine } from "../lib/engine";
 
 const startSchema = z.object({
@@ -177,6 +178,25 @@ export function runsApi(db: AppDatabase, engine: RunEngine, dataDir: string) {
     if (!row) return c.json({ error: "运行不存在" }, 404);
     await engine.deleteRun(runId);
     return c.json({ ok: true });
+  });
+
+  api.get("/:id/logs", (c) => {
+    const runId = c.req.param("id");
+    const nodeId = c.req.query("nodeId");
+    if (!db.select().from(runs).where(eq(runs.id, runId)).get()) return c.json({ error: "运行不存在" }, 404);
+    let rows = db.select().from(runNodeLogs).where(eq(runNodeLogs.runId, runId)).orderBy(runNodeLogs.createdAt).all();
+    if (nodeId) rows = rows.filter((r) => r.nodeId === nodeId);
+    const labels = new Map(db.select().from(runNodeResults).where(eq(runNodeResults.runId, runId)).all().map((r) => [r.nodeId, r.nodeLabel ?? r.nodeType]));
+    const items: RunNodeLog[] = rows.map((row) => ({
+      id: row.id,
+      runId: row.runId,
+      nodeId: row.nodeId,
+      nodeLabel: labels.get(row.nodeId),
+      kind: row.kind,
+      content: row.content,
+      createdAt: row.createdAt,
+    }));
+    return c.json({ items });
   });
 
   api.get("/:id/outputs/:nodeId", (c) => {

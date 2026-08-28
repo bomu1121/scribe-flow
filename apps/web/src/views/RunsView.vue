@@ -10,6 +10,7 @@ const router = useRouter();
 const store = useRunsStore();
 
 const statusFilter = ref<"" | RunStatus>("");
+const projectFilter = ref("");
 const statusOptions = [
   { label: "全部", value: "" },
   { label: "运行中", value: "running" },
@@ -18,7 +19,15 @@ const statusOptions = [
   { label: "已取消", value: "cancelled" },
 ];
 
-const filtered = computed(() => (statusFilter.value ? store.runs.filter((r) => r.status === statusFilter.value) : store.runs));
+const projectOptions = computed(() => {
+  const seen = new Map<string, string>();
+  for (const run of store.runs) seen.set(run.projectId, run.projectName || run.projectId);
+  return [...seen.entries()].map(([id, name]) => ({ id, name }));
+});
+
+const filtered = computed(() =>
+  store.runs.filter((r) => (statusFilter.value ? r.status === statusFilter.value : true) && (projectFilter.value ? r.projectId === projectFilter.value : true)),
+);
 
 const statusMeta: Record<RunStatus, { label: string; type: "primary" | "success" | "danger" | "info" }> = {
   running: { label: "运行中", type: "primary" },
@@ -68,9 +77,14 @@ async function removeRun(run: RunMeta) {
         <h2 class="sf-page-title">运行记录</h2>
         <p class="sf-page-sub">运行即归档，归档属于工程。没有收藏、星标或置顶。</p>
       </div>
-      <el-select v-model="statusFilter" class="sf-status-filter" size="small">
-        <el-option v-for="opt in statusOptions" :key="opt.value" :label="opt.label" :value="opt.value" />
-      </el-select>
+      <div class="sf-head-filters">
+        <el-select v-model="projectFilter" class="sf-project-filter" size="small" clearable placeholder="全部工程">
+          <el-option v-for="opt in projectOptions" :key="opt.id" :label="opt.name" :value="opt.id" />
+        </el-select>
+        <el-select v-model="statusFilter" class="sf-status-filter" size="small">
+          <el-option v-for="opt in statusOptions" :key="opt.value" :label="opt.label" :value="opt.value" />
+        </el-select>
+      </div>
     </div>
 
     <div v-if="store.loading" class="sf-empty">
@@ -133,6 +147,15 @@ async function removeRun(run: RunMeta) {
   padding-bottom: 18px;
   border-bottom: 1px solid var(--color-border);
   margin-bottom: 20px;
+}
+
+.sf-head-filters {
+  display: flex;
+  gap: 8px;
+}
+
+.sf-project-filter {
+  width: 200px;
 }
 
 .sf-status-filter {

@@ -4,8 +4,9 @@
 
 ## 项目状态
 
-- 当前里程碑：**M3 已完成**（模板一「B站视频→观点笔记」真实端到端跑通），下一步 M4
-- M3 分层验收：[docs/m3-acceptance.md](docs/m3-acceptance.md)（L0 9 用例 · L1 14/14 · L2 30/30 · L3 bsk 真实浏览器 · L4 B站下载/MiMo ASR/DeepSeek 真实通过）
+- 当前里程碑：**M4 已完成**，下一步 M5（响应式、a11y、深色预留、Docker 部署）
+- M4 分层验收：[docs/m4-acceptance.md](docs/m4-acceptance.md)（L0 9 用例 · L1 12/12 · L2 34/34 · L3 bsk 真实浏览器）
+- M3 分层验收：[docs/m3-acceptance.md](docs/m3-acceptance.md)（模板一「B站视频→观点笔记」真实端到端跑通）
 - M2 分层验收：[docs/m2-acceptance.md](docs/m2-acceptance.md)
 - 产品方案：[docs/scribe-flow-proposal.md](docs/scribe-flow-proposal.md)
 - 实施清单：[docs/scribe-flow-m0-m1.md](docs/scribe-flow-m0-m1.md)
@@ -60,6 +61,7 @@ pnpm lint:ui        # UI 铁律自检（Portal 全局样式/z-index 令牌/颜�
 pnpm smoke:ui       # CDP + 真实 Chrome 的 UI 冒烟（需先 pnpm dev）
 pnpm check:api:m2   # M2 API 自检（登录/选择器/上传）
 pnpm check:api:m3   # M3 引擎 API 自检（文本链路/SSE/重跑）
+pnpm check:api:m4   # M4 API 自检（提示词块 CRUD/运行日志）
 ```
 
 ## 设计约定

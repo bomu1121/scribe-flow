@@ -1,53 +1,43 @@
 import { defineStore } from "pinia";
-import { computed, ref, watch } from "vue";
+import { computed, ref } from "vue";
 import { BUILTIN_PROMPT_BLOCKS, type PromptBlock } from "@scribe-flow/shared";
-
-const STORAGE_KEY = "scribe-flow-prompt-blocks";
-
-function loadCustom(): PromptBlock[] {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    return raw ? (JSON.parse(raw) as PromptBlock[]) : [];
-  } catch {
-    return [];
-  }
-}
+import { api } from "@/lib/api";
 
 export const usePromptsStore = defineStore("prompts", () => {
-  const customBlocks = ref<PromptBlock[]>(loadCustom());
+  const customBlocks = ref<PromptBlock[]>([]);
+  const loading = ref(false);
 
   const allBlocks = computed<PromptBlock[]>(() => [...BUILTIN_PROMPT_BLOCKS, ...customBlocks.value]);
 
-  watch(
-    customBlocks,
-    () => {
-      try {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(customBlocks.value));
-      } catch {
-        // 存储不可用时静默忽略
-      }
-    },
-    { deep: true },
-  );
+  async function load() {
+    loading.value = true;
+    try {
+      const data = await api.get<{ items: PromptBlock[] }>("/api/prompts");
+      customBlocks.value = (data.items ?? []).filter((block) => !block.builtin);
+    } finally {
+      loading.value = false;
+    }
+  }
 
   function getBlock(id: string | undefined): PromptBlock | undefined {
     return allBlocks.value.find((b) => b.id === id);
   }
 
-  function addBlock(name: string, prompt: string): PromptBlock {
-    const id = `custom.${Date.now().toString(36)}`;
-    const block: PromptBlock = { id, name, prompt, builtin: false };
-    customBlocks.value = [...customBlocks.value, block];
+  async function addBlock(name: string, prompt: string): Promise<PromptBlock> {
+    const block = await api.post<PromptBlock>("/api/prompts", { name, prompt });
+    await load();
     return block;
   }
 
-  function updateBlock(id: string, patch: Partial<Pick<PromptBlock, "name" | "prompt">>) {
-    customBlocks.value = customBlocks.value.map((b) => (b.id === id ? { ...b, ...patch } : b));
+  async function updateBlock(id: string, patch: Partial<Pick<PromptBlock, "name" | "prompt">>) {
+    await api.patch<PromptBlock>(`/api/prompts/${id}`, patch);
+    await load();
   }
 
-  function removeBlock(id: string) {
-    customBlocks.value = customBlocks.value.filter((b) => b.id !== id);
+  async function removeBlock(id: string) {
+    await api.delete<{ ok: boolean }>(`/api/prompts/${id}`);
+    await load();
   }
 
-  return { BUILTIN_PROMPT_BLOCKS, customBlocks, allBlocks, getBlock, addBlock, updateBlock, removeBlock };
+  return { BUILTIN_PROMPT_BLOCKS, customBlocks, loading, allBlocks, load, getBlock, addBlock, updateBlock, removeBlock };
 });

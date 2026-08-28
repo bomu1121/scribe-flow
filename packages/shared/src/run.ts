@@ -50,6 +50,18 @@ export interface RunDetail extends RunMeta {
   nodeResults: RunNodeResult[];
 }
 
+export type RunNodeLogKind = "input" | "ai-request" | "ai-response" | "info" | "error";
+
+export interface RunNodeLog {
+  id: string;
+  runId: string;
+  nodeId: string;
+  nodeLabel?: string;
+  kind: RunNodeLogKind;
+  content: string;
+  createdAt: number;
+}
+
 /** SSE 事件（M3 运行引擎）。 */
 export type RunEvent =
   | { type: "run.started"; run: RunMeta }

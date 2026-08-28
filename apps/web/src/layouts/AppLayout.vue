@@ -3,11 +3,13 @@ import { computed, onBeforeUnmount, onMounted } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { Activity, LayoutGrid, PenLine, Settings } from "lucide-vue-next";
 import { useRunsStore } from "@/stores/runs";
+import { usePromptsStore } from "@/stores/prompts";
 import BiliAccountButton from "@/components/auth/BiliAccountButton.vue";
 
 const route = useRoute();
 const router = useRouter();
 const runsStore = useRunsStore();
+const promptsStore = usePromptsStore();
 
 const navItems = [
   { to: "/", label: "工程", icon: LayoutGrid },
@@ -20,6 +22,7 @@ const pageTitle = computed(() => String(route.meta.title ?? "ScribeFlow"));
 let timer: ReturnType<typeof setInterval> | null = null;
 onMounted(() => {
   void runsStore.load();
+  void promptsStore.load();
   timer = setInterval(() => void runsStore.load(), 5000);
 });
 onBeforeUnmount(() => {
