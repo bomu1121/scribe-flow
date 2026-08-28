@@ -1,48 +1,34 @@
 import { defineStore } from "pinia";
-import { ref, watch } from "vue";
-
-const STORAGE_KEY = "scribe-flow-settings";
-
-interface PersistedSettings {
-  defaultPromptBlockId: string;
-  autoRun: boolean;
-  concurrency: number;
-}
-
-function load(): Partial<PersistedSettings> {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    return raw ? (JSON.parse(raw) as PersistedSettings) : {};
-  } catch {
-    return {};
-  }
-}
+import { ref } from "vue";
+import type { AppSettings, UpdateSettingsRequest } from "@scribe-flow/shared";
+import { api } from "@/lib/api";
 
 export const useSettingsStore = defineStore("settings", () => {
-  const saved = load();
+  const settings = ref<AppSettings | null>(null);
+  const loading = ref(false);
 
-  const defaultPromptBlockId = ref(saved.defaultPromptBlockId ?? "builtin.insight");
-  const autoRun = ref(saved.autoRun ?? false);
-  const concurrency = ref(saved.concurrency ?? 2);
+  async function load() {
+    loading.value = true;
+    try {
+      settings.value = await api.get<AppSettings>("/api/settings");
+    } finally {
+      loading.value = false;
+    }
+  }
 
-  watch(
-    [defaultPromptBlockId, autoRun, concurrency],
-    () => {
-      try {
-        localStorage.setItem(
-          STORAGE_KEY,
-          JSON.stringify({
-            defaultPromptBlockId: defaultPromptBlockId.value,
-            autoRun: autoRun.value,
-            concurrency: concurrency.value,
-          } satisfies PersistedSettings),
-        );
-      } catch {
-        // 存储不可用时静默忽略
-      }
-    },
-    { deep: false },
-  );
+  async function save(patch: UpdateSettingsRequest) {
+    settings.value = await api.put<AppSettings>("/api/settings", patch);
+  }
 
-  return { defaultPromptBlockId, autoRun, concurrency };
+  async function testAi(): Promise<string> {
+    const result = await api.post<{ ok: boolean; content?: string }>("/api/settings/test/ai");
+    return result.content ?? "连接正常";
+  }
+
+  async function testAsr(): Promise<string> {
+    const result = await api.post<{ ok: boolean; content?: string }>("/api/settings/test/asr");
+    return result.content ?? "连接正常";
+  }
+
+  return { settings, loading, load, save, testAi, testAsr };
 });

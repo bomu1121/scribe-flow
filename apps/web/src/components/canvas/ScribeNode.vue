@@ -1,20 +1,59 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from "vue";
+import { ElInput, ElMessage, ElOption, ElSegmented, ElSelect, ElUpload, type UploadRequestOptions } from "element-plus";
 import { FileOutput, FileText, FileUp, GitMerge, Link2, Mic, Sparkles, WandSparkles } from "lucide-vue-next";
 import { Handle, Position, type NodeProps } from "@vue-flow/core";
 import { ContextMenuContent, ContextMenuItem, ContextMenuPortal, ContextMenuRoot, ContextMenuSeparator, ContextMenuTrigger } from "reka-ui";
-import { NODE_PORTS, NODE_TYPE_LABELS, type NodeType, type VideoPreview } from "@scribe-flow/shared";
-import Select, { type SelectOption } from "@/components/ui/Select.vue";
-import { Input } from "@/components/ui/input";
-import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+import { NODE_PORTS, NODE_TYPE_LABELS, type NodeType, type UploadedFile, type VideoPreview } from "@scribe-flow/shared";
+import SourcePickerDialog from "./SourcePickerDialog.vue";
 import { usePromptsStore } from "@/stores/prompts";
+import { useAuthStore } from "@/stores/auth";
 import { api } from "@/lib/api";
 import type { ScribeNodeData } from "@/utils/flow";
 
 const props = defineProps<NodeProps<ScribeNodeData>>();
 
 const promptsStore = usePromptsStore();
+const authStore = useAuthStore();
 const data = computed(() => props.data);
+
+const showPicker = ref(false);
+
+// 文本节点校验
+const textError = computed(() => {
+  const text = String(data.value.text ?? "");
+  if (text.trim().length === 0) return "文稿不能为空";
+  if (text.length > 50000) return "文稿过长（最多 50000 字）";
+  return "";
+});
+
+function openPicker() {
+  if (!authStore.loggedIn) {
+    ElMessage.info("请先点击左下角「未登录 B 站」扫码登录");
+    return;
+  }
+  showPicker.value = true;
+}
+
+function onPickerConfirm(videos: import("@scribe-flow/shared").SourceVideoItem[]) {
+  props.data.ctx?.addSourceVideos(videos);
+  ElMessage.success(`已添加 ${videos.length} 个视频来源`);
+}
+
+async function uploadFile(options: UploadRequestOptions) {
+  const form = new FormData();
+  form.append("file", options.file);
+  try {
+    const result = await api.upload<UploadedFile>("/api/files/upload", form);
+    patch({ fileId: result.fileId, fileName: result.fileName, filePath: result.storedPath, size: result.size });
+    commit();
+    ElMessage.success(`已上传「${result.fileName}」`);
+    options.onSuccess?.(result);
+  } catch (err) {
+    ElMessage.error(err instanceof Error ? err.message : "上传失败");
+    (options.onError as ((error: unknown) => void) | undefined)?.(err);
+  }
+}
 
 // 链接即时解析（检查点）：输入后防抖查询封面/标题/分 P
 const preview = ref<VideoPreview | null>(null);
@@ -96,9 +135,30 @@ const typeIcon = computed(() => {
 const statusClass = computed(() => (props.data.status ? `is-${props.data.status}` : "is-idle"));
 const sizeClass = computed(() => `sf-node--${nodeType.value.replaceAll(".", "-")}`);
 
-const promptOptions = computed<SelectOption[]>(() =>
+const asrOptions = [
+  { label: "MiMo-V2.5", value: "mimo" },
+  { label: "OpenAI 兼容", value: "openai-compatible" },
+];
+
+const promptOptions = computed(() =>
   promptsStore.allBlocks.map((block) => ({ label: `${block.name}${block.builtin ? "（内置）" : ""}`, value: block.id })),
 );
+
+const asrEngine = computed<string>({
+  get: () => (data.value.asrEngine as string | undefined) ?? "mimo",
+  set: (value) => {
+    patch({ asrEngine: value });
+    commit();
+  },
+});
+
+const promptBlockId = computed<string | undefined>({
+  get: () => data.value.promptBlockId,
+  set: (value) => {
+    patch({ promptBlockId: value || undefined });
+    commit();
+  },
+});
 
 function patch(p: Record<string, unknown>) {
   props.data.ctx?.updateData(p);
@@ -139,8 +199,9 @@ function commit() {
         <div class="sf-node-body">
           <!-- 来源：B 站链接。卡片做大，容纳批量选视频入口 -->
           <template v-if="nodeType === 'source.bili'">
-            <Input
-              class="h-8 text-xs"
+            <el-input
+              class="sf-node-control"
+              size="small"
               :model-value="data.url"
               placeholder="粘贴 B 站视频链接（支持分 P）"
               @update:model-value="(v: string | number) => { const value = String(v); patch({ url: value }); schedulePreview(value); }"
@@ -161,50 +222,54 @@ function commit() {
             </div>
             <div v-else-if="previewError" class="sf-node-preview sf-node-preview--error">{{ previewError }}</div>
             <div v-else class="sf-node-hint tnum">输入链接后自动解析封面、UP 主与分 P 信息</div>
-            <button type="button" class="sf-node-batch" disabled title="M2 接入">
-              从收藏夹 / 稍后再看批量选择视频（M2 接入）
+            <button type="button" class="sf-node-batch" @click="openPicker">
+              从收藏夹 / 我的合集 / 稍后再看 / 历史批量选择视频
             </button>
           </template>
 
           <template v-else-if="nodeType === 'source.file'">
-            <button type="button" class="sf-node-drop" disabled title="M2 接入">
-              <FileUp :size="18" />
-              <span>{{ data.fileName ?? "选择或拖入本地音视频（M2 接入）" }}</span>
-            </button>
+            <el-upload
+              class="sf-node-upload"
+              drag
+              :show-file-list="false"
+              :http-request="uploadFile"
+              accept=".mp4,.m4a,.mkv,.flv,.mov,.wav,.mp3,.aac,.webm,.m4v,audio/*,video/*"
+            >
+              <div class="sf-node-drop" :class="{ 'has-file': Boolean(data.fileName) }">
+                <FileUp :size="18" />
+                <span v-if="data.fileName" class="sf-node-file-name">{{ data.fileName }}</span>
+                <span v-else>点击或拖入本地音视频</span>
+              </div>
+            </el-upload>
           </template>
 
           <template v-else-if="nodeType === 'source.text'">
-            <textarea
+            <el-input
               class="sf-node-textarea"
-              :value="data.text"
-              rows="6"
+              type="textarea"
+              :rows="6"
+              :model-value="data.text"
               placeholder="粘贴已有文稿…"
-              @input="patch({ text: ($event.target as HTMLTextAreaElement).value })"
+              @update:model-value="(v: string | number) => patch({ text: String(v) })"
               @blur="commit"
             />
+            <span v-if="textError" class="sf-node-text-error">{{ textError }}</span>
+            <span v-else class="sf-node-text-count tnum">{{ String(data.text ?? '').length }} / 50000</span>
           </template>
 
           <template v-else-if="nodeType === 'process.transcribe'">
             <label class="sf-node-field">
               <span class="sf-node-field-label">ASR 引擎</span>
-              <ToggleGroup
-                type="single"
-                variant="outline"
-                size="sm"
-                :model-value="data.asrEngine ?? 'mimo'"
-                @update:model-value="(v: unknown) => { patch({ asrEngine: typeof v === 'string' ? v : undefined }); commit(); }"
-              >
-                <ToggleGroupItem value="mimo">MiMo-V2.5</ToggleGroupItem>
-                <ToggleGroupItem value="openai-compatible">OpenAI 兼容</ToggleGroupItem>
-              </ToggleGroup>
+              <el-segmented v-model="asrEngine" :options="asrOptions" size="small" block />
             </label>
           </template>
 
           <template v-else-if="nodeType === 'process.refine'">
             <label class="sf-node-field">
               <span class="sf-node-field-label">输出名称</span>
-              <Input
-                class="h-8 text-xs"
+              <el-input
+                class="sf-node-control"
+                size="small"
                 :model-value="data.outputName ?? ''"
                 placeholder="如：校对稿"
                 @update:model-value="(v: string | number) => patch({ outputName: String(v) })"
@@ -216,20 +281,22 @@ function commit() {
           <template v-else-if="nodeType === 'process.prompt'">
             <label class="sf-node-field">
               <span class="sf-node-field-label">提示词块</span>
-              <div class="sf-node-select">
-                <Select
-                  :model-value="data.promptBlockId ?? null"
-                  :options="promptOptions"
-                  placeholder="选择提示词块"
-                  size="sm"
-                  @update:model-value="(v) => { patch({ promptBlockId: v ?? undefined }); commit(); }"
-                />
-              </div>
+              <el-select
+                v-model="promptBlockId"
+                class="sf-node-select"
+                size="small"
+                clearable
+                filterable
+                placeholder="选择提示词块"
+              >
+                <el-option v-for="option in promptOptions" :key="option.value" :label="option.label" :value="option.value" />
+              </el-select>
             </label>
             <label class="sf-node-field">
               <span class="sf-node-field-label">输出名称</span>
-              <Input
-                class="h-8 text-xs"
+              <el-input
+                class="sf-node-control"
+                size="small"
                 :model-value="data.outputName ?? ''"
                 placeholder="如：观点笔记"
                 @update:model-value="(v: string | number) => patch({ outputName: String(v) })"
@@ -238,8 +305,9 @@ function commit() {
             </label>
             <label class="sf-node-field">
               <span class="sf-node-field-label">模型覆盖（可选）</span>
-              <Input
-                class="h-8 text-xs"
+              <el-input
+                class="sf-node-control"
+                size="small"
                 :model-value="data.model ?? ''"
                 placeholder="不填则跟随默认模型"
                 @update:model-value="(v: string | number) => patch({ model: String(v) })"
@@ -251,8 +319,9 @@ function commit() {
           <template v-else-if="nodeType === 'process.merge'">
             <label class="sf-node-field">
               <span class="sf-node-field-label">合并标题</span>
-              <Input
-                class="h-8 text-xs"
+              <el-input
+                class="sf-node-control"
+                size="small"
                 :model-value="data.title ?? ''"
                 placeholder="合并文档标题"
                 @update:model-value="(v: string | number) => patch({ title: String(v) })"
@@ -264,17 +333,20 @@ function commit() {
           <template v-else-if="nodeType === 'process.output'">
             <label class="sf-node-field">
               <span class="sf-node-field-label">输出文件名</span>
-              <Input
-                class="h-8 text-xs"
+              <el-input
+                class="sf-node-control"
+                size="small"
                 :model-value="data.fileName ?? ''"
                 placeholder="笔记.md"
                 @update:model-value="(v: string | number) => patch({ fileName: String(v) })"
                 @blur="commit"
               />
             </label>
-            <div class="sf-node-output-preview">输出预览（M3 运行后显示）</div>
+            <div class="sf-node-output-preview">{{ data.summary ?? "输出预览（运行后显示）" }}</div>
           </template>
         </div>
+
+        <div v-if="data.summary" class="sf-node-summary tnum">{{ data.summary }}</div>
 
         <Handle
           v-for="port in ports.outputs"
@@ -288,15 +360,16 @@ function commit() {
     </ContextMenuTrigger>
     <ContextMenuPortal>
       <ContextMenuContent class="sf-node-menu" align="start">
-        <ContextMenuItem class="sf-node-menu-item" :disabled="true" title="M3 接入">运行此节点</ContextMenuItem>
-        <ContextMenuItem class="sf-node-menu-item" :disabled="true" title="M3 接入">从此节点运行</ContextMenuItem>
+        <ContextMenuItem class="sf-node-menu-item" @select="props.data.ctx?.runNode()">运行此节点</ContextMenuItem>
+        <ContextMenuItem class="sf-node-menu-item" @select="props.data.ctx?.runFromNode()">从此节点运行</ContextMenuItem>
         <ContextMenuSeparator class="sf-node-menu-sep" />
         <ContextMenuItem class="sf-node-menu-item" @select="props.data.ctx?.duplicate()">复制</ContextMenuItem>
-        <ContextMenuItem class="sf-node-menu-item" :disabled="true" title="M3 接入">复制输出</ContextMenuItem>
+        <ContextMenuItem class="sf-node-menu-item" :disabled="true" title="M4 接入">复制输出</ContextMenuItem>
         <ContextMenuSeparator class="sf-node-menu-sep" />
         <ContextMenuItem class="sf-node-menu-item sf-node-menu-item--danger" @select="props.data.ctx?.remove()">删除</ContextMenuItem>
       </ContextMenuContent>
     </ContextMenuPortal>
+    <SourcePickerDialog v-model:open="showPicker" @confirm="onPickerConfirm" />
   </ContextMenuRoot>
 </template>
 
@@ -308,7 +381,7 @@ function commit() {
   border: 1px solid var(--node-border);
   border-radius: var(--node-radius);
   background: var(--color-surface);
-  box-shadow: var(--shadow-xs);
+  box-shadow: var(--shadow-card);
   transition:
     border-color var(--dur-2) var(--ease-out),
     box-shadow var(--dur-2) var(--ease-out),
@@ -334,7 +407,7 @@ function commit() {
 
 .sf-node.is-selected {
   border-color: var(--node-selected-border);
-  box-shadow: var(--shadow-card);
+  box-shadow: var(--shadow-overlay);
 }
 
 .sf-node.is-running {
@@ -418,6 +491,17 @@ function commit() {
   gap: 8px;
 }
 
+.sf-node-summary {
+  margin-top: 8px;
+  padding: 7px 8px;
+  border: 1px solid var(--color-brand-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-brand-soft);
+  color: var(--color-brand);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
 .sf-node-preview {
   display: flex;
   align-items: center;
@@ -482,7 +566,7 @@ function commit() {
   justify-content: center;
   gap: 6px;
   width: 100%;
-  min-height: 56px;
+  min-height: 40px;
   padding: 8px 10px;
   border: 1px dashed var(--color-border-strong);
   border-radius: var(--radius-md);
@@ -491,11 +575,33 @@ function commit() {
   font-family: inherit;
   font-size: 12px;
   text-align: center;
+  cursor: pointer;
+  transition:
+    border-color var(--dur-1) var(--ease-out),
+    color var(--dur-1) var(--ease-out),
+    background-color var(--dur-1) var(--ease-out);
 }
 
-.sf-node-batch:disabled {
-  cursor: not-allowed;
-  opacity: 0.7;
+.sf-node-batch:hover {
+  border-color: var(--color-brand);
+  color: var(--color-brand);
+  background: var(--color-brand-soft);
+}
+
+.sf-node-upload {
+  width: 100%;
+}
+
+.sf-node-upload :deep(.el-upload) {
+  width: 100%;
+}
+
+.sf-node-upload :deep(.el-upload-dragger) {
+  width: 100%;
+  padding: 0;
+  border: none;
+  border-radius: 0;
+  background: transparent;
 }
 
 .sf-node-drop {
@@ -511,43 +617,52 @@ function commit() {
   border-radius: var(--radius-md);
   background: var(--color-surface-muted);
   color: var(--color-text-secondary);
-  font-family: inherit;
   font-size: 12px;
 }
 
-.sf-node-drop:disabled {
-  cursor: not-allowed;
-  opacity: 0.7;
+.sf-node-drop.has-file {
+  border-style: solid;
+  border-color: var(--color-brand-border);
+  background: var(--color-brand-soft);
+  color: var(--color-brand);
+}
+
+.sf-node-file-name {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sf-node-control {
+  width: 100%;
 }
 
 .sf-node-textarea {
   width: 100%;
-  min-height: 120px;
-  padding: 8px 9px;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm);
-  background: var(--color-surface);
-  color: var(--color-text);
+}
+
+.sf-node-textarea :deep(.el-textarea__inner) {
   font-family: var(--font-mono);
   font-size: 12px;
   line-height: 1.6;
-  resize: vertical;
 }
 
-.sf-node-textarea::placeholder {
+.sf-node-text-error {
+  font-size: 11px;
+  color: var(--color-error);
+}
+
+.sf-node-text-count {
+  font-size: 10.5px;
   color: var(--color-text-tertiary);
-}
-
-.sf-node-textarea:focus {
-  outline: none;
-  border-color: var(--color-brand);
-  box-shadow: 0 0 0 3px var(--color-brand-soft);
+  text-align: right;
 }
 
 .sf-node-field {
   display: flex;
   flex-direction: column;
-  gap: 5px;
+  gap: 7px;
 }
 
 .sf-node-field-label {
@@ -557,11 +672,6 @@ function commit() {
 
 .sf-node-select {
   width: 100%;
-}
-
-.sf-node-select :deep(.sf-select-trigger) {
-  width: 100%;
-  justify-content: space-between;
 }
 
 .sf-node-hint {

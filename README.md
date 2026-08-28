@@ -4,18 +4,20 @@
 
 ## 项目状态
 
-- 当前里程碑：M2（B 站来源节点：链接解析已上线，登录快捷选择/本地上传进行中）
+- 当前里程碑：**M3 已完成**（模板一「B站视频→观点笔记」真实端到端跑通），下一步 M4
+- M3 分层验收：[docs/m3-acceptance.md](docs/m3-acceptance.md)（L0 9 用例 · L1 14/14 · L2 30/30 · L3 bsk 真实浏览器 · L4 B站下载/MiMo ASR/DeepSeek 真实通过）
+- M2 分层验收：[docs/m2-acceptance.md](docs/m2-acceptance.md)
 - 产品方案：[docs/scribe-flow-proposal.md](docs/scribe-flow-proposal.md)
 - 实施清单：[docs/scribe-flow-m0-m1.md](docs/scribe-flow-m0-m1.md)
-- UI 框架选型调研：[docs/ui-framework-selection.md](docs/ui-framework-selection.md)
-- shadcn-vue 官方使用规则：[docs/shadcn-vue-rules.md](docs/shadcn-vue-rules.md)
+- UI 组件库替换调研：[docs/ui-library-replacement-research.md](docs/ui-library-replacement-research.md)
+- UI 框架选型历史（已由 Element Plus 路线替代）：[docs/ui-framework-selection.md](docs/ui-framework-selection.md)
 - 开发记录与完整项目文档：[docs/development-log.md](docs/development-log.md)
 
 ## 技术栈
 
 | 端 | 技术 |
 |---|---|
-| Web | Vue 3 · Vite · TypeScript · Pinia · vue-router · Tailwind CSS 4 · reka-ui · Vue Flow |
+| Web | Vue 3 · Vite · TypeScript · Pinia · vue-router · Tailwind CSS 4 · Element Plus · reka-ui · Vue Flow |
 | Server | Node 22 · Hono · Drizzle ORM · SQLite |
 | Shared | TypeScript 类型 · Zod 图模型校验 · 工程模板 fixtures |
 
@@ -54,13 +56,17 @@ pnpm typecheck      # 全仓类型检查
 pnpm test           # 单元测试
 pnpm build          # 构建
 pnpm lint:slop      # 去 AI 味自检（渐变/玻璃拟态/emoji/辉光等反模式扫描）
-pnpm lint:ui        # 浮层样式铁律自检（Portal 组件必须使用全局样式与 z-index 令牌）
+pnpm lint:ui        # UI 铁律自检（Portal 全局样式/z-index 令牌/颜色单一来源）
+pnpm smoke:ui       # CDP + 真实 Chrome 的 UI 冒烟（需先 pnpm dev）
+pnpm check:api:m2   # M2 API 自检（登录/选择器/上传）
+pnpm check:api:m3   # M3 引擎 API 自检（文本链路/SSE/重跑）
 ```
 
 ## 设计约定
 
 - UI 文案一律简体中文；源文件 UTF-8。
-- 颜色一律使用 `apps/web/src/styles/tokens.css` 中的设计令牌，禁止页面散写 hex。
+- 通用组件统一使用 Element Plus（n8n 同款底座）：按钮/输入框/下拉框/对话框/消息/上传/表格等不自研。
+- 颜色一律使用 `apps/web/src/styles/tokens.css` 中的设计令牌；Element Plus 通过 `styles/element-theme.css` 的 `--el-*` 变量桥接同一套令牌，禁止页面散写 hex。
 - 画布交互不自研：底层 Vue Flow（MIT），交互行为照搬 n8n 编辑器（详见方案文档照搬清单）。
 - 许可证红线：只复用 MIT / Apache-2.0 代码；n8n、Dify 等只复刻交互行为，不复制代码。
 

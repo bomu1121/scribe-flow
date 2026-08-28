@@ -15,10 +15,9 @@ import { Background } from "@vue-flow/background";
 import { Controls } from "@vue-flow/controls";
 import { MiniMap } from "@vue-flow/minimap";
 import { NODE_TYPE_LABELS, PORT_TYPES, canConnect, nextEdgeId, nextNodeId, type NodeType, type WorkflowGraph } from "@scribe-flow/shared";
+import { ElDialog, ElInput } from "element-plus";
 import ScribeNode from "./ScribeNode.vue";
 import FlowEdge from "./FlowEdge.vue";
-import Dialog from "@/components/ui/Dialog.vue";
-import { Input } from "@/components/ui/input";
 import {
   cloneGraph,
   emptyNodeData,
@@ -38,6 +37,7 @@ const emit = defineEmits<{
   select: [nodeId: string | null];
   notice: [message: string];
   "history-change": [state: { canUndo: boolean; canRedo: boolean }];
+  "run-request": [request: { scope: "all" | "fromNode" | "node"; nodeId?: string }];
 }>();
 
 const nodesRef = ref<ScribeFlowNode[]>([]);
@@ -84,11 +84,12 @@ function ctxFor(nodeId: string) {
   return {
     duplicate: () => duplicateNodes([nodeId]),
     remove: () => removeNodes([nodeId]),
-    runNode: () => emit("notice", "运行引擎将在 M3 接入"),
-    runFromNode: () => emit("notice", "运行引擎将在 M3 接入"),
-    copyOutput: () => emit("notice", "节点输出将在 M3 运行后可用"),
+    runNode: () => emit("run-request", { scope: "node", nodeId }),
+    runFromNode: () => emit("run-request", { scope: "fromNode", nodeId }),
+    copyOutput: () => emit("notice", "节点输出将在运行后可用"),
     updateData: (patch: Record<string, unknown>) => updateNodeData(nodeId, patch),
     commit: () => commitHistory(),
+    addSourceVideos: (videos: import("@scribe-flow/shared").SourceVideoItem[]) => addSourceVideos(nodeId, videos),
   };
 }
 
@@ -279,6 +280,45 @@ function commitHistory() {
   pushHistory();
 }
 
+function sourcePatchFor(video: import("@scribe-flow/shared").SourceVideoItem): Record<string, unknown> {
+  const patch: Record<string, unknown> = {
+    url: `https://www.bilibili.com/video/${video.bvid}`,
+  };
+  if (video.pages && video.pages.length > 0) {
+    patch.pageInfo = video.pages[0];
+  } else if (video.cid) {
+    patch.pageInfo = { cid: video.cid, page: 1, part: "", duration: video.duration };
+  }
+  return patch;
+}
+
+/**
+ * 快捷选择器确认：当前节点为空时第一个视频填充当前节点，
+ * 其余（或全部，若当前节点已有内容）自动生成新的 B 站来源节点，垂直错开 160px。
+ */
+function addSourceVideos(nodeId: string, videos: import("@scribe-flow/shared").SourceVideoItem[]) {
+  if (videos.length === 0) return;
+  const target = nodesRef.value.find((node) => node.id === nodeId);
+  const pending = [...videos];
+  let basePosition = target?.position ?? centerPosition();
+
+  if (target && !String(target.data.url ?? "").trim()) {
+    updateNodeData(nodeId, sourcePatchFor(pending.shift() as import("@scribe-flow/shared").SourceVideoItem));
+  }
+
+  const created: ScribeFlowNode[] = pending.map((video, index) => {
+    const node = makeNode("source.bili", { x: basePosition.x + index * 24, y: basePosition.y + 160 + index * 160 });
+    node.data = { ...node.data, ...sourcePatchFor(video) } as ScribeFlowNode["data"];
+    return node;
+  });
+  if (created.length > 0) {
+    nodesRef.value = [...nodesRef.value, ...created];
+    emit("select", created[created.length - 1].id);
+  }
+  pushHistory();
+  emitGraph();
+}
+
 // ---------- 撤销 / 重做 ----------
 
 function undo() {
@@ -411,6 +451,30 @@ function fitView() {
   flowRef.value?.fitView({ padding: 0.15 });
 }
 
+/** 运行事件驱动节点状态；不触发自动保存（运行态不进 graph 快照）。 */
+function applyRunEvent(event: import("@scribe-flow/shared").RunEvent) {
+  if (event.type === "run.started") {
+    nodesRef.value = nodesRef.value.map((node) => ({ ...node, data: { ...node.data, status: "idle", summary: undefined } }));
+    return;
+  }
+  if (!("nodeId" in event)) return;
+  const patch: Record<string, unknown> = {};
+  if (event.type === "node.started") patch.status = "running";
+  else if (event.type === "node.progress") {
+    patch.status = "running";
+    patch.summary = `${event.message} ${event.progress}%`;
+  } else if (event.type === "node.done") {
+    patch.status = "done";
+    patch.summary = event.summary;
+  } else if (event.type === "node.error") {
+    patch.status = "error";
+    patch.summary = event.error;
+  }
+  nodesRef.value = nodesRef.value.map((node) =>
+    node.id === event.nodeId ? { ...node, data: { ...node.data, ...patch } as ScribeNodeData } : node,
+  );
+}
+
 defineExpose({
   addNodeAtCenter,
   updateNodeData,
@@ -423,6 +487,7 @@ defineExpose({
   canRedo: () => historyIndex.value < history.value.length - 1,
   fitView,
   autoLayout,
+  applyRunEvent,
 });
 </script>
 
@@ -457,15 +522,21 @@ defineExpose({
       <MiniMap position="bottom-right" :pannable="true" :zoomable="true" />
     </VueFlow>
 
-    <Dialog v-model:open="showNodeSearch" title="添加节点" description="输入节点名过滤，回车或点击添加。" width="440px">
-      <Input :model-value="searchKeyword" placeholder="搜索节点…" autofocus @update:model-value="updateSearch" />
+    <el-dialog v-model="showNodeSearch" title="添加节点" width="440px">
+      <p class="sf-node-search-desc">输入节点名过滤，回车或点击添加。</p>
+      <el-input
+        :model-value="searchKeyword"
+        placeholder="搜索节点…"
+        autofocus
+        @update:model-value="updateSearch"
+      />
       <div class="sf-node-search-list">
         <button v-for="type in filteredTypes" :key="type" type="button" class="sf-node-search-item" @click="pickSearchType(type)">
           {{ NODE_TYPE_LABELS[type] }}
         </button>
         <p v-if="filteredTypes.length === 0" class="sf-node-search-empty">没有匹配的节点类型</p>
       </div>
-    </Dialog>
+    </el-dialog>
   </div>
 </template>
 
@@ -476,6 +547,12 @@ defineExpose({
   min-width: 0;
   height: 100%;
   background: var(--color-canvas);
+}
+
+.sf-node-search-desc {
+  margin: 0 0 10px;
+  font-size: 12.5px;
+  color: var(--color-text-secondary);
 }
 
 .sf-node-search-list {

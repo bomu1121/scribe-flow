@@ -29,5 +29,56 @@ function ensureSchema(sqlite: Database.Database) {
       created_at INTEGER NOT NULL,
       updated_at INTEGER NOT NULL
     );
+
+    CREATE TABLE IF NOT EXISTS bili_sessions (
+      id TEXT PRIMARY KEY,
+      status TEXT NOT NULL DEFAULT 'waiting',
+      created_at INTEGER NOT NULL,
+      expires_at INTEGER NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS bili_cookies (
+      id INTEGER PRIMARY KEY,
+      cookie TEXT NOT NULL,
+      mid INTEGER NOT NULL,
+      uname TEXT NOT NULL,
+      face TEXT NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS runs (
+      id TEXT PRIMARY KEY,
+      project_id TEXT NOT NULL,
+      status TEXT NOT NULL,
+      scope TEXT NOT NULL,
+      created_at INTEGER NOT NULL,
+      finished_at INTEGER,
+      elapsed_ms INTEGER,
+      summary TEXT,
+      error TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS run_node_results (
+      id TEXT PRIMARY KEY,
+      run_id TEXT NOT NULL,
+      node_id TEXT NOT NULL,
+      node_type TEXT NOT NULL,
+      node_label TEXT,
+      status TEXT NOT NULL,
+      elapsed_ms INTEGER NOT NULL DEFAULT 0,
+      summary TEXT,
+      error TEXT,
+      output_kind TEXT,
+      output_text TEXT,
+      output_path TEXT,
+      output_size INTEGER,
+      updated_at INTEGER NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS app_settings (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
   `);
 }

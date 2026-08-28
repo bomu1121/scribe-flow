@@ -1,5 +1,5 @@
 import type { ViewportTransform } from "@vue-flow/core";
-import type { AsrEngine, GraphEdge, GraphNode, NodeRunStatus, NodeType, PageRef, WorkflowGraph } from "@scribe-flow/shared";
+import type { AsrEngine, GraphEdge, GraphNode, NodeRunStatus, NodeType, PageRef, SourceVideoItem, WorkflowGraph } from "@scribe-flow/shared";
 
 export const SCRIBE_NODE_TYPE = "scribe";
 export const SCRIBE_EDGE_TYPE = "scribe";
@@ -14,6 +14,8 @@ export interface NodeContextActions {
   updateData: (patch: Record<string, unknown>) => void;
   /** 卡片内表单失焦时提交一次撤销历史。 */
   commit: () => void;
+  /** 快捷选择器确认后：第一个填当前节点，其余生成新的 B 站来源节点。 */
+  addSourceVideos: (videos: SourceVideoItem[]) => void;
 }
 
 export interface ScribeNodeData {
@@ -24,6 +26,7 @@ export interface ScribeNodeData {
   url?: string;
   pageInfo?: PageRef;
   fileName?: string;
+  filePath?: string;
   text?: string;
   asrEngine?: AsrEngine;
   promptBlockId?: string;

@@ -18,6 +18,8 @@ export interface BiliSourceData {
 export interface FileSourceData {
   fileId?: string;
   fileName?: string;
+  /** 服务端相对存储路径（如 uploads/xxxx.mp4）。 */
+  filePath?: string;
   size?: number;
 }
 

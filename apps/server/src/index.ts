@@ -5,7 +5,7 @@ import { createDatabase } from "./db/client";
 
 const env = loadEnv();
 const db = createDatabase(env.dataDir);
-const app = createApp(db);
+const app = createApp(db, { dataDir: env.dataDir, uploadsDir: env.uploadsDir, maxUploadMb: env.maxUploadMb });
 
 serve(
   {

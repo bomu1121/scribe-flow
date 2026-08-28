@@ -1,20 +1,22 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import { useRoute, useRouter } from "vue-router";
+import { ElButton, ElDropdown, ElDropdownItem, ElDropdownMenu, ElInput, ElMessage } from "element-plus";
 import { ArrowLeft, Check, Copy, Download, LayoutPanelTop, Maximize, MoreHorizontal, Play, Redo2, StopCircle, Trash2, Undo2 } from "lucide-vue-next";
-import { emptyGraph, type WorkflowGraph } from "@scribe-flow/shared";
+import { emptyGraph, type RunMeta, type WorkflowGraph } from "@scribe-flow/shared";
 import FlowCanvas from "@/components/canvas/FlowCanvas.vue";
 import NodePalette from "@/components/canvas/NodePalette.vue";
-import { Button } from "@/components/ui/button";
-import DropdownMenu from "@/components/ui/DropdownMenu.vue";
-import DropdownMenuItem from "@/components/ui/DropdownMenuItem.vue";
+import { api } from "@/lib/api";
+import { subscribeRunEvents } from "@/lib/sse";
 import { useProjectsStore } from "@/stores/projects";
+import { useRunsStore } from "@/stores/runs";
 
 type SaveState = "loading" | "saved" | "saving" | "error";
 
 const route = useRoute();
 const router = useRouter();
 const store = useProjectsStore();
+const runsStore = useRunsStore();
 
 const projectId = computed(() => String(route.params.id));
 const projectName = ref("");
@@ -22,14 +24,19 @@ const description = ref("");
 const graph = ref<WorkflowGraph>(emptyGraph());
 const loaded = ref(false);
 const saveState = ref<SaveState>("loading");
-const consoleNotice = ref("画布交互按 n8n 行为照搬清单实现；运行引擎将在 M3 接入。");
+const consoleNotice = ref("就绪");
 const historyState = ref({ canUndo: false, canRedo: false });
 const flowCanvasRef = ref<InstanceType<typeof FlowCanvas> | null>(null);
 const noticeTimer = ref<ReturnType<typeof setTimeout> | null>(null);
+const selectedNodeId = ref<string | null>(null);
+const activeRun = ref<RunMeta | null>(null);
+const running = ref(false);
 
 let saveTimer: ReturnType<typeof setTimeout> | null = null;
+let stopRunEvents: (() => void) | null = null;
 
 onMounted(async () => {
+  void runsStore.load();
   try {
     const project = await store.getProject(projectId.value);
     projectName.value = project.name;
@@ -47,6 +54,7 @@ onMounted(async () => {
 onBeforeUnmount(() => {
   if (saveTimer) clearTimeout(saveTimer);
   if (noticeTimer.value) clearTimeout(noticeTimer.value);
+  stopRunEvents?.();
 });
 
 function showNotice(message: string) {
@@ -93,10 +101,10 @@ function onRename() {
 async function duplicateProject() {
   try {
     const created = await store.duplicateProject(projectId.value);
-    showNotice(`已创建副本「${created.name}」`);
+    ElMessage.success(`已创建副本「${created.name}」`);
     await router.push(`/project/${created.id}`);
   } catch (err) {
-    showNotice(err instanceof Error ? err.message : "复制工程失败");
+    ElMessage.error(err instanceof Error ? err.message : "复制工程失败");
   }
 }
 
@@ -104,12 +112,83 @@ async function exportProject() {
   try {
     await store.exportProject(projectId.value, projectName.value);
   } catch (err) {
-    showNotice(err instanceof Error ? err.message : "导出工程失败");
+    ElMessage.error(err instanceof Error ? err.message : "导出工程失败");
   }
 }
 
-function runningPlaceholder() {
-  showNotice("运行引擎将在 M3 接入");
+function onMoreCommand(command: string) {
+  switch (command) {
+    case "layout":
+      void flowCanvasRef.value?.autoLayout();
+      break;
+    case "fit":
+      flowCanvasRef.value?.fitView();
+      break;
+    case "undo":
+      flowCanvasRef.value?.undo();
+      break;
+    case "redo":
+      flowCanvasRef.value?.redo();
+      break;
+    case "duplicate":
+      void duplicateProject();
+      break;
+    case "export":
+      void exportProject();
+      break;
+    case "clear-runs":
+      ElMessage.info("清空运行记录将在 M4 接入");
+      break;
+  }
+}
+
+function runTitle(run: RunMeta): string {
+  return `运行 ${run.id.slice(-6)}`;
+}
+
+async function startRun(scope: "all" | "fromNode" | "node", nodeId?: string) {
+  if (running.value) {
+    showNotice("已有运行正在进行");
+    return;
+  }
+  try {
+    running.value = true;
+    const run = await api.post<RunMeta>(`/api/projects/${projectId.value}/runs`, { scope, nodeId });
+    activeRun.value = run;
+    flowCanvasRef.value?.applyRunEvent({ type: "run.started", run });
+    stopRunEvents = subscribeRunEvents(run.id, (event) => {
+      flowCanvasRef.value?.applyRunEvent(event);
+      if (event.type === "node.started") showNotice(`${nodeName(event.nodeId)} 开始执行`);
+      else if (event.type === "node.progress") showNotice(event.message);
+      else if (event.type === "node.done") showNotice(`${nodeName(event.nodeId)} 完成`);
+      else if (event.type === "node.error") {
+        showNotice(`${nodeName(event.nodeId)} 失败：${event.error}`);
+        ElMessage.error(`${nodeName(event.nodeId)} 失败：${event.error}`);
+      } else if (event.type === "run.done") {
+        running.value = false;
+        activeRun.value = { ...(activeRun.value as RunMeta), status: event.status };
+        showNotice(`运行结束：${event.status}`);
+        void runsStore.load();
+      }
+    });
+  } catch (err) {
+    running.value = false;
+    ElMessage.error(err instanceof Error ? err.message : "启动运行失败");
+  }
+}
+
+function nodeName(nodeId: string): string {
+  return graph.value.nodes.find((n) => n.id === nodeId)?.data.label ?? nodeId;
+}
+
+async function stopRun() {
+  if (!activeRun.value) return;
+  try {
+    await api.post<{ ok: boolean }>(`/api/runs/${activeRun.value.id}/stop`);
+    showNotice("已发送停止指令");
+  } catch (err) {
+    ElMessage.error(err instanceof Error ? err.message : "停止运行失败");
+  }
 }
 </script>
 
@@ -120,9 +199,10 @@ function runningPlaceholder() {
         <button type="button" class="sf-icon-btn" title="返回工程列表" @click="router.push('/')">
           <ArrowLeft :size="16" />
         </button>
-        <input
+        <el-input
           v-model="projectName"
           class="sf-project-name-input"
+          size="small"
           aria-label="工程名称"
           @change="onRename"
         />
@@ -133,53 +213,34 @@ function runningPlaceholder() {
       </div>
 
       <div class="sf-editor-bar-actions">
-        <Button variant="default" @click="runningPlaceholder">
+        <el-button class="sf-btn" type="primary" :disabled="running" @click="startRun('all')">
           <Play :size="14" />
-          运行全部
-        </Button>
-        <Button variant="outline" @click="runningPlaceholder">
+          <span>运行全部</span>
+        </el-button>
+        <el-button class="sf-btn" plain :disabled="!selectedNodeId || running" @click="selectedNodeId && startRun('fromNode', selectedNodeId)">
           <Play :size="14" />
-          从选中节点运行
-        </Button>
-        <Button variant="outline" @click="runningPlaceholder">
+          <span>从选中节点运行</span>
+        </el-button>
+        <el-button class="sf-btn" plain :disabled="!running" @click="stopRun">
           <StopCircle :size="14" />
-          停止
-        </Button>
-        <DropdownMenu>
-          <template #trigger>
-            <button type="button" class="sf-icon-btn" title="更多操作">
-              <MoreHorizontal :size="16" />
-            </button>
+          <span>停止</span>
+        </el-button>
+        <el-dropdown trigger="click" @command="(cmd) => onMoreCommand(String(cmd))">
+          <button type="button" class="sf-icon-btn" title="更多操作">
+            <MoreHorizontal :size="16" />
+          </button>
+          <template #dropdown>
+            <el-dropdown-menu>
+              <el-dropdown-item command="layout"><LayoutPanelTop :size="14" />整理画布</el-dropdown-item>
+              <el-dropdown-item command="fit"><Maximize :size="14" />适应视图</el-dropdown-item>
+              <el-dropdown-item command="undo" :disabled="!historyState.canUndo"><Undo2 :size="14" />撤销</el-dropdown-item>
+              <el-dropdown-item command="redo" :disabled="!historyState.canRedo"><Redo2 :size="14" />重做</el-dropdown-item>
+              <el-dropdown-item command="duplicate" divided><Copy :size="14" />复制工程</el-dropdown-item>
+              <el-dropdown-item command="export"><Download :size="14" />导出工程</el-dropdown-item>
+              <el-dropdown-item command="clear-runs" disabled class="sf-dropdown-danger"><Trash2 :size="14" />清空运行记录（M4）</el-dropdown-item>
+            </el-dropdown-menu>
           </template>
-          <DropdownMenuItem @select="flowCanvasRef?.autoLayout()">
-            <LayoutPanelTop :size="14" />
-            整理画布
-          </DropdownMenuItem>
-          <DropdownMenuItem @select="flowCanvasRef?.fitView()">
-            <Maximize :size="14" />
-            适应视图
-          </DropdownMenuItem>
-          <DropdownMenuItem :disabled="!historyState.canUndo" @select="flowCanvasRef?.undo()">
-            <Undo2 :size="14" />
-            撤销
-          </DropdownMenuItem>
-          <DropdownMenuItem :disabled="!historyState.canRedo" @select="flowCanvasRef?.redo()">
-            <Redo2 :size="14" />
-            重做
-          </DropdownMenuItem>
-          <DropdownMenuItem @select="duplicateProject">
-            <Copy :size="14" />
-            复制工程
-          </DropdownMenuItem>
-          <DropdownMenuItem @select="exportProject">
-            <Download :size="14" />
-            导出工程
-          </DropdownMenuItem>
-          <DropdownMenuItem danger disabled @select="runningPlaceholder">
-            <Trash2 :size="14" />
-            清空运行记录（M3）
-          </DropdownMenuItem>
-        </DropdownMenu>
+        </el-dropdown>
       </div>
     </header>
 
@@ -193,6 +254,8 @@ function runningPlaceholder() {
         @update:graph="onGraphUpdate"
         @notice="showNotice"
         @history-change="historyState = $event"
+        @select="selectedNodeId = $event"
+        @run-request="(req) => startRun(req.scope, req.nodeId)"
       />
       <div v-else class="sf-editor-loading">
         <span>{{ saveState === "error" ? "工程加载失败" : "正在加载画布…" }}</span>
@@ -200,8 +263,10 @@ function runningPlaceholder() {
     </div>
 
     <footer class="sf-editor-console">
-      <span class="sf-console-dot" />
-      <span class="sf-console-text">{{ consoleNotice || "就绪" }}</span>
+      <span class="sf-console-dot" :class="{ running }" />
+      <span class="sf-console-text">
+        <template v-if="running && activeRun">{{ runTitle(activeRun) }} · </template>{{ consoleNotice || "就绪" }}
+      </span>
     </footer>
   </div>
 </template>
@@ -229,7 +294,7 @@ function runningPlaceholder() {
 .sf-editor-bar-left {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
   min-width: 0;
 }
 
@@ -238,6 +303,10 @@ function runningPlaceholder() {
   align-items: center;
   gap: 8px;
   flex-shrink: 0;
+}
+
+.sf-btn {
+  gap: 6px;
 }
 
 .sf-icon-btn {
@@ -262,25 +331,6 @@ function runningPlaceholder() {
 
 .sf-project-name-input {
   width: 240px;
-  height: 30px;
-  padding: 0 8px;
-  border: 1px solid transparent;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--color-text);
-  font-family: inherit;
-  font-size: 13px;
-  font-weight: 600;
-}
-
-.sf-project-name-input:hover {
-  border-color: var(--color-border);
-}
-
-.sf-project-name-input:focus {
-  outline: none;
-  border-color: var(--color-brand);
-  background: var(--color-surface);
 }
 
 .sf-save-state {
@@ -324,6 +374,20 @@ function runningPlaceholder() {
   flex-shrink: 0;
 }
 
+.sf-console-dot.running {
+  background: var(--color-brand);
+  animation: sf-console-pulse 1.2s var(--ease-out) infinite alternate;
+}
+
+@keyframes sf-console-pulse {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0.35;
+  }
+}
+
 .sf-console-text {
   flex: 1;
   min-width: 0;
@@ -332,5 +396,12 @@ function runningPlaceholder() {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+</style>
+
+<style>
+/* 下拉菜单 Teleport 到 body，样式必须全局 */
+.sf-dropdown-danger {
+  color: var(--color-error);
 }
 </style>

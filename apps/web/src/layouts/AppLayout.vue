@@ -1,10 +1,12 @@
 <script setup lang="ts">
-import { computed } from "vue";
-import { useRoute } from "vue-router";
-import { Activity, CircleUserRound, LayoutGrid, PenLine, Settings } from "lucide-vue-next";
+import { computed, onBeforeUnmount, onMounted } from "vue";
+import { useRoute, useRouter } from "vue-router";
+import { Activity, LayoutGrid, PenLine, Settings } from "lucide-vue-next";
 import { useRunsStore } from "@/stores/runs";
+import BiliAccountButton from "@/components/auth/BiliAccountButton.vue";
 
 const route = useRoute();
+const router = useRouter();
 const runsStore = useRunsStore();
 
 const navItems = [
@@ -14,6 +16,15 @@ const navItems = [
 ];
 
 const pageTitle = computed(() => String(route.meta.title ?? "ScribeFlow"));
+
+let timer: ReturnType<typeof setInterval> | null = null;
+onMounted(() => {
+  void runsStore.load();
+  timer = setInterval(() => void runsStore.load(), 5000);
+});
+onBeforeUnmount(() => {
+  if (timer) clearInterval(timer);
+});
 </script>
 
 <template>
@@ -35,10 +46,7 @@ const pageTitle = computed(() => String(route.meta.title ?? "ScribeFlow"));
       </nav>
 
       <div class="sf-side-foot">
-        <button type="button" class="sf-account" title="B 站登录（M2 接入）">
-          <CircleUserRound :size="16" />
-          <span>未登录 B 站</span>
-        </button>
+        <BiliAccountButton />
         <span class="sf-version tnum">v0.1.0 · M0</span>
       </div>
     </aside>
@@ -47,7 +55,9 @@ const pageTitle = computed(() => String(route.meta.title ?? "ScribeFlow"));
       <header class="sf-topbar">
         <h1 class="sf-topbar-title">{{ pageTitle }}</h1>
         <div class="sf-topbar-right">
-          <span class="sf-running-pill tnum">运行中 {{ runsStore.runningCount }}</span>
+          <button type="button" class="sf-running-pill tnum" title="查看运行记录" @click="router.push('/runs')">
+            运行中 {{ runsStore.runningCount }}
+          </button>
         </div>
       </header>
       <div class="sf-content">
@@ -147,31 +157,6 @@ const pageTitle = computed(() => String(route.meta.title ?? "ScribeFlow"));
   border-top: 1px solid var(--color-border);
 }
 
-.sf-account {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  width: 100%;
-  height: 34px;
-  padding: 0 10px;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
-  background: transparent;
-  color: var(--color-text-secondary);
-  font-family: inherit;
-  font-size: 12.5px;
-  cursor: pointer;
-  text-align: left;
-  transition:
-    border-color var(--dur-1) var(--ease-out),
-    background-color var(--dur-1) var(--ease-out);
-}
-
-.sf-account:hover {
-  border-color: var(--color-border-strong);
-  background: var(--color-surface-muted);
-}
-
 .sf-version {
   font-size: 10px;
   color: var(--color-text-tertiary);
@@ -212,7 +197,9 @@ const pageTitle = computed(() => String(route.meta.title ?? "ScribeFlow"));
   border-radius: 999px;
   background: var(--color-surface-muted);
   color: var(--color-text-secondary);
+  font-family: inherit;
   font-size: 12px;
+  cursor: pointer;
 }
 
 .sf-content {

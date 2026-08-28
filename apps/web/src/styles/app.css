@@ -1,34 +1,7 @@
 @import "tailwindcss";
-@import "tw-animate-css";
-
-/*
- * Tailwind v4 主题映射：把我们自己的设计令牌映射为 shadcn-vue 语义色。
- * 组件层使用 bg-background / text-foreground / border-input / text-muted-foreground 等
- * 标准 utility 类，颜色值统一来自 tokens.css，不产生第二套色板。
- */
-@theme inline {
-  --color-background: var(--color-bg);
-  --color-foreground: var(--color-text);
-  --color-card: var(--color-surface);
-  --color-card-foreground: var(--color-text);
-  --color-popover: var(--color-surface);
-  --color-popover-foreground: var(--color-text);
-  --color-primary: var(--color-brand);
-  --color-primary-foreground: var(--color-on-brand);
-  --color-secondary: var(--color-ink-soft);
-  --color-secondary-foreground: var(--color-text);
-  --color-muted: var(--color-surface-muted);
-  --color-muted-foreground: var(--color-text-secondary);
-  --color-accent: var(--color-ink-soft);
-  --color-accent-foreground: var(--color-text);
-  --color-destructive: var(--color-error);
-  --color-destructive-foreground: var(--color-on-error);
-  --color-border: var(--color-border);
-  --color-input: var(--color-border);
-  --color-ring: var(--color-brand);
-}
 
 /* 应用级补充样式：全部引用设计令牌，不使用散落色值 */
+
 .app-root {
   height: 100vh;
   display: grid;
@@ -36,22 +9,22 @@
   background: var(--color-bg);
 }
 
-/* shadcn-vue v4 基础层：边框与 outline 默认使用语义令牌 */
-@layer base {
-  * {
-    @apply border-border outline-ring/50;
-  }
-
-  body {
-    @apply bg-background text-foreground;
-  }
+body {
+  margin: 0;
+  font-family: var(--font-family);
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--color-text);
+  background: var(--color-bg);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
 }
 
 /*
- * 键盘可达性基线：自定义元素（导航/节点库/图标按钮等）保留 outline 聚焦提示。
- * 已定义聚焦环的 UI 原语（data-slot 组件）必须被排除，避免出现双层边框。
+ * 键盘可达性基线：只给应用自研元素（导航/节点库/图标按钮等）补 focus outline。
+ * Element Plus 组件自带完整的 focus-visible 样式，必须排除，避免叠加出双层边框。
  */
-:focus-visible:not([data-slot="input"]):not([data-slot="button"]):not([data-slot="select-trigger"]):not([data-slot="select-item"]) {
+:focus-visible:not([class*="el-"]) {
   outline: 2px solid var(--color-brand);
   outline-offset: 1px;
 }

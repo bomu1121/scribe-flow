@@ -1,13 +1,9 @@
 <script setup lang="ts">
 import { onMounted, ref } from "vue";
 import { useRouter } from "vue-router";
+import { ElButton, ElDialog, ElDropdown, ElDropdownItem, ElDropdownMenu, ElMessage, ElMessageBox } from "element-plus";
 import { FileUp, FolderOpen, MoreHorizontal, Plus } from "lucide-vue-next";
 import { WORKFLOW_TEMPLATES, type ProjectListItem } from "@scribe-flow/shared";
-import AlertDialog from "@/components/ui/AlertDialog.vue";
-import { Button } from "@/components/ui/button";
-import Dialog from "@/components/ui/Dialog.vue";
-import DropdownMenu from "@/components/ui/DropdownMenu.vue";
-import DropdownMenuItem from "@/components/ui/DropdownMenuItem.vue";
 import { useProjectsStore } from "@/stores/projects";
 
 const router = useRouter();
@@ -15,10 +11,6 @@ const store = useProjectsStore();
 
 const showCreate = ref(false);
 const creating = ref(false);
-const notice = ref("");
-const errorNotice = ref("");
-const deleteTarget = ref<ProjectListItem | null>(null);
-const deleting = ref(false);
 const fileInput = ref<HTMLInputElement | null>(null);
 
 onMounted(() => {
@@ -27,13 +19,12 @@ onMounted(() => {
 
 async function createFromTemplate(templateId?: string) {
   creating.value = true;
-  errorNotice.value = "";
   try {
     const project = await store.createProject(templateId ? { templateId } : { name: "未命名工程" });
     showCreate.value = false;
     await router.push(`/project/${project.id}`);
   } catch (err) {
-    errorNotice.value = err instanceof Error ? err.message : "创建工程失败";
+    ElMessage.error(err instanceof Error ? err.message : "创建工程失败");
   } finally {
     creating.value = false;
   }
@@ -42,9 +33,9 @@ async function createFromTemplate(templateId?: string) {
 async function duplicate(project: ProjectListItem) {
   try {
     const created = await store.duplicateProject(project.id);
-    notice.value = `已创建副本「${created.name}」`;
+    ElMessage.success(`已创建副本「${created.name}」`);
   } catch (err) {
-    errorNotice.value = err instanceof Error ? err.message : "复制工程失败";
+    ElMessage.error(err instanceof Error ? err.message : "复制工程失败");
   }
 }
 
@@ -52,21 +43,44 @@ async function exportProject(project: ProjectListItem) {
   try {
     await store.exportProject(project.id, project.name);
   } catch (err) {
-    errorNotice.value = err instanceof Error ? err.message : "导出工程失败";
+    ElMessage.error(err instanceof Error ? err.message : "导出工程失败");
   }
 }
 
-async function confirmDelete() {
-  if (!deleteTarget.value) return;
-  deleting.value = true;
+async function removeProject(project: ProjectListItem) {
   try {
-    await store.removeProject(deleteTarget.value.id);
-    notice.value = `已删除工程「${deleteTarget.value.name}」`;
-    deleteTarget.value = null;
+    await ElMessageBox.confirm("工程内的运行记录会一并删除，此操作无法恢复。", `删除工程「${project.name}」`, {
+      confirmButtonText: "删除",
+      cancelButtonText: "取消",
+      type: "warning",
+      confirmButtonClass: "el-button--danger",
+    });
+  } catch {
+    return;
+  }
+
+  try {
+    await store.removeProject(project.id);
+    ElMessage.success(`已删除工程「${project.name}」`);
   } catch (err) {
-    errorNotice.value = err instanceof Error ? err.message : "删除工程失败";
-  } finally {
-    deleting.value = false;
+    ElMessage.error(err instanceof Error ? err.message : "删除工程失败");
+  }
+}
+
+function onProjectCommand(project: ProjectListItem, command: string) {
+  switch (command) {
+    case "open":
+      void router.push(`/project/${project.id}`);
+      break;
+    case "duplicate":
+      void duplicate(project);
+      break;
+    case "export":
+      void exportProject(project);
+      break;
+    case "delete":
+      void removeProject(project);
+      break;
   }
 }
 
@@ -78,10 +92,10 @@ function onImportFile(event: Event) {
   void (async () => {
     try {
       const project = await store.importProject(file);
-      notice.value = `已导入工程「${project.name}」`;
+      ElMessage.success(`已导入工程「${project.name}」`);
       await router.push(`/project/${project.id}`);
     } catch (err) {
-      errorNotice.value = err instanceof Error ? err.message : "导入工程失败";
+      ElMessage.error(err instanceof Error ? err.message : "导入工程失败");
     }
   })();
 }
@@ -95,20 +109,17 @@ function onImportFile(event: Event) {
         <p class="sf-page-sub">工作流以工程形式保存：画布编排、运行记录随工程归档。</p>
       </div>
       <div class="sf-head-actions">
-        <Button variant="outline" @click="fileInput?.click()">
+        <el-button class="sf-btn" plain @click="fileInput?.click()">
           <FileUp :size="15" />
-          导入工程
-        </Button>
-        <Button variant="default" @click="showCreate = true">
+          <span>导入工程</span>
+        </el-button>
+        <el-button class="sf-btn" type="primary" @click="showCreate = true">
           <Plus :size="15" />
-          新建工程
-        </Button>
+          <span>新建工程</span>
+        </el-button>
       </div>
       <input ref="fileInput" type="file" accept=".json,application/json" class="sf-hidden-input" @change="onImportFile" />
     </div>
-
-    <p v-if="notice" class="sf-notice">{{ notice }}</p>
-    <p v-if="errorNotice" class="sf-notice sf-notice--error">{{ errorNotice }}</p>
 
     <div v-if="store.loading" class="sf-empty">
       <div class="sf-empty-title">加载中…</div>
@@ -118,17 +129,19 @@ function onImportFile(event: Event) {
       <article v-for="project in store.list" :key="project.id" class="sf-project-card" @click="router.push(`/project/${project.id}`)">
         <header class="sf-project-card-head">
           <span class="sf-project-icon"><FolderOpen :size="15" /></span>
-          <DropdownMenu>
-            <template #trigger>
-              <button type="button" class="sf-more" title="更多操作" @click.stop>
-                <MoreHorizontal :size="15" />
-              </button>
+          <el-dropdown trigger="click" @command="(cmd) => onProjectCommand(project, String(cmd))">
+            <button type="button" class="sf-more" title="更多操作" @click.stop>
+              <MoreHorizontal :size="15" />
+            </button>
+            <template #dropdown>
+              <el-dropdown-menu>
+                <el-dropdown-item command="open">打开</el-dropdown-item>
+                <el-dropdown-item command="duplicate">复制</el-dropdown-item>
+                <el-dropdown-item command="export">导出</el-dropdown-item>
+                <el-dropdown-item command="delete" divided class="sf-dropdown-danger">删除</el-dropdown-item>
+              </el-dropdown-menu>
             </template>
-            <DropdownMenuItem @select="router.push(`/project/${project.id}`)">打开</DropdownMenuItem>
-            <DropdownMenuItem @select="duplicate(project)">复制</DropdownMenuItem>
-            <DropdownMenuItem @select="exportProject(project)">导出</DropdownMenuItem>
-            <DropdownMenuItem danger @select="deleteTarget = project">删除</DropdownMenuItem>
-          </DropdownMenu>
+          </el-dropdown>
         </header>
         <h3 class="sf-project-name">{{ project.name }}</h3>
         <p class="sf-project-desc">{{ project.description || "无说明" }}</p>
@@ -145,7 +158,8 @@ function onImportFile(event: Event) {
       <div class="sf-empty-desc">创建一个空白工程，或从「视频转笔记（单线）」模板开始。</div>
     </div>
 
-    <Dialog v-model:open="showCreate" title="新建工程" description="工作流模板只决定加工路径。观点提炼、技术文案提炼、信息溯源等提示词块，在画布的「AI 加工」节点中选择。" width="560px">
+    <el-dialog v-model="showCreate" title="新建工程" width="560px">
+      <p class="sf-dialog-desc">工作流模板只决定加工路径。观点提炼、技术文案提炼、信息溯源等提示词块，在画布的「AI 加工」节点中选择。</p>
       <div class="sf-tpl-grid">
         <button type="button" class="sf-tpl-card" :disabled="creating" @click="createFromTemplate()">
           <span class="sf-tpl-name">空白工程</span>
@@ -156,20 +170,7 @@ function onImportFile(event: Event) {
           <span class="sf-tpl-desc">{{ tpl.description }}</span>
         </button>
       </div>
-    </Dialog>
-
-    <AlertDialog
-      :open="deleteTarget !== null"
-      @update:open="(v: boolean) => { if (!v) deleteTarget = null; }"
-      :title="`删除工程「${deleteTarget?.name ?? ''}」`"
-      description="工程内的运行记录会一并删除，此操作无法恢复。"
-      confirm-text="删除"
-      cancel-text="取消"
-      danger
-      :loading="deleting"
-      @confirm="confirmDelete"
-      @cancel="deleteTarget = null"
-    />
+    </el-dialog>
   </div>
 </template>
 
@@ -197,6 +198,10 @@ function onImportFile(event: Event) {
   flex-shrink: 0;
 }
 
+.sf-btn {
+  gap: 6px;
+}
+
 .sf-hidden-input {
   display: none;
 }
@@ -213,22 +218,6 @@ function onImportFile(event: Event) {
   margin: 4px 0 0;
   font-size: 13px;
   color: var(--color-text-secondary);
-}
-
-.sf-notice {
-  margin: 0 0 14px;
-  padding: 10px 14px;
-  border: 1px solid var(--color-info-border);
-  border-radius: var(--radius-md);
-  background: var(--color-info-soft);
-  color: var(--color-info);
-  font-size: 12px;
-}
-
-.sf-notice--error {
-  border-color: var(--color-error-border);
-  background: var(--color-error-soft);
-  color: var(--color-error);
 }
 
 .sf-project-grid {
@@ -350,6 +339,13 @@ function onImportFile(event: Event) {
   color: var(--color-text-secondary);
 }
 
+.sf-dialog-desc {
+  margin: 0 0 14px;
+  font-size: 12.5px;
+  color: var(--color-text-secondary);
+  line-height: 1.6;
+}
+
 .sf-tpl-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -392,5 +388,12 @@ function onImportFile(event: Event) {
   font-size: 12px;
   color: var(--color-text-secondary);
   line-height: 1.5;
+}
+</style>
+
+<style>
+/* 下拉菜单 Teleport 到 body，样式必须全局 */
+.sf-dropdown-danger {
+  color: var(--color-error);
 }
 </style>

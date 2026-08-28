@@ -16,6 +16,9 @@
     "test": "pnpm -r test",
     "lint:slop": "node scripts/slop-lint.mjs",
     "lint:ui": "node scripts/ui-lint.mjs",
-    "lint": "pnpm lint:slop && pnpm lint:ui"
+    "lint": "pnpm lint:slop && pnpm lint:ui",
+    "smoke:ui": "node scripts/cdp-ui-smoke.mjs",
+    "check:api:m2": "node scripts/m2-api-check.mjs",
+    "check:api:m3": "node scripts/m3-api-check.mjs"
   }
 }

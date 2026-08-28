@@ -1,5 +1,7 @@
 # UI 样式框架选型与组件实现调研（代码级）
 
+> ⚠️ **历史文档（2026-08-28 起不再执行）**：本方案（shadcn-vue 复制件）已被用户否决。当前通用 UI 底座为 **Element Plus**，详见 [docs/ui-library-replacement-research.md](ui-library-replacement-research.md)。本文仅保留作决策过程归档。
+>
 > 背景：Select / Input 的样式与交互不达标。本文记录对主流 Web 样式方案的实际代码调研、选型结论，以及落地到 ScribeFlow 的技术细节。
 > 结论摘要：**采用 shadcn-vue new-york-v4 + Reka UI + Tailwind CSS v4 的 utility-first 组件层**；ScribeFlow 自身设计令牌保持不变，只作为 Tailwind 主题变量的值源。
 

@@ -27,6 +27,7 @@ const nodeDataByType = {
   file: baseDataSchema.extend({
     fileId: z.string().optional(),
     fileName: z.string().optional(),
+    filePath: z.string().optional(),
     size: z.number().optional(),
   }),
   text: baseDataSchema.extend({

@@ -1,24 +1,29 @@
 /**
- * UI 浮层样式防再犯检查。
- * 背景：Reka UI 的 *Portal 组件把内容 Teleport 到 <body>，
- * Vue scoped 样式不会给这些节点带上 data-v 作用域属性，
- * 导致弹出层背景/边框/圆角/内边距全部失效（下拉框严重样式问题）。
- * 规则：任何使用 Portal 的 SFC，必须至少有一个非 scoped 的 <style> 块，
- * 用于承载传送层样式；z-index 必须使用 --z-* 令牌，禁止散写。
+ * UI 样式铁律检查（Element Plus 时代版）。
+ * 规则：
+ * 1. 使用 Reka UI *Portal 的 SFC，必须至少有一个非 scoped 的 <style> 块，
+ *    用于承载 Teleport 到 body 的浮层样式；
+ * 2. z-index 只能使用 --z-* 设计令牌，禁止散写数字；
+ * 3. 组件/视图样式禁止散写颜色（hex/rgb/hsl），颜色只能定义在 styles/tokens.css
+ *    与 styles/element-theme.css。
  */
 import { readdir, readFile } from "node:fs/promises";
-import { join, extname } from "node:path";
+import { join, extname, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
-const SCAN_DIR = join(ROOT, "apps", "web", "src", "components");
+const SCAN_DIR = join(ROOT, "apps", "web", "src");
+const ALLOW_COLOR_FILES = new Set([
+  join(SCAN_DIR, "styles", "tokens.css"),
+  join(SCAN_DIR, "styles", "element-theme.css"),
+]);
 
 async function* walk(dir) {
   const entries = await readdir(dir, { withFileTypes: true });
   for (const entry of entries) {
     const full = join(dir, entry.name);
     if (entry.isDirectory()) yield* walk(full);
-    else if (extname(entry.name) === ".vue") yield full;
+    else if (entry.name.endsWith(".vue") || entry.name.endsWith(".css")) yield full;
   }
 }
 
@@ -28,28 +33,33 @@ let count = 0;
 for await (const file of walk(SCAN_DIR)) {
   count += 1;
   const text = await readFile(file, "utf8");
-  const usesPortal = /[A-Za-z]+Portal\b/.test(text);
-  if (!usesPortal) continue;
+  const rel = relative(ROOT, file);
 
-  const styleTags = [...text.matchAll(/<style([^>]*)>/g)].map((m) => m[1] ?? "");
-  const hasScopedStyle = styleTags.some((attrs) => /\bscoped\b/.test(attrs));
-  const hasGlobalStyle = styleTags.some((attrs) => !/\bscoped\b/.test(attrs));
-  // utility-first 组件（shadcn-vue registry 风格）没有 style 块是允许的；
-  // 但如果写了 scoped 样式，则必须同时提供全局样式承载传送层规则。
-  if (hasScopedStyle && !hasGlobalStyle) {
-    failures.push(`${file.replace(ROOT, "")}: 使用 Portal 且只有 scoped 样式，Teleport 弹层会丢失样式`);
+  if (file.endsWith(".vue")) {
+    const usesPortal = /[A-Za-z]+Portal\b/.test(text);
+    if (usesPortal) {
+      const styleTags = [...text.matchAll(/<style([^>]*)>/g)].map((m) => m[1] ?? "");
+      const hasScopedStyle = styleTags.some((attrs) => /\bscoped\b/.test(attrs));
+      const hasGlobalStyle = styleTags.some((attrs) => !/\bscoped\b/.test(attrs));
+      if (hasScopedStyle && !hasGlobalStyle) {
+        failures.push(`${rel}: 使用 Portal 且只有 scoped 样式，Teleport 弹层会丢失样式`);
+      }
+    }
+
+    if (/z-index\s*:\s*\d+/.test(text)) {
+      failures.push(`${rel}: 散写 z-index 数字，应使用 --z-* 令牌`);
+    }
   }
 
-  // z-index 硬编码检查（仅检查使用了 Portal 的文件里的样式内容）
-  if (/z-index\s*:\s*\d+/.test(text)) {
-    failures.push(`${file.replace(ROOT, "")}: 浮层组件散写 z-index，应使用 --z-* 令牌`);
+  if (!ALLOW_COLOR_FILES.has(file) && /#[0-9a-fA-F]{3,8}\b|rgba?\(|hsla?\(/.test(text)) {
+    failures.push(`${rel}: 样式散写颜色，应引用 styles/tokens.css 或 element-theme.css 中的变量`);
   }
 }
 
-console.log(`[ui-lint] 扫描 ${count} 个组件文件`);
+console.log(`[ui-lint] 扫描 ${count} 个组件/样式文件`);
 if (failures.length > 0) {
   console.error(`[ui-lint] 发现 ${failures.length} 个问题：`);
   for (const f of failures) console.error("  " + f);
   process.exit(1);
 }
-console.log("[ui-lint] 通过：传送浮层样式均为全局样式，层级使用令牌");
+console.log("[ui-lint] 通过：Portal 浮层样式全局、z-index 用令牌、颜色单一来源");

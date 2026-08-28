@@ -28,3 +28,12 @@ Thumbs.db
 # 测试产物
 coverage/
 playwright-report/
+
+# CDP UI 冒烟与本地截图产物
+.tmp-cdp-*/
+.tmp-cdp-*.png
+.sf-*.html
+.sf-*.png
+
+# 视觉工具产物
+.dsh-vision-router/

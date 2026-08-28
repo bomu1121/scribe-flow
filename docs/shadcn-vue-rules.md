@@ -1,5 +1,7 @@
-# shadcn-vue 官方使用规则（已落地）
+# shadcn-vue 官方使用规则（历史，不再执行）
 
+> ⚠️ **历史文档（2026-08-28 起不再执行）**：通用 UI 已迁移到 Element Plus，见 [docs/ui-library-replacement-research.md](ui-library-replacement-research.md)。表单控件的等价选择：2–7 选项切换用 `el-segmented`，预定义/可搜索下拉用 `el-select`（filterable），布尔用 `el-switch`，多行文本用 `el-input type="textarea"`。
+>
 > 来源：https://github.com/unovue/shadcn-vue/blob/main/skills/shadcn-vue/rules/forms.md
 > 这是 shadcn-vue 官方给 AI/开发者的**表单与输入控件选择规则**，ScribeFlow 按此执行。
 
