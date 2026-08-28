@@ -314,8 +314,9 @@ function commit() {
   background: var(--color-surface);
   box-shadow: var(--shadow-xs);
   transition:
-    border-color var(--dur-1) var(--ease-out),
-    box-shadow var(--dur-1) var(--ease-out);
+    border-color var(--dur-2) var(--ease-out),
+    box-shadow var(--dur-2) var(--ease-out),
+    background-color var(--dur-2) var(--ease-out);
 }
 
 /* 卡片按内容自适应：入口要大，方便批量选视频 */
@@ -337,6 +338,7 @@ function commit() {
 
 .sf-node.is-selected {
   border-color: var(--node-selected-border);
+  background: color-mix(in srgb, var(--color-brand) 3%, var(--color-surface));
   box-shadow: var(--shadow-card);
 }
 
@@ -382,25 +384,29 @@ function commit() {
 .sf-node-title-input {
   flex: 1;
   min-width: 0;
-  height: 22px;
-  padding: 0;
+  height: 24px;
+  padding: 0 6px;
   border: 1px solid transparent;
-  border-radius: var(--radius-xs);
+  border-radius: var(--radius-sm);
   background: transparent;
   color: var(--color-text);
   font-family: inherit;
   font-size: 13px;
-  font-weight: 500;
+  font-weight: 600;
+  transition:
+    background-color var(--dur-1) var(--ease-out),
+    border-color var(--dur-1) var(--ease-out);
 }
 
 .sf-node-title-input:hover {
+  background: var(--color-surface-muted);
   border-color: var(--color-border);
 }
 
 .sf-node-title-input:focus {
   outline: none;
-  border-color: var(--color-brand);
   background: var(--color-surface);
+  border-color: var(--color-brand);
 }
 
 .sf-node-status {
