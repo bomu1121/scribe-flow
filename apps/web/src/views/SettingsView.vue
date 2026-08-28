@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, reactive, ref } from "vue";
+import { onMounted, reactive, ref, watch } from "vue";
 import { ElButton, ElInput, ElMessage, ElMessageBox, ElOption, ElSegmented, ElSelect, ElTag } from "element-plus";
 import { PlugZap, Save, Trash2 } from "lucide-vue-next";
 import type { AiProvider, AsrEngine, PromptBlock } from "@scribe-flow/shared";
@@ -36,6 +36,25 @@ const form = reactive({
   concurrency: 2,
   outputDir: "outputs",
 });
+
+const DEEPSEEK_DEFAULT_MODELS = ["deepseek-chat", "deepseek-reasoner"] as const;
+const aiModelOptions = ref<string[]>([...DEEPSEEK_DEFAULT_MODELS]);
+const aiModelLoading = ref(false);
+const aiTesting = ref(false);
+const asrTesting = ref(false);
+
+watch(
+  () => form.aiKey,
+  (value) => {
+    store.aiKeyDraft = value ?? "";
+  },
+);
+watch(
+  () => form.asrKey,
+  (value) => {
+    store.asrKeyDraft = value ?? "";
+  },
+);
 
 const aiProviderOptions = [
   { label: "DeepSeek", value: "deepseek" },
@@ -119,6 +138,33 @@ async function clearFinishedRuns() {
   }
 }
 
+function syncAiModelOptions(models?: string[]) {
+  const options = models && models.length > 0 ? [...models] : [...DEEPSEEK_DEFAULT_MODELS];
+  if (form.aiModel && !options.includes(form.aiModel)) options.unshift(form.aiModel);
+  aiModelOptions.value = options;
+}
+
+async function refreshAiModels() {
+  if (form.aiProvider !== "deepseek") return;
+  aiModelLoading.value = true;
+  try {
+    const models = await store.fetchAiModels({
+      provider: form.aiProvider,
+      baseUrl: form.aiBaseUrl,
+      model: form.aiModel,
+      apiKey: form.aiKey || undefined,
+    });
+    if (models.length > 0) {
+      if (form.aiModel && !models.includes(form.aiModel)) form.aiModel = models[0];
+      syncAiModelOptions(models);
+    }
+  } catch {
+    // 拉取模型列表失败不阻塞页面加载或保存
+  } finally {
+    aiModelLoading.value = false;
+  }
+}
+
 function fillForm() {
   if (!store.settings) return;
   form.aiProvider = store.settings.ai.provider;
@@ -129,12 +175,23 @@ function fillForm() {
   form.asrModel = store.settings.asr.model;
   form.concurrency = store.settings.general.concurrency;
   form.outputDir = store.settings.general.outputDir;
+  form.aiKey = store.aiKeyDraft || "";
+  form.asrKey = store.asrKeyDraft || "";
+  if (form.aiProvider === "deepseek") {
+    if (aiModelOptions.value.length === 0) syncAiModelOptions();
+    else if (form.aiModel && !aiModelOptions.value.includes(form.aiModel)) aiModelOptions.value.unshift(form.aiModel);
+  } else {
+    aiModelOptions.value = [];
+  }
 }
 
 onMounted(async () => {
   await store.load();
   fillForm();
   await promptsStore.load();
+  if (form.aiProvider === "deepseek" && (store.settings?.ai.hasKey || form.aiKey)) {
+    await refreshAiModels();
+  }
 });
 
 function switchProvider(provider: AiProvider) {
@@ -142,9 +199,13 @@ function switchProvider(provider: AiProvider) {
   if (provider === "deepseek") {
     form.aiBaseUrl = "https://api.deepseek.com/v1";
     form.aiModel = "deepseek-chat";
+    syncAiModelOptions();
   } else if (provider === "openai") {
     form.aiBaseUrl = "https://api.openai.com/v1";
     form.aiModel = "gpt-4o-mini";
+    aiModelOptions.value = [];
+  } else {
+    aiModelOptions.value = [];
   }
 }
 
@@ -153,7 +214,7 @@ function switchAsr(engine: AsrEngine) {
   if (engine === "mimo") {
     form.asrBaseUrl = "https://api.xiaomimimo.com/v1";
     form.asrModel = "mimo-v2.5-asr";
-  } else if (!form.asrBaseUrl) {
+  } else {
     form.asrBaseUrl = "";
     form.asrModel = "whisper-1";
   }
@@ -161,13 +222,12 @@ function switchAsr(engine: AsrEngine) {
 
 async function saveAll() {
   try {
+    if (form.aiProvider === "deepseek") await refreshAiModels();
     await store.save({
       ai: { provider: form.aiProvider, baseUrl: form.aiBaseUrl, model: form.aiModel, apiKey: form.aiKey || undefined },
       asr: { engine: form.asrEngine, baseUrl: form.asrBaseUrl, model: form.asrModel, apiKey: form.asrKey || undefined },
       general: { concurrency: form.concurrency, outputDir: form.outputDir },
     });
-    form.aiKey = "";
-    form.asrKey = "";
     ElMessage.success("设置已保存");
     await store.load();
     fillForm();
@@ -177,20 +237,43 @@ async function saveAll() {
 }
 
 async function testAi() {
+  aiTesting.value = true;
+  aiModelLoading.value = true;
   try {
-    const content = await store.testAi();
-    ElMessage.success(`AI 连接正常：${content.slice(0, 40)}`);
+    const result = await store.testAi({
+      provider: form.aiProvider,
+      baseUrl: form.aiBaseUrl,
+      model: form.aiModel,
+      apiKey: form.aiKey || undefined,
+    });
+    ElMessage.success(`AI 连接正常：${(result.content ?? "连接正常").slice(0, 40)}`);
+    if (result.models?.length > 0) {
+      if (form.aiModel && !result.models.includes(form.aiModel)) form.aiModel = result.models[0];
+      syncAiModelOptions(result.models);
+    }
+    if (result.modelsError) ElMessage.warning(`连接正常，但拉取模型列表失败：${result.modelsError}`);
   } catch (err) {
     ElMessage.error(err instanceof Error ? err.message : "AI 连接失败");
+  } finally {
+    aiTesting.value = false;
+    aiModelLoading.value = false;
   }
 }
 
 async function testAsr() {
+  asrTesting.value = true;
   try {
-    const content = await store.testAsr();
-    ElMessage.success(`ASR 连接正常：${content.slice(0, 40)}`);
+    const content = await store.testAsr({
+      engine: form.asrEngine,
+      baseUrl: form.asrBaseUrl,
+      model: form.asrModel,
+      apiKey: form.asrKey || undefined,
+    });
+    ElMessage.success(`ASR 连接正常：${(content ?? "连接正常").slice(0, 40)}`);
   } catch (err) {
     ElMessage.error(err instanceof Error ? err.message : "ASR 连接失败");
+  } finally {
+    asrTesting.value = false;
   }
 }
 </script>
@@ -227,14 +310,24 @@ async function testAsr() {
           </label>
           <label class="sf-field">
             <span class="sf-field-label">模型</span>
-            <el-input v-model="form.aiModel" class="sf-field-control" placeholder="deepseek-chat" />
+            <el-select
+              v-if="form.aiProvider === 'deepseek'"
+              v-model="form.aiModel"
+              class="sf-field-control"
+              filterable
+              :loading="aiModelLoading"
+              placeholder="deepseek-chat"
+            >
+              <el-option v-for="model in aiModelOptions" :key="model" :label="model" :value="model" />
+            </el-select>
+            <el-input v-else v-model="form.aiModel" class="sf-field-control" placeholder="deepseek-chat" />
           </label>
           <label class="sf-field">
             <span class="sf-field-label">API Key</span>
             <el-input v-model="form.aiKey" type="password" show-password class="sf-field-control" :placeholder="store.settings?.ai.hasKey ? '已保存，留空则不修改' : 'sk-…'" />
           </label>
           <div class="sf-settings-actions">
-            <el-button class="sf-btn" plain @click="testAi"><PlugZap :size="14" /><span>测试连接</span></el-button>
+            <el-button class="sf-btn" plain :loading="aiTesting" @click="testAi"><PlugZap :size="14" /><span>测试连接</span></el-button>
             <el-button class="sf-btn" type="primary" @click="saveAll"><span>保存设置</span></el-button>
           </div>
         </div>
@@ -250,18 +343,18 @@ async function testAsr() {
           </label>
           <label class="sf-field">
             <span class="sf-field-label">接口地址</span>
-            <el-input v-model="form.asrBaseUrl" class="sf-field-control" placeholder="https://api.xiaomimimo.com/v1" />
+            <el-input v-model="form.asrBaseUrl" class="sf-field-control" :placeholder="form.asrEngine === 'mimo' ? 'https://api.xiaomimimo.com/v1' : 'https://api.openai.com/v1'" />
           </label>
           <label class="sf-field">
             <span class="sf-field-label">模型</span>
-            <el-input v-model="form.asrModel" class="sf-field-control" placeholder="mimo-v2.5-asr" />
+            <el-input v-model="form.asrModel" class="sf-field-control" :placeholder="form.asrEngine === 'mimo' ? 'mimo-v2.5-asr' : 'whisper-1'" />
           </label>
           <label class="sf-field">
             <span class="sf-field-label">API Key</span>
             <el-input v-model="form.asrKey" type="password" show-password class="sf-field-control" :placeholder="store.settings?.asr.hasKey ? '已保存，留空则不修改' : 'API Key'" />
           </label>
           <div class="sf-settings-actions">
-            <el-button class="sf-btn" plain @click="testAsr"><PlugZap :size="14" /><span>测试连接</span></el-button>
+            <el-button class="sf-btn" plain :loading="asrTesting" @click="testAsr"><PlugZap :size="14" /><span>测试连接</span></el-button>
             <el-button class="sf-btn" type="primary" @click="saveAll"><span>保存设置</span></el-button>
           </div>
         </div>

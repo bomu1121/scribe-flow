@@ -3,7 +3,6 @@ import { markRaw, onBeforeUnmount, onMounted, ref } from "vue";
 import {
   addEdge,
   applyEdgeChanges,
-  applyNodeChanges,
   VueFlow,
   type Connection,
   type EdgeChange,
@@ -47,7 +46,11 @@ const viewportRef = ref<ViewportTransform>({ x: 0, y: 0, zoom: 1 });
 const history = ref<WorkflowGraph[]>([]);
 const historyIndex = ref(-1);
 
-const flowRef = ref<{ screenToFlowCoordinate: (p: { x: number; y: number }) => { x: number; y: number }; fitView: (o?: Record<string, unknown>) => void } | null>(null);
+const flowRef = ref<{
+  screenToFlowCoordinate: (p: { x: number; y: number }) => { x: number; y: number };
+  fitView: (o?: Record<string, unknown>) => void;
+  setViewport: (transform: ViewportTransform) => Promise<boolean>;
+} | null>(null);
 const containerRef = ref<HTMLDivElement | null>(null);
 const showNodeSearch = ref(false);
 const searchKeyword = ref("");
@@ -93,10 +96,15 @@ function ctxFor(nodeId: string) {
   };
 }
 
-function initFromGraph(graph: WorkflowGraph) {
+function applyGraph(graph: WorkflowGraph) {
   nodesRef.value = toFlowNodes(graph, ctxFor);
   edgesRef.value = toFlowEdges(graph);
   viewportRef.value = { x: graph.viewport.x, y: graph.viewport.y, zoom: graph.viewport.zoom };
+  flowRef.value?.setViewport({ x: graph.viewport.x, y: graph.viewport.y, zoom: graph.viewport.zoom });
+}
+
+function initFromGraph(graph: WorkflowGraph) {
+  applyGraph(graph);
   history.value = [cloneGraph(graph)];
   historyIndex.value = 0;
   emitHistory();
@@ -113,8 +121,38 @@ onBeforeUnmount(() => {
 
 // ---------- Vue Flow 事件 ----------
 
+// Vue Flow 的 applyNodeChanges 依赖内部节点上的 computedPosition 才会更新 position；
+// 我们的受控节点是纯业务节点，需要自己把 position/select/remove/add 同步回 nodesRef。
+function applyScribeNodeChanges(changes: NodeChange[], nodes: ScribeFlowNode[]): ScribeFlowNode[] {
+  const removedIds = new Set(changes.filter((change) => change.type === "remove").map((change) => change.id));
+  const idChanges = changes.filter((change): change is NodeChange & { id: string } => "id" in change);
+  let next = nodes
+    .filter((node) => !removedIds.has(node.id))
+    .map((node) => {
+      const change = idChanges.find((c) => c.id === node.id);
+      if (!change) return node;
+      if (change.type === "position" && change.position) {
+        return { ...node, position: { ...change.position } };
+      }
+      if (change.type === "select") {
+        return { ...node, selected: change.selected };
+      }
+      return node;
+    });
+
+  for (const change of changes) {
+    if (change.type === "add" && change.item) {
+      const item = change.item as unknown as ScribeFlowNode;
+      if (!next.some((node) => node.id === item.id)) {
+        next = [...next, item];
+      }
+    }
+  }
+  return next;
+}
+
 function onNodesChange(changes: NodeChange[]) {
-  nodesRef.value = applyNodeChanges(changes, nodesRef.value as never) as unknown as ScribeFlowNode[];
+  nodesRef.value = applyScribeNodeChanges(changes, nodesRef.value);
   emitGraph();
   syncSelection();
 }
@@ -340,8 +378,9 @@ function redo() {
 function applyHistory() {
   const graph = history.value[historyIndex.value];
   if (!graph) return;
-  initFromGraph(graph);
+  applyGraph(graph);
   emitGraph();
+  emitHistory();
 }
 
 // ---------- 键盘 ----------

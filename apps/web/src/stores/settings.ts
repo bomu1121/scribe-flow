@@ -1,11 +1,57 @@
 import { defineStore } from "pinia";
-import { ref } from "vue";
-import type { AppSettings, UpdateSettingsRequest } from "@scribe-flow/shared";
+import { ref, watch } from "vue";
+import type { AiProvider, AppSettings, AsrEngine, UpdateSettingsRequest } from "@scribe-flow/shared";
 import { api } from "@/lib/api";
+
+const AI_KEY_DRAFT_STORAGE = "scribe-flow.aiKeyDraft";
+const ASR_KEY_DRAFT_STORAGE = "scribe-flow.asrKeyDraft";
+
+function readKeyDraft(key: string): string {
+  try {
+    return sessionStorage.getItem(key) ?? "";
+  } catch {
+    return "";
+  }
+}
+
+function writeKeyDraft(key: string, value: string) {
+  try {
+    if (value) sessionStorage.setItem(key, value);
+    else sessionStorage.removeItem(key);
+  } catch {
+    // 隐私模式或 storage 不可用时静默降级为内存态
+  }
+}
+
+export interface AiTestPayload {
+  provider?: AiProvider;
+  baseUrl?: string;
+  model?: string;
+  apiKey?: string;
+}
+
+export interface AsrTestPayload {
+  engine?: AsrEngine;
+  baseUrl?: string;
+  model?: string;
+  apiKey?: string;
+}
+
+export interface AiTestResult {
+  content: string;
+  models: string[];
+  modelsError?: string;
+}
 
 export const useSettingsStore = defineStore("settings", () => {
   const settings = ref<AppSettings | null>(null);
   const loading = ref(false);
+  /** 保存在 sessionStorage 中，刷新页面后仍可回显；关闭标签页后清除。 */
+  const aiKeyDraft = ref(readKeyDraft(AI_KEY_DRAFT_STORAGE));
+  const asrKeyDraft = ref(readKeyDraft(ASR_KEY_DRAFT_STORAGE));
+
+  watch(aiKeyDraft, (value) => writeKeyDraft(AI_KEY_DRAFT_STORAGE, value));
+  watch(asrKeyDraft, (value) => writeKeyDraft(ASR_KEY_DRAFT_STORAGE, value));
 
   async function load() {
     loading.value = true;
@@ -20,15 +66,20 @@ export const useSettingsStore = defineStore("settings", () => {
     settings.value = await api.put<AppSettings>("/api/settings", patch);
   }
 
-  async function testAi(): Promise<string> {
-    const result = await api.post<{ ok: boolean; content?: string }>("/api/settings/test/ai");
+  async function testAi(payload?: AiTestPayload): Promise<AiTestResult> {
+    const result = await api.post<{ ok: boolean; content?: string; models?: string[]; modelsError?: string }>("/api/settings/test/ai", payload);
+    return { content: result.content ?? "连接正常", models: result.models ?? [], modelsError: result.modelsError };
+  }
+
+  async function fetchAiModels(payload?: AiTestPayload): Promise<string[]> {
+    const result = await api.post<{ ok: boolean; models?: string[] }>("/api/settings/ai/models", payload);
+    return result.models ?? [];
+  }
+
+  async function testAsr(payload?: AsrTestPayload): Promise<string> {
+    const result = await api.post<{ ok: boolean; content?: string }>("/api/settings/test/asr", payload);
     return result.content ?? "连接正常";
   }
 
-  async function testAsr(): Promise<string> {
-    const result = await api.post<{ ok: boolean; content?: string }>("/api/settings/test/asr");
-    return result.content ?? "连接正常";
-  }
-
-  return { settings, loading, load, save, testAi, testAsr };
+  return { settings, loading, aiKeyDraft, asrKeyDraft, load, save, testAi, testAsr, fetchAiModels };
 });

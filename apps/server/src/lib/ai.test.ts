@@ -3,7 +3,7 @@ import { writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { chatCompletion, transcribeAudio } from "./ai";
+import { chatCompletion, listAiModels, transcribeAudio } from "./ai";
 
 let server: Server;
 let baseUrl: string;
@@ -20,6 +20,10 @@ beforeAll(async () => {
       }
       if (req.url?.includes("/chat/completions")) {
         res.end(JSON.stringify({ choices: [{ message: { role: "assistant", content: "AI 内容" } }] }));
+        return;
+      }
+      if (req.url?.includes("/models")) {
+        res.end(JSON.stringify({ data: [{ id: "deepseek-chat" }, { id: "deepseek-reasoner" }] }));
         return;
       }
       res.statusCode = 404;
@@ -40,6 +44,11 @@ describe("AI / ASR 调用层（本地 mock 端点）", () => {
   it("chatCompletion 走 OpenAI 兼容协议", async () => {
     const content = await chatCompletion({ provider: "deepseek", baseUrl, model: "mock", apiKey: "key" }, "system", "user");
     expect(content).toBe("AI 内容");
+  });
+
+  it("listAiModels 拉取 OpenAI 兼容模型列表", async () => {
+    const models = await listAiModels({ baseUrl, apiKey: "key" });
+    expect(models).toEqual(["deepseek-chat", "deepseek-reasoner"]);
   });
 
   it("transcribeAudio 支持 OpenAI 兼容 /audio/transcriptions", async () => {

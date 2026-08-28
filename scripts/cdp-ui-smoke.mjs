@@ -291,7 +291,8 @@ async function run() {
 
     await navigate(`${APP_URL}settings`);
     await waitFor("!!document.querySelector('.sf-settings-form')");
-    check("设置页 AI 表单渲染", await evalJs("document.querySelectorAll('.sf-settings-form .el-input').length >= 3"));
+    check("设置页 AI 表单渲染", await evalJs("document.querySelectorAll('.sf-settings-form .el-input, .sf-settings-form .el-select').length >= 3"));
+    check("DeepSeek 模型为下拉", await evalJs("document.querySelectorAll('.sf-settings-form .el-select').length >= 2"));
     await evalJs("document.querySelectorAll('.sf-settings-nav-item')[1].click(); true");
     await waitFor("!!document.querySelector('.sf-settings-form .el-segmented')", 5000);
     check("设置页 ASR 分段控件渲染", true);
