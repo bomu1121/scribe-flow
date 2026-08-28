@@ -58,7 +58,7 @@ onBeforeUnmount(() => {
       <header class="sf-topbar">
         <h1 class="sf-topbar-title">{{ pageTitle }}</h1>
         <div class="sf-topbar-right">
-          <button type="button" class="sf-running-pill tnum" title="查看运行记录" @click="router.push('/runs')">
+          <button type="button" class="sf-running-pill tnum" title="查看运行记录" aria-label="查看运行记录" @click="router.push('/runs')">
             运行中 {{ runsStore.runningCount }}
           </button>
         </div>
@@ -67,6 +67,13 @@ onBeforeUnmount(() => {
         <slot />
       </div>
     </main>
+
+    <nav class="sf-bottom-nav" aria-label="移动端导航">
+      <RouterLink v-for="item in navItems" :key="item.to" :to="item.to" class="sf-bottom-nav-item">
+        <component :is="item.icon" :size="18" />
+        <span>{{ item.label }}</span>
+      </RouterLink>
+    </nav>
   </div>
 </template>
 
@@ -209,5 +216,51 @@ onBeforeUnmount(() => {
   flex: 1;
   min-height: 0;
   overflow: hidden;
+}
+
+.sf-bottom-nav {
+  display: none;
+}
+
+@media (max-width: 768px) {
+  .app-root {
+    grid-template-columns: 1fr;
+  }
+
+  .sf-side {
+    display: none;
+  }
+
+  .sf-bottom-nav {
+    display: flex;
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    height: 56px;
+    border-top: 1px solid var(--color-border);
+    background: var(--color-surface);
+    z-index: var(--z-overlay);
+  }
+
+  .sf-bottom-nav-item {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 2px;
+    font-size: 10.5px;
+    color: var(--color-text-secondary);
+    text-decoration: none;
+  }
+
+  .sf-bottom-nav-item.router-link-active {
+    color: var(--color-brand);
+  }
+
+  .sf-content {
+    padding-bottom: 56px;
+  }
 }
 </style>

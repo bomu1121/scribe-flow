@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from "vue";
-import { ElButton, ElDialog, ElInput, ElMessage, ElOption, ElSelect, ElTable, type TableInstance } from "element-plus";
+import { ElButton, ElDialog, ElInput, ElMessage, ElOption, ElSelect, ElTabPane, ElTable, ElTableColumn, ElTabs, type TableInstance } from "element-plus";
 import { Clock3, FolderHeart, ListVideo, PlaySquare } from "lucide-vue-next";
 import type { SourceCollection, SourceVideoItem } from "@scribe-flow/shared";
 import { api } from "@/lib/api";
@@ -52,6 +52,10 @@ function fmtDuration(seconds: number): string {
   const m = Math.floor(seconds / 60);
   const s = seconds % 60;
   return m > 0 ? `${m}:${String(s).padStart(2, "0")}` : `${s} 秒`;
+}
+
+function asVideo(row: unknown): SourceVideoItem {
+  return row as SourceVideoItem;
 }
 
 function clearSelection() {
@@ -270,13 +274,13 @@ onBeforeUnmount(() => {
     >
       <el-table-column type="selection" width="36" />
       <el-table-column label="视频" min-width="260">
-        <template #default="{ row }: { row: SourceVideoItem }">
+        <template #default="{ row }">
           <div class="sf-video-cell">
-            <img :src="row.cover" class="sf-video-cover" alt="" referrerpolicy="no-referrer" loading="lazy" />
+            <img :src="asVideo(row).cover" class="sf-video-cover" alt="" referrerpolicy="no-referrer" loading="lazy" />
             <div class="sf-video-main">
-              <span class="sf-video-title">{{ row.title || "（无标题）" }}</span>
+              <span class="sf-video-title">{{ asVideo(row).title || "（无标题）" }}</span>
               <span class="sf-video-meta tnum">
-                {{ row.uploader || "UP 主未知" }} · {{ fmtDuration(row.duration) }}<template v-if="row.pageCount > 1"> · {{ row.pageCount }}P</template>
+                {{ asVideo(row).uploader || "UP 主未知" }} · {{ fmtDuration(asVideo(row).duration) }}<template v-if="asVideo(row).pageCount > 1"> · {{ asVideo(row).pageCount }}P</template>
               </span>
             </div>
           </div>

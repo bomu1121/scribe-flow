@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
 import { useRoute, useRouter } from "vue-router";
-import { ElButton, ElDialog, ElMessage, ElOption, ElSelect, ElTable, ElTag } from "element-plus";
+import { ElButton, ElDialog, ElMessage, ElOption, ElSelect, ElTable, ElTableColumn, ElTag } from "element-plus";
 import { ArrowLeft, Copy, FileText, RefreshCw, ScrollText } from "lucide-vue-next";
 import type { RunDetail, RunNodeLog, RunNodeResult } from "@scribe-flow/shared";
 import { api } from "@/lib/api";
@@ -56,6 +56,10 @@ const logKindLabels: Record<RunNodeLog["kind"], string> = {
 function fmt(ms?: number): string {
   if (!ms) return "—";
   return ms < 1000 ? `${ms}ms` : `${(ms / 1000).toFixed(1)}s`;
+}
+
+function asNode(row: unknown): RunNodeResult {
+  return row as RunNodeResult;
 }
 
 function downloadMarkdown() {
@@ -125,26 +129,26 @@ async function retryNode(node: RunNodeResult) {
     <template v-else-if="run">
       <el-table :data="run.nodeResults" row-key="nodeId" size="small" class="sf-nodes-table">
         <el-table-column label="节点" min-width="160">
-          <template #default="{ row }: { row: RunNodeResult }">{{ row.nodeLabel || row.nodeType }}</template>
+          <template #default="{ row }">{{ asNode(row).nodeLabel || asNode(row).nodeType }}</template>
         </el-table-column>
         <el-table-column label="状态" width="90">
-          <template #default="{ row }: { row: RunNodeResult }">
-            <el-tag :type="statusMeta[row.status]?.type ?? 'info'" size="small">{{ statusMeta[row.status]?.label ?? row.status }}</el-tag>
+          <template #default="{ row }">
+            <el-tag :type="statusMeta[asNode(row).status]?.type ?? 'info'" size="small">{{ statusMeta[asNode(row).status]?.label ?? asNode(row).status }}</el-tag>
           </template>
         </el-table-column>
         <el-table-column label="耗时" width="90">
-          <template #default="{ row }: { row: RunNodeResult }"><span class="tnum">{{ fmt(row.elapsedMs) }}</span></template>
+          <template #default="{ row }"><span class="tnum">{{ fmt(asNode(row).elapsedMs) }}</span></template>
         </el-table-column>
         <el-table-column label="产物 / 错误" min-width="220">
-          <template #default="{ row }: { row: RunNodeResult }">
-            <span v-if="row.error" class="sf-node-error">{{ row.error }}</span>
-            <span v-else>{{ row.summary || "—" }}</span>
+          <template #default="{ row }">
+            <span v-if="asNode(row).error" class="sf-node-error">{{ asNode(row).error }}</span>
+            <span v-else>{{ asNode(row).summary || "—" }}</span>
           </template>
         </el-table-column>
         <el-table-column label="操作" width="110" align="right">
-          <template #default="{ row }: { row: RunNodeResult }">
-            <el-button size="small" text @click="openLogs(row.nodeId)">日志</el-button>
-            <el-button v-if="row.status === 'error'" size="small" text type="primary" @click="retryNode(row)"><RefreshCw :size="13" /><span>重跑</span></el-button>
+          <template #default="{ row }">
+            <el-button size="small" text @click="openLogs(asNode(row).nodeId)">日志</el-button>
+            <el-button v-if="asNode(row).status === 'error'" size="small" text type="primary" @click="retryNode(asNode(row))"><RefreshCw :size="13" /><span>重跑</span></el-button>
           </template>
         </el-table-column>
       </el-table>

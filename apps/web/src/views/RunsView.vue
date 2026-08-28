@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
 import { useRouter } from "vue-router";
-import { ElButton, ElMessage, ElMessageBox, ElOption, ElSelect, ElTable, ElTag } from "element-plus";
+import { ElButton, ElMessage, ElMessageBox, ElOption, ElSelect, ElTable, ElTableColumn, ElTag } from "element-plus";
 import { Activity, Eye, Trash2 } from "lucide-vue-next";
 import type { RunMeta, RunStatus } from "@scribe-flow/shared";
 import { useRunsStore } from "@/stores/runs";
@@ -48,6 +48,10 @@ function fmtTime(ms?: number): string {
   if (!ms) return "—";
   if (ms < 1000) return `${ms}ms`;
   return `${(ms / 1000).toFixed(1)}s`;
+}
+
+function asRun(row: unknown): RunMeta {
+  return row as RunMeta;
 }
 
 async function removeRun(run: RunMeta) {
@@ -99,32 +103,32 @@ async function removeRun(run: RunMeta) {
 
     <el-table v-else :data="filtered" row-key="id" size="small" class="sf-runs-table">
       <el-table-column label="运行" min-width="140">
-        <template #default="{ row }: { row: RunMeta }">
-          <span class="sf-run-id tnum">#{{ row.id.slice(-6) }}</span>
-          <span class="sf-run-summary">{{ row.summary || "—" }}</span>
+        <template #default="{ row }">
+          <span class="sf-run-id tnum">#{{ asRun(row).id.slice(-6) }}</span>
+          <span class="sf-run-summary">{{ asRun(row).summary || "—" }}</span>
         </template>
       </el-table-column>
       <el-table-column label="工程" min-width="160">
-        <template #default="{ row }: { row: RunMeta }">{{ row.projectName || row.projectId }}</template>
+        <template #default="{ row }">{{ asRun(row).projectName || asRun(row).projectId }}</template>
       </el-table-column>
       <el-table-column label="范围" width="90">
-        <template #default="{ row }: { row: RunMeta }">{{ scopeLabels[row.scope] }}</template>
+        <template #default="{ row }">{{ scopeLabels[asRun(row).scope] }}</template>
       </el-table-column>
       <el-table-column label="状态" width="90">
-        <template #default="{ row }: { row: RunMeta }">
-          <el-tag :type="statusMeta[row.status].type" size="small">{{ statusMeta[row.status].label }}</el-tag>
+        <template #default="{ row }">
+          <el-tag :type="statusMeta[asRun(row).status].type" size="small">{{ statusMeta[asRun(row).status].label }}</el-tag>
         </template>
       </el-table-column>
       <el-table-column label="耗时" width="90">
-        <template #default="{ row }: { row: RunMeta }"><span class="tnum">{{ fmtTime(row.elapsedMs) }}</span></template>
+        <template #default="{ row }"><span class="tnum">{{ fmtTime(asRun(row).elapsedMs) }}</span></template>
       </el-table-column>
       <el-table-column label="时间" width="170">
-        <template #default="{ row }: { row: RunMeta }"><span class="tnum">{{ new Date(row.createdAt).toLocaleString("zh-CN") }}</span></template>
+        <template #default="{ row }"><span class="tnum">{{ new Date(asRun(row).createdAt).toLocaleString("zh-CN") }}</span></template>
       </el-table-column>
       <el-table-column label="操作" width="130" align="right">
-        <template #default="{ row }: { row: RunMeta }">
-          <el-button size="small" text @click="router.push(`/project/${row.projectId}/run/${row.id}`)"><Eye :size="14" /><span>详情</span></el-button>
-          <el-button size="small" text class="sf-danger-text" @click="removeRun(row)"><Trash2 :size="14" /><span>删除</span></el-button>
+        <template #default="{ row }">
+          <el-button size="small" text @click="router.push(`/project/${asRun(row).projectId}/run/${asRun(row).id}`)"><Eye :size="14" /><span>详情</span></el-button>
+          <el-button size="small" text class="sf-danger-text" @click="removeRun(asRun(row))"><Trash2 :size="14" /><span>删除</span></el-button>
         </template>
       </el-table-column>
     </el-table>

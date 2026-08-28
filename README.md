@@ -4,9 +4,11 @@
 
 ## 项目状态
 
-- 当前里程碑：**M4 已完成**，下一步 M5（响应式、a11y、深色预留、Docker 部署）
+- 当前里程碑：**M0–M5 全部完成** 🎉
+- M5 分层验收：[docs/m5-acceptance.md](docs/m5-acceptance.md)（主包 1130KB→124.6KB · smoke 37/37 · Docker 构建通过）
 - M4 分层验收：[docs/m4-acceptance.md](docs/m4-acceptance.md)（L0 9 用例 · L1 12/12 · L2 34/34 · L3 bsk 真实浏览器）
 - M3 分层验收：[docs/m3-acceptance.md](docs/m3-acceptance.md)（模板一「B站视频→观点笔记」真实端到端跑通）
+- 部署说明：[docs/deploy.md](docs/deploy.md)（Docker 单容器 + 环境变量 + 备份迁移）
 - M2 分层验收：[docs/m2-acceptance.md](docs/m2-acceptance.md)
 - 产品方案：[docs/scribe-flow-proposal.md](docs/scribe-flow-proposal.md)
 - 实施清单：[docs/scribe-flow-m0-m1.md](docs/scribe-flow-m0-m1.md)

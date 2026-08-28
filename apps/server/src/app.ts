@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import { cors } from "hono/cors";
+import { serveStatic } from "@hono/node-server/serve-static";
 import { health } from "./routes/health";
 import { projectsApi } from "./routes/projects";
 import { videosApi } from "./routes/videos";
@@ -16,6 +17,8 @@ export interface AppOptions {
   dataDir: string;
   uploadsDir: string;
   maxUploadMb: number;
+  /** 生产部署时的前端 dist 目录；为空表示由 Vite 独立托管。 */
+  staticDir?: string;
 }
 
 export function createApp(db: AppDatabase, options: AppOptions) {
@@ -42,6 +45,11 @@ export function createApp(db: AppDatabase, options: AppOptions) {
   app.route("/api/prompts", promptsApi(db));
 
   app.notFound((c) => c.json({ error: "接口不存在" }, 404));
+
+  if (options.staticDir) {
+    app.use("*", serveStatic({ root: options.staticDir }));
+    app.get("*", serveStatic({ path: "./index.html", root: options.staticDir }));
+  }
 
   app.onError((err, c) => {
     console.error("[server] 未处理错误：", err);

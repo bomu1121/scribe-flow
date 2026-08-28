@@ -204,6 +204,10 @@ function centerPosition(): { x: number; y: number } {
 }
 
 function addNodeAt(type: NodeType, position?: { x: number; y: number }) {
+  if (nodesRef.value.length >= 200) {
+    emit("notice", "节点数量已达 200 上限，请拆分工程");
+    return;
+  }
   const node = makeNode(type, position ?? centerPosition());
   // ctx 需要绑定最终 id
   node.data.ctx = ctxFor(node.id);

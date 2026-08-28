@@ -245,6 +245,7 @@ async function stopRun() {
     </header>
 
     <div class="sf-editor-main">
+      <div class="sf-mobile-hint">画布编辑器需要桌面端（≥1024px）。当前仅作只读预览，请在电脑上打开以编辑。</div>
       <NodePalette @add="(type) => flowCanvasRef?.addNodeAtCenter(type)" />
       <FlowCanvas
         v-if="loaded"
@@ -262,7 +263,7 @@ async function stopRun() {
       </div>
     </div>
 
-    <footer class="sf-editor-console">
+    <footer class="sf-editor-console" aria-live="polite">
       <span class="sf-console-dot" :class="{ running }" />
       <span class="sf-console-text">
         <template v-if="running && activeRun">{{ runTitle(activeRun) }} · </template>{{ consoleNotice || "就绪" }}
@@ -345,6 +346,32 @@ async function stopRun() {
   flex: 1;
   min-height: 0;
   display: flex;
+}
+
+.sf-mobile-hint {
+  display: none;
+}
+
+@media (max-width: 1024px) {
+  .sf-mobile-hint {
+    display: block;
+    position: absolute;
+    left: 50%;
+    top: 60px;
+    transform: translateX(-50%);
+    z-index: var(--z-popover);
+    padding: 8px 14px;
+    border: 1px solid var(--color-warning-border);
+    border-radius: var(--radius-md);
+    background: var(--color-warning-soft);
+    color: var(--color-warning);
+    font-size: 12px;
+    pointer-events: none;
+  }
+
+  .sf-editor-main > :deep(.sf-palette) {
+    display: none;
+  }
 }
 
 .sf-editor-loading {

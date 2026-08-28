@@ -6,6 +6,7 @@ export interface ServerEnv {
   dataDir: string;
   uploadsDir: string;
   maxUploadMb: number;
+  staticDir?: string;
 }
 
 export function loadEnv(): ServerEnv {
@@ -13,7 +14,8 @@ export function loadEnv(): ServerEnv {
   const dataDir = resolve(process.env.DATA_DIR ?? "./data");
   const uploadsDir = join(dataDir, "uploads");
   const maxUploadMb = Number(process.env.MAX_UPLOAD_MB ?? 2048);
+  const staticDir = process.env.STATIC_DIR ? resolve(process.env.STATIC_DIR) : undefined;
   mkdirSync(dataDir, { recursive: true });
   mkdirSync(uploadsDir, { recursive: true });
-  return { port, dataDir, uploadsDir, maxUploadMb };
+  return { port, dataDir, uploadsDir, maxUploadMb, staticDir };
 }

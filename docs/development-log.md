@@ -2,7 +2,7 @@
 
 > 最后更新：2026-08-28
 > 仓库：https://github.com/bomu1121/scribe-flow.git
-> 状态：M0/M1/M2/M3/M4 全部完成；下一步 M5 打磨发布。
+> 状态：M0–M5 全部完成。ScribeFlow 里程碑开发收官。
 
 ---
 
@@ -15,7 +15,7 @@
 | M2 来源节点 | ✅ 完成 | B 站链接输入即解析、扫码登录（Cookie 仅存服务端）、收藏夹/我的合集/稍后再看/B站历史快捷多选、本地音视频上传、文本校验 |
 | M3 运行引擎 | ✅ 完成 | 运行数据模型/启动/停止/重跑/删除/产物、DAG 并发执行、SSE、节点状态与控制台、运行记录页、设置页；B站下载/FFmpeg/MiMo ASR/AI 节点全部真实端到端验收通过 |
 | M4 输出与运行记录 | ✅ 完成 | 提示词块库服务端持久化 + 设置页管理、运行日志弹窗、重跑失败节点、复制/下载、运行记录页筛选、数据与工程清理 |
-| M5 打磨发布 | ⏳ 未开始 | 响应式、a11y、大图性能、深色预留、Docker 部署 |
+| M5 打磨发布 | ✅ 完成 | Element Plus 按需引入与分包、响应式移动端、a11y、节点数量防御、深色令牌预留、Docker 部署与 CI |
 
 ## 2. 仓库结构
 
@@ -85,6 +85,15 @@ scribe-flow/
 - 数据与工程设置页：数据目录/运行记录数/输出文件数展示，清理已结束运行
 - 验收脚本：`pnpm check:api:m4`（12 项）、`pnpm smoke:ui`（34 项）；分层标准见 `docs/m4-acceptance.md`
 
+### 打磨发布（M5 完成）
+- Element Plus 按需引入：移除全量 `app.use`，`ElConfigProvider` 中文 locale + `v-loading` 指令单独注册；Vite 分包 element-plus/vue-flow/reka-ui；主入口 1130KB → 124.6KB（gzip 42KB）
+- 响应式：≤768 侧栏收起 + 底部导航；≤1024 画布只读提示与节点库隐藏
+- a11y：图标按钮 aria-label、底部控制台 `aria-live`、全局 focus-visible 回归
+- 大图防御：节点数量达到 200 拒绝继续添加并提示拆分
+- 深色预留：`element-theme.css` 提供 `html.dark` 变量骨架，v1 不启用
+- 部署：`Dockerfile`（node:22-slim + ffmpeg + 单容器静态托管）、`.dockerignore`、`docs/deploy.md`、CI docker build job；`STATIC_DIR` 支持 SPA fallback
+- 验收标准：`docs/m5-acceptance.md`；`pnpm smoke:ui` 37/37
+
 ### UI 组件体系（2026-08-28 升级：Element Plus 底座）
 - 通用控件全部使用 Element Plus 2.14：按钮/输入框/下拉框/分段控件/对话框/消息确认/下拉菜单等，不自研、不手抄样式
 - 选型证据：n8n（本项目交互母本，同为 Vue 3 + Vue Flow）的 `@n8n/design-system` 依赖 `element-plus`；详见 `docs/ui-library-replacement-research.md`
@@ -141,11 +150,13 @@ scribe-flow/
   - L1 `pnpm check:api:m4` 12/12：提示词块 CRUD、运行日志、按节点过滤、数据信息
   - L2 `pnpm smoke:ui` 34/34：运行详情日志弹窗、提示词块库、数据与工程页
   - L3 bsk 真实 Chrome：提示词块库 UI 新增自定义块「会议纪要提炼」成功
+- M5 分层验收（2026-08-28）：
+  - L0 全绿；L1 主包 1130KB→124.6KB；L2 `pnpm smoke:ui` 37/37（新增移动端 3 项）；L3 生产静态托管 `/` 与 SPA fallback 200；L4 `docker build -t scribe-flow:ci .` 成功，CI 增补 docker job
 - UTF-8 乱码扫描通过；UI 文案简体中文
 
 ## 7. 未完成 / 下一步
 
-- M5：响应式、a11y、深色模式、Docker 部署、Element Plus 按需引入（当前全量引入有 chunk >500KB 警告）
+- M0–M5 里程碑已全部完成。后续可选事项：深色模式启用、Playwright 冒烟、drizzle-kit 迁移、按需引入 element-plus CSS（当前全量 CSS 360KB，gzip 48KB）
 
 ## 8. 本地运行
 
