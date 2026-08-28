@@ -14,6 +14,7 @@ import {
   SelectValue,
   SelectViewport,
 } from "reka-ui";
+import { cn } from "@/utils/cn";
 
 export interface SelectOption {
   label: string;
@@ -27,8 +28,9 @@ const props = withDefaults(
     placeholder?: string;
     disabled?: boolean;
     size?: "sm" | "md";
+    class?: string;
   }>(),
-  { placeholder: "请选择", disabled: false, size: "md" },
+  { placeholder: "请选择", disabled: false, size: "md", class: "" },
 );
 
 const model = defineModel<string | null>({ default: null });
@@ -40,33 +42,54 @@ function onUpdate(value: unknown) {
 
 <template>
   <SelectRoot :model-value="model" @update:model-value="onUpdate">
-    <SelectTrigger class="sf-select-trigger" :class="`sf-select-trigger--${props.size}`" :disabled="props.disabled">
-      <SelectValue :placeholder="props.placeholder" class="sf-select-value" />
+    <SelectTrigger
+      data-slot="select-trigger"
+      :disabled="props.disabled"
+      :class="
+        cn(
+          'group flex w-full items-center justify-between gap-2 whitespace-nowrap rounded-md border border-input bg-background text-sm shadow-xs transition-[color,box-shadow] outline-none',
+          'data-[placeholder]:text-muted-foreground',
+          'focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/30',
+          'data-[state=open]:border-ring data-[state=open]:ring-2 data-[state=open]:ring-ring/20',
+          'disabled:cursor-not-allowed disabled:opacity-50',
+          props.size === 'sm' ? 'h-8 px-2.5 text-xs' : 'h-9 px-3 text-sm',
+          '[&_svg]:pointer-events-none [&_svg]:shrink-0',
+          props.class,
+        )
+      "
+    >
+      <SelectValue data-slot="select-value" :placeholder="props.placeholder" class="min-w-0 flex-1 text-left data-[placeholder]:text-muted-foreground" />
       <SelectIcon as-child>
-        <ChevronDown :size="14" class="sf-select-chevron" />
+        <ChevronDown class="size-4 text-muted-foreground transition-transform duration-200 group-data-[state=open]:rotate-180 group-data-[state=open]:text-ring" />
       </SelectIcon>
     </SelectTrigger>
     <SelectPortal>
-      <SelectContent class="sf-select-content" position="popper" :side-offset="6">
-        <SelectScrollUpButton class="sf-select-scroll-btn">
-          <ChevronUp :size="14" />
+      <SelectContent
+        data-slot="select-content"
+        :side-offset="6"
+        position="popper"
+        class="sf-select-content relative z-[var(--z-select)] max-h-[var(--reka-select-content-available-height,320px)] min-w-[var(--reka-select-trigger-width,8rem)] overflow-hidden rounded-md border border-border bg-popover text-popover-foreground shadow-[var(--shadow-overlay)]"
+      >
+        <SelectScrollUpButton class="flex cursor-default items-center justify-center py-1 text-muted-foreground">
+          <ChevronUp class="size-4" />
         </SelectScrollUpButton>
-        <SelectViewport class="sf-select-viewport">
+        <SelectViewport class="p-1">
           <SelectItem
             v-for="opt in props.options"
             :key="String(opt.value)"
+            data-slot="select-item"
             :value="String(opt.value)"
             :disabled="opt.disabled"
-            class="sf-select-item"
+            class="relative flex w-full cursor-default select-none items-center gap-2 rounded-sm py-1.5 pl-2 pr-8 text-sm outline-none data-[disabled]:pointer-events-none data-[disabled]:opacity-50 data-[highlighted]:bg-accent data-[highlighted]:text-accent-foreground data-[state=checked]:text-primary focus:bg-accent focus:text-accent-foreground"
           >
             <SelectItemText>{{ opt.label }}</SelectItemText>
-            <SelectItemIndicator class="sf-select-indicator">
-              <Check :size="14" />
+            <SelectItemIndicator class="absolute right-2 inline-flex size-3.5 items-center justify-center text-primary">
+              <Check class="size-4" />
             </SelectItemIndicator>
           </SelectItem>
         </SelectViewport>
-        <SelectScrollDownButton class="sf-select-scroll-btn">
-          <ChevronDown :size="14" />
+        <SelectScrollDownButton class="flex cursor-default items-center justify-center py-1 text-muted-foreground">
+          <ChevronDown class="size-4" />
         </SelectScrollDownButton>
       </SelectContent>
     </SelectPortal>
@@ -74,164 +97,13 @@ function onUpdate(value: unknown) {
 </template>
 
 <style>
-/* 浮层经 Teleport 挂到 body：样式必须全局，不能 scoped */
-.sf-select-trigger {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  width: 100%;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm);
-  background: var(--color-surface);
-  color: var(--color-text);
-  font-family: inherit;
-  cursor: pointer;
-  user-select: none;
-  transition:
-    border-color var(--dur-1) var(--ease-out),
-    box-shadow var(--dur-1) var(--ease-out),
-    background-color var(--dur-1) var(--ease-out);
-}
-
-.sf-select-trigger--sm {
-  height: 30px;
-  padding: 0 8px;
-  font-size: 12.5px;
-}
-
-.sf-select-trigger--md {
-  height: 34px;
-  padding: 0 10px;
-  font-size: 13px;
-}
-
-.sf-select-trigger:hover:not(:disabled) {
-  border-color: var(--color-border-strong);
-  background: var(--color-surface-muted);
-}
-
-.sf-select-trigger:focus-visible {
-  outline: none;
-  border-color: var(--color-brand);
-  box-shadow: 0 0 0 3px var(--color-brand-soft);
-}
-
-.sf-select-trigger[data-state="open"] {
-  border-color: var(--color-brand);
-  box-shadow: 0 0 0 3px var(--color-brand-soft);
-}
-
-.sf-select-trigger:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-.sf-select-value {
-  flex: 1;
-  min-width: 0;
-  text-align: left;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.sf-select-value[data-placeholder] {
-  color: var(--color-text-tertiary);
-}
-
-.sf-select-chevron {
-  flex-shrink: 0;
-  color: var(--color-text-tertiary);
-  transition: transform var(--dur-2) var(--ease-out);
-}
-
-.sf-select-trigger[data-state="open"] .sf-select-chevron {
-  transform: rotate(180deg);
-  color: var(--color-brand);
-}
-
-.sf-select-content {
-  z-index: var(--z-select);
-  min-width: var(--reka-select-trigger-width, 160px);
-  padding: 0;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
-  background: var(--color-surface);
-  box-shadow: var(--shadow-overlay);
-  overflow: hidden;
-}
-
+/* 浮层经 Teleport 挂到 body：开合动画必须用全局样式 */
 .sf-select-content[data-state="open"] {
   animation: sf-select-in var(--dur-2) var(--ease-out);
 }
 
 .sf-select-content[data-state="closed"] {
   animation: sf-select-out var(--dur-1) var(--ease-out);
-}
-
-.sf-select-viewport {
-  max-height: var(--reka-select-content-available-height, 320px);
-  overflow-y: auto;
-  padding: 4px;
-}
-
-.sf-select-scroll-btn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 4px 0;
-  color: var(--color-text-tertiary);
-  cursor: default;
-  transition:
-    color var(--dur-1) var(--ease-out),
-    background-color var(--dur-1) var(--ease-out);
-}
-
-.sf-select-scroll-btn:hover {
-  color: var(--color-text);
-  background: var(--color-ink-soft);
-}
-
-.sf-select-item {
-  position: relative;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 7px 28px 7px 10px;
-  border-radius: var(--radius-sm);
-  font-size: 13px;
-  line-height: 1.45;
-  color: var(--color-text);
-  cursor: pointer;
-  outline: none;
-  user-select: none;
-  transition:
-    background-color var(--dur-1) var(--ease-out),
-    color var(--dur-1) var(--ease-out);
-}
-
-.sf-select-item[data-highlighted],
-.sf-select-item:focus-visible {
-  background: var(--color-ink-soft);
-  color: var(--color-text);
-}
-
-.sf-select-item[data-state="checked"] {
-  color: var(--color-brand);
-  font-weight: 500;
-}
-
-.sf-select-item[data-disabled] {
-  opacity: 0.45;
-  pointer-events: none;
-}
-
-.sf-select-indicator {
-  position: absolute;
-  right: 8px;
-  display: inline-flex;
-  align-items: center;
-  color: var(--color-brand);
 }
 
 @keyframes sf-select-in {

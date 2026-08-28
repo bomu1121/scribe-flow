@@ -4,9 +4,10 @@
 
 ## 项目状态
 
-- 当前里程碑：M0（仓库骨架 + 设计系统 + 应用外壳）
+- 当前里程碑：M2（B 站来源节点：链接解析已上线，登录快捷选择/本地上传进行中）
 - 产品方案：[docs/scribe-flow-proposal.md](docs/scribe-flow-proposal.md)
 - 实施清单：[docs/scribe-flow-m0-m1.md](docs/scribe-flow-m0-m1.md)
+- UI 框架选型调研：[docs/ui-framework-selection.md](docs/ui-framework-selection.md)
 
 ## 技术栈
 

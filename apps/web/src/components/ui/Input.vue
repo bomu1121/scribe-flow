@@ -1,67 +1,36 @@
 <script setup lang="ts">
-import { computed } from "vue";
+import type { HTMLAttributes } from "vue";
+import { useVModel } from "@vueuse/core";
+import { cn } from "@/utils/cn";
 
-const props = withDefaults(
-  defineProps<{
-    placeholder?: string;
-    disabled?: boolean;
-    type?: string;
-    autofocus?: boolean;
-  }>(),
-  { placeholder: "", disabled: false, type: "text", autofocus: false },
-);
+const props = defineProps<{
+  defaultValue?: string | number;
+  modelValue?: string | number;
+  class?: HTMLAttributes["class"];
+}>();
 
-const model = defineModel<string>({ default: "" });
+const emits = defineEmits<{
+  (e: "update:modelValue", payload: string | number): void;
+}>();
 
-const classes = computed(() => ({
-  "sf-input": true,
-  "sf-input--disabled": props.disabled,
-}));
+const modelValue = useVModel(props, "modelValue", emits, {
+  passive: true,
+  defaultValue: props.defaultValue,
+});
 </script>
 
 <template>
   <input
-    v-model="model"
-    :class="classes"
-    :type="type"
-    :placeholder="placeholder"
-    :disabled="disabled"
-    :autofocus="autofocus"
+    v-model="modelValue"
+    data-slot="input"
+    :class="
+      cn(
+        'h-9 w-full min-w-0 rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-xs transition-[color,box-shadow] outline-none',
+        'placeholder:text-muted-foreground',
+        'disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-50',
+        'focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/30',
+        props.class,
+      )
+    "
   />
 </template>
-
-<style scoped>
-.sf-input {
-  width: 100%;
-  height: 34px;
-  padding: 0 10px;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm);
-  background: var(--color-surface);
-  color: var(--color-text);
-  font-family: inherit;
-  font-size: 13px;
-  transition:
-    border-color var(--dur-1) var(--ease-out),
-    box-shadow var(--dur-1) var(--ease-out);
-}
-
-.sf-input::placeholder {
-  color: var(--color-text-tertiary);
-}
-
-.sf-input:hover:not(:disabled) {
-  border-color: var(--color-border-strong);
-}
-
-.sf-input:focus {
-  outline: none;
-  border-color: var(--color-brand);
-  box-shadow: 0 0 0 3px var(--color-brand-soft);
-}
-
-.sf-input--disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-</style>

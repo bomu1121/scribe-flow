@@ -5,6 +5,7 @@ import { Handle, Position, type NodeProps } from "@vue-flow/core";
 import { ContextMenuContent, ContextMenuItem, ContextMenuPortal, ContextMenuRoot, ContextMenuSeparator, ContextMenuTrigger } from "reka-ui";
 import { NODE_PORTS, NODE_TYPE_LABELS, type NodeType, type VideoPreview } from "@scribe-flow/shared";
 import Select, { type SelectOption } from "@/components/ui/Select.vue";
+import Input from "@/components/ui/Input.vue";
 import { usePromptsStore } from "@/stores/prompts";
 import { api } from "@/lib/api";
 import type { ScribeNodeData } from "@/utils/flow";
@@ -56,12 +57,6 @@ onMounted(() => {
 onBeforeUnmount(() => {
   if (previewTimer) clearTimeout(previewTimer);
 });
-
-function onUrlInput(event: Event) {
-  const value = (event.target as HTMLInputElement).value;
-  patch({ url: value });
-  schedulePreview(value);
-}
 
 function fmtDuration(sec: number): string {
   const h = Math.floor(sec / 3600);
@@ -149,11 +144,11 @@ function commit() {
         <div class="sf-node-body">
           <!-- 来源：B 站链接。卡片做大，容纳批量选视频入口 -->
           <template v-if="nodeType === 'source.bili'">
-            <input
-              class="sf-node-input"
-              :value="data.url"
+            <Input
+              class="h-8 text-xs"
+              :model-value="data.url"
               placeholder="粘贴 B 站视频链接（支持分 P）"
-              @input="onUrlInput"
+              @update:model-value="(v: string | number) => { const value = String(v); patch({ url: value }); schedulePreview(value); }"
               @blur="commit"
             />
             <div v-if="previewLoading" class="sf-node-preview sf-node-preview--loading tnum">正在解析视频信息…</div>
@@ -212,11 +207,11 @@ function commit() {
           <template v-else-if="nodeType === 'process.refine'">
             <label class="sf-node-field">
               <span class="sf-node-field-label">输出名称</span>
-              <input
-                class="sf-node-input"
-                :value="data.outputName ?? ''"
+              <Input
+                class="h-8 text-xs"
+                :model-value="data.outputName ?? ''"
                 placeholder="如：校对稿"
-                @input="patch({ outputName: ($event.target as HTMLInputElement).value })"
+                @update:model-value="(v: string | number) => patch({ outputName: String(v) })"
                 @blur="commit"
               />
             </label>
@@ -237,21 +232,21 @@ function commit() {
             </label>
             <label class="sf-node-field">
               <span class="sf-node-field-label">输出名称</span>
-              <input
-                class="sf-node-input"
-                :value="data.outputName ?? ''"
+              <Input
+                class="h-8 text-xs"
+                :model-value="data.outputName ?? ''"
                 placeholder="如：观点笔记"
-                @input="patch({ outputName: ($event.target as HTMLInputElement).value })"
+                @update:model-value="(v: string | number) => patch({ outputName: String(v) })"
                 @blur="commit"
               />
             </label>
             <label class="sf-node-field">
               <span class="sf-node-field-label">模型覆盖（可选）</span>
-              <input
-                class="sf-node-input"
-                :value="data.model ?? ''"
+              <Input
+                class="h-8 text-xs"
+                :model-value="data.model ?? ''"
                 placeholder="不填则跟随默认模型"
-                @input="patch({ model: ($event.target as HTMLInputElement).value })"
+                @update:model-value="(v: string | number) => patch({ model: String(v) })"
                 @blur="commit"
               />
             </label>
@@ -260,11 +255,11 @@ function commit() {
           <template v-else-if="nodeType === 'process.merge'">
             <label class="sf-node-field">
               <span class="sf-node-field-label">合并标题</span>
-              <input
-                class="sf-node-input"
-                :value="data.title ?? ''"
+              <Input
+                class="h-8 text-xs"
+                :model-value="data.title ?? ''"
                 placeholder="合并文档标题"
-                @input="patch({ title: ($event.target as HTMLInputElement).value })"
+                @update:model-value="(v: string | number) => patch({ title: String(v) })"
                 @blur="commit"
               />
             </label>
@@ -273,11 +268,11 @@ function commit() {
           <template v-else-if="nodeType === 'process.output'">
             <label class="sf-node-field">
               <span class="sf-node-field-label">输出文件名</span>
-              <input
-                class="sf-node-input"
-                :value="data.fileName ?? ''"
+              <Input
+                class="h-8 text-xs"
+                :model-value="data.fileName ?? ''"
                 placeholder="笔记.md"
-                @input="patch({ fileName: ($event.target as HTMLInputElement).value })"
+                @update:model-value="(v: string | number) => patch({ fileName: String(v) })"
                 @blur="commit"
               />
             </label>
@@ -420,28 +415,6 @@ function commit() {
   display: flex;
   flex-direction: column;
   gap: 8px;
-}
-
-.sf-node-input {
-  width: 100%;
-  height: 30px;
-  padding: 0 9px;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm);
-  background: var(--color-surface);
-  color: var(--color-text);
-  font-family: inherit;
-  font-size: 12.5px;
-}
-
-.sf-node-input::placeholder {
-  color: var(--color-text-tertiary);
-}
-
-.sf-node-input:focus {
-  outline: none;
-  border-color: var(--color-brand);
-  box-shadow: 0 0 0 3px var(--color-brand-soft);
 }
 
 .sf-node-preview {

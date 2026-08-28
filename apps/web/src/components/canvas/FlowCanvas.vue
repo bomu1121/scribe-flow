@@ -353,9 +353,9 @@ function onCanvasDoubleClick(event: MouseEvent) {
   showNodeSearch.value = true;
 }
 
-function updateSearch(value: string) {
-  searchKeyword.value = value;
-  const q = value.trim().toLowerCase();
+function updateSearch(value: string | number) {
+  searchKeyword.value = String(value);
+  const q = String(value).trim().toLowerCase();
   filteredTypes.value = q ? searchableTypes.filter((type) => NODE_TYPE_LABELS[type].toLowerCase().includes(q)) : searchableTypes;
 }
 
