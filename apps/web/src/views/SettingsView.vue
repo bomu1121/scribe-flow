@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { onMounted, reactive, ref, watch } from "vue";
-import { ElButton, ElInput, ElMessage, ElMessageBox, ElOption, ElSegmented, ElSelect, ElTag } from "element-plus";
-import { PlugZap, Save, Trash2 } from "lucide-vue-next";
+import { ElButton, ElInput, ElMessage, ElMessageBox, ElOption, ElSelect, ElTag } from "element-plus";
+import { Cloud, Mic, PlugZap, Save, Trash2 } from "lucide-vue-next";
+import ModelSelect from "../components/ModelSelect.vue";
 import type { AiProvider, AsrEngine, PromptBlock } from "@scribe-flow/shared";
 import { api } from "@/lib/api";
 import { useSettingsStore } from "@/stores/settings";
@@ -63,8 +64,8 @@ const aiProviderOptions = [
 ];
 
 const asrOptions = [
-  { label: "MiMo-V2.5（小米）", value: "mimo" },
-  { label: "OpenAI 兼容", value: "openai-compatible" },
+  { label: "MiMo-V2.5（小米）", value: "mimo", icon: Mic },
+  { label: "OpenAI 兼容", value: "openai-compatible", icon: Cloud },
 ];
 
 const blockForm = reactive({ id: "", name: "", prompt: "" });
@@ -339,7 +340,13 @@ async function testAsr() {
         <div class="sf-settings-form">
           <label class="sf-field">
             <span class="sf-field-label">引擎</span>
-            <el-segmented v-model="form.asrEngine" :options="asrOptions" block @change="switchAsr" />
+            <ModelSelect
+              v-model="form.asrEngine"
+              :options="asrOptions"
+              placeholder="选择 ASR 引擎"
+              :prefix-icon="Mic"
+              @change="(value: string) => switchAsr(value as AsrEngine)"
+            />
           </label>
           <label class="sf-field">
             <span class="sf-field-label">接口地址</span>

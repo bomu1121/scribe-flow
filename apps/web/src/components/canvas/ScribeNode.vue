@@ -1,11 +1,12 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from "vue";
-import { ElInput, ElMessage, ElOption, ElSegmented, ElSelect, ElUpload, type UploadRequestOptions } from "element-plus";
-import { FileOutput, FileText, FileUp, GitMerge, Link2, Mic, Sparkles, WandSparkles } from "lucide-vue-next";
+import { ElInput, ElMessage, ElOption, ElSelect, ElUpload, type UploadRequestOptions } from "element-plus";
+import { Cloud, FileOutput, FileText, FileUp, GitMerge, Link2, Mic, Sparkles, WandSparkles } from "lucide-vue-next";
 import { Handle, Position, type NodeProps } from "@vue-flow/core";
 import { ContextMenuContent, ContextMenuItem, ContextMenuPortal, ContextMenuRoot, ContextMenuSeparator, ContextMenuTrigger } from "reka-ui";
 import { NODE_PORTS, NODE_TYPE_LABELS, type NodeType, type UploadedFile, type VideoPreview } from "@scribe-flow/shared";
 import SourcePickerDialog from "./SourcePickerDialog.vue";
+import ModelSelect from "../ModelSelect.vue";
 import { usePromptsStore } from "@/stores/prompts";
 import { useAuthStore } from "@/stores/auth";
 import { api } from "@/lib/api";
@@ -136,8 +137,8 @@ const statusClass = computed(() => (props.data.status ? `is-${props.data.status}
 const sizeClass = computed(() => `sf-node--${nodeType.value.replaceAll(".", "-")}`);
 
 const asrOptions = [
-  { label: "MiMo-V2.5", value: "mimo" },
-  { label: "OpenAI 兼容", value: "openai-compatible" },
+  { label: "MiMo-V2.5", value: "mimo", icon: Mic },
+  { label: "OpenAI 兼容", value: "openai-compatible", icon: Cloud },
 ];
 
 const promptOptions = computed(() =>
@@ -260,7 +261,7 @@ function commit() {
           <template v-else-if="nodeType === 'process.transcribe'">
             <label class="sf-node-field">
               <span class="sf-node-field-label">ASR 引擎</span>
-              <el-segmented v-model="asrEngine" :options="asrOptions" size="small" block />
+              <ModelSelect v-model="asrEngine" :options="asrOptions" size="small" placeholder="选择 ASR 引擎" :prefix-icon="Mic" />
             </label>
           </template>
 
