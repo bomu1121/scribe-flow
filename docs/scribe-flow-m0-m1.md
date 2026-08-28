@@ -10,6 +10,7 @@
 - ✅ **M1 全部验收（2026-08-27 更新）**：后端工程 CRUD、工程列表页、Vue Flow 画布编辑器（节点/连线/卡片内表单/撤销重做/自动布局/自动保存）、导入导出闭环；15 条 n8n 交互照搬清单已用真实 Chrome + CDP 逐项自动化验证通过，详见下方勾选清单。
 - 下一步：M2 来源节点真实化（B 站解析/登录快捷选择/本地上传）。
 - 🔄 M2 进行中：B 站链接「输入即解析」检查点已上线——卡片内输入链接后防抖调用 `/api/videos/preview`，展示封面/标题/UP 主/时长/分 P，并自动保存 pageInfo。
+- ✅ UI 原语升级（2026-08-27）：Select 按 [shadcn-vue new-york-v4 registry](https://github.com/unovue/shadcn-vue/blob/48419525/apps/v4/content/docs/components/select.md) 同款结构重写（`SelectItemText` + `SelectItemIndicator` + `SelectIcon` + 上下滚动按钮 + open/closed 动画 + 选中态勾选）；Button/Tabs/Dialog/AlertDialog/DropdownMenu 补齐 `hover / active / focus-visible` 状态，全量原语交互态统一。
 
 ---
 

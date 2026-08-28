@@ -53,6 +53,11 @@ const classes = computed(() =>
   cursor: not-allowed;
 }
 
+.sf-button:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px var(--color-brand-soft);
+}
+
 .sf-button--sm {
   height: 28px;
   padding: 0 10px;
@@ -77,6 +82,10 @@ const classes = computed(() =>
   background: var(--color-brand-hover);
 }
 
+.sf-button--primary:active:not(:disabled) {
+  background: var(--color-brand-pressed);
+}
+
 .sf-button--secondary {
   background: var(--color-surface);
   border-color: var(--color-border);
@@ -85,6 +94,11 @@ const classes = computed(() =>
 .sf-button--secondary:hover:not(:disabled) {
   border-color: var(--color-border-strong);
   background: var(--color-surface-muted);
+}
+
+.sf-button--secondary:active:not(:disabled) {
+  border-color: var(--color-brand-border);
+  color: var(--color-brand);
 }
 
 .sf-button--outline {
@@ -105,12 +119,20 @@ const classes = computed(() =>
   color: var(--color-text);
 }
 
+.sf-button--ghost:active:not(:disabled) {
+  color: var(--color-brand);
+}
+
 .sf-button--danger {
   background: var(--color-error);
   color: var(--color-on-error);
 }
 .sf-button--danger:hover:not(:disabled) {
   background: color-mix(in srgb, var(--color-error) 88%, #000000);
+}
+
+.sf-button--danger:active:not(:disabled) {
+  background: color-mix(in srgb, var(--color-error) 78%, #000000);
 }
 
 .sf-button--block {

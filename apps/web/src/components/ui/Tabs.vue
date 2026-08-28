@@ -57,6 +57,11 @@ const model = defineModel<string>({ required: true });
   color: var(--color-text);
 }
 
+.sf-tabs-trigger:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--color-brand-border);
+}
+
 .sf-tabs-trigger[data-state="active"] {
   background: var(--color-surface);
   color: var(--color-text);

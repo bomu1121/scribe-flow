@@ -359,6 +359,11 @@
 - 浮层 z-index 只允许使用 `--z-overlay / --z-dialog / --z-select / --z-popover / --z-dropdown / --z-context` 令牌，禁止散写。
 - `scripts/ui-lint.mjs` 静态执行上述两条检查，并接入 CI；新增任何 Portal 组件不合规即失败。
 
+### 6.5 组件基线与交互态
+
+- UI 原语实现结构参照 [shadcn-vue new-york-v4 registry](https://github.com/unovue/shadcn-vue/blob/48419525/apps/v4/content/docs/components/select.md)，不手搓缺失的 Reka 语义（Select 必须含 `SelectItemText / SelectItemIndicator / SelectIcon / ScrollUp / ScrollDown`）。
+- 每个交互组件必须覆盖：`hover`、`active`、`:focus-visible`、`[data-state=open]` 动画、`disabled` 降级；弹出层进入/退出使用 `--dur-*` 与 `--ease-out`。
+
 ---
 
 ## 7. 技术架构

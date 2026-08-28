@@ -113,6 +113,11 @@ const open = defineModel<boolean>("open", { required: true });
   color: var(--color-text);
 }
 
+.sf-dialog-close:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--color-brand-border);
+}
+
 .sf-dialog-body {
   padding: 16px 20px;
 }

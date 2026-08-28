@@ -30,6 +30,11 @@ const emit = defineEmits<{ select: [] }>();
   background: var(--color-ink-soft);
 }
 
+.sf-menu-item:focus-visible {
+  outline: none;
+  background: var(--color-ink-soft);
+}
+
 .sf-menu-item[data-disabled] {
   opacity: 0.45;
   cursor: not-allowed;

@@ -124,6 +124,16 @@ const emit = defineEmits<{ confirm: []; cancel: [] }>();
   background: var(--color-surface-muted);
 }
 
+.sf-alert-btn:active:not(:disabled) {
+  border-color: var(--color-brand-border);
+  color: var(--color-brand);
+}
+
+.sf-alert-btn:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--color-brand-border);
+}
+
 .sf-alert-btn:disabled {
   opacity: 0.5;
   cursor: not-allowed;
@@ -138,6 +148,11 @@ const emit = defineEmits<{ confirm: []; cancel: [] }>();
 .sf-alert-btn--danger:hover:not(:disabled) {
   background: color-mix(in srgb, var(--color-error) 88%, #000000);
   border-color: color-mix(in srgb, var(--color-error) 88%, #000000);
+}
+
+.sf-alert-btn--danger:active:not(:disabled) {
+  background: color-mix(in srgb, var(--color-error) 78%, #000000);
+  border-color: color-mix(in srgb, var(--color-error) 78%, #000000);
 }
 
 @keyframes sf-fade-in {
