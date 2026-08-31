@@ -1,5 +1,6 @@
 import { join } from "node:path";
 import Database from "better-sqlite3";
+import { and, eq, notInArray } from "drizzle-orm";
 import { drizzle, type BetterSQLite3Database } from "drizzle-orm/better-sqlite3";
 import * as schema from "./schema";
 
@@ -12,6 +13,22 @@ export function createDatabase(dataDir: string): AppDatabase {
   sqlite.pragma("foreign_keys = ON");
   ensureSchema(sqlite);
   return drizzle(sqlite, { schema });
+}
+
+/** 服务启动时恢复上次异常中断的运行：把残留 running 状态标记为 cancelled。 */
+export function recoverInterruptedRuns(db: AppDatabase) {
+  const now = Date.now();
+  const running = db.select().from(schema.runs).where(eq(schema.runs.status, "running")).all();
+  for (const row of running) {
+    db.update(schema.runs)
+      .set({ status: "cancelled", finishedAt: now, elapsedMs: now - row.createdAt, error: "服务重启，运行已中断" })
+      .where(eq(schema.runs.id, row.id))
+      .run();
+    db.update(schema.runNodeResults)
+      .set({ status: "cancelled", error: "服务重启，运行已中断", updatedAt: now })
+      .where(and(eq(schema.runNodeResults.runId, row.id), notInArray(schema.runNodeResults.status, ["done", "error", "cancelled", "skipped"])))
+      .run();
+  }
 }
 
 /**
@@ -55,7 +72,8 @@ function ensureSchema(sqlite: Database.Database) {
       finished_at INTEGER,
       elapsed_ms INTEGER,
       summary TEXT,
-      error TEXT
+      error TEXT,
+      graph_json TEXT
     );
 
     CREATE TABLE IF NOT EXISTS run_node_results (
@@ -99,4 +117,10 @@ function ensureSchema(sqlite: Database.Database) {
       created_at INTEGER NOT NULL
     );
   `);
+
+  // 幂等迁移：旧库 runs 表没有 graph_json 时补列。
+  const runColumns = sqlite.prepare("PRAGMA table_info(runs)").all() as Array<{ name: string }>;
+  if (!runColumns.some((col) => col.name === "graph_json")) {
+    sqlite.exec("ALTER TABLE runs ADD COLUMN graph_json TEXT");
+  }
 }

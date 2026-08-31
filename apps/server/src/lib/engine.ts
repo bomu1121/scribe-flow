@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { mkdir, rm, stat, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import { desc, eq } from "drizzle-orm";
+import { and, desc, eq, notInArray } from "drizzle-orm";
 import {
   BUILTIN_PROMPT_BLOCKS,
   NODE_TYPE_LABELS,
@@ -33,11 +33,19 @@ interface ActiveRun {
   cancelled: boolean;
   listeners: Set<(event: RunEvent) => void>;
   outputs: Map<string, NodeOutput>;
+  nodeAborts: Map<string, AbortController>;
   startedAt: number;
 }
 
 function escapePathName(value: string): string {
   return value.replace(/[\\/:*?"<>|]/g, "_").slice(0, 80);
+}
+
+function previewFor(output: NodeOutput): string | undefined {
+  if (!output || (output.kind !== "text" && output.kind !== "noteBlock" && output.kind !== "noteDoc")) return undefined;
+  const text = output.text ?? "";
+  const clean = text.replace(/\s+/g, " ").trim();
+  return clean.slice(0, 120) || undefined;
 }
 
 function nodeLabel(node: GraphNode): string {
@@ -82,6 +90,7 @@ export class RunEngine {
       cancelled: false,
       listeners: new Set(),
       outputs: new Map(),
+      nodeAborts: new Map(),
       startedAt: Date.now(),
     };
     const project = this.db.select().from(projects).where(eq(projects.id, projectId)).get();
@@ -94,6 +103,33 @@ export class RunEngine {
     const active = this.actives.get(runId);
     if (!active) return false;
     active.cancelled = true;
+    for (const controller of active.nodeAborts.values()) controller.abort();
+    return true;
+  }
+
+  /** 强制结束：立即把运行与未完成节点标记为 cancelled，并中止所有进行中的 HTTP 请求。 */
+  forceStop(runId: string): boolean {
+    const active = this.actives.get(runId);
+    if (active) {
+      active.cancelled = true;
+      for (const controller of active.nodeAborts.values()) controller.abort();
+    }
+    const row = this.db.select().from(runs).where(eq(runs.id, runId)).get();
+    if (!row) return false;
+    const now = Date.now();
+    this.db
+      .update(runs)
+      .set({ status: "cancelled", finishedAt: now, elapsedMs: now - (active?.startedAt ?? row.createdAt), error: "已手动强制结束" })
+      .where(eq(runs.id, runId))
+      .run();
+    this.db
+      .update(runNodeResults)
+      .set({ status: "cancelled", error: "已手动强制结束", updatedAt: now })
+      .where(and(eq(runNodeResults.runId, runId), notInArray(runNodeResults.status, ["done", "error", "cancelled", "skipped"])))
+      .run();
+    if (active) {
+      this.emit(active, { type: "run.done", runId, status: "cancelled" });
+    }
     return true;
   }
 
@@ -210,7 +246,7 @@ export class RunEngine {
     return { kind: row.outputKind, text: row.outputText ?? undefined, path: row.outputPath ?? undefined, size: row.outputSize ?? undefined };
   }
 
-  private async resolveInputs(active: ActiveRun, node: GraphNode): Promise<{ text?: string; audioPath?: string }> {
+  private async resolveInputs(active: ActiveRun, node: GraphNode): Promise<{ text?: string; audioPaths: string[] }> {
     const inputs: NodeOutput[] = [];
     for (const edge of active.graph.edges) {
       if (edge.target !== node.id) continue;
@@ -224,9 +260,13 @@ export class RunEngine {
         if (previous) inputs.push(previous);
       }
     }
-    const audio = inputs.find((i) => i.kind === "audio");
+    const audioPaths = inputs
+      .filter((i) => i.kind === "audio")
+      .map((i) => i.path)
+      .filter((p): p is string => Boolean(p))
+      .map((p) => resolve(this.dataDir, p));
     const texts = inputs.filter((i) => i.kind !== "audio");
-    return { text: texts.map((t) => t.text ?? "").filter(Boolean).join("\n\n") || undefined, audioPath: audio?.path ? resolve(this.dataDir, audio.path) : undefined };
+    return { text: texts.map((t) => t.text ?? "").filter(Boolean).join("\n\n") || undefined, audioPaths };
   }
 
   private nodeById(active: ActiveRun, nodeId: string): GraphNode {
@@ -238,30 +278,38 @@ export class RunEngine {
   private async executeNode(active: ActiveRun, nodeId: string): Promise<"done" | "error"> {
     const node = this.nodeById(active, nodeId);
     const started = Date.now();
+    const abort = new AbortController();
+    active.nodeAborts.set(nodeId, abort);
     await this.updateNode(active, nodeId, "running", 0, undefined, undefined);
     this.emit(active, { type: "node.started", runId: active.id, nodeId });
 
     try {
       const inputs = await this.resolveInputs(active, node);
-      const output = await this.runNode(active, node, inputs);
+      const output = await this.runNode(active, node, inputs, abort.signal);
+      if (active.cancelled) throw new Error("运行已取消");
       const elapsed = Date.now() - started;
       await this.updateNode(active, nodeId, "done", elapsed, output.summary, output.output);
-      this.emit(active, { type: "node.done", runId: active.id, nodeId, summary: output.summary ?? "完成" });
+      this.emit(active, { type: "node.done", runId: active.id, nodeId, summary: output.summary ?? "完成", preview: previewFor(output.output) });
       active.outputs.set(nodeId, output.output);
       return "done";
     } catch (err) {
       const message = err instanceof Error ? err.message : "节点执行失败";
       const elapsed = Date.now() - started;
-      await this.updateNode(active, nodeId, "error", elapsed, undefined, undefined, message);
-      this.emit(active, { type: "node.error", runId: active.id, nodeId, error: message });
-      return "error";
+      const status = active.cancelled ? "cancelled" : "error";
+      const finalError = active.cancelled ? "已取消" : message;
+      await this.updateNode(active, nodeId, status, elapsed, undefined, undefined, finalError);
+      this.emit(active, { type: "node.error", runId: active.id, nodeId, error: finalError });
+      return status === "cancelled" ? "done" : "error";
+    } finally {
+      active.nodeAborts.delete(nodeId);
     }
   }
 
   private async runNode(
     active: ActiveRun,
     node: GraphNode,
-    inputs: { text?: string; audioPath?: string },
+    inputs: { text?: string; audioPaths: string[] },
+    signal?: AbortSignal,
   ): Promise<{ output: NodeOutput; summary?: string }> {
     const data = node.data as Record<string, unknown>;
     switch (node.type) {
@@ -308,15 +356,21 @@ export class RunEngine {
       }
 
       case "process.transcribe": {
-        if (!inputs.audioPath) throw new Error("没有可转写的音频输入");
-        await this.progress(active, node.id, 10, "调用云 ASR");
-        await this.log(active, node.id, "info", `音频输入：${inputs.audioPath}`);
+        if (inputs.audioPaths.length === 0) throw new Error("没有可转写的音频输入");
         const config = getAsrConfig(this.db);
         if (!config.apiKey) throw new Error("未配置语音识别密钥，请到设置页填写");
-        const text = await transcribeAudio(config, inputs.audioPath);
-        if (!text.trim()) throw new Error("转写结果为空");
-        await this.log(active, node.id, "ai-response", text);
-        return { output: { kind: "text", text, size: text.length }, summary: `${text.length} 字` };
+        const parts: string[] = [];
+        for (let i = 0; i < inputs.audioPaths.length; i += 1) {
+          const audioPath = inputs.audioPaths[i];
+          await this.progress(active, node.id, Math.round(10 + (i / inputs.audioPaths.length) * 80), `转写音频 ${i + 1}/${inputs.audioPaths.length}`);
+          await this.log(active, node.id, "info", `音频输入 ${i + 1}：${audioPath}`);
+          const text = await transcribeAudio(config, audioPath, signal);
+          if (!text.trim()) throw new Error(`第 ${i + 1} 个音频转写结果为空`);
+          await this.log(active, node.id, "ai-response", text);
+          parts.push(text.trim());
+        }
+        const text = parts.join("\n\n");
+        return { output: { kind: "text", text, size: text.length }, summary: `${inputs.audioPaths.length} 个音频 · ${text.length} 字` };
       }
 
       case "process.refine":
@@ -337,7 +391,7 @@ export class RunEngine {
         const model = String(data.model ?? "").trim() || aiConfig.model;
         await this.log(active, node.id, "input", inputs.text);
         await this.log(active, node.id, "ai-request", `${model}\n\n${system}`);
-        const text = await chatCompletion({ ...aiConfig, model }, system, inputs.text);
+        const text = await chatCompletion({ ...aiConfig, model }, system, inputs.text, signal);
         if (!text.trim()) throw new Error("AI 返回为空");
         await this.log(active, node.id, "ai-response", text);
         const kind = node.type === "process.prompt" ? "noteBlock" : "text";
@@ -431,7 +485,7 @@ export class RunEngine {
     setTimeout(() => this.actives.delete(active.id), 60_000);
   }
 
-  detail(runId: string): { run?: RunMeta; nodes: RunNodeResult[] } {
+  detail(runId: string): { run?: RunMeta; nodes: RunNodeResult[]; graph?: WorkflowGraph } {
     const row = this.db.select().from(runs).where(eq(runs.id, runId)).get();
     if (!row) return { nodes: [] };
     const project = this.db.select().from(projects).where(eq(projects.id, row.projectId)).get();
@@ -460,7 +514,8 @@ export class RunEngine {
         ? { kind: r.outputKind, text: r.outputText ?? undefined, path: r.outputPath ?? undefined, size: r.outputSize ?? undefined }
         : undefined,
     }));
-    return { run, nodes };
+    const graph = row.graphJson ? (JSON.parse(row.graphJson) as WorkflowGraph) : undefined;
+    return { run, nodes, graph };
   }
 
   async deleteRun(runId: string) {

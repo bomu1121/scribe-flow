@@ -1,10 +1,11 @@
 import { serve } from "@hono/node-server";
 import { createApp } from "./app";
 import { loadEnv } from "./env";
-import { createDatabase } from "./db/client";
+import { createDatabase, recoverInterruptedRuns } from "./db/client";
 
 const env = loadEnv();
 const db = createDatabase(env.dataDir);
+recoverInterruptedRuns(db);
 const app = createApp(db, { dataDir: env.dataDir, uploadsDir: env.uploadsDir, maxUploadMb: env.maxUploadMb, staticDir: env.staticDir });
 
 serve(

@@ -37,6 +37,7 @@ const emit = defineEmits<{
   notice: [message: string];
   "history-change": [state: { canUndo: boolean; canRedo: boolean }];
   "run-request": [request: { scope: "all" | "fromNode" | "node"; nodeId?: string }];
+  "view-output": [nodeId: string];
 }>();
 
 const nodesRef = ref<ScribeFlowNode[]>([]);
@@ -50,6 +51,7 @@ const flowRef = ref<{
   screenToFlowCoordinate: (p: { x: number; y: number }) => { x: number; y: number };
   fitView: (o?: Record<string, unknown>) => void;
   setViewport: (transform: ViewportTransform) => Promise<boolean>;
+  setCenter: (x: number, y: number, options?: { zoom?: number; duration?: number }) => Promise<boolean>;
 } | null>(null);
 const containerRef = ref<HTMLDivElement | null>(null);
 const showNodeSearch = ref(false);
@@ -90,6 +92,7 @@ function ctxFor(nodeId: string) {
     runNode: () => emit("run-request", { scope: "node", nodeId }),
     runFromNode: () => emit("run-request", { scope: "fromNode", nodeId }),
     copyOutput: () => emit("notice", "节点输出将在运行后可用"),
+    viewOutput: () => emit("view-output", nodeId),
     updateData: (patch: Record<string, unknown>) => updateNodeData(nodeId, patch),
     commit: () => commitHistory(),
     addSourceVideos: (videos: import("@scribe-flow/shared").SourceVideoItem[]) => addSourceVideos(nodeId, videos),
@@ -325,6 +328,11 @@ function commitHistory() {
 function sourcePatchFor(video: import("@scribe-flow/shared").SourceVideoItem): Record<string, unknown> {
   const patch: Record<string, unknown> = {
     url: `https://www.bilibili.com/video/${video.bvid}`,
+    bvid: video.bvid,
+    title: video.title,
+    cover: video.cover,
+    uploader: video.uploader,
+    duration: video.duration,
   };
   if (video.pages && video.pages.length > 0) {
     patch.pageInfo = video.pages[0];
@@ -494,10 +502,18 @@ function fitView() {
   flowRef.value?.fitView({ padding: 0.15 });
 }
 
+/** 从结果页返回时定位并选中指定节点。 */
+function focusNode(nodeId: string) {
+  const node = nodesRef.value.find((n) => n.id === nodeId);
+  if (!node) return;
+  nodesRef.value = nodesRef.value.map((n) => ({ ...n, selected: n.id === nodeId }));
+  void flowRef.value?.setCenter(node.position.x + 100, node.position.y + 60, { zoom: 1.2, duration: 300 });
+}
+
 /** 运行事件驱动节点状态；不触发自动保存（运行态不进 graph 快照）。 */
 function applyRunEvent(event: import("@scribe-flow/shared").RunEvent) {
   if (event.type === "run.started") {
-    nodesRef.value = nodesRef.value.map((node) => ({ ...node, data: { ...node.data, status: "idle", summary: undefined } }));
+    nodesRef.value = nodesRef.value.map((node) => ({ ...node, data: { ...node.data, status: "idle", summary: undefined, preview: undefined } }));
     return;
   }
   if (!("nodeId" in event)) return;
@@ -509,6 +525,7 @@ function applyRunEvent(event: import("@scribe-flow/shared").RunEvent) {
   } else if (event.type === "node.done") {
     patch.status = "done";
     patch.summary = event.summary;
+    patch.preview = event.preview;
   } else if (event.type === "node.error") {
     patch.status = "error";
     patch.summary = event.error;
@@ -530,6 +547,7 @@ defineExpose({
   canRedo: () => historyIndex.value < history.value.length - 1,
   fitView,
   autoLayout,
+  focusNode,
   applyRunEvent,
 });
 </script>

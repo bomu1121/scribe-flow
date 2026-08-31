@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { desc, eq } from "drizzle-orm";
 import { Hono } from "hono";
 import { z } from "zod";
-import { emptyGraph, parseGraph, WORKFLOW_TEMPLATES, type WorkflowGraph } from "@scribe-flow/shared";
+import { emptyGraph, parseGraph, WORKFLOW_TEMPLATES, type GraphNode, type WorkflowGraph } from "@scribe-flow/shared";
 import { projects, type ProjectRow } from "../db/schema";
 import type { AppDatabase } from "../db/client";
 
@@ -31,6 +31,20 @@ function now() {
   return Date.now();
 }
 
+/** 去掉工程图里的运行态字段，工程 JSON 只保存定义，不保存 status/summary/preview。 */
+function cleanGraph(graph: WorkflowGraph): WorkflowGraph {
+  return {
+    ...graph,
+    nodes: graph.nodes.map((node) => {
+      const data = { ...(node.data as Record<string, unknown>) };
+      delete data.status;
+      delete data.summary;
+      delete data.preview;
+      return { ...node, data } as GraphNode;
+    }),
+  };
+}
+
 function toListItem(row: ProjectRow) {
   let nodeCount = 0;
   try {
@@ -54,7 +68,7 @@ function toDetail(row: ProjectRow) {
     id: row.id,
     name: row.name,
     description: row.description,
-    graph: JSON.parse(row.graphJson) as WorkflowGraph,
+    graph: cleanGraph(JSON.parse(row.graphJson) as WorkflowGraph),
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };
@@ -114,7 +128,7 @@ export function projectsApi(db: AppDatabase) {
       id: row.id,
       name: row.name,
       description: row.description,
-      graph: JSON.parse(row.graphJson) as WorkflowGraph,
+      graph: cleanGraph(JSON.parse(row.graphJson) as WorkflowGraph),
       exportedAt: new Date().toISOString(),
     });
   });
@@ -122,7 +136,7 @@ export function projectsApi(db: AppDatabase) {
   api.get("/:id/graph", (c) => {
     const row = db.select().from(projects).where(eq(projects.id, c.req.param("id"))).get();
     if (!row) return c.json({ error: "工程不存在" }, 404);
-    return c.json({ graph: JSON.parse(row.graphJson) as WorkflowGraph, updatedAt: row.updatedAt });
+    return c.json({ graph: cleanGraph(JSON.parse(row.graphJson) as WorkflowGraph), updatedAt: row.updatedAt });
   });
 
   api.put("/:id/graph", async (c) => {
@@ -137,7 +151,7 @@ export function projectsApi(db: AppDatabase) {
 
     let graph: WorkflowGraph;
     try {
-      graph = parseGraph(parsed.data.graph);
+      graph = cleanGraph(parseGraph(parsed.data.graph));
     } catch {
       return c.json({ error: "画布数据校验失败：存在非法节点或连线" }, 400);
     }

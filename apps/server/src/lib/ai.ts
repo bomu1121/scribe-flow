@@ -16,7 +16,12 @@ export interface AsrConfig {
   apiKey: string;
 }
 
-export function chatCompletion(config: AiConfig, system: string, user: string): Promise<string> {
+function withTimeout(signal: AbortSignal | undefined, ms: number): AbortSignal {
+  if (!signal) return AbortSignal.timeout(ms);
+  return AbortSignal.any([signal, AbortSignal.timeout(ms)]);
+}
+
+export function chatCompletion(config: AiConfig, system: string, user: string, signal?: AbortSignal): Promise<string> {
   return fetch(`${config.baseUrl.replace(/\/+$/, "")}/chat/completions`, {
     method: "POST",
     headers: {
@@ -31,15 +36,15 @@ export function chatCompletion(config: AiConfig, system: string, user: string): 
       ],
       temperature: 0.3,
     }),
-    signal: AbortSignal.timeout(300_000),
+    signal: withTimeout(signal, 300_000),
   }).then(handleChatResponse);
 }
 
 /** 拉取 OpenAI 兼容接口的可用模型列表。 */
-export async function listAiModels(config: Pick<AiConfig, "baseUrl" | "apiKey">): Promise<string[]> {
+export async function listAiModels(config: Pick<AiConfig, "baseUrl" | "apiKey">, signal?: AbortSignal): Promise<string[]> {
   const res = await fetch(`${config.baseUrl.replace(/\/+$/, "")}/models`, {
     headers: { Authorization: `Bearer ${config.apiKey}` },
-    signal: AbortSignal.timeout(30_000),
+    signal: withTimeout(signal, 30_000),
   });
   if (!res.ok) {
     const text = await res.text().catch(() => "");
@@ -72,11 +77,11 @@ async function handleChatResponse(res: Response): Promise<string> {
 }
 
 /** 云 ASR：MiMo 走 input_audio 的 chat/completions；OpenAI 兼容走 /audio/transcriptions。 */
-export async function transcribeAudio(config: AsrConfig, audioPath: string): Promise<string> {
+export async function transcribeAudio(config: AsrConfig, audioPath: string, signal?: AbortSignal): Promise<string> {
   if (config.engine === "mimo") {
-    return transcribeMimo(config, audioPath);
+    return transcribeMimo(config, audioPath, signal);
   }
-  return transcribeOpenAiCompatible(config, audioPath);
+  return transcribeOpenAiCompatible(config, audioPath, signal);
 }
 
 // MiMo 的 input_audio 把整段音频塞进 base64 data URL，官方文档限制编码后字符串最大 10MB。
@@ -118,7 +123,7 @@ function splitWav(buffer: Buffer, maxDataBytes: number): Buffer[] {
   return chunks;
 }
 
-async function transcribeMimo(config: AsrConfig, audioPath: string): Promise<string> {
+async function transcribeMimo(config: AsrConfig, audioPath: string, signal?: AbortSignal): Promise<string> {
   const data = await readFile(audioPath);
   const chunks = data.length > MIMO_MAX_AUDIO_BYTES ? splitWav(data, MIMO_MAX_AUDIO_BYTES) : [data];
   const results: string[] = [];
@@ -142,7 +147,7 @@ async function transcribeMimo(config: AsrConfig, audioPath: string): Promise<str
         asr_options: { language: "zh" },
         stream: false,
       }),
-      signal: AbortSignal.timeout(600_000),
+      signal: withTimeout(signal, 600_000),
     });
     const content = await handleChatResponse(res);
     const text = content.trim();
@@ -152,7 +157,7 @@ async function transcribeMimo(config: AsrConfig, audioPath: string): Promise<str
   return results.join("\n\n");
 }
 
-async function transcribeOpenAiCompatible(config: AsrConfig, audioPath: string): Promise<string> {
+async function transcribeOpenAiCompatible(config: AsrConfig, audioPath: string, signal?: AbortSignal): Promise<string> {
   const form = new FormData();
   const file = new Blob([await readFile(audioPath)], { type: "audio/wav" });
   form.append("file", file, `${basename(audioPath, ".wav") || "audio"}.wav`);
@@ -163,7 +168,7 @@ async function transcribeOpenAiCompatible(config: AsrConfig, audioPath: string):
     method: "POST",
     headers: { Authorization: `Bearer ${config.apiKey}` },
     body: form,
-    signal: AbortSignal.timeout(600_000),
+    signal: withTimeout(signal, 600_000),
   });
   if (!res.ok) {
     const text = await res.text().catch(() => "");

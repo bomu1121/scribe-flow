@@ -13,6 +13,12 @@ export interface PageRef {
 export interface BiliSourceData {
   url: string;
   pageInfo?: PageRef;
+  /** 展示用元信息（解析成功后写入，运行结果页据此展示封面/标题/UP主）。 */
+  bvid?: string;
+  title?: string;
+  cover?: string;
+  uploader?: string;
+  duration?: number;
 }
 
 export interface FileSourceData {

@@ -10,6 +10,8 @@ export interface NodeContextActions {
   runNode: () => void;
   runFromNode: () => void;
   copyOutput: () => void;
+  /** 打开该节点在最近一次运行中的输出结果页。 */
+  viewOutput: () => void;
   /** 卡片内表单更新节点数据。 */
   updateData: (patch: Record<string, unknown>) => void;
   /** 卡片内表单失焦时提交一次撤销历史。 */
@@ -23,8 +25,13 @@ export interface ScribeNodeData {
   label?: string;
   status?: NodeRunStatus;
   summary?: string;
+  preview?: string;
   url?: string;
   pageInfo?: PageRef;
+  bvid?: string;
+  cover?: string;
+  uploader?: string;
+  duration?: number;
   fileName?: string;
   filePath?: string;
   text?: string;
@@ -90,6 +97,10 @@ export function toBusinessGraph(nodes: ScribeFlowNode[], edges: ScribeFlowEdge[]
     const data = { ...node.data } as Record<string, unknown>;
     delete data.nodeType;
     delete data.ctx;
+    // 运行态字段只属于内存/运行记录，不写入工程定义，避免刷新后“卡在 running”。
+    delete data.status;
+    delete data.summary;
+    delete data.preview;
     return {
       id: node.id,
       type: node.data.nodeType,

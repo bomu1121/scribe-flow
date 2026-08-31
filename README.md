@@ -6,6 +6,7 @@
 
 - 当前里程碑：**M0–M5 全部完成** 🎉
 - M5 分层验收：[docs/m5-acceptance.md](docs/m5-acceptance.md)（主包 1130KB→124.6KB · smoke 37/37 · Docker 构建通过）
+- 结果展示页方案：[docs/result-viewer-design.md](docs/result-viewer-design.md)（多输入/多输出、缩放/编辑/全屏、返回工作流）
 - M4 分层验收：[docs/m4-acceptance.md](docs/m4-acceptance.md)（L0 9 用例 · L1 12/12 · L2 34/34 · L3 bsk 真实浏览器）
 - M3 分层验收：[docs/m3-acceptance.md](docs/m3-acceptance.md)（模板一「B站视频→观点笔记」真实端到端跑通）
 - 部署说明：[docs/deploy.md](docs/deploy.md)（Docker 单容器 + 环境变量 + 备份迁移）
@@ -72,6 +73,10 @@ pnpm check:api:m4   # M4 API 自检（提示词块 CRUD/运行日志）
 - 通用组件统一使用 Element Plus（n8n 同款底座）：按钮/输入框/下拉框/对话框/消息/上传/表格等不自研。
 - 颜色一律使用 `apps/web/src/styles/tokens.css` 中的设计令牌；Element Plus 通过 `styles/element-theme.css` 的 `--el-*` 变量桥接同一套令牌，禁止页面散写 hex。
 - 画布交互不自研：底层 Vue Flow（MIT），交互行为照搬 n8n 编辑器（详见方案文档照搬清单）。
+- 多输入汇入语义：转写节点接收多个音频时逐个转写后以空行合并；AI/合并节点接收多个文本时按连接顺序以空行合并；禁止静默丢弃任一输入。
+- 运行前预检：范围内存在 AI/ASR 节点但对应密钥缺失时，前后端都会拒绝启动运行并提示先到设置页配置。
+- 运行中断恢复：服务重启会把残留 running 状态自动标记为 cancelled；画布与运行详情页提供「强制结束」入口，可中止卡住的运行并允许重跑。
+- 运行态不写入工程图：`status / summary / preview` 只在内存与运行记录中保存，工程图只保存工作流定义，避免刷新后节点“卡在 running”。
 - 许可证红线：只复用 MIT / Apache-2.0 代码；n8n、Dify 等只复刻交互行为，不复制代码。
 
 ## License

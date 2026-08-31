@@ -28,6 +28,8 @@ Thumbs.db
 # 测试产物
 coverage/
 playwright-report/
+.tmp-server-test/
+.tmp-server-test2/
 
 # CDP UI 冒烟与本地截图产物
 .tmp-cdp-*/

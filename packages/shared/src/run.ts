@@ -1,4 +1,4 @@
-import type { AsrEngine } from "./graph";
+import type { AsrEngine, WorkflowGraph } from "./graph";
 
 export type RunStatus = "running" | "success" | "error" | "cancelled";
 export type NodeResultStatus = "queued" | "running" | "done" | "error" | "cancelled" | "skipped";
@@ -48,6 +48,8 @@ export interface NodeOutput {
 
 export interface RunDetail extends RunMeta {
   nodeResults: RunNodeResult[];
+  /** 运行时的工程图快照；旧运行可能缺失，前端可回退到当前工程图。 */
+  graph?: WorkflowGraph;
 }
 
 export type RunNodeLogKind = "input" | "ai-request" | "ai-response" | "info" | "error";
@@ -67,7 +69,7 @@ export type RunEvent =
   | { type: "run.started"; run: RunMeta }
   | { type: "node.started"; runId: string; nodeId: string }
   | { type: "node.progress"; runId: string; nodeId: string; progress: number; message: string }
-  | { type: "node.done"; runId: string; nodeId: string; summary: string }
+  | { type: "node.done"; runId: string; nodeId: string; summary: string; preview?: string }
   | { type: "node.error"; runId: string; nodeId: string; error: string }
   | { type: "run.done"; runId: string; status: RunStatus };
 

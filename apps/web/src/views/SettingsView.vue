@@ -324,7 +324,11 @@ async function testAsr() {
             <el-input v-else v-model="form.aiModel" class="sf-field-control" placeholder="deepseek-chat" />
           </label>
           <label class="sf-field">
-            <span class="sf-field-label">API Key</span>
+            <span class="sf-field-label">
+              API Key
+              <el-tag v-if="store.settings?.ai.hasKey" type="success" size="small">已保存</el-tag>
+              <el-tag v-else type="warning" size="small">未配置</el-tag>
+            </span>
             <el-input v-model="form.aiKey" type="password" show-password class="sf-field-control" :placeholder="store.settings?.ai.hasKey ? '已保存，留空则不修改' : 'sk-…'" />
           </label>
           <div class="sf-settings-actions">
@@ -357,7 +361,11 @@ async function testAsr() {
             <el-input v-model="form.asrModel" class="sf-field-control" :placeholder="form.asrEngine === 'mimo' ? 'mimo-v2.5-asr' : 'whisper-1'" />
           </label>
           <label class="sf-field">
-            <span class="sf-field-label">API Key</span>
+            <span class="sf-field-label">
+              API Key
+              <el-tag v-if="store.settings?.asr.hasKey" type="success" size="small">已保存</el-tag>
+              <el-tag v-else type="warning" size="small">未配置</el-tag>
+            </span>
             <el-input v-model="form.asrKey" type="password" show-password class="sf-field-control" :placeholder="store.settings?.asr.hasKey ? '已保存，留空则不修改' : 'API Key'" />
           </label>
           <div class="sf-settings-actions">
@@ -522,6 +530,9 @@ async function testAsr() {
 }
 
 .sf-field-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   font-size: 12px;
   color: var(--color-text-secondary);
 }

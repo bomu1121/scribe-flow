@@ -17,6 +17,7 @@ import {
 import type { AppDatabase } from "../db/client";
 import { projects, runNodeLogs, runNodeResults, runs, type RunRow } from "../db/schema";
 import { nextRunId, type RunEngine } from "../lib/engine";
+import { getAiConfig, getAsrConfig } from "../lib/settings";
 
 const startSchema = z.object({
   scope: z.enum(["all", "fromNode", "node"]),
@@ -53,6 +54,26 @@ function rowToNodeResult(row: (typeof runNodeResults)["$inferSelect"]): RunNodeR
   };
 }
 
+function nodeIdsForScope(graph: ReturnType<typeof parseGraph>, scope: RunScope, nodeId?: string): Set<string> {
+  const all = new Set(graph.nodes.map((n) => n.id));
+  if (scope === "node" && nodeId) return new Set([nodeId]);
+  if (scope === "fromNode" && nodeId) {
+    const result = new Set([nodeId]);
+    let changed = true;
+    while (changed) {
+      changed = false;
+      for (const edge of graph.edges) {
+        if (result.has(edge.source) && !result.has(edge.target)) {
+          result.add(edge.target);
+          changed = true;
+        }
+      }
+    }
+    return result;
+  }
+  return all;
+}
+
 export function createRun(db: AppDatabase, projectId: string, scope: RunScope, nodeId?: string) {
   const project = db.select().from(projects).where(eq(projects.id, projectId)).get();
   if (!project) throw new Error("工程不存在");
@@ -60,9 +81,17 @@ export function createRun(db: AppDatabase, projectId: string, scope: RunScope, n
   if (scope !== "all" && nodeId && !graph.nodes.some((n) => n.id === nodeId)) {
     throw new Error("节点不存在");
   }
+
+  // 执行前预检：缺失必要密钥时直接拒绝启动，避免“跑起来后才失败”。
+  const scopeNodeIds = nodeIdsForScope(graph, scope, nodeId);
+  const needsAi = graph.nodes.some((n) => scopeNodeIds.has(n.id) && (n.type === "process.refine" || n.type === "process.prompt"));
+  const needsAsr = graph.nodes.some((n) => scopeNodeIds.has(n.id) && n.type === "process.transcribe");
+  if (needsAi && !getAiConfig(db).apiKey) throw new Error("未配置 AI 模型密钥，请先到设置页填写");
+  if (needsAsr && !getAsrConfig(db).apiKey) throw new Error("未配置语音识别密钥，请先到设置页填写");
+
   const id = nextRunId();
   const createdAt = Date.now();
-  db.insert(runs).values({ id, projectId, status: "running", scope, createdAt }).run();
+  db.insert(runs).values({ id, projectId, status: "running", scope, createdAt, graphJson: JSON.stringify(graph) }).run();
   return { id, graph };
 }
 
@@ -106,7 +135,7 @@ export function runsApi(db: AppDatabase, engine: RunEngine, dataDir: string) {
   api.get("/:id", (c) => {
     const detail = engine.detail(c.req.param("id"));
     if (!detail.run) return c.json({ error: "运行不存在" }, 404);
-    return c.json({ ...detail.run, nodeResults: detail.nodes });
+    return c.json({ ...detail.run, nodeResults: detail.nodes, graph: detail.graph });
   });
 
   api.get("/:id/events", (c) => {
@@ -135,7 +164,11 @@ export function runsApi(db: AppDatabase, engine: RunEngine, dataDir: string) {
       await send({ type: "run.started", run: currentRun });
       for (const node of detail.nodes) {
         if (node.status === "done") {
-          await send({ type: "node.done", runId, nodeId: node.nodeId, summary: node.summary ?? "完成" });
+          const preview =
+            node.output && (node.output.kind === "text" || node.output.kind === "noteBlock" || node.output.kind === "noteDoc")
+              ? (node.output.text ?? "").replace(/\s+/g, " ").trim().slice(0, 120) || undefined
+              : undefined;
+          await send({ type: "node.done", runId, nodeId: node.nodeId, summary: node.summary ?? "完成", preview });
         } else if (node.status === "error") {
           await send({ type: "node.error", runId, nodeId: node.nodeId, error: node.error ?? "失败" });
         }
@@ -157,6 +190,11 @@ export function runsApi(db: AppDatabase, engine: RunEngine, dataDir: string) {
 
   api.post("/:id/stop", (c) => {
     const ok = engine.stop(c.req.param("id"));
+    return c.json({ ok });
+  });
+
+  api.post("/:id/force-stop", (c) => {
+    const ok = engine.forceStop(c.req.param("id"));
     return c.json({ ok });
   });
 
@@ -211,6 +249,21 @@ export function runsApi(db: AppDatabase, engine: RunEngine, dataDir: string) {
       ? { kind: row.outputKind, text: row.outputText ?? undefined, path: row.outputPath ?? undefined, size: row.outputSize ?? undefined }
       : undefined;
     return c.json({ status: row.status, error: row.error, summary: row.summary, output });
+  });
+
+  api.get("/:id/outputs/:nodeId/content", async (c) => {
+    const row = db
+      .select()
+      .from(runNodeResults)
+      .where(eq(runNodeResults.runId, c.req.param("id")))
+      .all()
+      .find((r) => r.nodeId === c.req.param("nodeId"));
+    if (!row) return c.json({ error: "节点结果不存在" }, 404);
+    if (row.outputText) return c.json({ text: row.outputText, size: row.outputSize ?? row.outputText.length });
+    if (!row.outputPath) return c.json({ text: "" });
+    const abs = resolve(dataDir, row.outputPath);
+    const text = await readFile(abs, "utf8");
+    return c.json({ text, size: text.length });
   });
 
   api.get("/:id/outputs/:nodeId/download", async (c) => {

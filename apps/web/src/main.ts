@@ -17,6 +17,7 @@ import "./styles/tokens.css";
 import "element-plus/dist/index.css";
 import "./styles/element-theme.css";
 import "./styles/app.css";
+import "./styles/markdown.css";
 
 const app = createApp(App);
 app.use(createPinia());

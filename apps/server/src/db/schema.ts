@@ -45,6 +45,8 @@ export const runs = sqliteTable("runs", {
   elapsedMs: integer("elapsed_ms"),
   summary: text("summary"),
   error: text("error"),
+  /** 运行时的工程图快照，保证历史结果页的输入/输出溯源不被后续编辑影响。 */
+  graphJson: text("graph_json"),
 });
 
 export type RunRow = typeof runs.$inferSelect;

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import { ElInput, ElMessage, ElOption, ElSelect, ElUpload, type UploadRequestOptions } from "element-plus";
-import { Cloud, FileOutput, FileText, FileUp, GitMerge, Link2, Mic, Sparkles, WandSparkles } from "lucide-vue-next";
+import { Cloud, Eye, FileOutput, FileText, FileUp, GitMerge, Link2, Mic, Sparkles, WandSparkles } from "lucide-vue-next";
 import { Handle, Position, type NodeProps } from "@vue-flow/core";
 import { ContextMenuContent, ContextMenuItem, ContextMenuPortal, ContextMenuRoot, ContextMenuSeparator, ContextMenuTrigger } from "reka-ui";
 import { NODE_PORTS, NODE_TYPE_LABELS, type NodeType, type UploadedFile, type VideoPreview } from "@scribe-flow/shared";
@@ -79,6 +79,14 @@ function schedulePreview(url: string) {
     try {
       const result = await api.post<VideoPreview>("/api/videos/preview", { url: value });
       preview.value = result;
+      const bvid = result.bvid || value.match(/BV[0-9A-Za-z]+/)?.[0] || "";
+      patch({
+        bvid,
+        title: result.title,
+        cover: result.cover,
+        uploader: result.uploader,
+        duration: result.duration,
+      });
       if (result.pages.length > 0) {
         const first = result.pages[0];
         patch({ pageInfo: { cid: first.cid, page: first.page, part: first.part, duration: first.duration } });
@@ -135,6 +143,10 @@ const typeIcon = computed(() => {
 
 const statusClass = computed(() => (props.data.status ? `is-${props.data.status}` : "is-idle"));
 const sizeClass = computed(() => `sf-node--${nodeType.value.replaceAll(".", "-")}`);
+
+const canViewOutput = computed(() =>
+  ["source.text", "process.transcribe", "process.refine", "process.prompt", "process.merge", "process.output"].includes(nodeType.value),
+);
 
 const asrOptions = [
   { label: "MiMo-V2.5", value: "mimo", icon: Mic },
@@ -194,6 +206,16 @@ function commit() {
             @input="patch({ label: ($event.target as HTMLInputElement).value })"
             @blur="commit"
           />
+          <button
+            v-if="canViewOutput"
+            type="button"
+            class="sf-node-output-btn"
+            :title="`查看 ${label} 的输出`"
+            :aria-label="`查看 ${label} 的输出`"
+            @click.stop="props.data.ctx?.viewOutput()"
+          >
+            <Eye :size="13" />
+          </button>
           <span class="sf-node-status" />
         </div>
 
@@ -347,7 +369,10 @@ function commit() {
           </template>
         </div>
 
-        <div v-if="data.summary" class="sf-node-summary tnum">{{ data.summary }}</div>
+        <div v-if="data.summary || data.preview" class="sf-node-result">
+          <div v-if="data.preview" class="sf-node-result-preview">{{ data.preview }}</div>
+          <div v-if="data.summary" class="sf-node-result-meta tnum">{{ data.summary }}</div>
+        </div>
 
         <Handle
           v-for="port in ports.outputs"
@@ -492,15 +517,53 @@ function commit() {
   gap: 8px;
 }
 
-.sf-node-summary {
+.sf-node-result {
   margin-top: 8px;
   padding: 7px 8px;
-  border: 1px solid var(--color-brand-border);
+  border: 1px solid var(--color-border);
   border-radius: var(--radius-sm);
-  background: var(--color-brand-soft);
-  color: var(--color-brand);
+  background: var(--color-surface-muted);
+}
+
+.sf-node-result-preview {
   font-size: 11px;
   line-height: 1.5;
+  color: var(--color-text-secondary);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  word-break: break-word;
+}
+
+.sf-node-result-meta {
+  margin-top: 4px;
+  font-size: 10px;
+  color: var(--color-text-tertiary);
+}
+
+.sf-node-output-btn {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text-tertiary);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition:
+    background-color var(--dur-1) var(--ease-out),
+    color var(--dur-1) var(--ease-out),
+    border-color var(--dur-1) var(--ease-out);
+}
+
+.sf-node-output-btn:hover {
+  border-color: var(--color-brand-border);
+  background: var(--color-brand-soft);
+  color: var(--color-brand);
 }
 
 .sf-node-preview {

@@ -172,14 +172,12 @@ onBeforeUnmount(() => {
   right: 0;
   width: 100%;
   min-width: 100%;
-  background: #ffffff;
+  background: var(--color-surface);
   border: none;
-  border-radius: 12px;
-  box-shadow:
-    0 2px 8px rgba(0, 0, 0, 0.06),
-    0 12px 32px rgba(0, 0, 0, 0.08);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-overlay);
   padding: 6px;
-  z-index: 100;
+  z-index: var(--z-dropdown);
 }
 
 .sf-model-select__option {
@@ -190,9 +188,9 @@ onBeforeUnmount(() => {
   height: 40px;
   padding: 0 10px;
   border: none;
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   background: transparent;
-  color: #212121;
+  color: var(--color-text);
   font-family: inherit;
   font-size: 14px;
   text-align: left;
@@ -201,18 +199,18 @@ onBeforeUnmount(() => {
 }
 
 .sf-model-select__option:hover {
-  background: #f5f5f5;
+  background: var(--color-ink-soft);
 }
 
 .sf-model-select__option.is-selected {
-  background: #f5f5f5;
+  background: var(--color-ink-soft);
   font-weight: 500;
 }
 
 .sf-model-select__option-icon {
   display: inline-flex;
   flex-shrink: 0;
-  color: #555;
+  color: var(--color-text-secondary);
 }
 
 .sf-model-select__option-label {
@@ -225,7 +223,7 @@ onBeforeUnmount(() => {
 
 .sf-model-select__check {
   flex-shrink: 0;
-  color: #8a8a8a;
+  color: var(--color-text-tertiary);
   opacity: 0;
   transition: opacity 0.12s ease;
 }
