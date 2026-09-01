@@ -2,9 +2,10 @@ import { readFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
-import { desc, eq } from "drizzle-orm";
+import { and, desc, eq } from "drizzle-orm";
 import { z } from "zod";
 import {
+  NODE_TYPE_LABELS,
   parseGraph,
   type NodeOutput,
   type RunEvent,
@@ -77,6 +78,8 @@ function nodeIdsForScope(graph: ReturnType<typeof parseGraph>, scope: RunScope, 
 export function createRun(db: AppDatabase, projectId: string, scope: RunScope, nodeId?: string) {
   const project = db.select().from(projects).where(eq(projects.id, projectId)).get();
   if (!project) throw new Error("工程不存在");
+  const existingRunning = db.select().from(runs).where(and(eq(runs.projectId, projectId), eq(runs.status, "running"))).get();
+  if (existingRunning) throw new Error("该工程已有运行正在进行，请先等待或停止");
   const graph = parseGraph(JSON.parse(project.graphJson));
   if (scope !== "all" && nodeId && !graph.nodes.some((n) => n.id === nodeId)) {
     throw new Error("节点不存在");
@@ -88,6 +91,20 @@ export function createRun(db: AppDatabase, projectId: string, scope: RunScope, n
   const needsAsr = graph.nodes.some((n) => scopeNodeIds.has(n.id) && n.type === "process.transcribe");
   if (needsAi && !getAiConfig(db).apiKey) throw new Error("未配置 AI 模型密钥，请先到设置页填写");
   if (needsAsr && !getAsrConfig(db).apiKey) throw new Error("未配置语音识别密钥，请先到设置页填写");
+
+  // 执行前预检：B 站来源节点必须有可识别的链接/BV 号，避免启动后才失败。
+  const emptyBili = graph.nodes.find(
+    (n) =>
+      scopeNodeIds.has(n.id) &&
+      n.type === "source.bili" &&
+      !String(n.data.url ?? "").trim() &&
+      !String(n.data.bvid ?? "").trim() &&
+      !(Array.isArray(n.data.items) && n.data.items.length > 0),
+  );
+  if (emptyBili) {
+    const label = emptyBili.data.label ?? NODE_TYPE_LABELS[emptyBili.type];
+    throw new Error(`节点「${label}」的 B 站链接为空，请填写链接或删除该节点`);
+  }
 
   const id = nextRunId();
   const createdAt = Date.now();
@@ -135,7 +152,7 @@ export function runsApi(db: AppDatabase, engine: RunEngine, dataDir: string) {
   api.get("/:id", (c) => {
     const detail = engine.detail(c.req.param("id"));
     if (!detail.run) return c.json({ error: "运行不存在" }, 404);
-    return c.json({ ...detail.run, nodeResults: detail.nodes, graph: detail.graph });
+    return c.json({ ...detail.run, nodeResults: detail.nodes, graph: detail.graph, inputs: detail.inputs });
   });
 
   api.get("/:id/events", (c) => {
@@ -214,6 +231,7 @@ export function runsApi(db: AppDatabase, engine: RunEngine, dataDir: string) {
     const runId = c.req.param("id");
     const row = db.select().from(runs).where(eq(runs.id, runId)).get();
     if (!row) return c.json({ error: "运行不存在" }, 404);
+    if (row.status === "running") return c.json({ error: "运行中不可删除，请先停止或等待结束" }, 400);
     await engine.deleteRun(runId);
     return c.json({ ok: true });
   });

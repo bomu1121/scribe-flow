@@ -46,10 +46,30 @@ export interface NodeOutput {
   size?: number;
 }
 
+export interface RunNodeInput {
+  id: string;
+  runId: string;
+  /** 消费该输入的节点（例如 process.transcribe / process.refine）。 */
+  targetNodeId: string;
+  /** 产生该输入的节点（来源或上游处理节点）。 */
+  sourceNodeId: string;
+  kind: "text" | "audio";
+  text?: string;
+  /** 该输入在目标节点处理后的独立结果（例如每个输入单独调用 AI 后的输出）。 */
+  resultText?: string;
+  path?: string;
+  size?: number;
+  /** 同一目标节点下的输入顺序（按连线顺序）。 */
+  position: number;
+  createdAt: number;
+}
+
 export interface RunDetail extends RunMeta {
   nodeResults: RunNodeResult[];
   /** 运行时的工程图快照；旧运行可能缺失，前端可回退到当前工程图。 */
   graph?: WorkflowGraph;
+  /** 各节点消费的输入明细；用于在结果页单独查看“这条链路身上的所有输入”。 */
+  inputs?: RunNodeInput[];
 }
 
 export type RunNodeLogKind = "input" | "ai-request" | "ai-response" | "info" | "error";

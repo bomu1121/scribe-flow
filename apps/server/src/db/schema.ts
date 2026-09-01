@@ -70,6 +70,23 @@ export const runNodeResults = sqliteTable("run_node_results", {
 
 export type RunNodeResultRow = typeof runNodeResults.$inferSelect;
 
+/** 运行节点输入明细：记录每个节点实际消费的输入（文本或音频转写结果），用于结果页单独查看。 */
+export const runNodeInputs = sqliteTable("run_node_inputs", {
+  id: text("id").primaryKey(),
+  runId: text("run_id").notNull(),
+  targetNodeId: text("target_node_id").notNull(),
+  sourceNodeId: text("source_node_id").notNull(),
+  kind: text("kind", { enum: ["text", "audio"] }).notNull(),
+  text: text("text"),
+  resultText: text("result_text"),
+  path: text("path"),
+  size: integer("size"),
+  position: integer("position").notNull().default(0),
+  createdAt: integer("created_at").notNull(),
+});
+
+export type RunNodeInputRow = typeof runNodeInputs.$inferSelect;
+
 /** 应用设置（key-value；密钥只存服务端，读取接口返回 hasKey）。 */
 export const appSettings = sqliteTable("app_settings", {
   key: text("key").primaryKey(),

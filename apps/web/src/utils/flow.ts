@@ -1,5 +1,5 @@
 import type { ViewportTransform } from "@vue-flow/core";
-import type { AsrEngine, GraphEdge, GraphNode, NodeRunStatus, NodeType, PageRef, SourceVideoItem, WorkflowGraph } from "@scribe-flow/shared";
+import type { AsrEngine, BiliSourceItem, GraphEdge, GraphNode, NodeRunStatus, NodeType, PageRef, SourceVideoItem, WorkflowGraph } from "@scribe-flow/shared";
 
 export const SCRIBE_NODE_TYPE = "scribe";
 export const SCRIBE_EDGE_TYPE = "scribe";
@@ -9,6 +9,8 @@ export interface NodeContextActions {
   remove: () => void;
   runNode: () => void;
   runFromNode: () => void;
+  /** 当前工程是否有运行正在进行；用于禁用右键菜单里的“运行”入口。 */
+  running?: boolean;
   copyOutput: () => void;
   /** 打开该节点在最近一次运行中的输出结果页。 */
   viewOutput: () => void;
@@ -16,7 +18,7 @@ export interface NodeContextActions {
   updateData: (patch: Record<string, unknown>) => void;
   /** 卡片内表单失焦时提交一次撤销历史。 */
   commit: () => void;
-  /** 快捷选择器确认后：第一个填当前节点，其余生成新的 B 站来源节点。 */
+  /** 多选合并：把多个 B 站视频/分P 合并进当前节点，生成一张多选卡片。 */
   addSourceVideos: (videos: SourceVideoItem[]) => void;
 }
 
@@ -28,6 +30,8 @@ export interface ScribeNodeData {
   preview?: string;
   url?: string;
   pageInfo?: PageRef;
+  /** 多选模式：一张卡片里的多个 B 站视频/分P。 */
+  items?: BiliSourceItem[];
   bvid?: string;
   cover?: string;
   uploader?: string;

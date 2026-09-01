@@ -128,7 +128,16 @@ async function removeRun(run: RunMeta) {
       <el-table-column label="操作" width="130" align="right">
         <template #default="{ row }">
           <el-button size="small" text @click="router.push(`/project/${asRun(row).projectId}/run/${asRun(row).id}`)"><Eye :size="14" /><span>详情</span></el-button>
-          <el-button size="small" text class="sf-danger-text" @click="removeRun(asRun(row))"><Trash2 :size="14" /><span>删除</span></el-button>
+          <el-button
+            size="small"
+            text
+            class="sf-danger-text"
+            :disabled="asRun(row).status === 'running'"
+            :title="asRun(row).status === 'running' ? '运行中不可删除' : '删除运行'"
+            @click="removeRun(asRun(row))"
+          >
+            <Trash2 :size="14" /><span>删除</span>
+          </el-button>
         </template>
       </el-table-column>
     </el-table>

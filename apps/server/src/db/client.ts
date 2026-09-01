@@ -116,11 +116,31 @@ function ensureSchema(sqlite: Database.Database) {
       content TEXT NOT NULL,
       created_at INTEGER NOT NULL
     );
+
+    CREATE TABLE IF NOT EXISTS run_node_inputs (
+      id TEXT PRIMARY KEY,
+      run_id TEXT NOT NULL,
+      target_node_id TEXT NOT NULL,
+      source_node_id TEXT NOT NULL,
+      kind TEXT NOT NULL,
+      text TEXT,
+      result_text TEXT,
+      path TEXT,
+      size INTEGER,
+      position INTEGER NOT NULL DEFAULT 0,
+      created_at INTEGER NOT NULL
+    );
   `);
 
   // 幂等迁移：旧库 runs 表没有 graph_json 时补列。
   const runColumns = sqlite.prepare("PRAGMA table_info(runs)").all() as Array<{ name: string }>;
   if (!runColumns.some((col) => col.name === "graph_json")) {
     sqlite.exec("ALTER TABLE runs ADD COLUMN graph_json TEXT");
+  }
+
+  // 幂等迁移：旧库 run_node_inputs 表没有 result_text 时补列。
+  const inputColumns = sqlite.prepare("PRAGMA table_info(run_node_inputs)").all() as Array<{ name: string }>;
+  if (!inputColumns.some((col) => col.name === "result_text")) {
+    sqlite.exec("ALTER TABLE run_node_inputs ADD COLUMN result_text TEXT");
   }
 }

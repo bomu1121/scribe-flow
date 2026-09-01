@@ -13,6 +13,17 @@ const pageRefSchema = z.object({
   duration: z.number(),
 });
 
+const biliSourceItemSchema = z.object({
+  bvid: z.string(),
+  cid: z.number(),
+  page: z.number(),
+  part: z.string(),
+  title: z.string().optional(),
+  cover: z.string().optional(),
+  uploader: z.string().optional(),
+  duration: z.number().optional(),
+});
+
 const baseDataSchema = z.object({
   label: z.string().optional(),
   status: z.enum(["idle", "queued", "running", "done", "error", "cancelled"]).optional(),
@@ -23,6 +34,12 @@ const nodeDataByType = {
   bili: baseDataSchema.extend({
     url: z.string(),
     pageInfo: pageRefSchema.optional(),
+    items: z.array(biliSourceItemSchema).optional(),
+    bvid: z.string().optional(),
+    title: z.string().optional(),
+    cover: z.string().optional(),
+    uploader: z.string().optional(),
+    duration: z.number().optional(),
   }),
   file: baseDataSchema.extend({
     fileId: z.string().optional(),

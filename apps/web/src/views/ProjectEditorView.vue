@@ -3,12 +3,14 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { ElButton, ElDrawer, ElDropdown, ElDropdownItem, ElDropdownMenu, ElInput, ElMessage } from "element-plus";
 import { ArrowLeft, Check, Copy, Download, ExternalLink, LayoutPanelTop, Maximize, MoreHorizontal, Play, Redo2, StopCircle, Trash2, Undo2 } from "lucide-vue-next";
-import { emptyGraph, type RunDetail, type RunMeta, type RunNodeResult, type WorkflowGraph } from "@scribe-flow/shared";
+import { NODE_TYPE_LABELS, emptyGraph, type NodeType, type RunDetail, type RunMeta, type RunNodeInput, type RunNodeResult, type SourceVideoItem, type WorkflowGraph } from "@scribe-flow/shared";
 import FlowCanvas from "@/components/canvas/FlowCanvas.vue";
 import NodePalette from "@/components/canvas/NodePalette.vue";
+import SourcePickerDialog from "@/components/canvas/SourcePickerDialog.vue";
 import { api } from "@/lib/api";
 import { renderMarkdown } from "@/lib/markdown";
 import { subscribeRunEvents } from "@/lib/sse";
+import { useAuthStore } from "@/stores/auth";
 import { useProjectsStore } from "@/stores/projects";
 import { useRunsStore } from "@/stores/runs";
 import { useSettingsStore } from "@/stores/settings";
@@ -20,6 +22,7 @@ const router = useRouter();
 const store = useProjectsStore();
 const runsStore = useRunsStore();
 const settingsStore = useSettingsStore();
+const authStore = useAuthStore();
 
 const projectId = computed(() => String(route.params.id));
 const projectName = ref("");
@@ -42,13 +45,90 @@ const outputDrawerNodeLabel = ref("");
 const outputDrawerRunStatus = ref("");
 const outputDrawerText = ref("");
 const outputDrawerLoading = ref(false);
+const outputDrawerInputs = ref<RunNodeInput[]>([]);
+const outputDrawerNodeResults = ref<RunNodeResult[]>([]);
+const outputDrawerGraph = ref<WorkflowGraph | null>(null);
+const outputDrawerView = ref<"output" | "input">("output");
+const outputDrawerSelectedInputKey = ref("");
+const outputDrawerInputMode = ref<"result" | "raw">("result");
+const outputDrawerInputText = ref("");
+const biliPickerVisible = ref(false);
 const renderedOutput = computed(() => renderMarkdown(outputDrawerText.value));
+const renderedOutputInput = computed(() => renderMarkdown(outputDrawerInputText.value));
+const outputDrawerActiveText = computed(() => (outputDrawerView.value === "input" ? outputDrawerInputText.value : outputDrawerText.value));
 const runStatusLabels: Record<string, string> = {
   running: "运行中",
   success: "成功",
   error: "失败",
   cancelled: "已取消",
 };
+
+interface OutputDrawerInputItem extends RunNodeInput {
+  label: string;
+  key: string;
+}
+
+function upstreamNodeIds(graph: WorkflowGraph, nodeId: string): Set<string> {
+  const result = new Set<string>();
+  const visit = (id: string) => {
+    for (const edge of graph.edges) {
+      if (edge.target === id && !result.has(edge.source)) {
+        result.add(edge.source);
+        visit(edge.source);
+      }
+    }
+  };
+  visit(nodeId);
+  return result;
+}
+
+const outputDrawerInputItems = computed<OutputDrawerInputItem[]>(() => {
+  const graph = outputDrawerGraph.value;
+  if (!graph || !outputDrawerNodeId.value) return [];
+  const upstream = upstreamNodeIds(graph, outputDrawerNodeId.value);
+  const resultMap = new Map(outputDrawerNodeResults.value.map((n) => [n.nodeId, n]));
+  const order = new Map(outputDrawerNodeResults.value.map((n, idx) => [n.nodeId, idx]));
+  const items = outputDrawerInputs.value
+    .filter((input) => upstream.has(input.sourceNodeId))
+    .map((input) => {
+      const node = resultMap.get(input.sourceNodeId);
+      const graphNode = graph.nodes.find((n) => n.id === input.sourceNodeId);
+      const data = (graphNode?.data ?? {}) as Record<string, unknown>;
+      let label = node?.nodeLabel || NODE_TYPE_LABELS[node?.nodeType as keyof typeof NODE_TYPE_LABELS] || node?.nodeType || input.sourceNodeId;
+      if (graphNode?.type === "source.bili") {
+        const items = Array.isArray(data.items) ? (data.items as { title?: string }[]) : [];
+        if (items.length > 1) label = String(data.label ?? NODE_TYPE_LABELS[graphNode.type] ?? "B站多选");
+        else if (typeof data.title === "string" && data.title) label = data.title;
+      } else if (graphNode?.type === "source.file" && typeof data.fileName === "string" && data.fileName) label = data.fileName;
+      return { ...input, label, key: input.id };
+    });
+  const counts = new Map<string, number>();
+  for (const item of items) counts.set(item.sourceNodeId, (counts.get(item.sourceNodeId) ?? 0) + 1);
+  const seen = new Map<string, number>();
+  return items
+    .map((item) => {
+      if ((counts.get(item.sourceNodeId) ?? 0) > 1) {
+        const index = (seen.get(item.sourceNodeId) ?? 0) + 1;
+        seen.set(item.sourceNodeId, index);
+        const graphNode = graph.nodes.find((n) => n.id === item.sourceNodeId);
+        const data = (graphNode?.data ?? {}) as Record<string, unknown>;
+        const biliItems = Array.isArray(data.items) ? (data.items as { title?: string; part?: string; page?: number }[]) : [];
+        let itemLabel = item.label;
+        if (graphNode?.type === "source.bili" && biliItems.length >= index) {
+          const entry = biliItems[index - 1];
+          if (entry) {
+            itemLabel = entry.title || (typeof data.title === "string" ? data.title : "") || item.label;
+            if (entry.part) itemLabel = `${itemLabel} · P${entry.page} ${entry.part}`;
+          }
+        }
+        return { ...item, label: `${itemLabel} #${index}` };
+      }
+      return item;
+    })
+    .sort((a, b) => (order.get(a.sourceNodeId) ?? Number.MAX_SAFE_INTEGER) - (order.get(b.sourceNodeId) ?? Number.MAX_SAFE_INTEGER));
+});
+
+const selectedOutputDrawerInput = computed(() => outputDrawerInputItems.value.find((i) => i.key === outputDrawerSelectedInputKey.value) ?? null);
 
 let saveTimer: ReturnType<typeof setTimeout> | null = null;
 let stopRunEvents: (() => void) | null = null;
@@ -97,6 +177,25 @@ function showNotice(message: string) {
   noticeTimer.value = setTimeout(() => {
     consoleNotice.value = "";
   }, 4000);
+}
+
+function onPaletteAdd(type: NodeType | "source.biliCollection") {
+  if (type === "source.biliCollection") {
+    if (!authStore.loggedIn) {
+      ElMessage.info("请先点击左下角「未登录 B 站」扫码登录");
+      return;
+    }
+    biliPickerVisible.value = true;
+    return;
+  }
+  flowCanvasRef.value?.addNodeAtCenter(type);
+}
+
+function onBiliPickerConfirm(videos: SourceVideoItem[]) {
+  if (videos.length > 0) {
+    flowCanvasRef.value?.addBiliVideos(videos);
+    ElMessage.success(videos.length > 1 ? `已添加 1 张多选卡片（${videos.length} 个视频）` : "已添加 1 个视频来源");
+  }
 }
 
 function onGraphUpdate(next: WorkflowGraph) {
@@ -233,6 +332,16 @@ async function startRun(scope: "all" | "fromNode" | "node", nodeId?: string) {
     ElMessage.error(missing);
     return;
   }
+  // 先落盘当前画布，避免运行服务端读到上一次保存的旧图（例如刚粘贴的 B 站链接还没到自动保存）。
+  if (saveTimer) clearTimeout(saveTimer);
+  saveTimer = null;
+  try {
+    await store.saveGraph(projectId.value, graph.value);
+    saveState.value = "saved";
+  } catch (err) {
+    ElMessage.error(err instanceof Error ? err.message : "保存失败，请稍后重试");
+    return;
+  }
   try {
     running.value = true;
     const run = await api.post<RunMeta>(`/api/projects/${projectId.value}/runs`, { scope, nodeId });
@@ -250,6 +359,8 @@ async function startRun(scope: "all" | "fromNode" | "node", nodeId?: string) {
         running.value = false;
         activeRun.value = { ...(activeRun.value as RunMeta), status: event.status };
         showNotice(`运行结束：${event.status}`);
+        stopRunEvents?.();
+        stopRunEvents = null;
         void runsStore.load();
       }
     });
@@ -306,7 +417,7 @@ async function viewOutput(nodeId: string) {
       const detail = await api.get<RunDetail>(`/api/runs/${run.id}`);
       const nodeResult = detail.nodeResults.find((node) => node.nodeId === nodeId);
       if (nodeResult) {
-        openOutputDrawer(nodeId, run, nodeResult);
+        openOutputDrawer(nodeId, run, nodeResult, detail);
         return;
       }
     }
@@ -316,12 +427,18 @@ async function viewOutput(nodeId: string) {
   }
 }
 
-function openOutputDrawer(nodeId: string, run: RunMeta, nodeResult: RunNodeResult) {
+function openOutputDrawer(nodeId: string, run: RunMeta, nodeResult: RunNodeResult, detail: RunDetail) {
   outputDrawerNodeId.value = nodeId;
   outputDrawerRunId.value = run.id;
   outputDrawerRunStatus.value = run.status;
   outputDrawerNodeLabel.value = nodeResult.nodeLabel || nodeResult.nodeType;
   outputDrawerText.value = "";
+  outputDrawerInputs.value = detail.inputs ?? [];
+  outputDrawerNodeResults.value = detail.nodeResults;
+  outputDrawerGraph.value = detail.graph ?? graph.value;
+  outputDrawerView.value = "output";
+  outputDrawerSelectedInputKey.value = "";
+  outputDrawerInputText.value = "";
   outputDrawerVisible.value = true;
   void loadNodeOutput(nodeId, run.id, nodeResult);
 }
@@ -345,24 +462,44 @@ async function loadNodeOutput(nodeId: string, runId: string, nodeResult: RunNode
   }
 }
 
+function selectOutputDrawerOutput() {
+  outputDrawerView.value = "output";
+  outputDrawerSelectedInputKey.value = "";
+  outputDrawerInputText.value = "";
+}
+
+function selectOutputDrawerInput(item: OutputDrawerInputItem) {
+  outputDrawerView.value = "input";
+  outputDrawerSelectedInputKey.value = item.key;
+  outputDrawerInputMode.value = item.resultText ? "result" : "raw";
+  outputDrawerInputText.value = item.resultText ?? item.text ?? "";
+}
+
+function selectOutputDrawerInputMode(mode: "result" | "raw") {
+  const item = selectedOutputDrawerInput.value;
+  if (!item) return;
+  outputDrawerInputMode.value = mode;
+  outputDrawerInputText.value = mode === "result" ? item.resultText ?? item.text ?? "" : item.text ?? "";
+}
+
 function openFullResult() {
   if (!outputDrawerRunId.value) return;
   void router.push({ path: `/project/${projectId.value}/run/${outputDrawerRunId.value}`, query: { focus: outputDrawerNodeId.value } });
 }
 
 async function copyNodeOutput() {
-  if (!outputDrawerText.value) return;
+  if (!outputDrawerActiveText.value) return;
   try {
-    await navigator.clipboard.writeText(outputDrawerText.value);
-    ElMessage.success("已复制节点输出");
+    await navigator.clipboard.writeText(outputDrawerActiveText.value);
+    ElMessage.success("已复制节点内容");
   } catch {
     ElMessage.error("复制失败，请手动选择文本");
   }
 }
 
 function downloadNodeOutput() {
-  if (!outputDrawerText.value) return;
-  const blob = new Blob([outputDrawerText.value], { type: "text/markdown; charset=utf-8" });
+  if (!outputDrawerActiveText.value) return;
+  const blob = new Blob([outputDrawerActiveText.value], { type: "text/markdown; charset=utf-8" });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
@@ -427,12 +564,13 @@ function downloadNodeOutput() {
 
     <div class="sf-editor-main">
       <div class="sf-mobile-hint">画布编辑器需要桌面端（≥1024px）。当前仅作只读预览，请在电脑上打开以编辑。</div>
-      <NodePalette @add="(type) => flowCanvasRef?.addNodeAtCenter(type)" />
+      <NodePalette @add="onPaletteAdd" />
       <FlowCanvas
         v-if="loaded"
         ref="flowCanvasRef"
         :key="projectId"
         :initial-graph="graph"
+        :running="running"
         @update:graph="onGraphUpdate"
         @notice="showNotice"
         @history-change="historyState = $event"
@@ -468,23 +606,44 @@ function downloadNodeOutput() {
           </el-button>
         </div>
 
+        <div v-if="outputDrawerInputItems.length > 0" class="sf-output-drawer-tabs">
+          <button type="button" :class="{ active: outputDrawerView === 'output' }" @click="selectOutputDrawerOutput">输出</button>
+          <button
+            v-for="item in outputDrawerInputItems"
+            :key="item.key"
+            type="button"
+            :class="{ active: outputDrawerView === 'input' && outputDrawerSelectedInputKey === item.key }"
+            @click="selectOutputDrawerInput(item)"
+          >
+            {{ item.label }}
+          </button>
+        </div>
+
         <div v-loading="outputDrawerLoading" class="sf-output-drawer-body">
-          <div v-if="outputDrawerText" class="sf-output-drawer-preview markdown-body" v-html="renderedOutput" />
+          <div v-if="outputDrawerView === 'input' && selectedOutputDrawerInput?.resultText" class="sf-output-drawer-input-modes">
+            <button type="button" :class="{ active: outputDrawerInputMode === 'result' }" @click="selectOutputDrawerInputMode('result')">处理结果</button>
+            <button type="button" :class="{ active: outputDrawerInputMode === 'raw' }" @click="selectOutputDrawerInputMode('raw')">原始输入</button>
+          </div>
+          <div v-if="outputDrawerView === 'input' && outputDrawerInputText" class="sf-output-drawer-preview markdown-body" v-html="renderedOutputInput" />
+          <div v-else-if="outputDrawerView === 'input' && !outputDrawerLoading" class="sf-output-drawer-empty">该输入暂无独立文本（可能是音视频或旧记录）。</div>
+          <div v-else-if="outputDrawerView === 'output' && outputDrawerText" class="sf-output-drawer-preview markdown-body" v-html="renderedOutput" />
           <div v-else-if="!outputDrawerLoading" class="sf-output-drawer-empty">该节点本次运行没有文本输出。</div>
         </div>
 
         <div class="sf-output-drawer-actions">
-          <el-button size="small" plain :disabled="!outputDrawerText" @click="copyNodeOutput">
+          <el-button size="small" plain :disabled="!outputDrawerActiveText" @click="copyNodeOutput">
             <Copy :size="13" />
             <span>复制</span>
           </el-button>
-          <el-button size="small" plain :disabled="!outputDrawerText" @click="downloadNodeOutput">
+          <el-button size="small" plain :disabled="!outputDrawerActiveText" @click="downloadNodeOutput">
             <Download :size="13" />
             <span>下载</span>
           </el-button>
         </div>
       </template>
     </el-drawer>
+
+    <SourcePickerDialog v-model:open="biliPickerVisible" @confirm="onBiliPickerConfirm" />
   </div>
 </template>
 
@@ -664,6 +823,63 @@ function downloadNodeOutput() {
   margin-top: 3px;
   font-size: 11px;
   color: var(--color-text-tertiary);
+}
+
+.sf-output-drawer-tabs {
+  display: flex;
+  gap: 4px;
+  padding: 8px 20px 0;
+  overflow-x: auto;
+  border-bottom: 1px solid var(--color-border);
+  flex-shrink: 0;
+}
+
+.sf-output-drawer-tabs button {
+  flex-shrink: 0;
+  height: 28px;
+  padding: 0 10px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.sf-output-drawer-tabs button:hover {
+  background: var(--color-ink-soft);
+  color: var(--color-text);
+}
+
+.sf-output-drawer-tabs button.active {
+  border-color: var(--color-brand);
+  background: var(--color-brand-soft);
+  color: var(--color-brand);
+}
+
+.sf-output-drawer-input-modes {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 10px;
+}
+
+.sf-output-drawer-input-modes button {
+  height: 24px;
+  padding: 0 10px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-muted);
+  color: var(--color-text-secondary);
+  font-family: inherit;
+  font-size: 11.5px;
+  cursor: pointer;
+}
+
+.sf-output-drawer-input-modes button.active {
+  border-color: var(--color-brand);
+  background: var(--color-brand-soft);
+  color: var(--color-brand);
 }
 
 .sf-output-drawer-body {

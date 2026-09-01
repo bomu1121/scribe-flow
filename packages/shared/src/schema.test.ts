@@ -32,6 +32,72 @@ describe("graph", () => {
     expect(isValidConnection(biliNode, "audio", transcribeNode, "audio")).toBe(true);
     expect(isValidConnection(biliNode, "audio", transcribeNode, "transcript")).toBe(false);
   });
+
+  it("保留 B 站来源节点的展示元信息", () => {
+    const result = safeParseGraph({
+      schemaVersion: 1,
+      nodes: [
+        {
+          id: "a",
+          type: "source.bili",
+          position: { x: 0, y: 0 },
+          data: {
+            url: "https://www.bilibili.com/video/BV1xx411c7mD",
+            bvid: "BV1xx411c7mD",
+            title: "示例视频",
+            cover: "https://example.com/cover.jpg",
+            uploader: "UP 主",
+            duration: 120,
+          },
+        },
+      ],
+      edges: [],
+      viewport: { x: 0, y: 0, zoom: 1 },
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      const data = result.data.nodes[0].data as {
+        bvid?: string;
+        title?: string;
+        cover?: string;
+        uploader?: string;
+        duration?: number;
+      };
+      expect(data.bvid).toBe("BV1xx411c7mD");
+      expect(data.title).toBe("示例视频");
+      expect(data.cover).toBe("https://example.com/cover.jpg");
+      expect(data.uploader).toBe("UP 主");
+      expect(data.duration).toBe(120);
+    }
+  });
+
+  it("接受 B 站来源节点的多选 items 字段", () => {
+    const result = safeParseGraph({
+      schemaVersion: 1,
+      nodes: [
+        {
+          id: "a",
+          type: "source.bili",
+          position: { x: 0, y: 0 },
+          data: {
+            url: "https://www.bilibili.com/video/BV1xx411c7mD",
+            items: [
+              { bvid: "BV1xx411c7mD", cid: 1001, page: 1, part: "P1", title: "示例视频", duration: 120 },
+              { bvid: "BV1xx411c7mD", cid: 1002, page: 2, part: "P2", title: "示例视频", duration: 180 },
+            ],
+          },
+        },
+      ],
+      edges: [],
+      viewport: { x: 0, y: 0, zoom: 1 },
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      const data = result.data.nodes[0].data as { items?: { bvid: string; cid: number; page: number; part: string }[] };
+      expect(data.items).toHaveLength(2);
+      expect(data.items?.[1]?.cid).toBe(1002);
+    }
+  });
 });
 
 describe("templates", () => {

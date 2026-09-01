@@ -9,10 +9,27 @@ export interface PageRef {
   duration: number;
 }
 
+/** B 站来源卡片里的单个可下载视频/分P。 */
+export interface BiliSourceItem {
+  bvid: string;
+  cid: number;
+  page: number;
+  part: string;
+  title?: string;
+  cover?: string;
+  uploader?: string;
+  duration?: number;
+}
+
 /** B 站来源：手动 URL 或快捷选择后解析出的 pageInfo。 */
 export interface BiliSourceData {
   url: string;
   pageInfo?: PageRef;
+  /**
+   * 多选模式：一张卡片承载多个 B 站视频/分P。
+   * 运行时会逐个产出音频，等价于多张独立来源卡片连到下游。
+   */
+  items?: BiliSourceItem[];
   /** 展示用元信息（解析成功后写入，运行结果页据此展示封面/标题/UP主）。 */
   bvid?: string;
   title?: string;

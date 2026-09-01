@@ -15,7 +15,15 @@ export function subscribeRunEvents(runId: string, onEvent: (event: RunEvent) => 
 
     source.onmessage = (ev) => {
       try {
-        onEvent(JSON.parse(ev.data) as RunEvent);
+        const event = JSON.parse(ev.data) as RunEvent;
+        onEvent(event);
+        // 运行已结束，主动关闭并禁止重连，避免对已结束运行反复重放快照/错误。
+        if (event.type === "run.done") {
+          closed = true;
+          if (timer) clearTimeout(timer);
+          source?.close();
+          source = null;
+        }
       } catch {
         // 忽略无法解析的事件
       }

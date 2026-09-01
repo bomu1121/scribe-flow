@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from "vue";
-import { ElButton, ElDialog, ElInput, ElMessage, ElOption, ElSelect, ElTabPane, ElTable, ElTableColumn, ElTabs, type TableInstance } from "element-plus";
+import { ElButton, ElDialog, ElInput, ElMessage, ElTabPane, ElTable, ElTableColumn, ElTabs, type TableInstance } from "element-plus";
 import { Clock3, FolderHeart, ListVideo, PlaySquare } from "lucide-vue-next";
 import type { SourceCollection, SourceVideoItem } from "@scribe-flow/shared";
+import ModelSelect from "../ModelSelect.vue";
 import { api } from "@/lib/api";
 
 const props = defineProps<{ open: boolean }>();
@@ -236,26 +237,24 @@ onBeforeUnmount(() => {
     </el-tabs>
 
     <div class="sf-picker-toolbar">
-      <el-select
-        v-if="activeTab === 'fav'"
-        v-model="selectedFolder"
-        class="sf-picker-folder"
-        size="small"
-        placeholder="选择收藏夹"
-        :loading="loading && folders.length === 0"
-      >
-        <el-option v-for="folder in folders" :key="folder.id" :label="`${folder.title}（${folder.count}）`" :value="folder.id" />
-      </el-select>
-      <el-select
-        v-else-if="activeTab === 'season'"
-        v-model="selectedCollection"
-        class="sf-picker-folder"
-        size="small"
-        placeholder="选择合集"
-        :loading="loading && collections.length === 0"
-      >
-        <el-option v-for="collection in collections" :key="collection.id" :label="`${collection.title}（${collection.count}）`" :value="collection.id" />
-      </el-select>
+      <div v-if="activeTab === 'fav'" class="sf-picker-folder">
+        <ModelSelect
+          v-model="selectedFolder"
+          :options="folders.map((folder) => ({ label: `${folder.title}（${folder.count}）`, value: folder.id }))"
+          size="small"
+          placeholder="选择收藏夹"
+          :prefix-icon="FolderHeart"
+        />
+      </div>
+      <div v-else-if="activeTab === 'season'" class="sf-picker-folder">
+        <ModelSelect
+          v-model="selectedCollection"
+          :options="collections.map((collection) => ({ label: `${collection.title}（${collection.count}）`, value: collection.id }))"
+          size="small"
+          placeholder="选择合集"
+          :prefix-icon="ListVideo"
+        />
+      </div>
       <el-input v-if="activeTab !== 'history'" v-model="searchKeyword" size="small" clearable placeholder="搜索标题 / UP 主" class="sf-picker-search" />
     </div>
 

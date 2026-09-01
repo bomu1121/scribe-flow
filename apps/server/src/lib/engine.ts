@@ -9,13 +9,14 @@ import {
   type NodeOutput,
   type RunEvent,
   type RunMeta,
+  type RunNodeInput,
   type RunNodeResult,
   type RunScope,
   type RunStatus,
   type WorkflowGraph,
 } from "@scribe-flow/shared";
 import type { AppDatabase } from "../db/client";
-import { biliCookies, projects, runNodeLogs, runNodeResults, runs } from "../db/schema";
+import { biliCookies, projects, runNodeInputs, runNodeLogs, runNodeResults, runs } from "../db/schema";
 import { chatCompletion, transcribeAudio } from "./ai";
 import { downloadBiliAudio, toAsrWav } from "./media";
 import { getAiConfig, getAsrConfig, getSettings } from "./settings";
@@ -32,9 +33,21 @@ interface ActiveRun {
   order: string[];
   cancelled: boolean;
   listeners: Set<(event: RunEvent) => void>;
-  outputs: Map<string, NodeOutput>;
+  outputs: Map<string, NodeOutput[]>;
   nodeAborts: Map<string, AbortController>;
   startedAt: number;
+}
+
+interface ResolvedInput {
+  sourceNodeId: string;
+  output: NodeOutput;
+  position: number;
+}
+
+interface ResolvedInputs {
+  text?: string;
+  audioPaths: string[];
+  items: ResolvedInput[];
 }
 
 function escapePathName(value: string): string {
@@ -233,8 +246,8 @@ export class RunEngine {
     return true;
   }
 
-  /** 单节点/局部运行：不在本次运行内的上游节点，从最近一次成功结果取输入。 */
-  private async previousOutput(nodeId: string): Promise<NodeOutput | undefined> {
+  /** 单节点/局部运行：不在本次运行内的上游节点，从最近一次成功结果取输入（支持多输出节点）。 */
+  private async previousOutputs(nodeId: string): Promise<NodeOutput[]> {
     const row = this.db
       .select()
       .from(runNodeResults)
@@ -242,31 +255,132 @@ export class RunEngine {
       .orderBy(desc(runNodeResults.updatedAt))
       .limit(1)
       .get();
-    if (!row || row.status !== "done" || !row.outputKind) return undefined;
-    return { kind: row.outputKind, text: row.outputText ?? undefined, path: row.outputPath ?? undefined, size: row.outputSize ?? undefined };
+    if (!row || row.status !== "done" || !row.outputKind) return [];
+    if (row.nodeType === "process.transcribe" || row.nodeType === "process.refine" || row.nodeType === "process.prompt") {
+      const inputRows = this.db
+        .select()
+        .from(runNodeInputs)
+        .where(and(eq(runNodeInputs.runId, row.runId), eq(runNodeInputs.targetNodeId, nodeId), eq(runNodeInputs.kind, "text")))
+        .orderBy(runNodeInputs.position)
+        .all();
+      if (inputRows.length > 0) {
+        const kind: NodeOutput["kind"] = row.nodeType === "process.prompt" ? "noteBlock" : "text";
+        const outputs: NodeOutput[] = [];
+        for (const inputRow of inputRows) {
+          const text = inputRow.resultText ?? inputRow.text;
+          if (text) outputs.push({ kind, text, size: text.length });
+        }
+        if (outputs.length > 0) return outputs;
+      }
+    }
+    // 多选 B 站/本地音视频来源：从该节点被下游消费的音频输入行还原多个输出，
+    // 保证“从下游节点单独运行”时仍能拿到全部音频，而不是只有合并后的第一个。
+    if (row.nodeType === "source.bili" || row.nodeType === "source.file") {
+      const audioRows = this.db
+        .select()
+        .from(runNodeInputs)
+        .where(and(eq(runNodeInputs.runId, row.runId), eq(runNodeInputs.sourceNodeId, nodeId), eq(runNodeInputs.kind, "audio")))
+        .orderBy(runNodeInputs.position)
+        .all();
+      const seen = new Set<string>();
+      const outputs: NodeOutput[] = [];
+      for (const inputRow of audioRows) {
+        if (!inputRow.path || seen.has(inputRow.path)) continue;
+        seen.add(inputRow.path);
+        outputs.push({ kind: "audio", path: inputRow.path, size: inputRow.size ?? undefined });
+      }
+      if (outputs.length > 0) return outputs;
+    }
+    return [{ kind: row.outputKind, text: row.outputText ?? undefined, path: row.outputPath ?? undefined, size: row.outputSize ?? undefined }];
   }
 
-  private async resolveInputs(active: ActiveRun, node: GraphNode): Promise<{ text?: string; audioPaths: string[] }> {
-    const inputs: NodeOutput[] = [];
+  private async resolveInputs(active: ActiveRun, node: GraphNode): Promise<ResolvedInputs> {
+    const items: ResolvedInput[] = [];
     for (const edge of active.graph.edges) {
       if (edge.target !== node.id) continue;
       const source = active.graph.nodes.find((n) => n.id === edge.source);
       if (!source) continue;
-      if (active.nodeIds.has(source.id)) {
-        const output = active.outputs.get(source.id);
-        if (output) inputs.push(output);
-      } else {
-        const previous = await this.previousOutput(source.id);
-        if (previous) inputs.push(previous);
-      }
+      const outputs = active.nodeIds.has(source.id) ? (active.outputs.get(source.id) ?? []) : await this.previousOutputs(source.id);
+      for (const output of outputs) items.push({ sourceNodeId: source.id, output, position: items.length });
     }
-    const audioPaths = inputs
-      .filter((i) => i.kind === "audio")
-      .map((i) => i.path)
+    const audioPaths = items
+      .filter((i) => i.output.kind === "audio")
+      .map((i) => i.output.path)
       .filter((p): p is string => Boolean(p))
       .map((p) => resolve(this.dataDir, p));
-    const texts = inputs.filter((i) => i.kind !== "audio");
-    return { text: texts.map((t) => t.text ?? "").filter(Boolean).join("\n\n") || undefined, audioPaths };
+    const texts = items.filter((i) => i.output.kind !== "audio");
+    return { text: texts.map((t) => t.output.text ?? "").filter(Boolean).join("\n\n") || undefined, audioPaths, items };
+  }
+
+  /** 把当前节点消费到的每个输入落库，供结果页单独查看。 */
+  private async persistInputs(active: ActiveRun, targetNodeId: string, items: ResolvedInput[]) {
+    const now = Date.now();
+    for (const item of items) {
+      const output = item.output;
+      await this.db
+        .insert(runNodeInputs)
+        .values({
+          id: randomUUID(),
+          runId: active.id,
+          targetNodeId,
+          sourceNodeId: item.sourceNodeId,
+          kind: output.kind === "audio" ? "audio" : "text",
+          text: output.kind === "audio" ? undefined : output.text,
+          path: output.path,
+          size: output.size,
+          position: item.position,
+          createdAt: now,
+        })
+        .run();
+    }
+  }
+
+  /** 音频转写完成后，把对应音频输入行升级为文本（保留 source/target/position）。 */
+  private async updateInputText(active: ActiveRun, targetNodeId: string, sourceNodeId: string, position: number, text: string, size: number) {
+    await this.db
+      .update(runNodeInputs)
+      .set({ kind: "text", text, size, path: undefined })
+      .where(
+        and(
+          eq(runNodeInputs.runId, active.id),
+          eq(runNodeInputs.targetNodeId, targetNodeId),
+          eq(runNodeInputs.sourceNodeId, sourceNodeId),
+          eq(runNodeInputs.position, position),
+        ),
+      )
+      .run();
+  }
+
+  /** AI 节点逐个处理输入后，把每个输入对应的独立处理结果写回。 */
+  private async updateInputResult(active: ActiveRun, targetNodeId: string, sourceNodeId: string, position: number, resultText: string) {
+    await this.db
+      .update(runNodeInputs)
+      .set({ resultText })
+      .where(
+        and(
+          eq(runNodeInputs.runId, active.id),
+          eq(runNodeInputs.targetNodeId, targetNodeId),
+          eq(runNodeInputs.sourceNodeId, sourceNodeId),
+          eq(runNodeInputs.position, position),
+        ),
+      )
+      .run();
+  }
+
+  /** 多输出节点落库/展示时合并成一份主输出，保留兼容性；独立结果仍存于 run_node_inputs。 */
+  private combineOutputs(node: GraphNode, outputs: NodeOutput[]): NodeOutput {
+    if (outputs.length === 0) return { kind: "text", text: "" };
+    if (outputs.length === 1) return outputs[0];
+    // 多输出音视频来源（多选卡片）没有可合并的文本，主输出保留第一个音频即可；
+    // 完整多输出仍通过 active.outputs / run_node_inputs 传递给下游。
+    if (outputs.every((output) => output.kind === "audio")) return outputs[0];
+    const kind: NodeOutput["kind"] =
+      node.type === "process.prompt" ? "noteBlock" : node.type === "process.merge" || node.type === "process.output" ? "noteDoc" : "text";
+    const text = outputs
+      .map((output) => output.text ?? "")
+      .filter(Boolean)
+      .join("\n\n---\n\n");
+    return { kind, text, size: text.length };
   }
 
   private nodeById(active: ActiveRun, nodeId: string): GraphNode {
@@ -285,12 +399,14 @@ export class RunEngine {
 
     try {
       const inputs = await this.resolveInputs(active, node);
-      const output = await this.runNode(active, node, inputs, abort.signal);
+      await this.persistInputs(active, node.id, inputs.items);
+      const result = await this.runNode(active, node, inputs, abort.signal);
       if (active.cancelled) throw new Error("运行已取消");
       const elapsed = Date.now() - started;
-      await this.updateNode(active, nodeId, "done", elapsed, output.summary, output.output);
-      this.emit(active, { type: "node.done", runId: active.id, nodeId, summary: output.summary ?? "完成", preview: previewFor(output.output) });
-      active.outputs.set(nodeId, output.output);
+      const combined = this.combineOutputs(node, result.outputs);
+      await this.updateNode(active, nodeId, "done", elapsed, result.summary, combined);
+      this.emit(active, { type: "node.done", runId: active.id, nodeId, summary: result.summary ?? "完成", preview: previewFor(combined) });
+      active.outputs.set(nodeId, result.outputs);
       return "done";
     } catch (err) {
       const message = err instanceof Error ? err.message : "节点执行失败";
@@ -308,15 +424,37 @@ export class RunEngine {
   private async runNode(
     active: ActiveRun,
     node: GraphNode,
-    inputs: { text?: string; audioPaths: string[] },
+    inputs: ResolvedInputs,
     signal?: AbortSignal,
-  ): Promise<{ output: NodeOutput; summary?: string }> {
+  ): Promise<{ outputs: NodeOutput[]; summary?: string }> {
     const data = node.data as Record<string, unknown>;
     switch (node.type) {
       case "source.bili": {
+        const items = Array.isArray(data.items) ? (data.items as { bvid?: string; cid?: number; page?: number; part?: string; duration?: number }[]) : [];
+        if (items.length > 0) {
+          const cookie = this.db.select().from(biliCookies).where(eq(biliCookies.id, 1)).get()?.cookie;
+          const dir = join(this.dataDir, "runs", active.id, "nodes", node.id);
+          await mkdir(dir, { recursive: true });
+          const outputs: NodeOutput[] = [];
+          for (let i = 0; i < items.length; i += 1) {
+            const item = items[i];
+            const bvid = String(item.bvid ?? "").trim();
+            const cid = Number(item.cid ?? 0);
+            if (!bvid) throw new Error(`多选卡片第 ${i + 1} 项缺少 BV 号`);
+            if (!cid) throw new Error(`多选卡片第 ${i + 1} 项缺少 cid，请重新在卡片中解析链接`);
+            await this.progress(active, node.id, Math.round((i / items.length) * 80 + 10), `下载第 ${i + 1}/${items.length} 个 B 站音轨`);
+            const audio = await downloadBiliAudio(bvid, cid, cookie, dir);
+            const wav = join(dir, `audio-${i + 1}.wav`);
+            await toAsrWav(audio, wav);
+            const size = await stat(wav).then((s) => s.size);
+            outputs.push({ kind: "audio", path: `runs/${active.id}/nodes/${node.id}/audio-${i + 1}.wav`, size });
+          }
+          return { outputs, summary: `${items.length} 个音轨已就绪` };
+        }
+
         const url = String(data.url ?? "").trim();
-        if (!url) throw new Error("B 站链接为空");
-        const bvid = url.match(/BV[0-9A-Za-z]+/)?.[0];
+        const bvid = url.match(/BV[0-9A-Za-z]+/)?.[0] || String(data.bvid ?? "").trim();
+        if (!url && !bvid) throw new Error("B 站链接为空");
         if (!bvid) throw new Error("链接中没有识别到 BV 号");
         const pageInfo = data.pageInfo as { cid?: number } | undefined;
         const cid = Number(pageInfo?.cid ?? 0);
@@ -331,7 +469,7 @@ export class RunEngine {
         await toAsrWav(audio, wav);
         const size = await stat(wav).then((s) => s.size);
         const rel = `runs/${active.id}/nodes/${node.id}/audio.wav`;
-        return { output: { kind: "audio", path: rel, size }, summary: "音轨已就绪" };
+        return { outputs: [{ kind: "audio", path: rel, size }], summary: "音轨已就绪" };
       }
 
       case "source.file": {
@@ -344,7 +482,7 @@ export class RunEngine {
         const wav = join(dir, "audio.wav");
         await toAsrWav(abs, wav);
         return {
-          output: { kind: "audio", path: `runs/${active.id}/nodes/${node.id}/audio.wav` },
+          outputs: [{ kind: "audio", path: `runs/${active.id}/nodes/${node.id}/audio.wav` }],
           summary: String(data.fileName ?? "音轨已就绪"),
         };
       }
@@ -352,31 +490,37 @@ export class RunEngine {
       case "source.text": {
         const text = String(data.text ?? "").trim();
         if (!text) throw new Error("文稿为空");
-        return { output: { kind: "text", text, size: text.length }, summary: `${text.length} 字` };
+        return { outputs: [{ kind: "text", text, size: text.length }], summary: `${text.length} 字` };
       }
 
       case "process.transcribe": {
-        if (inputs.audioPaths.length === 0) throw new Error("没有可转写的音频输入");
+        const audioItems = inputs.items.filter((i) => i.output.kind === "audio");
+        if (audioItems.length === 0) throw new Error("没有可转写的音频输入");
         const config = getAsrConfig(this.db);
         if (!config.apiKey) throw new Error("未配置语音识别密钥，请到设置页填写");
         const parts: string[] = [];
-        for (let i = 0; i < inputs.audioPaths.length; i += 1) {
-          const audioPath = inputs.audioPaths[i];
-          await this.progress(active, node.id, Math.round(10 + (i / inputs.audioPaths.length) * 80), `转写音频 ${i + 1}/${inputs.audioPaths.length}`);
+        for (let i = 0; i < audioItems.length; i += 1) {
+          const item = audioItems[i];
+          const audioPath = resolve(this.dataDir, item.output.path ?? "");
+          await this.progress(active, node.id, Math.round(10 + (i / audioItems.length) * 80), `转写音频 ${i + 1}/${audioItems.length}`);
           await this.log(active, node.id, "info", `音频输入 ${i + 1}：${audioPath}`);
           const text = await transcribeAudio(config, audioPath, signal);
           if (!text.trim()) throw new Error(`第 ${i + 1} 个音频转写结果为空`);
           await this.log(active, node.id, "ai-response", text);
-          parts.push(text.trim());
+          const trimmed = text.trim();
+          await this.updateInputText(active, node.id, item.sourceNodeId, item.position, trimmed, trimmed.length);
+          parts.push(trimmed);
         }
-        const text = parts.join("\n\n");
-        return { output: { kind: "text", text, size: text.length }, summary: `${inputs.audioPaths.length} 个音频 · ${text.length} 字` };
+        const outputs = parts.map((text) => ({ kind: "text" as const, text, size: text.length }));
+        const total = parts.reduce((sum, text) => sum + text.length, 0);
+        return { outputs, summary: `${audioItems.length} 个音频 · ${total} 字` };
       }
 
       case "process.refine":
       case "process.prompt": {
-        if (!inputs.text) throw new Error("没有文稿输入");
-        await this.progress(active, node.id, 10, "调用 AI 模型");
+        const textItems = inputs.items.filter((i) => i.output.kind !== "audio" && i.output.text?.trim());
+        if (textItems.length === 0) throw new Error("没有文稿输入");
+        await this.progress(active, node.id, 5, `准备逐个处理 ${textItems.length} 个输入`);
         const aiConfig = getAiConfig(this.db);
         if (!aiConfig.apiKey) throw new Error("未配置 AI 模型密钥，请到设置页填写");
         const blockId = String(data.promptBlockId ?? "");
@@ -389,13 +533,24 @@ export class RunEngine {
             ? "你是文字校对编辑。修正转写文稿中的错别字、重复与语气词，保持原意与信息完整，只输出校对后的文稿。"
             : "你是内容编辑。按用户要求整理文稿，只输出整理结果。");
         const model = String(data.model ?? "").trim() || aiConfig.model;
-        await this.log(active, node.id, "input", inputs.text);
-        await this.log(active, node.id, "ai-request", `${model}\n\n${system}`);
-        const text = await chatCompletion({ ...aiConfig, model }, system, inputs.text, signal);
-        if (!text.trim()) throw new Error("AI 返回为空");
-        await this.log(active, node.id, "ai-response", text);
-        const kind = node.type === "process.prompt" ? "noteBlock" : "text";
-        return { output: { kind, text, size: text.length }, summary: `${text.length} 字` };
+        const parts: string[] = [];
+        for (let i = 0; i < textItems.length; i += 1) {
+          const item = textItems[i];
+          const inputText = item.output.text?.trim() ?? "";
+          await this.progress(active, node.id, Math.round(10 + (i / textItems.length) * 80), `处理输入 ${i + 1}/${textItems.length}`);
+          await this.log(active, node.id, "input", inputText);
+          await this.log(active, node.id, "ai-request", `${model}\n\n${system}`);
+          const result = await chatCompletion({ ...aiConfig, model }, system, inputText, signal);
+          if (!result.trim()) throw new Error(`第 ${i + 1} 个输入处理结果为空`);
+          const trimmed = result.trim();
+          await this.log(active, node.id, "ai-response", trimmed);
+          await this.updateInputResult(active, node.id, item.sourceNodeId, item.position, trimmed);
+          parts.push(trimmed);
+        }
+        const kind: NodeOutput["kind"] = node.type === "process.prompt" ? "noteBlock" : "text";
+        const outputs = parts.map((text) => ({ kind, text, size: text.length }));
+        const total = parts.reduce((sum, text) => sum + text.length, 0);
+        return { outputs, summary: `${textItems.length} 个输入 · ${total} 字` };
       }
 
       case "process.merge": {
@@ -403,7 +558,7 @@ export class RunEngine {
         const title = String(data.title ?? "").trim() || "合并笔记";
         const markdown = `# ${title}\n\n${inputs.text}`;
         await this.log(active, node.id, "input", inputs.text);
-        return { output: { kind: "noteDoc", text: markdown, size: markdown.length }, summary: `${markdown.length} 字` };
+        return { outputs: [{ kind: "noteDoc", text: markdown, size: markdown.length }], summary: `${markdown.length} 字` };
       }
 
       case "process.output": {
@@ -416,7 +571,7 @@ export class RunEngine {
         await writeFile(outPath, inputs.text, "utf8");
         const rel = `${outputDir}/${active.id}/${fileName}`;
         await this.log(active, node.id, "info", `输出文件：${rel}`);
-        return { output: { kind: "noteDoc", text: inputs.text, path: rel, size: inputs.text.length }, summary: `${fileName} · ${inputs.text.length} 字` };
+        return { outputs: [{ kind: "noteDoc", text: inputs.text, path: rel, size: inputs.text.length }], summary: `${fileName} · ${inputs.text.length} 字` };
       }
 
       default:
@@ -485,7 +640,68 @@ export class RunEngine {
     setTimeout(() => this.actives.delete(active.id), 60_000);
   }
 
-  detail(runId: string): { run?: RunMeta; nodes: RunNodeResult[]; graph?: WorkflowGraph } {
+  /** 旧运行没有 run_node_inputs 时，从节点结果与转写日志推导输入明细，保证历史结果页也能单独查看。 */
+  private buildLegacyInputs(
+    runId: string,
+    runRow: (typeof runs)["$inferSelect"],
+    nodeRows: (typeof runNodeResults)["$inferSelect"][],
+    graph?: WorkflowGraph,
+  ): RunNodeInput[] {
+    if (!graph) return [];
+    const inputs: RunNodeInput[] = [];
+    const createdAt = runRow.createdAt;
+    const resultByNode = new Map(nodeRows.filter((r) => r.status === "done").map((r) => [r.nodeId, r]));
+
+    for (const edge of graph.edges) {
+      const sourceRow = resultByNode.get(edge.source);
+      if (!sourceRow) continue;
+      const targetRow = resultByNode.get(edge.target);
+      const position = graph.edges.filter((e) => e.target === edge.target).findIndex((e) => e.id === edge.id);
+      const base = { runId, sourceNodeId: edge.source, targetNodeId: edge.target, createdAt, position: Math.max(0, position) };
+
+      if (sourceRow.outputKind !== "audio") {
+        const text = sourceRow.outputText;
+        if (text) {
+          inputs.push({
+            id: `legacy-${edge.source}-${edge.target}`,
+            kind: "text",
+            text,
+            size: sourceRow.outputSize ?? text.length,
+            ...base,
+          });
+        }
+        continue;
+      }
+
+      // 音频输入：只有直接下游转写节点会产出独立文本，从日志按“音频输入 N：路径”匹配。
+      const target = graph.nodes.find((n) => n.id === edge.target);
+      if (target?.type !== "process.transcribe" || !targetRow?.outputText) continue;
+      const transcribeLogs = this.db
+        .select()
+        .from(runNodeLogs)
+        .where(and(eq(runNodeLogs.runId, runId), eq(runNodeLogs.nodeId, edge.target)))
+        .orderBy(runNodeLogs.createdAt)
+        .all();
+      const infoPaths = transcribeLogs
+        .filter((l) => l.kind === "info" && /^音频输入 \d+：/.test(l.content))
+        .map((l) => l.content.replace(/^音频输入 \d+：/, "").trim());
+      const responses = transcribeLogs.filter((l) => l.kind === "ai-response").map((l) => l.content);
+      const absPath = resolve(this.dataDir, sourceRow.outputPath ?? "");
+      const idx = infoPaths.findIndex((p) => p === absPath);
+      if (idx >= 0 && responses[idx]) {
+        inputs.push({
+          id: `legacy-${edge.source}-${edge.target}`,
+          kind: "text",
+          text: responses[idx],
+          size: responses[idx].length,
+          ...base,
+        });
+      }
+    }
+    return inputs;
+  }
+
+  detail(runId: string): { run?: RunMeta; nodes: RunNodeResult[]; graph?: WorkflowGraph; inputs?: RunNodeInput[] } {
     const row = this.db.select().from(runs).where(eq(runs.id, runId)).get();
     if (!row) return { nodes: [] };
     const project = this.db.select().from(projects).where(eq(projects.id, row.projectId)).get();
@@ -514,12 +730,32 @@ export class RunEngine {
         ? { kind: r.outputKind, text: r.outputText ?? undefined, path: r.outputPath ?? undefined, size: r.outputSize ?? undefined }
         : undefined,
     }));
-    const graph = row.graphJson ? (JSON.parse(row.graphJson) as WorkflowGraph) : undefined;
-    return { run, nodes, graph };
+    const inputRows = this.db.select().from(runNodeInputs).where(eq(runNodeInputs.runId, runId)).orderBy(runNodeInputs.createdAt, runNodeInputs.position).all();
+    const storedInputs = inputRows.map((r) => ({
+      id: r.id,
+      runId: r.runId,
+      targetNodeId: r.targetNodeId,
+      sourceNodeId: r.sourceNodeId,
+      kind: r.kind as "text" | "audio",
+      text: r.text ?? undefined,
+      resultText: r.resultText ?? undefined,
+      path: r.path ?? undefined,
+      size: r.size ?? undefined,
+      position: r.position,
+      createdAt: r.createdAt,
+    }));
+    let graph = row.graphJson ? (JSON.parse(row.graphJson) as WorkflowGraph) : undefined;
+    if (!graph) {
+      const project = this.db.select().from(projects).where(eq(projects.id, row.projectId)).get();
+      if (project) graph = JSON.parse(project.graphJson) as WorkflowGraph;
+    }
+    const inputs = storedInputs.length > 0 ? storedInputs : this.buildLegacyInputs(runId, row, rows, graph);
+    return { run, nodes, graph, inputs };
   }
 
   async deleteRun(runId: string) {
     await this.db.delete(runNodeResults).where(eq(runNodeResults.runId, runId)).run();
+    await this.db.delete(runNodeInputs).where(eq(runNodeInputs.runId, runId)).run();
     await this.db.delete(runs).where(eq(runs.id, runId)).run();
     await rm(join(this.dataDir, "runs", runId), { recursive: true, force: true }).catch(() => undefined);
     const outputDir = getSettings(this.db).general.outputDir || "outputs";

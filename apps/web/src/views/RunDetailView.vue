@@ -20,7 +20,7 @@ import {
   ZoomIn,
   ZoomOut,
 } from "lucide-vue-next";
-import type { ProjectMeta, RunDetail, RunNodeLog, RunNodeResult, WorkflowGraph } from "@scribe-flow/shared";
+import type { ProjectMeta, RunDetail, RunNodeInput, RunNodeLog, RunNodeResult, WorkflowGraph } from "@scribe-flow/shared";
 import { NODE_TYPE_LABELS } from "@scribe-flow/shared";
 import { api } from "@/lib/api";
 import { renderMarkdown } from "@/lib/markdown";
@@ -41,6 +41,8 @@ const logs = ref<RunNodeLog[]>([]);
 const logsVisible = ref(false);
 const logsNodeId = ref("");
 const selectedOutputIndex = ref(0);
+const selectedInputKey = ref("");
+const inputText = ref("");
 const resultRootRef = ref<HTMLElement | null>(null);
 const docScrollRef = ref<HTMLElement | null>(null);
 
@@ -49,6 +51,8 @@ const projectId = String(route.params.id);
 
 let stopRunEvents: (() => void) | null = null;
 let reloadTimer: ReturnType<typeof setTimeout> | null = null;
+
+const isRunning = computed(() => run.value?.status === "running");
 
 const statusMeta: Record<string, { label: string; type: "primary" | "success" | "danger" | "info" }> = {
   running: { label: "运行中", type: "primary" },
@@ -75,6 +79,7 @@ interface SourceInfo {
   summary?: string;
   url?: string;
   pageInfo?: { page?: number; part?: string; duration?: number };
+  items?: { title?: string; part?: string; page?: number; duration?: number }[];
   bvid?: string;
   title?: string;
   cover?: string;
@@ -88,6 +93,17 @@ interface SourceInfo {
 interface OutputDoc {
   node: RunNodeResult;
   title: string;
+}
+
+interface InputItem extends SourceInfo {
+  key: string;
+  sourceNodeId: string;
+  kind: "text" | "audio";
+  text?: string;
+  path?: string;
+  size?: number;
+  /** 该中间步骤下多个来源的独立内容；存在时主区域按模块分开展示。 */
+  modules?: { key: string; label: string; text: string }[];
 }
 
 function asRecord(value: unknown): Record<string, unknown> {
@@ -160,6 +176,7 @@ const sources = computed<SourceInfo[]>(() => {
           ...base,
           url: String(data.url ?? ""),
           pageInfo: data.pageInfo as SourceInfo["pageInfo"],
+          items: Array.isArray(data.items) ? (data.items as SourceInfo["items"]) : undefined,
           bvid: String(data.bvid ?? ""),
           title: String(data.title ?? ""),
           cover: String(data.cover ?? ""),
@@ -184,6 +201,42 @@ const sources = computed<SourceInfo[]>(() => {
     });
 });
 
+function resolveModuleLabel(
+  row: RunNodeInput,
+  rows: RunNodeInput[],
+  resultMap: Map<string, RunNodeResult>,
+  graph?: WorkflowGraph,
+  sourceIndex = 0,
+): string {
+  let current = row;
+  for (let depth = 0; depth < 12; depth += 1) {
+    const nodeResult = resultMap.get(current.sourceNodeId);
+    const graphNode = graph?.nodes.find((n) => n.id === current.sourceNodeId);
+    const nodeType = nodeResult?.nodeType ?? graphNode?.type ?? "";
+    if (nodeType.startsWith("source.")) {
+      const data = (graphNode?.data ?? {}) as Record<string, unknown>;
+      if (nodeType === "source.bili") {
+        const items = Array.isArray(data.items) ? (data.items as { title?: string; part?: string; page?: number }[]) : [];
+        const entry = items[sourceIndex];
+        if (entry?.title || entry?.part) {
+          const base = entry.title || (typeof data.title === "string" ? data.title : "") || nodeResult?.nodeLabel || NODE_TYPE_LABELS[nodeType as keyof typeof NODE_TYPE_LABELS] || nodeType;
+          return entry.part ? `${base} · P${entry.page} ${entry.part}` : base;
+        }
+        if (typeof data.title === "string" && data.title) return data.title;
+      }
+      if (nodeType === "source.file" && typeof data.fileName === "string" && data.fileName) return data.fileName;
+      return nodeResult?.nodeLabel || NODE_TYPE_LABELS[nodeType as keyof typeof NODE_TYPE_LABELS] || nodeType;
+    }
+    const next = rows.find((r) => r.targetNodeId === current.sourceNodeId && r.position === current.position);
+    if (!next) break;
+    current = next;
+  }
+  const nodeResult = resultMap.get(row.sourceNodeId);
+  const graphNode = graph?.nodes.find((n) => n.id === row.sourceNodeId);
+  const nodeType = nodeResult?.nodeType ?? graphNode?.type ?? "";
+  return nodeResult?.nodeLabel || NODE_TYPE_LABELS[nodeType as keyof typeof NODE_TYPE_LABELS] || row.sourceNodeId;
+}
+
 function upstreamSourceIds(nodeId: string): Set<string> {
   const edges = graph.value?.edges ?? [];
   const result = new Set<string>();
@@ -206,15 +259,79 @@ const visibleSources = computed(() => {
   return sources.value.filter((s) => ids.has(s.nodeId));
 });
 
+const inputItems = computed<InputItem[]>(() => {
+  if (!currentOutput.value) return [];
+  const rows: RunNodeInput[] = run.value?.inputs ?? [];
+  const upstream = upstreamSourceIds(currentOutput.value.node.nodeId);
+  const rowMap = new Map<string, RunNodeInput[]>();
+  for (const row of rows) {
+    if (!upstream.has(row.sourceNodeId)) continue;
+    const list = rowMap.get(row.sourceNodeId) ?? [];
+    list.push(row);
+    rowMap.set(row.sourceNodeId, list);
+  }
+  // 旧数据没有 inputs 时，仍展示原始素材入口。
+  for (const source of visibleSources.value) {
+    if (!rowMap.has(source.nodeId)) rowMap.set(source.nodeId, []);
+  }
+
+  const items: InputItem[] = [];
+  for (const [sourceNodeId, sourceRows] of rowMap) {
+    const textRow = sourceRows.find((r) => r.kind === "text" && r.text);
+    const audioRow = sourceRows.find((r) => r.kind === "audio");
+    const nodeResult = nodeResultMap.value.get(sourceNodeId);
+    const graphNode = graph.value?.nodes.find((n) => n.id === sourceNodeId);
+    const source = sources.value.find((s) => s.nodeId === sourceNodeId);
+    const nodeType = source?.nodeType ?? graphNode?.type ?? nodeResult?.nodeType ?? "";
+    const label = source?.label ?? nodeResult?.nodeLabel ?? NODE_TYPE_LABELS[nodeType as keyof typeof NODE_TYPE_LABELS] ?? nodeType;
+    const fallbackText = nodeResult?.output && nodeResult.output.kind !== "audio" ? nodeResult.output.text : undefined;
+    const defaultKind: InputItem["kind"] = nodeType === "source.text" ? "text" : "audio";
+    const moduleRows = sourceRows.filter((r) => r.kind === "text" && (r.text || r.resultText));
+    const modules =
+      moduleRows.length > 1
+        ? moduleRows.map((r, index) => ({
+            key: r.id,
+            label: `${index + 1}. ${resolveModuleLabel(r, rows, nodeResultMap.value, graph.value, index)}`,
+            text: r.text ?? r.resultText ?? "",
+          }))
+        : undefined;
+    const base: InputItem = {
+      key: sourceNodeId,
+      sourceNodeId,
+      nodeId: sourceNodeId,
+      nodeType,
+      label,
+      status: source?.status ?? nodeResult?.status,
+      summary: source?.summary ?? nodeResult?.summary,
+      kind: textRow ? "text" : audioRow ? "audio" : fallbackText ? "text" : defaultKind,
+      text: textRow?.text ?? fallbackText,
+      path: audioRow?.path,
+      size: textRow?.size ?? audioRow?.size,
+      modules,
+    };
+    items.push({ ...base, ...(source ?? {}) });
+  }
+
+  const order = new Map((run.value?.nodeResults ?? []).map((n, idx) => [n.nodeId, idx]));
+  items.sort((a, b) => (order.get(a.sourceNodeId) ?? Number.MAX_SAFE_INTEGER) - (order.get(b.sourceNodeId) ?? Number.MAX_SAFE_INTEGER));
+  return items;
+});
+
+const selectedInput = computed(() => inputItems.value.find((i) => i.key === selectedInputKey.value) ?? null);
+const viewingInput = computed(() => selectedInput.value !== null);
 const currentMarkdown = computed(() => (editing.value ? draft.value : markdown.value));
+const activeMarkdown = computed(() => (viewingInput.value ? inputText.value : currentMarkdown.value));
 const renderedMarkdown = computed(() => renderMarkdown(markdown.value));
 const renderedDraft = computed(() => renderMarkdown(draft.value));
+const renderedInputMarkdown = computed(() => renderMarkdown(inputText.value));
 const paperStyle = computed(() => ({ "--doc-scale": String(zoom.value / 100) }));
+const inputWordCount = computed(() => inputText.value.replace(/\s/g, "").length);
+const inputReadingTime = computed(() => Math.max(1, Math.round(inputWordCount.value / 400)));
 
 const toc = computed(() => {
   const items: { id: string; text: string; level: number }[] = [];
   const seen = new Map<string, number>();
-  for (const line of currentMarkdown.value.split("\n")) {
+  for (const line of activeMarkdown.value.split("\n")) {
     const match = line.match(/^(#{1,4})\s+(.*)$/);
     if (!match) continue;
     const text = match[2]?.trim() ?? "";
@@ -223,10 +340,13 @@ const toc = computed(() => {
   return items;
 });
 
-const wordCount = computed(() => currentMarkdown.value.replace(/\s/g, "").length);
+const wordCount = computed(() => activeMarkdown.value.replace(/\s/g, "").length);
 const readingTime = computed(() => Math.max(1, Math.round(wordCount.value / 400)));
 const sourceSummary = computed(() => {
-  const videoCount = visibleSources.value.filter((s) => s.nodeType === "source.bili" || s.nodeType === "source.file").length;
+  const videoCount = visibleSources.value.reduce(
+    (sum, s) => sum + (s.nodeType === "source.bili" ? (s.items?.length ?? 1) : s.nodeType === "source.file" ? 1 : 0),
+    0,
+  );
   const textCount = visibleSources.value.filter((s) => s.nodeType === "source.text").length;
   const parts: string[] = [];
   if (videoCount > 0) parts.push(`${videoCount} 个音视频`);
@@ -259,6 +379,11 @@ async function loadRun(showLoading = true) {
     }
     const previousOutputId = currentOutput.value?.node.nodeId;
     run.value = data;
+    // 运行中输出仍在变化，自动退出编辑，避免草稿被下一次刷新覆盖。
+    if (data.status === "running" && editing.value) {
+      editing.value = false;
+      draft.value = markdown.value;
+    }
     if (outputNodes.value.length > 0) {
       const focusNodeId = route.query.focus ? String(route.query.focus) : "";
       const focusIndex = focusNodeId ? outputNodes.value.findIndex((doc) => doc.node.nodeId === focusNodeId) : -1;
@@ -269,6 +394,7 @@ async function loadRun(showLoading = true) {
       markdown.value = "";
       draft.value = "";
     }
+    refreshSelectedInputText();
 
     if (stopRunEvents) stopRunEvents();
     if (data.status === "running") {
@@ -321,9 +447,36 @@ async function loadOutputContent(nodeId: string) {
 async function selectOutput(index: number) {
   const doc = outputNodes.value[index];
   if (!doc) return;
+  selectedInputKey.value = "";
+  inputText.value = "";
   selectedOutputIndex.value = index;
   editing.value = false;
   await loadOutputContent(doc.node.nodeId);
+}
+
+async function selectInput(key: string) {
+  const item = inputItems.value.find((i) => i.key === key);
+  if (!item) return;
+  selectedInputKey.value = key;
+  editing.value = false;
+  inputText.value = item.text ?? "";
+  // 旧数据没有 run_node_inputs 时，大文本可能只存在输出文件里，按需读取。
+  if (!inputText.value) {
+    const node = nodeResultMap.value.get(item.sourceNodeId);
+    if (node?.output && node.output.kind !== "audio" && node.output.path) {
+      try {
+        const result = await api.get<{ text: string }>(`/api/runs/${runId}/outputs/${item.sourceNodeId}/content`);
+        inputText.value = result.text ?? "";
+      } catch (err) {
+        ElMessage.error(err instanceof Error ? err.message : "输入内容读取失败");
+      }
+    }
+  }
+}
+
+function refreshSelectedInputText() {
+  const item = selectedInput.value;
+  inputText.value = item?.text ?? "";
 }
 
 function toggleEdit() {
@@ -388,19 +541,19 @@ function asNode(row: unknown): RunNodeResult {
 }
 
 function downloadMarkdown() {
-  const text = currentMarkdown.value;
+  const text = activeMarkdown.value;
   if (!text) return;
   const blob = new Blob([text], { type: "text/markdown; charset=utf-8" });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
-  a.download = `run-${runId.slice(-6)}.md`;
+  a.download = viewingInput.value ? `run-${runId.slice(-6)}-input.md` : `run-${runId.slice(-6)}.md`;
   a.click();
   URL.revokeObjectURL(url);
 }
 
 async function copyMarkdown() {
-  const text = currentMarkdown.value;
+  const text = activeMarkdown.value;
   if (!text) return;
   try {
     await navigator.clipboard.writeText(text);
@@ -473,8 +626,8 @@ async function forceStopRun() {
           <el-button size="small" plain type="danger" @click="forceStopRun"><StopCircle :size="14" /><span>强制结束</span></el-button>
         </template>
         <el-button size="small" plain @click="openLogs('')"><ScrollText :size="14" /><span>查看日志</span></el-button>
-        <el-button size="small" plain :disabled="!currentMarkdown" @click="copyMarkdown"><Copy :size="14" /><span>复制</span></el-button>
-        <el-button size="small" type="primary" :disabled="!currentMarkdown" @click="downloadMarkdown"><FileText :size="14" /><span>下载 Markdown</span></el-button>
+        <el-button size="small" plain :disabled="!activeMarkdown" @click="copyMarkdown"><Copy :size="14" /><span>复制</span></el-button>
+        <el-button size="small" type="primary" :disabled="!activeMarkdown" @click="downloadMarkdown"><FileText :size="14" /><span>下载 Markdown</span></el-button>
       </div>
     </header>
 
@@ -508,7 +661,17 @@ async function forceStopRun() {
           <el-table-column label="操作" width="110" align="right">
             <template #default="{ row }">
               <el-button size="small" text @click="openLogs(asNode(row).nodeId)">日志</el-button>
-              <el-button v-if="asNode(row).status === 'error'" size="small" text type="primary" @click="retryNode(asNode(row))"><RefreshCw :size="13" /><span>重跑</span></el-button>
+              <el-button
+                v-if="asNode(row).status === 'error'"
+                size="small"
+                text
+                type="primary"
+                :disabled="isRunning"
+                :title="isRunning ? '运行中不可重跑，请先等待或停止当前运行' : '重跑该节点'"
+                @click="retryNode(asNode(row))"
+              >
+                <RefreshCw :size="13" /><span>重跑</span>
+              </el-button>
             </template>
           </el-table-column>
         </el-table>
@@ -517,7 +680,7 @@ async function forceStopRun() {
       <div v-show="activeTab === 'result'" class="rv-body">
         <aside class="rv-side" :class="{ collapsed: sideCollapsed }">
           <div class="rv-side-head">
-            <span class="rv-side-title">输入素材</span>
+            <span class="rv-side-title">链路输入</span>
             <button type="button" class="rv-side-toggle" :title="sideCollapsed ? '展开侧栏' : '折叠侧栏'" @click="sideCollapsed = !sideCollapsed">
               <PanelLeftClose v-if="!sideCollapsed" :size="14" />
               <PanelLeftOpen v-else :size="14" />
@@ -525,33 +688,46 @@ async function forceStopRun() {
           </div>
 
           <div v-if="!sideCollapsed" class="rv-side-content">
-            <div v-if="visibleSources.length > 0" class="rv-source-list">
-              <article v-for="(source, index) in visibleSources" :key="source.nodeId" class="rv-source-card">
+            <div v-if="inputItems.length > 0" class="rv-source-list">
+              <button
+                v-for="(input, index) in inputItems"
+                :key="input.key"
+                type="button"
+                class="rv-source-card"
+                :class="{ active: selectedInputKey === input.key }"
+                @click="selectInput(input.key)"
+              >
                 <div class="rv-source-index tnum">{{ index + 1 }}</div>
                 <div class="rv-source-main">
-                  <div class="rv-source-label">{{ source.label }}</div>
-                  <template v-if="source.nodeType === 'source.bili'">
-                    <img v-if="source.cover" :src="source.cover" class="rv-source-cover" alt="" referrerpolicy="no-referrer" loading="lazy" />
-                    <div v-if="source.title" class="rv-source-title">{{ source.title }}</div>
-                    <div v-else-if="source.url" class="rv-source-url">{{ source.url }}</div>
+                  <div class="rv-source-label">{{ input.label }}</div>
+                  <template v-if="input.nodeType === 'source.bili'">
+                    <img v-if="input.cover" :src="input.cover" class="rv-source-cover" alt="" referrerpolicy="no-referrer" loading="lazy" />
+                    <div v-if="input.items && input.items.length > 1" class="rv-source-title">{{ input.label || "B站多选" }}</div>
+                    <div v-else-if="input.title" class="rv-source-title">{{ input.title }}</div>
+                    <div v-else-if="input.url" class="rv-source-url">{{ input.url }}</div>
                     <div class="rv-source-meta tnum">
-                      <span v-if="source.uploader">{{ source.uploader }} · </span>
-                      <span>{{ fmtDuration(source.duration) }}</span>
-                      <span v-if="source.pageInfo?.part"> · {{ source.pageInfo.part }}</span>
+                      <span v-if="input.uploader">{{ input.uploader }} · </span>
+                      <span>{{ fmtDuration(input.duration) }}</span>
+                      <span v-if="input.items && input.items.length > 1"> · {{ input.items.length }} 项</span>
+                      <span v-else-if="input.pageInfo?.part"> · {{ input.pageInfo.part }}</span>
                     </div>
                   </template>
-                  <template v-else-if="source.nodeType === 'source.file'">
-                    <div class="rv-source-title">{{ source.fileName || "本地音视频" }}</div>
-                    <div class="rv-source-meta tnum">{{ fmtSize(source.size) }}</div>
+                  <template v-else-if="input.nodeType === 'source.file'">
+                    <div class="rv-source-title">{{ input.fileName || "本地音视频" }}</div>
+                    <div class="rv-source-meta tnum">{{ fmtSize(input.size) }}</div>
                   </template>
-                  <template v-else-if="source.nodeType === 'source.text'">
-                    <div class="rv-source-text">{{ source.textPreview || "空文稿" }}</div>
+                  <template v-else-if="input.nodeType === 'source.text'">
+                    <div class="rv-source-text">{{ input.textPreview || input.text?.slice(0, 80) || "空文稿" }}</div>
                   </template>
-                  <el-tag v-if="source.status" :type="statusMeta[source.status]?.type ?? 'info'" size="small" class="rv-source-status">
-                    {{ statusMeta[source.status]?.label ?? source.status }}
+                  <template v-else-if="input.text">
+                    <div class="rv-source-text">{{ input.text.slice(0, 80) }}</div>
+                  </template>
+                  <span v-if="input.text" class="rv-source-hint">点击查看单独内容</span>
+                  <el-tag v-if="input.status" :type="statusMeta[input.status]?.type ?? 'info'" size="small" class="rv-source-status">
+                    {{ statusMeta[input.status]?.label ?? input.status }}
                   </el-tag>
                 </div>
-              </article>
+              </button>
             </div>
             <div v-else class="rv-side-empty">本次结果没有可追溯的输入素材</div>
 
@@ -585,11 +761,22 @@ async function forceStopRun() {
                 <Minimize v-if="fullscreen" :size="14" />
                 <Maximize v-else :size="14" />
               </button>
-              <button type="button" class="rv-tool-btn" :class="{ active: editing }" :title="editing ? '退出编辑' : '编辑文档'" @click="toggleEdit">
+              <button v-if="viewingInput" type="button" class="rv-tool-btn" title="返回输出" @click="selectedInputKey = ''; inputText = ''">
+                <ArrowLeft :size="14" /><span>输出</span>
+              </button>
+              <button
+                v-if="!viewingInput"
+                type="button"
+                class="rv-tool-btn"
+                :class="{ active: editing }"
+                :disabled="isRunning"
+                :title="isRunning ? '运行中不可编辑' : editing ? '退出编辑' : '编辑文档'"
+                @click="toggleEdit"
+              >
                 <Eye v-if="editing" :size="14" />
                 <PenLine v-else :size="14" />
               </button>
-              <span v-if="editing" class="rv-tool-text">编辑中</span>
+              <span v-if="editing && !viewingInput" class="rv-tool-text">编辑中</span>
             </div>
             <div v-if="toc.length > 0" class="rv-toc">
               <ListTree :size="14" />
@@ -603,31 +790,68 @@ async function forceStopRun() {
           </div>
 
           <div ref="docScrollRef" class="rv-doc-scroll">
-            <article class="rv-paper" :style="paperStyle">
-              <header class="rv-paper-head">
-                <h1 class="rv-paper-title">{{ currentOutput?.title || "输出文档" }}</h1>
-                <p class="rv-paper-meta">
-                  {{ sourceSummary }} · {{ wordCount }} 字 · 约 {{ readingTime }} 分钟阅读
-                </p>
-              </header>
+            <template v-if="viewingInput">
+              <article class="rv-paper" :style="paperStyle">
+                <header class="rv-paper-head">
+                  <h1 class="rv-paper-title">{{ selectedInput?.label || "输入素材" }}</h1>
+                  <p class="rv-paper-meta">
+                    <template v-if="selectedInput?.nodeType === 'source.bili'">
+                      <template v-if="selectedInput.items && selectedInput.items.length > 1">{{ selectedInput.label || "B站多选" }}（{{ selectedInput.items.length }} 项）</template>
+                      <template v-else>{{ selectedInput.title || selectedInput.url || "B站视频" }}</template> · {{ fmtDuration(selectedInput.duration) }}
+                    </template>
+                    <template v-else-if="selectedInput?.nodeType === 'source.file'">
+                      {{ selectedInput.fileName || "本地音视频" }} · {{ fmtSize(selectedInput.size) }}
+                    </template>
+                    <template v-else>
+                      {{ selectedInput?.label || "文本输入" }}
+                    </template>
+                    <template v-if="selectedInput?.modules && selectedInput.modules.length > 1">
+                      · {{ selectedInput.modules.length }} 个独立输入
+                    </template>
+                    <template v-else-if="inputText"> · {{ inputWordCount }} 字 · 约 {{ inputReadingTime }} 分钟阅读</template>
+                  </p>
+                </header>
 
-              <div v-if="editing" class="rv-edit-grid">
-                <textarea v-model="draft" class="rv-editor" spellcheck="false" aria-label="Markdown 编辑器" />
-                <div class="rv-preview markdown-body" v-html="renderedDraft" />
+                <div v-if="selectedInput?.modules && selectedInput.modules.length > 1" class="rv-input-modules">
+                  <section v-for="module in selectedInput.modules" :key="module.key" class="rv-input-module">
+                    <h2 class="rv-input-module-title">{{ module.label }}</h2>
+                    <div class="rv-preview markdown-body" v-html="renderMarkdown(module.text)" />
+                  </section>
+                </div>
+                <div v-else-if="inputText" class="rv-preview markdown-body" v-html="renderedInputMarkdown" />
+                <div v-else class="rv-input-empty">
+                  <p>这是一个音视频输入，当前没有单独转写文稿。</p>
+                  <p>如果这是旧运行记录，重新运行一次即可在输入列表中查看每个音频的独立转写内容。</p>
+                </div>
+              </article>
+            </template>
+            <template v-else>
+              <article class="rv-paper" :style="paperStyle">
+                <header class="rv-paper-head">
+                  <h1 class="rv-paper-title">{{ currentOutput?.title || "输出文档" }}</h1>
+                  <p class="rv-paper-meta">
+                    {{ sourceSummary }} · {{ wordCount }} 字 · 约 {{ readingTime }} 分钟阅读
+                  </p>
+                </header>
+
+                <div v-if="editing" class="rv-edit-grid">
+                  <textarea v-model="draft" class="rv-editor" spellcheck="false" aria-label="Markdown 编辑器" />
+                  <div class="rv-preview markdown-body" v-html="renderedDraft" />
+                </div>
+                <div v-else class="rv-preview markdown-body" v-html="renderedMarkdown" />
+
+                <div v-if="editing" class="rv-edit-actions">
+                  <el-button size="small" plain :disabled="draft === markdown" @click="resetDraft">恢复原始</el-button>
+                  <el-button size="small" plain @click="toggleEdit">退出编辑</el-button>
+                  <el-button size="small" type="primary" :disabled="!draft" @click="copyMarkdown">复制编辑结果</el-button>
+                </div>
+              </article>
+
+              <div v-if="!currentMarkdown" class="rv-empty">
+                <div class="rv-empty-title">本次运行没有可展示的文本产物</div>
+                <div class="rv-empty-sub">可以到「节点流水」查看各节点状态，或「查看日志」定位问题。</div>
               </div>
-              <div v-else class="rv-preview markdown-body" v-html="renderedMarkdown" />
-
-              <div v-if="editing" class="rv-edit-actions">
-                <el-button size="small" plain :disabled="draft === markdown" @click="resetDraft">恢复原始</el-button>
-                <el-button size="small" plain @click="toggleEdit">退出编辑</el-button>
-                <el-button size="small" type="primary" :disabled="!draft" @click="copyMarkdown">复制编辑结果</el-button>
-              </div>
-            </article>
-
-            <div v-if="!currentMarkdown" class="rv-empty">
-              <div class="rv-empty-title">本次运行没有可展示的文本产物</div>
-              <div class="rv-empty-sub">可以到「节点流水」查看各节点状态，或「查看日志」定位问题。</div>
-            </div>
+            </template>
           </div>
         </section>
       </div>
@@ -829,10 +1053,27 @@ async function forceStopRun() {
 .rv-source-card {
   display: flex;
   gap: 8px;
+  width: 100%;
   padding: 8px;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
   background: var(--color-surface-muted);
+  color: inherit;
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    border-color var(--dur-1) var(--ease-out),
+    background-color var(--dur-1) var(--ease-out);
+}
+
+.rv-source-card:hover {
+  border-color: var(--color-border-strong);
+}
+
+.rv-source-card.active {
+  border-color: var(--color-brand);
+  background: var(--color-brand-soft);
 }
 
 .rv-source-index {
@@ -900,6 +1141,11 @@ async function forceStopRun() {
   -webkit-line-clamp: 3;
   -webkit-box-orient: vertical;
   overflow: hidden;
+}
+
+.rv-source-hint {
+  font-size: 10.5px;
+  color: var(--color-text-tertiary);
 }
 
 .rv-source-status {
@@ -1004,9 +1250,14 @@ async function forceStopRun() {
   cursor: pointer;
 }
 
-.rv-tool-btn:hover {
+.rv-tool-btn:hover:not(:disabled) {
   background: var(--color-ink-soft);
   color: var(--color-text);
+}
+
+.rv-tool-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .rv-tool-btn.active {
@@ -1150,6 +1401,38 @@ async function forceStopRun() {
   margin-top: 6px;
   font-size: 12px;
   color: var(--color-text-tertiary);
+}
+
+.rv-input-empty {
+  padding: 24px;
+  border: 1px dashed var(--color-border);
+  border-radius: var(--radius-md);
+  color: var(--color-text-tertiary);
+  font-size: 13px;
+  text-align: center;
+}
+
+.rv-input-empty p {
+  margin: 4px 0;
+}
+
+.rv-input-module {
+  margin: 0 0 24px;
+  padding-bottom: 20px;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.rv-input-module:last-child {
+  margin-bottom: 0;
+  padding-bottom: 0;
+  border-bottom: none;
+}
+
+.rv-input-module-title {
+  margin: 0 0 12px;
+  font-size: 1.05em;
+  font-weight: 600;
+  color: var(--color-text);
 }
 
 .rv-log-filter {

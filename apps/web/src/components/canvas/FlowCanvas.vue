@@ -13,7 +13,7 @@ import {
 import { Background } from "@vue-flow/background";
 import { Controls } from "@vue-flow/controls";
 import { MiniMap } from "@vue-flow/minimap";
-import { NODE_TYPE_LABELS, PORT_TYPES, canConnect, nextEdgeId, nextNodeId, type NodeType, type WorkflowGraph } from "@scribe-flow/shared";
+import { NODE_TYPE_LABELS, PORT_TYPES, canConnect, nextEdgeId, nextNodeId, type BiliSourceItem, type NodeType, type WorkflowGraph } from "@scribe-flow/shared";
 import { ElDialog, ElInput } from "element-plus";
 import ScribeNode from "./ScribeNode.vue";
 import FlowEdge from "./FlowEdge.vue";
@@ -30,7 +30,7 @@ import {
   type ScribeNodeData,
 } from "@/utils/flow";
 
-const props = defineProps<{ initialGraph: WorkflowGraph }>();
+const props = defineProps<{ initialGraph: WorkflowGraph; running?: boolean }>();
 const emit = defineEmits<{
   "update:graph": [graph: WorkflowGraph];
   select: [nodeId: string | null];
@@ -91,6 +91,7 @@ function ctxFor(nodeId: string) {
     remove: () => removeNodes([nodeId]),
     runNode: () => emit("run-request", { scope: "node", nodeId }),
     runFromNode: () => emit("run-request", { scope: "fromNode", nodeId }),
+    running: props.running,
     copyOutput: () => emit("notice", "节点输出将在运行后可用"),
     viewOutput: () => emit("view-output", nodeId),
     updateData: (patch: Record<string, unknown>) => updateNodeData(nodeId, patch),
@@ -342,31 +343,70 @@ function sourcePatchFor(video: import("@scribe-flow/shared").SourceVideoItem): R
   return patch;
 }
 
+function sourceItemFor(video: import("@scribe-flow/shared").SourceVideoItem): BiliSourceItem {
+  const page = video.pages?.[0] ?? (video.cid ? { cid: video.cid, page: 1, part: "", duration: video.duration } : undefined);
+  return {
+    bvid: video.bvid,
+    cid: page?.cid ?? 0,
+    page: page?.page ?? 1,
+    part: page?.part ?? "",
+    title: video.title,
+    cover: video.cover,
+    uploader: video.uploader,
+    duration: page?.duration ?? video.duration,
+  };
+}
+
+function sourceItemsFor(videos: import("@scribe-flow/shared").SourceVideoItem[]): BiliSourceItem[] {
+  return videos.map(sourceItemFor);
+}
+
+function multiSourcePatch(items: BiliSourceItem[], label = "B站多选"): Record<string, unknown> {
+  const first = items[0];
+  return {
+    label,
+    items,
+    url: `https://www.bilibili.com/video/${first.bvid}`,
+    bvid: first.bvid,
+    title: first.title,
+    cover: first.cover,
+    uploader: first.uploader,
+    duration: first.duration,
+    pageInfo: { cid: first.cid, page: first.page, part: first.part, duration: first.duration ?? 0 },
+  };
+}
+
 /**
- * 快捷选择器确认：当前节点为空时第一个视频填充当前节点，
- * 其余（或全部，若当前节点已有内容）自动生成新的 B 站来源节点，垂直错开 160px。
+ * 多选合并：把多个 B 站视频/分P 写入当前节点，生成一张“多选卡片”。
+ * 后续运行逻辑仍按每个 item 逐个产出音频，等价于多张独立来源卡片。
  */
 function addSourceVideos(nodeId: string, videos: import("@scribe-flow/shared").SourceVideoItem[]) {
   if (videos.length === 0) return;
   const target = nodesRef.value.find((node) => node.id === nodeId);
-  const pending = [...videos];
-  let basePosition = target?.position ?? centerPosition();
+  if (!target) return;
 
-  if (target && !String(target.data.url ?? "").trim()) {
-    updateNodeData(nodeId, sourcePatchFor(pending.shift() as import("@scribe-flow/shared").SourceVideoItem));
-  }
-
-  const created: ScribeFlowNode[] = pending.map((video, index) => {
-    const node = makeNode("source.bili", { x: basePosition.x + index * 24, y: basePosition.y + 160 + index * 160 });
-    node.data = { ...node.data, ...sourcePatchFor(video) } as ScribeFlowNode["data"];
-    return node;
-  });
-  if (created.length > 0) {
-    nodesRef.value = [...nodesRef.value, ...created];
-    emit("select", created[created.length - 1].id);
-  }
+  const items = sourceItemsFor(videos);
+  updateNodeData(nodeId, multiSourcePatch(items));
   pushHistory();
   emitGraph();
+  emit("select", nodeId);
+}
+
+/** 从“B站收藏”来源入口：单选生成普通 B 站链接节点，多选合并为一张多选卡片。 */
+function addBiliVideos(videos: import("@scribe-flow/shared").SourceVideoItem[]) {
+  if (videos.length === 0) return;
+  if (nodesRef.value.length >= 200) {
+    emit("notice", "节点数量已达 200 上限，请拆分工程");
+    return;
+  }
+  const base = centerPosition();
+  const node = makeNode("source.bili", { x: base.x, y: base.y });
+  const patch = videos.length === 1 ? sourcePatchFor(videos[0]) : multiSourcePatch(sourceItemsFor(videos), "B站收藏");
+  node.data = { ...node.data, ...patch, ctx: ctxFor(node.id) } as ScribeFlowNode["data"];
+  nodesRef.value = [...nodesRef.value, node];
+  pushHistory();
+  emitGraph();
+  emit("select", node.id);
 }
 
 // ---------- 撤销 / 重做 ----------
@@ -537,6 +577,7 @@ function applyRunEvent(event: import("@scribe-flow/shared").RunEvent) {
 
 defineExpose({
   addNodeAtCenter,
+  addBiliVideos,
   updateNodeData,
   commitHistory,
   duplicateSelection,

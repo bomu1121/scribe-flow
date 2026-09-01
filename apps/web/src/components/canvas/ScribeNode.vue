@@ -1,24 +1,25 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from "vue";
-import { ElInput, ElMessage, ElOption, ElSelect, ElUpload, type UploadRequestOptions } from "element-plus";
+import { ElInput, ElMessage, ElUpload, type UploadRequestOptions } from "element-plus";
 import { Cloud, Eye, FileOutput, FileText, FileUp, GitMerge, Link2, Mic, Sparkles, WandSparkles } from "lucide-vue-next";
 import { Handle, Position, type NodeProps } from "@vue-flow/core";
 import { ContextMenuContent, ContextMenuItem, ContextMenuPortal, ContextMenuRoot, ContextMenuSeparator, ContextMenuTrigger } from "reka-ui";
 import { NODE_PORTS, NODE_TYPE_LABELS, type NodeType, type UploadedFile, type VideoPreview } from "@scribe-flow/shared";
-import SourcePickerDialog from "./SourcePickerDialog.vue";
 import ModelSelect from "../ModelSelect.vue";
 import { usePromptsStore } from "@/stores/prompts";
-import { useAuthStore } from "@/stores/auth";
 import { api } from "@/lib/api";
 import type { ScribeNodeData } from "@/utils/flow";
 
 const props = defineProps<NodeProps<ScribeNodeData>>();
 
 const promptsStore = usePromptsStore();
-const authStore = useAuthStore();
 const data = computed(() => props.data);
 
-const showPicker = ref(false);
+const selectedPages = ref<number[]>([]);
+
+const biliItems = computed(() => (Array.isArray(data.value.items) ? data.value.items : []));
+const distinctBvids = computed(() => new Set(biliItems.value.map((item) => item.bvid)).size);
+const isCollection = computed(() => biliItems.value.length > 1);
 
 // 文本节点校验
 const textError = computed(() => {
@@ -27,19 +28,6 @@ const textError = computed(() => {
   if (text.length > 50000) return "文稿过长（最多 50000 字）";
   return "";
 });
-
-function openPicker() {
-  if (!authStore.loggedIn) {
-    ElMessage.info("请先点击左下角「未登录 B 站」扫码登录");
-    return;
-  }
-  showPicker.value = true;
-}
-
-function onPickerConfirm(videos: import("@scribe-flow/shared").SourceVideoItem[]) {
-  props.data.ctx?.addSourceVideos(videos);
-  ElMessage.success(`已添加 ${videos.length} 个视频来源`);
-}
 
 async function uploadFile(options: UploadRequestOptions) {
   const form = new FormData();
@@ -88,8 +76,14 @@ function schedulePreview(url: string) {
         duration: result.duration,
       });
       if (result.pages.length > 0) {
-        const first = result.pages[0];
-        patch({ pageInfo: { cid: first.cid, page: first.page, part: first.part, duration: first.duration } });
+        const savedPages = (data.value.items ?? []).map((item) => item.page).filter(Boolean);
+        const savedPage = Number(data.value.pageInfo?.page ?? 0);
+        const initial = result.pages.find((p) => p.page === savedPage) ?? result.pages[0];
+        const restored = result.pages.filter((p) => savedPages.includes(p.page)).map((p) => p.page);
+        selectedPages.value = restored.length > 0 ? restored : [initial.page];
+        patch({ pageInfo: { cid: initial.cid, page: initial.page, part: initial.part, duration: initial.duration } });
+      } else {
+        selectedPages.value = [];
       }
     } catch (err) {
       previewError.value = err instanceof Error ? err.message : "解析失败，请检查链接";
@@ -99,8 +93,45 @@ function schedulePreview(url: string) {
   }, 500);
 }
 
+function togglePage(page: number) {
+  selectedPages.value = selectedPages.value.includes(page)
+    ? selectedPages.value.filter((p) => p !== page)
+    : [...selectedPages.value, page];
+}
+
+function confirmPageSelection() {
+  const current = preview.value;
+  if (!current || selectedPages.value.length === 0) return;
+  const pages = current.pages.filter((p) => selectedPages.value.includes(p.page));
+  if (pages.length === 0) return;
+  const items = pages.map((page) => ({
+    bvid: current.bvid,
+    cid: page.cid,
+    page: page.page,
+    part: page.part,
+    title: current.title,
+    cover: current.cover,
+    uploader: current.uploader,
+    duration: page.duration,
+  }));
+  const first = items[0];
+  patch({
+    items,
+    url: `https://www.bilibili.com/video/${current.bvid}`,
+    bvid: current.bvid,
+    title: current.title,
+    cover: current.cover,
+    uploader: current.uploader,
+    duration: first.duration,
+    pageInfo: { cid: first.cid, page: first.page, part: first.part, duration: first.duration },
+  });
+  props.data.ctx?.commit();
+  ElMessage.success(items.length > 1 ? `已选择 ${items.length} 个分P，合并为一张卡片` : `已选择 P${first.page}`);
+}
+
 onMounted(() => {
-  if (props.data.url) schedulePreview(props.data.url);
+  // 多选收藏卡片不需要解析“第一个视频”的预览，所有项平等展示。
+  if (props.data.url && !isCollection.value) schedulePreview(props.data.url);
 });
 
 onBeforeUnmount(() => {
@@ -220,34 +251,67 @@ function commit() {
         </div>
 
         <div class="sf-node-body">
-          <!-- 来源：B 站链接。卡片做大，容纳批量选视频入口 -->
+          <!-- 来源：B 站链接 / B 站多选收藏。多选时使用“平等列表”卡片，不再强调第一个视频。 -->
           <template v-if="nodeType === 'source.bili'">
-            <el-input
-              class="sf-node-control"
-              size="small"
-              :model-value="data.url"
-              placeholder="粘贴 B 站视频链接（支持分 P）"
-              @update:model-value="(v: string | number) => { const value = String(v); patch({ url: value }); schedulePreview(value); }"
-              @blur="commit"
-            />
-            <div v-if="previewLoading" class="sf-node-preview sf-node-preview--loading tnum">正在解析视频信息…</div>
-            <div v-else-if="preview" class="sf-node-preview">
-              <img :src="preview.cover" class="sf-node-cover" alt="视频封面" referrerpolicy="no-referrer" loading="lazy" />
-              <div class="sf-node-preview-info">
-                <span class="sf-node-preview-title">{{ preview.title }}</span>
-                <span class="sf-node-preview-meta tnum">
-                  {{ preview.uploader }} · {{ fmtDuration(preview.duration) }} · {{ preview.pages.length }}P
-                </span>
-                <span v-if="data.pageInfo" class="sf-node-preview-page tnum">
-                  已选 P{{ data.pageInfo.page }} · {{ data.pageInfo.part }}
-                </span>
+            <template v-if="isCollection">
+              <div class="sf-node-collection">
+                <div class="sf-node-collection-head">
+                  <span class="sf-node-collection-count tnum">{{ biliItems.length }} 项</span>
+                  <span class="sf-node-collection-tag">{{ distinctBvids > 1 ? "多视频" : "多P" }}</span>
+                </div>
+                <div class="sf-node-selected-list">
+                  <div v-for="item in biliItems" :key="`${item.bvid}-${item.cid}`" class="sf-node-selected-row">
+                    <img v-if="item.cover" :src="item.cover" class="sf-node-selected-cover" alt="" referrerpolicy="no-referrer" loading="lazy" />
+                    <div v-else class="sf-node-selected-cover sf-node-selected-cover--placeholder" />
+                    <div class="sf-node-selected-info">
+                      <span class="sf-node-selected-title">{{ item.title || item.part || `P${item.page}` }}</span>
+                      <span class="sf-node-selected-meta tnum">
+                        <template v-if="item.uploader">{{ item.uploader }} · </template>{{ fmtDuration(item.duration ?? 0) }}
+                      </span>
+                      <span v-if="item.part" class="sf-node-selected-part tnum">P{{ item.page }} · {{ item.part }}</span>
+                    </div>
+                  </div>
+                </div>
               </div>
-            </div>
-            <div v-else-if="previewError" class="sf-node-preview sf-node-preview--error">{{ previewError }}</div>
-            <div v-else class="sf-node-hint tnum">输入链接后自动解析封面、UP 主与分 P 信息</div>
-            <button type="button" class="sf-node-batch" @click="openPicker">
-              从收藏夹 / 我的合集 / 稍后再看 / 历史批量选择视频
-            </button>
+            </template>
+            <template v-else>
+              <el-input
+                class="sf-node-control"
+                size="small"
+                :model-value="data.url"
+                placeholder="粘贴 B 站视频链接（支持分 P）"
+                @update:model-value="(v: string | number) => { const value = String(v); patch({ url: value }); schedulePreview(value); }"
+                @blur="commit"
+              />
+              <div v-if="previewLoading" class="sf-node-preview sf-node-preview--loading tnum">正在解析视频信息…</div>
+              <div v-else-if="preview" class="sf-node-preview">
+                <img :src="preview.cover" class="sf-node-cover" alt="视频封面" referrerpolicy="no-referrer" loading="lazy" />
+                <div class="sf-node-preview-info">
+                  <span class="sf-node-preview-title">{{ preview.title }}</span>
+                  <span class="sf-node-preview-meta tnum">
+                    {{ preview.uploader }} · {{ fmtDuration(preview.duration) }} · {{ preview.pages.length }}P
+                  </span>
+                  <span v-if="data.pageInfo" class="sf-node-preview-page tnum">
+                    已选 P{{ data.pageInfo.page }} · {{ data.pageInfo.part }}
+                  </span>
+                </div>
+              </div>
+              <div v-else-if="previewError" class="sf-node-preview sf-node-preview--error">{{ previewError }}</div>
+              <div v-else class="sf-node-hint tnum">输入链接后自动解析封面、UP 主与分 P 信息</div>
+              <div v-if="preview && preview.pages.length > 1" class="sf-node-pages">
+                <div class="sf-node-pages-head">
+                  <span class="sf-node-pages-title">选择分P（可多选）</span>
+                  <button type="button" class="sf-node-pages-confirm" :disabled="selectedPages.length === 0" @click="confirmPageSelection">
+                    生成所选分P
+                  </button>
+                </div>
+                <label v-for="page in preview.pages" :key="page.page" class="sf-node-page">
+                  <input type="checkbox" :checked="selectedPages.includes(page.page)" @change="togglePage(page.page)" />
+                  <span class="sf-node-page-name">P{{ page.page }} · {{ page.part || `第 ${page.page} 集` }}</span>
+                  <span class="sf-node-page-duration tnum">{{ fmtDuration(page.duration) }}</span>
+                </label>
+              </div>
+            </template>
           </template>
 
           <template v-else-if="nodeType === 'source.file'">
@@ -304,16 +368,15 @@ function commit() {
           <template v-else-if="nodeType === 'process.prompt'">
             <label class="sf-node-field">
               <span class="sf-node-field-label">提示词块</span>
-              <el-select
+              <ModelSelect
                 v-model="promptBlockId"
-                class="sf-node-select"
+                :options="promptOptions"
                 size="small"
                 clearable
                 filterable
                 placeholder="选择提示词块"
-              >
-                <el-option v-for="option in promptOptions" :key="option.value" :label="option.label" :value="option.value" />
-              </el-select>
+                :prefix-icon="Sparkles"
+              />
             </label>
             <label class="sf-node-field">
               <span class="sf-node-field-label">输出名称</span>
@@ -386,8 +449,8 @@ function commit() {
     </ContextMenuTrigger>
     <ContextMenuPortal>
       <ContextMenuContent class="sf-node-menu" align="start">
-        <ContextMenuItem class="sf-node-menu-item" @select="props.data.ctx?.runNode()">运行此节点</ContextMenuItem>
-        <ContextMenuItem class="sf-node-menu-item" @select="props.data.ctx?.runFromNode()">从此节点运行</ContextMenuItem>
+        <ContextMenuItem class="sf-node-menu-item" :disabled="props.data.ctx?.running" title="运行中不可启动新运行" @select="props.data.ctx?.runNode()">运行此节点</ContextMenuItem>
+        <ContextMenuItem class="sf-node-menu-item" :disabled="props.data.ctx?.running" title="运行中不可启动新运行" @select="props.data.ctx?.runFromNode()">从此节点运行</ContextMenuItem>
         <ContextMenuSeparator class="sf-node-menu-sep" />
         <ContextMenuItem class="sf-node-menu-item" @select="props.data.ctx?.duplicate()">复制</ContextMenuItem>
         <ContextMenuItem class="sf-node-menu-item" :disabled="true" title="M4 接入">复制输出</ContextMenuItem>
@@ -395,7 +458,6 @@ function commit() {
         <ContextMenuItem class="sf-node-menu-item sf-node-menu-item--danger" @select="props.data.ctx?.remove()">删除</ContextMenuItem>
       </ContextMenuContent>
     </ContextMenuPortal>
-    <SourcePickerDialog v-model:open="showPicker" @confirm="onPickerConfirm" />
   </ContextMenuRoot>
 </template>
 
@@ -624,32 +686,158 @@ function commit() {
   color: var(--color-brand);
 }
 
-.sf-node-batch {
+.sf-node-selected-list {
   display: flex;
-  align-items: center;
-  justify-content: center;
+  flex-direction: column;
   gap: 6px;
-  width: 100%;
-  min-height: 40px;
-  padding: 8px 10px;
-  border: 1px dashed var(--color-border-strong);
-  border-radius: var(--radius-md);
-  background: var(--color-surface-muted);
-  color: var(--color-text-secondary);
-  font-family: inherit;
-  font-size: 12px;
-  text-align: center;
-  cursor: pointer;
-  transition:
-    border-color var(--dur-1) var(--ease-out),
-    color var(--dur-1) var(--ease-out),
-    background-color var(--dur-1) var(--ease-out);
+  max-height: 260px;
+  overflow-y: auto;
+  padding: 2px;
 }
 
-.sf-node-batch:hover {
+.sf-node-selected-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 8px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-muted);
+}
+
+.sf-node-selected-cover {
+  width: 96px;
+  aspect-ratio: 16 / 9;
+  object-fit: cover;
+  border-radius: var(--radius-sm);
+  background: var(--color-ink-soft);
+  flex-shrink: 0;
+}
+
+.sf-node-selected-cover--placeholder {
+  background: var(--color-ink-soft);
+}
+
+.sf-node-selected-info {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.sf-node-selected-title {
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.4;
+  color: var(--color-text);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.sf-node-selected-meta {
+  font-size: 11px;
+  color: var(--color-text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sf-node-selected-part {
+  font-size: 10.5px;
+  color: var(--color-brand);
+}
+
+.sf-node-collection {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.sf-node-collection-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.sf-node-collection-count {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+}
+
+.sf-node-collection-tag {
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--color-brand-soft);
+  color: var(--color-brand);
+  font-size: 10px;
+  line-height: 1.5;
+}
+
+.sf-node-pages {
+  padding: 8px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-muted);
+}
+
+.sf-node-pages-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.sf-node-pages-title {
+  font-size: 11px;
+  color: var(--color-text-tertiary);
+}
+
+.sf-node-pages-confirm {
+  padding: 2px 8px;
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  color: var(--color-text-secondary);
+  font-family: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.sf-node-pages-confirm:hover:not(:disabled) {
   border-color: var(--color-brand);
   color: var(--color-brand);
-  background: var(--color-brand-soft);
+}
+
+.sf-node-pages-confirm:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.sf-node-page {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 2px;
+  font-size: 11.5px;
+  color: var(--color-text);
+  cursor: pointer;
+}
+
+.sf-node-page-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sf-node-page-duration {
+  color: var(--color-text-tertiary);
 }
 
 .sf-node-upload {

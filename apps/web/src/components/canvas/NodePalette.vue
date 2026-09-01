@@ -1,11 +1,21 @@
 <script setup lang="ts">
-import { FileOutput, FileText, FileUp, GitMerge, Link2, Mic, Sparkles, WandSparkles } from "lucide-vue-next";
+import { FileOutput, FileText, FileUp, FolderHeart, GitMerge, Link2, Mic, Sparkles, WandSparkles } from "lucide-vue-next";
 import { NODE_TYPE_LABELS, type NodeType } from "@scribe-flow/shared";
+
+type PaletteItemType = NodeType | "source.biliCollection";
+
+interface PaletteItem {
+  type: PaletteItemType;
+  icon: unknown;
+  label?: string;
+  /** 动作型入口不落画布节点，点击后由父级打开选择器。 */
+  action?: boolean;
+}
 
 interface PaletteGroup {
   key: string;
   label: string;
-  items: { type: NodeType; icon: unknown }[];
+  items: PaletteItem[];
 }
 
 const groups: PaletteGroup[] = [
@@ -14,6 +24,7 @@ const groups: PaletteGroup[] = [
     label: "来源",
     items: [
       { type: "source.bili", icon: Link2 },
+      { type: "source.biliCollection", icon: FolderHeart, label: "B站收藏", action: true },
       { type: "source.file", icon: FileUp },
       { type: "source.text", icon: FileText },
     ],
@@ -41,9 +52,9 @@ const groups: PaletteGroup[] = [
   },
 ];
 
-const emit = defineEmits<{ add: [type: NodeType] }>();
+const emit = defineEmits<{ add: [type: PaletteItemType] }>();
 
-function onDragStart(event: DragEvent, type: NodeType) {
+function onDragStart(event: DragEvent, type: PaletteItemType) {
   event.dataTransfer?.setData("application/scribe-node", type);
   if (event.dataTransfer) event.dataTransfer.effectAllowed = "move";
 }
@@ -58,14 +69,15 @@ function onDragStart(event: DragEvent, type: NodeType) {
         :key="item.type"
         type="button"
         class="sf-palette-item"
-        draggable="true"
+        :draggable="!item.action"
+        :title="item.action ? '点击打开 B 站收藏/历史多选' : undefined"
         @dragstart="onDragStart($event, item.type)"
         @click="emit('add', item.type)"
       >
         <span class="sf-palette-icon">
           <component :is="item.icon" :size="13" />
         </span>
-        <span>{{ NODE_TYPE_LABELS[item.type] }}</span>
+        <span>{{ item.label ?? NODE_TYPE_LABELS[item.type as NodeType] }}</span>
       </button>
     </div>
   </aside>
