@@ -335,8 +335,9 @@ function sourcePatchFor(video: import("@scribe-flow/shared").SourceVideoItem): R
     uploader: video.uploader,
     duration: video.duration,
   };
-  if (video.pages && video.pages.length > 0) {
-    patch.pageInfo = video.pages[0];
+  const firstPage = video.pages?.find((p) => p.cid) ?? video.pages?.[0];
+  if (firstPage?.cid) {
+    patch.pageInfo = firstPage;
   } else if (video.cid) {
     patch.pageInfo = { cid: video.cid, page: 1, part: "", duration: video.duration };
   }
@@ -344,7 +345,7 @@ function sourcePatchFor(video: import("@scribe-flow/shared").SourceVideoItem): R
 }
 
 function sourceItemFor(video: import("@scribe-flow/shared").SourceVideoItem): BiliSourceItem {
-  const page = video.pages?.[0] ?? (video.cid ? { cid: video.cid, page: 1, part: "", duration: video.duration } : undefined);
+  const page = video.pages?.find((p) => p.cid) ?? video.pages?.[0] ?? (video.cid ? { cid: video.cid, page: 1, part: "", duration: video.duration } : undefined);
   return {
     bvid: video.bvid,
     cid: page?.cid ?? 0,

@@ -1,5 +1,5 @@
 import QRCode from "qrcode";
-import type { BiliAccount, SourceCollection, SourceVideoItem } from "@scribe-flow/shared";
+import type { BiliAccount, PageRef, SourceCollection, SourceVideoItem } from "@scribe-flow/shared";
 
 export const BILI_USER_AGENT =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36";
@@ -43,6 +43,39 @@ async function biliGet<T>(url: string, cookie?: string): Promise<T> {
 function coverHttps(url: string | undefined): string {
   if (!url) return "";
   return url.replace(/^http:\/\//i, "https://").replace(/^\/\//, "https://");
+}
+
+export interface BiliVideoDetail {
+  bvid: string;
+  cid: number;
+  pages: PageRef[];
+}
+
+const videoDetailCache = new Map<string, { data: BiliVideoDetail; ts: number }>();
+const VIDEO_DETAIL_CACHE_TTL = 5 * 60 * 1000;
+
+/** 通过 B 站稿件信息接口补齐 cid / 分 P 信息（公开接口，无需登录）。 */
+export async function fetchBiliVideoDetail(bvid: string): Promise<BiliVideoDetail> {
+  const hit = videoDetailCache.get(bvid);
+  if (hit && Date.now() - hit.ts < VIDEO_DETAIL_CACHE_TTL) return hit.data;
+
+  const data = await biliGet<{
+    bvid?: string;
+    cid?: number;
+    pages?: { page: number; cid: number; part: string; duration: number }[];
+  }>(`https://api.bilibili.com/x/web-interface/view?bvid=${encodeURIComponent(bvid)}`);
+  const cid = Number(data.cid ?? 0);
+  const pages: PageRef[] =
+    data.pages && data.pages.length > 0
+      ? data.pages.map((p) => ({ page: p.page, cid: p.cid, part: p.part, duration: p.duration }))
+      : [{ page: 1, cid, part: "", duration: 0 }];
+  const detail: BiliVideoDetail = { bvid: data.bvid ?? bvid, cid, pages };
+  if (videoDetailCache.size >= 100) {
+    const oldest = videoDetailCache.keys().next().value;
+    if (oldest) videoDetailCache.delete(oldest);
+  }
+  videoDetailCache.set(bvid, { data: detail, ts: Date.now() });
+  return detail;
 }
 
 // ---------- 扫码登录 ----------
@@ -195,6 +228,10 @@ function normalizeFavItem(item: FavMediaItem): SourceVideoItem {
       }
     : undefined;
   const pages = item.pages?.length ? item.pages : pageRef ? [pageRef] : undefined;
+  const pageCount =
+    typeof item.page === "number" && item.page > 0
+      ? item.page
+      : Number(item.pages?.length ?? (pageRef ? 1 : item.videos ?? 1));
   return {
     bvid: item.bvid ?? "",
     aid: Number(item.id ?? item.aid ?? 0),
@@ -203,7 +240,7 @@ function normalizeFavItem(item: FavMediaItem): SourceVideoItem {
     cover: coverHttps(item.cover),
     uploader: item.upper?.name ?? "",
     duration: Number(item.duration ?? 0),
-    pageCount: Number(item.pages?.length ?? (pageRef ? 1 : item.videos ?? 1)),
+    pageCount,
     pages,
   };
 }

@@ -2,7 +2,7 @@
 import { computed, onBeforeUnmount, ref, watch } from "vue";
 import { ElButton, ElDialog, ElInput, ElMessage, ElTabPane, ElTable, ElTableColumn, ElTabs, type TableInstance } from "element-plus";
 import { Clock3, FolderHeart, ListVideo, PlaySquare } from "lucide-vue-next";
-import type { SourceCollection, SourceVideoItem } from "@scribe-flow/shared";
+import type { SourceCollection, SourceVideoItem, VideoPreview } from "@scribe-flow/shared";
 import ModelSelect from "../ModelSelect.vue";
 import { api } from "@/lib/api";
 
@@ -18,6 +18,7 @@ const dialogVisible = computed({
 
 const activeTab = ref<TabKey>("fav");
 const loading = ref(false);
+const confirming = ref(false);
 const errorMessage = ref("");
 const searchKeyword = ref("");
 const page = ref(1);
@@ -178,13 +179,41 @@ async function goPage(next: number) {
   await reloadVideos();
 }
 
-function confirmSelection() {
+async function confirmSelection() {
+  if (confirming.value) return;
   if (selected.value.length === 0) {
     ElMessage.warning("请先选择至少一个视频");
     return;
   }
-  emit("confirm", selected.value.map((item) => ({ ...item })));
-  dialogVisible.value = false;
+  confirming.value = true;
+  try {
+    const items = await Promise.all(
+      selected.value.map(async (item) => {
+        // 收藏夹/合集列表接口不返回 cid，选中后先补齐分 P 信息，避免生成“缺 cid”的卡片。
+        if (item.cid || item.pages?.some((p) => p.cid)) return { ...item };
+        const preview = await api.post<VideoPreview>("/api/videos/preview", {
+          url: `https://www.bilibili.com/video/${item.bvid}`,
+        });
+        return {
+          ...item,
+          bvid: preview.bvid,
+          cid: preview.cid,
+          pages: preview.pages,
+          pageCount: preview.pages.length,
+          title: item.title || preview.title,
+          cover: item.cover || preview.cover,
+          uploader: item.uploader || preview.uploader,
+          duration: item.duration || preview.duration,
+        };
+      }),
+    );
+    emit("confirm", items);
+    dialogVisible.value = false;
+  } catch (err) {
+    ElMessage.error(err instanceof Error ? err.message : "解析视频信息失败，请稍后重试");
+  } finally {
+    confirming.value = false;
+  }
 }
 
 let searchTimer: ReturnType<typeof setTimeout> | null = null;
@@ -295,7 +324,9 @@ onBeforeUnmount(() => {
       </div>
       <div class="sf-picker-confirm">
         <span class="sf-picker-count tnum">已选 {{ selected.length }} 项</span>
-        <el-button type="primary" :disabled="selected.length === 0" @click="confirmSelection">生成来源节点</el-button>
+        <el-button type="primary" :disabled="selected.length === 0 || confirming" @click="confirmSelection">
+          {{ confirming ? "解析视频信息…" : "生成来源节点" }}
+        </el-button>
       </div>
     </div>
   </el-dialog>

@@ -18,6 +18,7 @@ import {
 import type { AppDatabase } from "../db/client";
 import { biliCookies, projects, runNodeInputs, runNodeLogs, runNodeResults, runs } from "../db/schema";
 import { chatCompletion, transcribeAudio } from "./ai";
+import { fetchBiliVideoDetail } from "./bilibili";
 import { downloadBiliAudio, toAsrWav } from "./media";
 import { getAiConfig, getAsrConfig, getSettings } from "./settings";
 
@@ -439,8 +440,13 @@ export class RunEngine {
           for (let i = 0; i < items.length; i += 1) {
             const item = items[i];
             const bvid = String(item.bvid ?? "").trim();
-            const cid = Number(item.cid ?? 0);
             if (!bvid) throw new Error(`多选卡片第 ${i + 1} 项缺少 BV 号`);
+            let cid = Number(item.cid ?? 0);
+            if (!cid) {
+              const detail = await fetchBiliVideoDetail(bvid);
+              const page = detail.pages.find((p) => p.page === Number(item.page ?? 1)) ?? detail.pages[0];
+              cid = page?.cid ?? 0;
+            }
             if (!cid) throw new Error(`多选卡片第 ${i + 1} 项缺少 cid，请重新在卡片中解析链接`);
             await this.progress(active, node.id, Math.round((i / items.length) * 80 + 10), `下载第 ${i + 1}/${items.length} 个 B 站音轨`);
             const audio = await downloadBiliAudio(bvid, cid, cookie, dir);
@@ -456,8 +462,13 @@ export class RunEngine {
         const bvid = url.match(/BV[0-9A-Za-z]+/)?.[0] || String(data.bvid ?? "").trim();
         if (!url && !bvid) throw new Error("B 站链接为空");
         if (!bvid) throw new Error("链接中没有识别到 BV 号");
-        const pageInfo = data.pageInfo as { cid?: number } | undefined;
-        const cid = Number(pageInfo?.cid ?? 0);
+        const pageInfo = data.pageInfo as { cid?: number; page?: number } | undefined;
+        let cid = Number(pageInfo?.cid ?? 0);
+        if (!cid) {
+          const detail = await fetchBiliVideoDetail(bvid);
+          const page = detail.pages.find((p) => p.page === Number(pageInfo?.page ?? 1)) ?? detail.pages[0];
+          cid = page?.cid ?? 0;
+        }
         if (!cid) throw new Error("该视频缺少 cid，请重新在卡片中解析链接");
         const cookie = this.db.select().from(biliCookies).where(eq(biliCookies.id, 1)).get()?.cookie;
         const dir = join(this.dataDir, "runs", active.id, "nodes", node.id);
