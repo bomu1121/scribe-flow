@@ -1,0 +1,193 @@
+
+
+Overview | Dagster Docs                - - - - -
+
+-
+
+-
+
+-
+
+Skip to main content
+
+Developing with AI? Check out our new  AI skills !
+
+User guide  Examples  Deployment  Migration  Integrations  API
+Latest (1.13.20)  -  Latest (1.13.20)
+-  Version 1.12 (1.12.8)
+-  Version 1.11 (1.11.16)
+-  Version 1.10 (1.10.21)
+-  Version 1.9 (1.9.13)
+-  1.9.9 and earlier
+-  Upcoming release (Preview)
+
+Sign in  Try Dagster+
+Search
+
+-    Getting Started
+-   Overview
+-   Quickstart (Dagster+ Hybrid and OSS)
+-   Quickstart (Dagster+ Serverless)
+-   Installation
+-   Concepts
+-   AI tools
+-   Dagster University
+-   Python primer
+
+-    Tutorial
+-   Projects
+-   Assets
+-   Resources
+-   Asset dependencies
+-   Asset checks
+-   Automation
+-   Components
+-   Dagster basics tutorial
+
+-    Build
+-   Build pipelines
+-    Projects and workspaces
+
+-    Assets
+
+-    Components
+
+-    Partitions and backfills
+
+-    External resources
+
+-    I/O managers
+
+-    Ops
+
+-    Jobs
+
+-    Automate
+-   Automate
+-    Schedules
+
+-    Declarative Automation
+
+-    Sensors
+
+-   Asset sensors
+
+-    Operate
+-    Configuration
+
+-   Operating pipelines
+-   Dagster webserver and UI
+-   User settings in the UI
+-   Run executors
+-    Managing concurrency
+
+-    Log & debug
+-   Logging & debugging pipelines
+-    Logging
+
+-    Debugging
+
+-    Observe
+-    Asset catalog (Dagster+)
+
+-    Alerts (Dagster+)
+
+-   Asset health status (Dagster+)
+-   Asset freshness policies
+-    Insights (Dagster+)
+
+-   Observe
+
+-    Test
+-   Testing assets
+-   Asset checks
+-   Running a subset of asset checks
+-   Unit testing assets and ops
+-   Testing partitioned config and jobs
+-   Data contracts with asset checks
+
+-    Labs
+-   Dagster+ MCP server
+-    Dagster+ AI
+
+-   Issues
+-    Connections
+
+-    Webhooks
+
+-   Labs
+
+-    About
+-   Community
+-   Contributing code
+-    Contributing documentation
+
+-   Dagster telemetry
+-   Releases
+-   Changelog
+-   Data portability
+
+-
+-  Getting Started
+-  Overview
+
+## Welcome to Dagster
+
+Dagster is a data orchestrator built for data engineers, with integrated lineage, observability, a declarative programming model, and best-in-class testability.
+
+defs/assets.py
+import   dagster   as   dg
+
+@dg  .  asset
+def     hello  (  context  :   dg  .  AssetExecutionContext  )  :
+context  .  log  .  info  (  "Hello!"  )
+
+@dg  .  asset  (  deps  =  [  hello  ]  )
+def     world  (  context  :   dg  .  AssetExecutionContext  )  :
+context  .  log  .  info  (  "World!"  )
+
+## Get started ​
+
+## Quickstart
+
+Build your first Dagster pipeline in our Quickstart tutorial.
+
+## Thinking in Assets
+
+New to Dagster? Learn about how thinking in assets can help you manage your data better.
+
+## Dagster Plus
+
+Learn about Dagster Plus, our managed offering that includes a hosted Dagster instance and many more features.
+
+## Join the Dagster community ​
+
+## Slack
+
+Join our Slack community to talk with other Dagster users, use our AI-powered chatbot, and get help with Dagster.
+
+## GitHub
+
+Star our GitHub repository and follow our development through GitHub Discussions.
+
+## YouTube
+
+Watch our latest videos on YouTube.
+
+## Dagster University
+
+Learn Dagster through interactive courses and hands-on tutorials.
+
+Edit this page
+
+Next
+Quickstart (Dagster+ Hybrid and OSS)
+
+Terms of Service
+Privacy Policy
+Security
+Cookie Preferences
+
+Copyright 2026 Dagster Labs
+
+

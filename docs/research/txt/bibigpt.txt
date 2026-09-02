@@ -1,0 +1,103 @@
+BibiGPT · AI 音视频内容一键总结   -  - - - - - - - - - - - - - - - - - - - -  BibiGPT 知行助理 - AI 视频总结，让你的音视频内容看得快、搜得到、用得好                   - - -     - -                                                                     - -
+Bibi  GPT     探索  价格  博客  文档    客户端
+更新日志  v4.603.0  ·   💻 桌面客户端(Beta)丨本地文件
+
+📱                     登录
+
+##  Bibi  GPT AI 音视频助理
+1 小时视频，3 分钟看完重点——AI 视频总结、思维导图、视频转文字，一键搞定
+
+## What is BibiGPT?
+BibiGPT (originally BiliGPT, also known as AI 课代表) is an AI video and audio assistant. Paste any video, audio, podcast or upload a local file and BibiGPT generates a structured, time-stamped summary, full transcript, mind map, and an AI chat surface over the content. Founded by JimmyLv (吕立青) in 2023, served 1M+ users since.
+
+## How does BibiGPT summarize videos?
+BibiGPT 是 AI 视频总结与音视频转文字工具：粘贴 B站（哔哩哔哩）、YouTube、抖音、小红书、 播客链接，一键完成视频总结、字幕提取、视频转文字、思维导图生成；支持 AI 对话追问、 图文改写，并可一键保存到 Notion、Obsidian、flomo 笔记。免费试用，无需下载安装。
+
+## Which platforms does BibiGPT support?
+BibiGPT works with YouTube, Bilibili (B 站), TikTok, Douyin (抖音), Kuaishou (快手), Xiaohongshu (小红书), Twitter / X, Vimeo, TED, Coursera, Khan Academy, Apple Podcasts, Spotify, Xiaoyuzhou (小宇宙), Ximalaya (喜马拉雅), and arbitrary web pages with audio or video tags. Local files supported: mp3, mp4, m4a, wav, srt, vtt, ass.
+
+## Is BibiGPT free?
+Free tier with daily quota (30-min videos). Plus $19.8/mo (year $142.56). Pro $34.8/mo (year $250.56) with vision, batch processing, and API access. Lifetime $888 (limited). Pay-as-you-go credits from $20 (2,000 credits) to $200 (40,000 credits, 50% off per credit).
+
+## How do AI agents integrate with BibiGPT?
+Four agent surfaces: (1) MCP server at https://bibigpt.co/api/mcp with OAuth 2.0 + Bearer; (2) REST OpenAPI spec at https://bibigpt.co/api/openapi.json; (3) NLWeb /ask endpoint with SSE streaming at https://bibigpt.co/api/ask; (4) Anthropic Skill via npx skills add JimmyLv/bibigpt-skill . Discovery files: /.well-known/agent-card.json (A2A), /.well-known/mcp.json, /llms.txt, /api/llms.txt, /pricing.md, /index.md. Try /api/discover for a single-call list of all agent entry points, or visit https://bibigpt.co/?mode=agent for a structured JSON view of this homepage.
+
+## How does BibiGPT handle privacy?
+Uploaded files auto-deleted after 30 days. Summaries default to private and only become public when the user explicitly toggles sharing. BibiGPT does not train on user content without opt-in. Full data export and delete via dashboard. GDPR / CCPA compliant. See the  BibiGPT Privacy Policy  and   security.txt .
+
+## Who built BibiGPT?
+Founder  吕立青 (JimmyLv)  — former ThoughtWorks and Alibaba engineer — open-sourced the predecessor as BiliGPT on   GitHub  in 2023. Product docs:   docs.bibigpt.co . Company page:   About BibiGPT . Support:   Contact . Legal:   Terms of Service .
+
+## Multi-platform clients
+Web app at bibigpt.co (Chinese) and aitodo.co (international). Browser extension for Chrome / Firefox / Edge. Desktop app for macOS and Windows (Tauri 2.x). Mobile apps for iOS and Android (Expo). Cross-platform agent integration via MCP / OpenAPI / Skill.
+
+-
+免费总结
+立即免费体验        -                 0万+
+学习者和创作者在用
+
+-                 0万+
+视频已被总结
+
+-               0+
+平台粘贴即用
+
+## 🎬 AI 功能演示
+支持 B站、YouTube、播客、TED 等平台。一键生成视频总结、章节大纲、思维导图，还可与 AI 对话深入了解内容。
+智能总结  章节大纲  AI 对话
+
+RED
+
+RED
+
+支持主流平台音视频内容总结
+
+## 如何用 BibiGPT 三步总结视频？
+
+不用下载安装，B 站、YouTube、播客链接粘贴就能用
+
+-              -     01
+
+## 粘贴链接
+支持 B站、YouTube、抖音、小红书、播客等 30+ 平台，本地音视频文件也能直接上传。
+
+-                     02
+
+## AI 视频总结
+自动提取字幕、视频转文字，生成带时间戳的总结和章节速览，直接跳到关键内容。
+
+-                 03
+
+## 知识随你用
+思维导图、AI 追问、图文改写，一键存进 Notion、Obsidian、flomo 笔记。
+
+免费总结一个视频试试   更多用法：  YouTube 转 Notion 笔记  播客转文章
+
+## 1 小时视频，3 分钟看完重点——AI 视频总结、思维导图、视频转文字，一键搞定
+
+## 把看不完的视频，变成用得上的知识
+
+## 无缝集成笔记应用
+
+## 核心功能
+
+## 把每一段视频都变成可复用的知识
+
+## 应用场景
+
+## 为学习和团队节省时间
+
+## 功能特性
+
+## 用户评价
+看看用户的真实体验与感受
+
+## 会员定价
+7天无风险购买，随时可退
+
+## 最热 AI 视频总结
+加载热门内容中…
+
+About Us  Contact  Privacy Policy  Terms of Service
+
+

@@ -138,14 +138,14 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: 8px;
   width: 100%;
-  height: 36px;
-  padding: 0 10px;
-  border: 1px solid var(--color-border);
-  border-radius: 8px;
-  background: var(--color-surface);
+  height: var(--control-height);
+  padding: 0 var(--control-padding-x);
+  border: 1px solid var(--control-border);
+  border-radius: var(--control-radius);
+  background: var(--control-bg);
   color: var(--color-text);
   font-family: inherit;
-  font-size: 13px;
+  font-size: var(--control-font-size);
   cursor: pointer;
   transition:
     border-color 0.12s ease,
@@ -153,11 +153,11 @@ onBeforeUnmount(() => {
 }
 
 .sf-model-select__trigger:hover {
-  border-color: var(--color-border-strong);
+  border-color: var(--control-border-hover);
 }
 
 .sf-model-select.is-open .sf-model-select__trigger {
-  border-color: var(--color-border-strong);
+  border-color: var(--control-border-hover);
   box-shadow: none;
 }
 
@@ -227,24 +227,24 @@ onBeforeUnmount(() => {
 
 .sf-model-select__search-input {
   width: 100%;
-  height: 32px;
-  padding: 0 10px;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm);
-  background: var(--color-surface-muted);
+  height: var(--control-height-sm);
+  padding: 0 var(--control-padding-x);
+  border: 1px solid var(--control-border);
+  border-radius: var(--control-radius-sm);
+  background: var(--control-bg-muted);
   color: var(--color-text);
   font-family: inherit;
-  font-size: 12px;
+  font-size: var(--control-font-size-sm);
   outline: none;
   transition: border-color 0.12s ease;
 }
 
 .sf-model-select__search-input:focus {
-  border-color: var(--color-border-strong);
+  border-color: var(--control-border-hover);
 }
 
 .sf-model-select__search-input::placeholder {
-  color: var(--color-text-tertiary);
+  color: var(--control-placeholder);
 }
 
 .sf-model-select__options {
@@ -313,9 +313,9 @@ onBeforeUnmount(() => {
 }
 
 .sf-model-select.is-small .sf-model-select__trigger {
-  height: 32px;
-  font-size: 12px;
-  border-radius: 8px;
+  height: var(--control-height-sm);
+  font-size: var(--control-font-size-sm);
+  border-radius: var(--control-radius);
 }
 
 .sf-model-select.is-small .sf-model-select__menu {

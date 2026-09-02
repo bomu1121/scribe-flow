@@ -13,7 +13,7 @@ import {
 import { Background } from "@vue-flow/background";
 import { Controls } from "@vue-flow/controls";
 import { MiniMap } from "@vue-flow/minimap";
-import { NODE_PORTS, NODE_TYPE_LABELS, canConnectSpecs, nextEdgeId, nextNodeId, type BiliSourceItem, type NodeType, type PortSpec, type RunNodeResult, type WorkflowGraph } from "@scribe-flow/shared";
+import { NODE_PORTS, NODE_TYPE_LABELS, canConnectSpecs, nextEdgeId, nextNodeId, type BiliSourceItem, type NodeType, type PortSpec, type ResultDelta, type RunNodeResult, type WorkflowGraph } from "@scribe-flow/shared";
 import { ElDialog, ElInput } from "element-plus";
 import ScribeNode from "./ScribeNode.vue";
 import FlowEdge from "./FlowEdge.vue";
@@ -511,6 +511,7 @@ const NODE_LAYOUT_WIDTH: Record<NodeType, number> = {
   "flow.if": 300,
   "process.text": 260,
   "process.chapter": 240,
+  "process.mindmap": 300,
 };
 
 // ---------- 布局 ----------
@@ -560,7 +561,7 @@ function focusNode(nodeId: string) {
 /** 运行事件驱动节点状态；不触发自动保存（运行态不进 graph 快照）。 */
 function applyRunEvent(event: import("@scribe-flow/shared").RunEvent) {
   if (event.type === "run.started") {
-    nodesRef.value = nodesRef.value.map((node) => ({ ...node, data: { ...node.data, status: "idle", summary: undefined, preview: undefined } }));
+    nodesRef.value = nodesRef.value.map((node) => ({ ...node, data: { ...node.data, status: "idle", summary: undefined, preview: undefined, delta: undefined } }));
     return;
   }
   if (!("nodeId" in event)) return;
@@ -576,16 +577,51 @@ function applyRunEvent(event: import("@scribe-flow/shared").RunEvent) {
     patch.status = "skipped";
     patch.summary = event.reason;
   } else if (event.type === "node.done") {
+    const target = nodesRef.value.find((n) => n.id === event.nodeId);
     patch.status = "done";
     patch.summary = event.summary;
-    patch.preview = event.preview;
+    patch.delta = event.delta;
+    if (target && target.data.nodeType !== "process.output" && target.data.nodeType !== "process.mindmap") {
+      patch.preview = event.preview;
+    } else {
+      patch.preview = undefined;
+    }
   } else if (event.type === "node.error") {
     patch.status = "error";
     patch.summary = event.error;
+    patch.delta = undefined;
   }
   nodesRef.value = nodesRef.value.map((node) =>
     node.id === event.nodeId ? { ...node, data: { ...node.data, ...patch } as ScribeNodeData } : node,
   );
+}
+
+/** 生成选中节点展开用的结构化摘要：保留 Markdown 换行/标题，截取前几段而不是拍平成一行。 */
+function previewText(text: string): string | undefined {
+  const clean = text.replace(/\r\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
+  if (!clean) return undefined;
+  return clean.slice(0, 320) || undefined;
+}
+
+function countChars(text: string): number {
+  return text.replace(/\s/g, "").length;
+}
+
+/** 运行快照恢复时按“直接上游文本”计算差异徽标，刷新后也能显示。 */
+function snapshotDelta(result: RunNodeResult, byId: Map<string, RunNodeResult>): ResultDelta | undefined {
+  if (result.status !== "done" || !result.output?.text) return undefined;
+  const currentText = result.output.text;
+  const upstreamTexts = edgesRef.value
+    .filter((edge) => edge.target === result.nodeId)
+    .map((edge) => byId.get(edge.source)?.output?.text)
+    .filter((text): text is string => Boolean(text?.trim()))
+    .map((text) => text.trim());
+  if (upstreamTexts.length === 0) return { label: "新生成", tone: "new" };
+  const upstreamText = upstreamTexts.join("\n\n");
+  if (upstreamText.trim() === currentText.trim()) return { label: "与上游一致", tone: "same" };
+  const diff = countChars(currentText) - countChars(upstreamText);
+  if (diff === 0) return { label: "较上游内容变化", tone: "changed" };
+  return { label: `较上游 ${diff > 0 ? "+" : ""}${diff} 字`, tone: diff > 0 ? "up" : "down" };
 }
 
 /** 重新进入画布时用运行快照恢复节点状态（不触发自动保存）。 */
@@ -610,8 +646,11 @@ function applyRunSnapshot(nodeResults: RunNodeResult[]) {
     patch.status = status;
     if (result.summary) patch.summary = result.summary;
     if (result.error) patch.summary = result.error;
-    if (result.output?.text && (result.output.kind === "text" || result.output.kind === "noteBlock" || result.output.kind === "noteDoc")) {
-      const preview = result.output.text.replace(/\s+/g, " ").trim().slice(0, 120);
+    patch.delta = status === "done" ? snapshotDelta(result, byId) : undefined;
+    if (result.nodeType === "process.mindmap" || result.nodeType === "process.output") {
+      patch.preview = undefined;
+    } else if (result.output?.text && (result.output.kind === "text" || result.output.kind === "noteBlock" || result.output.kind === "noteDoc")) {
+      const preview = previewText(result.output.text);
       if (preview) patch.preview = preview;
     }
     return { ...node, data: { ...node.data, ...patch } as ScribeNodeData };

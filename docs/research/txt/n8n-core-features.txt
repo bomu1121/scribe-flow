@@ -1,0 +1,93 @@
+- - -  - - - - - -                      -   Understand workflows | Build | n8n Docs    - - -           - - - - -
+n8n Docs
+
+⌘  Ctrl   k
+
+Forum  Changelog    More
+
+-      Get started
+-      Deploy
+-      Build
+-      Nodes
+-      Connect
+-      Administer
+-      Contribute
+
+n8n Docs
+
+-   Build
+-   Understand workflows         -   Workflow components
+-   Understand executions
+-   Create and run workflows
+-   Save and publish workflows
+-   Create and edit credentials
+-   Use Gateway credits
+
+-    Build and manage agents   Preview
+
+-   Ways of building workflows
+-   Manage workflows
+-   Flow logic
+-   Work with data
+-   Code in n8n
+-   Integrate AI
+-   Keyboard shortcuts
+
+On this page
+
+For the complete documentation index, see  llms.txt . This page is also available as  Markdown .
+Copy
+On this page
+-     Build
+
+## Understand workflows
+A  workflow  is a collection of nodes connected together to automate a process.
+-
+
+Create   a workflow.
+
+-
+
+Use   Workflow templates   to help you get started.
+
+-
+
+Learn about the key   components   of a workflow in n8n.
+
+-
+
+Debug using the   Executions   list.
+
+-
+
+Share   workflows between users.
+
+If it&#x27;s your first time building a workflow, you may want to use the   quickstart guide   to quickly try out n8n features.
+
+Previous  Build
+Next  Workflow components
+
+Last updated  4 days ago
+Was this helpful?
+
+## Company
+-  n8n.io
+-  Careers
+-  Blog
+
+## Resources
+-  Templates
+-  Academy
+-  Changelog
+
+## Legal and privacy
+-  Security
+-  Sustainable use license
+-  Privacy
+
+x-twitter                   discord              linkedin              youtube
+© 2026 n8n | All rights reserved
+
+Was this helpful?
+
+

@@ -1,8 +1,15 @@
 <script setup lang="ts">
-import { ElInputNumber, ElSelect, ElOption } from "element-plus";
+import { ElInputNumber } from "element-plus";
+import ModelSelect from "../../ModelSelect.vue";
 
 const props = defineProps<{ granularity?: "coarse" | "medium" | "fine"; maxChapters?: number }>();
 const emit = defineEmits<{ update: [value: { granularity: "coarse" | "medium" | "fine"; maxChapters: number }] }>();
+
+const granularityOptions = [
+  { label: "粗（少章节）", value: "coarse" },
+  { label: "中（默认）", value: "medium" },
+  { label: "细（多章节）", value: "fine" },
+];
 
 function setGranularity(value: string) {
   emit("update", { granularity: value as "coarse" | "medium" | "fine", maxChapters: props.maxChapters ?? 20 });
@@ -15,14 +22,10 @@ function setMaxChapters(value: number | undefined) {
 
 <template>
   <div class="sf-chapter-card">
-    <label class="sf-node-field">
+    <div class="sf-node-field">
       <span class="sf-node-field-label">粒度</span>
-      <el-select :model-value="granularity ?? 'medium'" size="small" @update:model-value="setGranularity">
-        <el-option label="粗（少章节）" value="coarse" />
-        <el-option label="中（默认）" value="medium" />
-        <el-option label="细（多章节）" value="fine" />
-      </el-select>
-    </label>
+      <ModelSelect :model-value="granularity ?? 'medium'" :options="granularityOptions" size="small" @update:model-value="setGranularity" />
+    </div>
     <label class="sf-node-field">
       <span class="sf-node-field-label">最多章节</span>
       <el-input-number :model-value="maxChapters ?? 20" :min="1" :max="50" size="small" @update:model-value="setMaxChapters" />

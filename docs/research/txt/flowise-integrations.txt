@@ -1,0 +1,172 @@
+- - -  - - - - - -                    -   Integrations | FlowiseAI    - - -           - - - -
+FlowiseAI
+
+⌘  Ctrl   k
+
+FlowiseAI
+
+English
+-   Introduction
+-   Get Started
+-   Contribution Guide
+-   API Reference
+-   CLI Reference
+-   Using Flowise
+-   Configuration
+-   Integrations         -   LangChain
+-   LiteLLM Proxy
+-   LlamaIndex
+-   Utilities
+-   External Integrations
+
+-   Migration Guide
+-   Tutorials
+-
+Flowise
+-  Flowise GitHub
+-  Flowise Cloud
+
+Powered by GitBook
+
+On this page
+
+For the complete documentation index, see  llms.txt . This page is also available as  Markdown .
+Copy
+On this page
+-  English
+
+## Integrations
+Learn about all available integrations / nodes in Flowise
+In Flowise, nodes are referred to as integrations. Similar to LEGO, you can build a customized LLM ochestration flow, a chatbot, an agent with all the integrations available in Flowise.
+
+##  LangChain
+-
+
+Agents
+
+-
+
+Cache
+
+-
+
+Chains
+
+-
+
+Chat Models
+
+-
+
+Document Loaders
+
+-
+
+Embeddings
+
+-
+
+LLMs
+
+-
+
+Memory
+
+-
+
+Moderation
+
+-
+
+Output Parsers
+
+-
+
+Prompts
+
+-
+
+Record Managers
+
+-
+
+Retrievers
+
+-
+
+Text Splitters
+
+-
+
+Tools
+
+-
+
+Vector Stores
+
+##  LlamaIndex
+-
+
+Agents
+
+-
+
+Chat Models
+
+-
+
+Embeddings
+
+-
+
+Engine
+
+-
+
+Response Synthesizer
+
+-
+
+Tools
+
+-
+
+Vector Stores
+
+##  Utilities
+-
+
+Custom JS Function
+
+-
+
+Set/Get Variable
+
+-
+
+If Else
+
+-
+
+Set Variable
+
+-
+
+Sticky Note
+
+##  External Integrations
+-
+
+Zapier Zaps
+
+Previous  Running in Production
+Next  LangChain
+
+Last updated  1 year ago
+
+-   LangChain
+-   LlamaIndex
+-   Utilities
+-   External Integrations
+
+

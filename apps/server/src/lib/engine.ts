@@ -7,6 +7,7 @@ import {
   NODE_TYPE_LABELS,
   type GraphNode,
   type NodeOutput,
+  type ResultDelta,
   type RunEvent,
   type RunMeta,
   type RunNodeInput,
@@ -19,13 +20,14 @@ import type { AppDatabase } from "../db/client";
 import { biliCookies, projects, runNodeInputs, runNodeLogs, runNodeResults, runs } from "../db/schema";
 import { chatCompletion, transcribeAudio } from "./ai";
 import { fetchBiliVideoDetail } from "./bilibili";
+import { countMindMapNodes, mindMapToMarkdown, parseMindMapJson } from "./mindmap";
 import { downloadBiliAudio, toAsrWav } from "./media";
 import { getAiConfig, getAsrConfig, getSettings } from "./settings";
 
 const MAX_INLINE_TEXT = 200_000;
 
 /** 只有外部调用类节点才自动重试；本地节点失败重试无意义。 */
-const RETRYABLE_NODE_TYPES = new Set(["process.transcribe", "process.refine", "process.prompt", "process.chapter"]);
+const RETRYABLE_NODE_TYPES = new Set(["process.transcribe", "process.refine", "process.prompt", "process.chapter", "process.mindmap"]);
 
 /** 判断一次失败是否值得重试：取消与配置类错误不重试，其余（超时/网络/5xx/空结果）重试。 */
 function isRetryableError(error: Error, cancelled: boolean): boolean {
@@ -75,8 +77,28 @@ function escapePathName(value: string): string {
 function previewFor(output: NodeOutput): string | undefined {
   if (!output || (output.kind !== "text" && output.kind !== "noteBlock" && output.kind !== "noteDoc")) return undefined;
   const text = output.text ?? "";
-  const clean = text.replace(/\s+/g, " ").trim();
-  return clean.slice(0, 120) || undefined;
+  const clean = text.replace(/\r\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
+  return clean.slice(0, 320) || undefined;
+}
+
+function countChars(text: string): number {
+  return text.replace(/\s/g, "").length;
+}
+
+/** 生成节点相对直接上游的变化徽标：新生成 / 与上游一致 / 字数增减 / 内容变化。 */
+function computeResultDelta(current: NodeOutput | undefined, inputs: ResolvedInputs): ResultDelta | undefined {
+  if (!current || (current.kind !== "text" && current.kind !== "noteBlock" && current.kind !== "noteDoc")) return undefined;
+  const currentText = current.text ?? "";
+  if (!currentText.trim()) return undefined;
+  const upstreamTexts = inputs.items
+    .filter((item) => item.output.kind !== "audio" && item.output.text?.trim())
+    .map((item) => item.output.text?.trim() ?? "");
+  if (upstreamTexts.length === 0) return { label: "新生成", tone: "new" };
+  const upstreamText = upstreamTexts.join("\n\n");
+  if (upstreamText.trim() === currentText.trim()) return { label: "与上游一致", tone: "same" };
+  const diff = countChars(currentText) - countChars(upstreamText);
+  if (diff === 0) return { label: "较上游内容变化", tone: "changed" };
+  return { label: `较上游 ${diff > 0 ? "+" : ""}${diff} 字`, tone: diff > 0 ? "up" : "down" };
 }
 
 function nodeLabel(node: GraphNode): string {
@@ -500,7 +522,7 @@ export class RunEngine {
     const kind: NodeOutput["kind"] =
       node.type === "process.prompt"
         ? "noteBlock"
-        : node.type === "process.chapter"
+        : node.type === "process.chapter" || node.type === "process.mindmap"
           ? "noteDoc"
           : node.type === "flow.if" || node.type === "process.text"
             ? (firstKind ?? "text")
@@ -543,8 +565,16 @@ export class RunEngine {
           if (active.cancelled) throw new Error("运行已取消");
           const elapsed = Date.now() - started;
           const combined = this.combineOutputs(node, result.outputs);
+          const delta = computeResultDelta(combined, inputs);
           await this.updateNode(active, nodeId, "done", elapsed, result.summary, combined, undefined, attempts);
-          this.emit(active, { type: "node.done", runId: active.id, nodeId, summary: result.summary ?? "完成", preview: previewFor(combined) });
+          this.emit(active, {
+            type: "node.done",
+            runId: active.id,
+            nodeId,
+            summary: result.summary ?? "完成",
+            preview: node.type === "process.mindmap" || node.type === "process.output" ? undefined : previewFor(combined),
+            delta,
+          });
           active.outputs.set(nodeId, result.outputs);
           return "done";
         } catch (err) {
@@ -804,6 +834,43 @@ export class RunEngine {
         }));
         const total = outputs.reduce((sum, output) => sum + (output.size ?? 0), 0);
         return { outputs, summary: `${chapters.length} 章 · ${total} 字` };
+      }
+
+      case "process.mindmap": {
+        const textItems = inputs.items.filter((i) => i.output.kind !== "audio" && i.output.text?.trim());
+        if (textItems.length === 0) throw new Error("没有文稿输入");
+        const text = textItems.map((i) => i.output.text?.trim() ?? "").filter(Boolean).join("\n\n");
+        if (!text.trim()) throw new Error("没有可生成思维导图的文稿");
+        const aiConfig = getAiConfig(this.db);
+        if (!aiConfig.apiKey) throw new Error("未配置 AI 模型密钥，请到设置页填写");
+        const branchSize = String(data.branchSize ?? "auto") as "auto" | "few" | "many";
+        const maxDepth = Math.min(5, Math.max(3, Number(data.maxDepth ?? 4) || 4));
+        const theme = String(data.theme ?? "paper") as "paper" | "presentation" | "academic";
+        const branchGuide =
+          branchSize === "few" ? "主分支 3-5 个" : branchSize === "many" ? "主分支 6-9 个" : "主分支 4-7 个";
+        const titleHint = String(data.title ?? "").trim()
+          ? `导图标题必须使用用户指定的“${String(data.title).trim()}”，不要另取标题。`
+          : "为导图取一个不超过 20 字的中心主题标题。";
+        const model = String(data.model ?? "").trim() || aiConfig.model;
+        const system = `你是思维导图结构化编辑。请把下面“校对后的原稿”整理成思维导图。
+要求：
+1. 只输出 JSON，不要输出解释或 Markdown 代码块。
+2. JSON 格式：{"title":"中心主题","nodes":[{"text":"主分支","children":[{"text":"子主题","children":[{"text":"叶子要点"}]}]}]}
+3. ${branchGuide}；层级最多 ${maxDepth} 层（不含中心主题）；每个节点 2-5 个子节点。
+4. 节点文本用短语，中文建议不超过 12 字，不要照抄长句。
+5. 严格忠于原文，不新增原文没有的观点，删除重复或高度重叠的分支。
+6. ${titleHint}
+7. 如果原稿较长，优先提炼骨架与关键结论，而不是罗列每一句话。`;
+        await this.log(active, node.id, "ai-request", `${model}\n\n${system}`);
+        await this.progress(active, node.id, 15, "AI 提炼思维导图结构");
+        const result = await chatCompletion({ ...aiConfig, model }, system, text, signal);
+        await this.log(active, node.id, "ai-response", result);
+        const tree = parseMindMapJson(result, { branchSize, maxDepth, theme });
+        if (!tree.title && String(data.title ?? "").trim()) tree.title = String(data.title).trim();
+        const markdown = mindMapToMarkdown(tree, { branchSize, maxDepth, theme });
+        const nodeCount = countMindMapNodes(tree.nodes);
+        const summary = `${tree.nodes.length} 个主分支 · ${nodeCount} 个节点 · ${markdown.length} 字`;
+        return { outputs: [{ kind: "noteDoc", text: markdown, size: markdown.length }], summary };
       }
 
       default:

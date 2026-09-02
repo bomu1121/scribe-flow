@@ -1,12 +1,13 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { ElButton, ElDrawer, ElDropdown, ElDropdownItem, ElDropdownMenu, ElInput, ElMessage } from "element-plus";
-import { ArrowLeft, Check, Copy, Download, ExternalLink, LayoutPanelTop, Maximize, MoreHorizontal, Play, Redo2, StopCircle, Trash2, Undo2 } from "lucide-vue-next";
+import { ArrowLeft, Check, Copy, Download, ExternalLink, History, LayoutPanelTop, Maximize, MoreHorizontal, Play, Redo2, StopCircle, Trash2, Undo2 } from "lucide-vue-next";
 import { NODE_TYPE_LABELS, emptyGraph, type NodeType, type RunDetail, type RunMeta, type RunNodeInput, type RunNodeResult, type SourceVideoItem, type WorkflowGraph } from "@scribe-flow/shared";
 import FlowCanvas from "@/components/canvas/FlowCanvas.vue";
 import NodePalette from "@/components/canvas/NodePalette.vue";
 import SourcePickerDialog from "@/components/canvas/SourcePickerDialog.vue";
+import DiffViewer from "@/components/DiffViewer.vue";
 import { api } from "@/lib/api";
 import { renderMarkdown } from "@/lib/markdown";
 import { subscribeRunEvents } from "@/lib/sse";
@@ -16,6 +17,7 @@ import { useRunsStore } from "@/stores/runs";
 import { useSettingsStore } from "@/stores/settings";
 
 type SaveState = "loading" | "saved" | "saving" | "error";
+type OutputDrawerInputMode = "result" | "raw" | "diff";
 
 const route = useRoute();
 const router = useRouter();
@@ -36,6 +38,7 @@ const flowCanvasRef = ref<InstanceType<typeof FlowCanvas> | null>(null);
 const noticeTimer = ref<ReturnType<typeof setTimeout> | null>(null);
 const selectedNodeId = ref<string | null>(null);
 const activeRun = ref<RunMeta | null>(null);
+const lastRun = ref<RunMeta | null>(null);
 const running = ref(false);
 const projectRunningRun = computed(() => runsStore.runs.find((r) => r.projectId === projectId.value && r.status === "running") ?? null);
 const outputDrawerVisible = ref(false);
@@ -50,7 +53,7 @@ const outputDrawerNodeResults = ref<RunNodeResult[]>([]);
 const outputDrawerGraph = ref<WorkflowGraph | null>(null);
 const outputDrawerView = ref<"output" | "input">("output");
 const outputDrawerSelectedInputKey = ref("");
-const outputDrawerInputMode = ref<"result" | "raw">("result");
+const outputDrawerInputMode = ref<OutputDrawerInputMode>("result");
 const outputDrawerInputText = ref("");
 const biliPickerVisible = ref(false);
 const renderedOutput = computed(() => renderMarkdown(outputDrawerText.value));
@@ -130,8 +133,22 @@ const outputDrawerInputItems = computed<OutputDrawerInputItem[]>(() => {
 
 const selectedOutputDrawerInput = computed(() => outputDrawerInputItems.value.find((i) => i.key === outputDrawerSelectedInputKey.value) ?? null);
 
+/** 可用的“变更对比”：优先对比该输入的原始文本与 AI 处理结果；没有独立 resultText 时，若只有一个上游输入，则对比原始输入与当前节点输出。 */
+const outputDrawerDiff = computed<{ before: string; after: string } | null>(() => {
+  const item = selectedOutputDrawerInput.value;
+  if (!item) return null;
+  const before = item.text ?? "";
+  const after = item.resultText ?? (outputDrawerInputItems.value.length === 1 ? outputDrawerText.value : "");
+  if (!before.trim() || !after.trim()) return null;
+  return { before, after };
+});
+
 let saveTimer: ReturnType<typeof setTimeout> | null = null;
 let stopRunEvents: (() => void) | null = null;
+let pendingRunSnapshot: RunNodeResult[] | null = null;
+let disposed = false;
+let subscribedRunId: string | null = null;
+let restoredLastRunId: string | null = null;
 
 onMounted(async () => {
   void runsStore.load();
@@ -147,6 +164,7 @@ onMounted(async () => {
         delete data.status;
         delete data.summary;
         delete data.preview;
+        delete data.delta;
         return { ...n, data } as typeof n;
       }),
     };
@@ -158,6 +176,12 @@ onMounted(async () => {
     loaded.value = true;
   }
 
+  await nextTick();
+  if (pendingRunSnapshot) {
+    flowCanvasRef.value?.applyRunSnapshot(pendingRunSnapshot);
+    pendingRunSnapshot = null;
+  }
+
   const focusNodeId = route.query.focus ? String(route.query.focus) : "";
   if (focusNodeId) {
     await nextTick();
@@ -166,10 +190,26 @@ onMounted(async () => {
 });
 
 onBeforeUnmount(() => {
+  disposed = true;
   if (saveTimer) clearTimeout(saveTimer);
   if (noticeTimer.value) clearTimeout(noticeTimer.value);
   stopRunEvents?.();
+  stopRunEvents = null;
+  subscribedRunId = null;
 });
+
+watch(
+  projectRunningRun,
+  (run) => {
+    if (run) {
+      if (activeRun.value?.id !== run.id) void resumeRun(run);
+    } else {
+      if (running.value && activeRun.value) void reconcileActiveRun();
+      else void restoreLastRun();
+    }
+  },
+  { immediate: true },
+);
 
 function showNotice(message: string) {
   consoleNotice.value = message;
@@ -282,6 +322,103 @@ function runTitle(run: RunMeta): string {
   return `运行 ${run.id.slice(-6)}`;
 }
 
+/** 重新进入工程页时，若服务端仍有 running 运行，恢复画布进度并重新订阅 SSE。 */
+async function resumeRun(run: RunMeta) {
+  if (activeRun.value?.id === run.id && (stopRunEvents || subscribedRunId === run.id)) return;
+  stopRunEvents?.();
+  subscribedRunId = null;
+  activeRun.value = run;
+  running.value = true;
+  showNotice(`检测到运行 #${run.id.slice(-6)} 正在进行，正在恢复进度…`);
+  try {
+    const detail = await api.get<RunDetail>(`/api/runs/${run.id}`);
+    if (disposed) return;
+    if (detail.status !== "running") {
+      running.value = false;
+      activeRun.value = null;
+      showNotice(`运行 #${run.id.slice(-6)} 已结束：${runStatusLabels[detail.status] ?? detail.status}`);
+      void runsStore.load();
+      return;
+    }
+    const snapshot = detail.nodeResults ?? [];
+    pendingRunSnapshot = snapshot;
+    if (flowCanvasRef.value) {
+      flowCanvasRef.value.applyRunSnapshot(snapshot);
+      pendingRunSnapshot = null;
+    }
+    showNotice(`已恢复运行中 #${run.id.slice(-6)} 的实时进度`);
+  } catch (err) {
+    showNotice(err instanceof Error ? err.message : "恢复运行状态失败");
+  }
+  if (disposed) return;
+
+  stopRunEvents = subscribeRunEvents(run.id, (event) => {
+    flowCanvasRef.value?.applyRunEvent(event);
+    if (event.type === "node.started") showNotice(`${nodeName(event.nodeId)} 开始执行`);
+    else if (event.type === "node.progress") showNotice(event.message);
+    else if (event.type === "node.done") showNotice(`${nodeName(event.nodeId)} 完成`);
+    else if (event.type === "node.error") {
+      showNotice(`${nodeName(event.nodeId)} 失败：${event.error}`);
+      ElMessage.error(`${nodeName(event.nodeId)} 失败：${event.error}`);
+    } else if (event.type === "run.done") {
+      running.value = false;
+      activeRun.value = { ...(activeRun.value as RunMeta), status: event.status };
+      showNotice(`运行结束：${event.status}`);
+      stopRunEvents?.();
+      stopRunEvents = null;
+      subscribedRunId = null;
+      void runsStore.load();
+    }
+  });
+  subscribedRunId = run.id;
+}
+
+/** 全局轮询发现运行已不在 running 列表时，主动向服务端核对一次，避免 SSE 断线导致界面卡在运行中。 */
+async function reconcileActiveRun() {
+  const run = activeRun.value;
+  if (!run || !running.value) return;
+  try {
+    const detail = await api.get<RunDetail>(`/api/runs/${run.id}`);
+    if (disposed) return;
+    if (detail.status !== "running") {
+      running.value = false;
+      activeRun.value = { ...run, status: detail.status };
+      stopRunEvents?.();
+      stopRunEvents = null;
+      subscribedRunId = null;
+      showNotice(`运行结束：${runStatusLabels[detail.status] ?? detail.status}`);
+      void runsStore.load();
+    } else if (!stopRunEvents) {
+      await resumeRun(run);
+    }
+  } catch {
+    // 暂时无法确认状态，保持当前显示，等待下一次轮询或 SSE 重连。
+  }
+}
+
+/** 没有进行中的运行时，把最近一次已完成/失败/取消的运行快照恢复到画布，方便刷新后直接查看上次结果。 */
+async function restoreLastRun() {
+  if (projectRunningRun.value) return;
+  const latest = runsStore.runs.find((r) => r.projectId === projectId.value);
+  if (!latest || latest.status === "running" || restoredLastRunId === latest.id) return;
+  restoredLastRunId = latest.id;
+  try {
+    const detail = await api.get<RunDetail>(`/api/runs/${latest.id}`);
+    if (disposed) return;
+    if (detail.status === "running") return;
+    lastRun.value = latest;
+    const snapshot = detail.nodeResults ?? [];
+    pendingRunSnapshot = snapshot;
+    if (flowCanvasRef.value) {
+      flowCanvasRef.value.applyRunSnapshot(snapshot);
+      pendingRunSnapshot = null;
+    }
+    showNotice(`已载入上次运行 #${latest.id.slice(-6)}：${runStatusLabels[detail.status] ?? detail.status}`);
+  } catch {
+    restoredLastRunId = null;
+  }
+}
+
 function nodeIdsForScope(scope: "all" | "fromNode" | "node", nodeId?: string): Set<string> {
   const all = new Set(graph.value.nodes.map((n) => n.id));
   if (scope === "node" && nodeId) return new Set([nodeId]);
@@ -305,7 +442,7 @@ function nodeIdsForScope(scope: "all" | "fromNode" | "node", nodeId?: string): S
 function missingKeyMessage(scope: "all" | "fromNode" | "node", nodeId?: string): string | null {
   const ids = nodeIdsForScope(scope, nodeId);
   const nodes = graph.value.nodes.filter((n) => ids.has(n.id));
-  if (nodes.some((n) => n.type === "process.refine" || n.type === "process.prompt") && !settingsStore.settings?.ai.hasKey) {
+  if (nodes.some((n) => n.type === "process.refine" || n.type === "process.prompt" || n.type === "process.mindmap") && !settingsStore.settings?.ai.hasKey) {
     return "未配置 AI 模型密钥，请先到设置页填写";
   }
   if (nodes.some((n) => n.type === "process.transcribe") && !settingsStore.settings?.asr.hasKey) {
@@ -327,6 +464,7 @@ async function startRun(scope: "all" | "fromNode" | "node", nodeId?: string) {
       return;
     }
   }
+  if (disposed) return;
   const missing = missingKeyMessage(scope, nodeId);
   if (missing) {
     ElMessage.error(missing);
@@ -337,6 +475,7 @@ async function startRun(scope: "all" | "fromNode" | "node", nodeId?: string) {
   saveTimer = null;
   try {
     await store.saveGraph(projectId.value, graph.value);
+    if (disposed) return;
     saveState.value = "saved";
   } catch (err) {
     ElMessage.error(err instanceof Error ? err.message : "保存失败，请稍后重试");
@@ -345,25 +484,33 @@ async function startRun(scope: "all" | "fromNode" | "node", nodeId?: string) {
   try {
     running.value = true;
     const run = await api.post<RunMeta>(`/api/projects/${projectId.value}/runs`, { scope, nodeId });
+    if (disposed) return;
     activeRun.value = run;
-    flowCanvasRef.value?.applyRunEvent({ type: "run.started", run });
-    stopRunEvents = subscribeRunEvents(run.id, (event) => {
-      flowCanvasRef.value?.applyRunEvent(event);
-      if (event.type === "node.started") showNotice(`${nodeName(event.nodeId)} 开始执行`);
-      else if (event.type === "node.progress") showNotice(event.message);
-      else if (event.type === "node.done") showNotice(`${nodeName(event.nodeId)} 完成`);
-      else if (event.type === "node.error") {
-        showNotice(`${nodeName(event.nodeId)} 失败：${event.error}`);
-        ElMessage.error(`${nodeName(event.nodeId)} 失败：${event.error}`);
-      } else if (event.type === "run.done") {
-        running.value = false;
-        activeRun.value = { ...(activeRun.value as RunMeta), status: event.status };
-        showNotice(`运行结束：${event.status}`);
-        stopRunEvents?.();
-        stopRunEvents = null;
-        void runsStore.load();
-      }
-    });
+    if (subscribedRunId !== run.id) {
+      stopRunEvents?.();
+      stopRunEvents = null;
+      subscribedRunId = null;
+      flowCanvasRef.value?.applyRunEvent({ type: "run.started", run });
+      stopRunEvents = subscribeRunEvents(run.id, (event) => {
+        flowCanvasRef.value?.applyRunEvent(event);
+        if (event.type === "node.started") showNotice(`${nodeName(event.nodeId)} 开始执行`);
+        else if (event.type === "node.progress") showNotice(event.message);
+        else if (event.type === "node.done") showNotice(`${nodeName(event.nodeId)} 完成`);
+        else if (event.type === "node.error") {
+          showNotice(`${nodeName(event.nodeId)} 失败：${event.error}`);
+          ElMessage.error(`${nodeName(event.nodeId)} 失败：${event.error}`);
+        } else if (event.type === "run.done") {
+          running.value = false;
+          activeRun.value = { ...(activeRun.value as RunMeta), status: event.status };
+          showNotice(`运行结束：${event.status}`);
+          stopRunEvents?.();
+          stopRunEvents = null;
+          subscribedRunId = null;
+          void runsStore.load();
+        }
+      });
+      subscribedRunId = run.id;
+    }
   } catch (err) {
     running.value = false;
     ElMessage.error(err instanceof Error ? err.message : "启动运行失败");
@@ -417,6 +564,10 @@ async function viewOutput(nodeId: string) {
       const detail = await api.get<RunDetail>(`/api/runs/${run.id}`);
       const nodeResult = detail.nodeResults.find((node) => node.nodeId === nodeId);
       if (nodeResult) {
+        if (nodeResult.nodeType === "process.mindmap") {
+          router.push({ path: `/project/${projectId.value}/run/${run.id}`, query: { focus: nodeId, tab: "mindmap" } });
+          return;
+        }
         openOutputDrawer(nodeId, run, nodeResult, detail);
         return;
       }
@@ -475,11 +626,11 @@ function selectOutputDrawerInput(item: OutputDrawerInputItem) {
   outputDrawerInputText.value = item.resultText ?? item.text ?? "";
 }
 
-function selectOutputDrawerInputMode(mode: "result" | "raw") {
+function selectOutputDrawerInputMode(mode: OutputDrawerInputMode) {
   const item = selectedOutputDrawerInput.value;
   if (!item) return;
   outputDrawerInputMode.value = mode;
-  outputDrawerInputText.value = mode === "result" ? item.resultText ?? item.text ?? "" : item.text ?? "";
+  outputDrawerInputText.value = mode === "raw" ? item.text ?? "" : item.resultText ?? item.text ?? "";
 }
 
 function openFullResult() {
@@ -530,6 +681,10 @@ function downloadNodeOutput() {
       </div>
 
       <div class="sf-editor-bar-actions">
+        <el-button v-if="lastRun" class="sf-btn" plain @click="router.push(`/project/${projectId}/run/${lastRun.id}`)">
+          <History :size="14" />
+          <span>上次结果</span>
+        </el-button>
         <el-button class="sf-btn" type="primary" :disabled="running" @click="startRun('all')">
           <Play :size="14" />
           <span>运行全部</span>
@@ -620,11 +775,13 @@ function downloadNodeOutput() {
         </div>
 
         <div v-loading="outputDrawerLoading" class="sf-output-drawer-body">
-          <div v-if="outputDrawerView === 'input' && selectedOutputDrawerInput?.resultText" class="sf-output-drawer-input-modes">
+          <div v-if="outputDrawerView === 'input' && outputDrawerDiff" class="sf-output-drawer-input-modes">
             <button type="button" :class="{ active: outputDrawerInputMode === 'result' }" @click="selectOutputDrawerInputMode('result')">处理结果</button>
             <button type="button" :class="{ active: outputDrawerInputMode === 'raw' }" @click="selectOutputDrawerInputMode('raw')">原始输入</button>
+            <button type="button" :class="{ active: outputDrawerInputMode === 'diff' }" @click="selectOutputDrawerInputMode('diff')">变更对比</button>
           </div>
-          <div v-if="outputDrawerView === 'input' && outputDrawerInputText" class="sf-output-drawer-preview markdown-body" v-html="renderedOutputInput" />
+          <DiffViewer v-if="outputDrawerView === 'input' && outputDrawerInputMode === 'diff' && outputDrawerDiff" :before="outputDrawerDiff.before" :after="outputDrawerDiff.after" />
+          <div v-else-if="outputDrawerView === 'input' && outputDrawerInputText" class="sf-output-drawer-preview markdown-body" v-html="renderedOutputInput" />
           <div v-else-if="outputDrawerView === 'input' && !outputDrawerLoading" class="sf-output-drawer-empty">该输入暂无独立文本（可能是音视频或旧记录）。</div>
           <div v-else-if="outputDrawerView === 'output' && outputDrawerText" class="sf-output-drawer-preview markdown-body" v-html="renderedOutput" />
           <div v-else-if="!outputDrawerLoading" class="sf-output-drawer-empty">该节点本次运行没有文本输出。</div>

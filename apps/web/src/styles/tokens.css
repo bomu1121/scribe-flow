@@ -76,6 +76,20 @@
   --header-height: 52px;
   --content-max: 1080px;
 
+  /* 表单控件统一规范：输入框 / 下拉框 / 文本域共用同一套结构，禁止各自散写 */
+  --control-height: 36px;
+  --control-height-sm: 32px;
+  --control-padding-x: 10px;
+  --control-radius: 8px;
+  --control-radius-sm: 6px;
+  --control-font-size: 13px;
+  --control-font-size-sm: 12px;
+  --control-border: var(--color-border);
+  --control-border-hover: var(--color-border-strong);
+  --control-bg: var(--color-surface);
+  --control-bg-muted: var(--color-surface-muted);
+  --control-placeholder: var(--color-text-tertiary);
+
   /* 浮层层级（Teleport 组件必须统一从这里取值，禁止散写 z-index） */
   --z-overlay: 1000;
   --z-dialog: 1010;

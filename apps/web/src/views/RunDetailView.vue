@@ -10,6 +10,7 @@ import {
   ListTree,
   Maximize,
   Minimize,
+  Network,
   PanelLeftClose,
   PanelLeftOpen,
   PenLine,
@@ -25,14 +26,18 @@ import { NODE_TYPE_LABELS } from "@scribe-flow/shared";
 import { api } from "@/lib/api";
 import { renderMarkdown } from "@/lib/markdown";
 import { subscribeRunEvents } from "@/lib/sse";
+import MindMapViewer from "@/components/MindMapViewer.vue";
+import DiffViewer from "@/components/DiffViewer.vue";
 
 const route = useRoute();
 const router = useRouter();
 const run = ref<RunDetail | null>(null);
 const loading = ref(false);
-const activeTab = ref<"result" | "nodes">("result");
+const activeTab = ref<"result" | "nodes" | "mindmap">("result");
 const markdown = ref("");
 const draft = ref("");
+const mindMapMarkdown = ref("");
+const selectedMindMapIndex = ref(0);
 const editing = ref(false);
 const zoom = ref(100);
 const fullscreen = ref(false);
@@ -43,6 +48,7 @@ const logsNodeId = ref("");
 const selectedOutputIndex = ref(0);
 const selectedInputKey = ref("");
 const inputText = ref("");
+const comparingDiff = ref(false);
 const resultRootRef = ref<HTMLElement | null>(null);
 const docScrollRef = ref<HTMLElement | null>(null);
 
@@ -156,6 +162,18 @@ const outputNodes = computed<OutputDoc[]>(() => {
 });
 
 const currentOutput = computed(() => outputNodes.value[selectedOutputIndex.value] ?? null);
+
+const mindMapNodes = computed<OutputDoc[]>(() => {
+  const all = run.value?.nodeResults ?? [];
+  return all
+    .filter((n) => n.nodeType === "process.mindmap" && (n.output?.kind === "noteDoc" || n.output?.kind === "text"))
+    .map((n) => ({
+      node: n,
+      title: n.nodeLabel || NODE_TYPE_LABELS[n.nodeType as keyof typeof NODE_TYPE_LABELS] || n.nodeType,
+    }));
+});
+
+const currentMindMap = computed(() => mindMapNodes.value[selectedMindMapIndex.value] ?? null);
 
 const sources = computed<SourceInfo[]>(() => {
   const nodes = graph.value?.nodes ?? [];
@@ -320,7 +338,18 @@ const inputItems = computed<InputItem[]>(() => {
 const selectedInput = computed(() => inputItems.value.find((i) => i.key === selectedInputKey.value) ?? null);
 const viewingInput = computed(() => selectedInput.value !== null);
 const currentMarkdown = computed(() => (editing.value ? draft.value : markdown.value));
-const activeMarkdown = computed(() => (viewingInput.value ? inputText.value : currentMarkdown.value));
+/** 用于与当前输出对比的“链路输入”完整文本；多模块输入会合并后参与对比。 */
+const inputCompareText = computed(() => {
+  const item = selectedInput.value;
+  if (!item) return "";
+  if (item.modules && item.modules.length > 1) return item.modules.map((module) => module.text).join("\n\n");
+  return item.text ?? "";
+});
+const canCompareInputToOutput = computed(() => viewingInput.value && Boolean(inputCompareText.value.trim()) && Boolean(markdown.value.trim()));
+const activeMarkdown = computed(() => {
+  if (activeTab.value === "mindmap") return mindMapMarkdown.value;
+  return viewingInput.value ? inputText.value : currentMarkdown.value;
+});
 const renderedMarkdown = computed(() => renderMarkdown(markdown.value));
 const renderedDraft = computed(() => renderMarkdown(draft.value));
 const renderedInputMarkdown = computed(() => renderMarkdown(inputText.value));
@@ -394,6 +423,19 @@ async function loadRun(showLoading = true) {
       markdown.value = "";
       draft.value = "";
     }
+    const queryTab = String(route.query.tab ?? "");
+    if (queryTab === "mindmap" && mindMapNodes.value.length > 0) {
+      activeTab.value = "mindmap";
+      const focusNodeId = route.query.focus ? String(route.query.focus) : "";
+      const focusIndex = focusNodeId ? mindMapNodes.value.findIndex((doc) => doc.node.nodeId === focusNodeId) : -1;
+      selectedMindMapIndex.value = focusIndex >= 0 ? focusIndex : 0;
+    } else if (activeTab.value === "mindmap" && mindMapNodes.value.length === 0) {
+      activeTab.value = "result";
+    }
+    if (activeTab.value === "mindmap" && mindMapNodes.value.length > 0) {
+      const mindIndex = Math.min(selectedMindMapIndex.value, mindMapNodes.value.length - 1);
+      await loadMindMapContent(mindIndex);
+    }
     refreshSelectedInputText();
 
     if (stopRunEvents) stopRunEvents();
@@ -444,11 +486,44 @@ async function loadOutputContent(nodeId: string) {
   draft.value = markdown.value;
 }
 
+async function loadMindMapContent(index?: number) {
+  if (index !== undefined) selectedMindMapIndex.value = index;
+  const doc = currentMindMap.value;
+  if (!doc) {
+    mindMapMarkdown.value = "";
+    return;
+  }
+  const node = doc.node;
+  if (node.output?.text) {
+    mindMapMarkdown.value = node.output.text;
+  } else if (node.output?.path) {
+    try {
+      const result = await api.get<{ text: string }>(`/api/runs/${runId}/outputs/${node.nodeId}/content`);
+      mindMapMarkdown.value = result.text ?? "";
+    } catch (err) {
+      mindMapMarkdown.value = "";
+      ElMessage.error(err instanceof Error ? err.message : "思维导图内容读取失败");
+    }
+  } else {
+    mindMapMarkdown.value = "";
+  }
+}
+
+async function openMindMapTab(index = 0) {
+  activeTab.value = "mindmap";
+  await loadMindMapContent(index);
+}
+
+async function selectMindMap(index: number) {
+  await loadMindMapContent(index);
+}
+
 async function selectOutput(index: number) {
   const doc = outputNodes.value[index];
   if (!doc) return;
   selectedInputKey.value = "";
   inputText.value = "";
+  comparingDiff.value = false;
   selectedOutputIndex.value = index;
   editing.value = false;
   await loadOutputContent(doc.node.nodeId);
@@ -459,6 +534,7 @@ async function selectInput(key: string) {
   if (!item) return;
   selectedInputKey.value = key;
   editing.value = false;
+  comparingDiff.value = false;
   inputText.value = item.text ?? "";
   // 旧数据没有 run_node_inputs 时，大文本可能只存在输出文件里，按需读取。
   if (!inputText.value) {
@@ -477,6 +553,11 @@ async function selectInput(key: string) {
 function refreshSelectedInputText() {
   const item = selectedInput.value;
   inputText.value = item?.text ?? "";
+}
+
+function toggleInputDiff() {
+  if (!canCompareInputToOutput.value) return;
+  comparingDiff.value = !comparingDiff.value;
 }
 
 function toggleEdit() {
@@ -633,6 +714,9 @@ async function forceStopRun() {
 
     <nav class="rv-tabs" aria-label="运行详情视图切换">
       <button type="button" :class="{ active: activeTab === 'result' }" @click="activeTab = 'result'">结果</button>
+      <button v-if="mindMapNodes.length > 0" type="button" :class="{ active: activeTab === 'mindmap' }" @click="openMindMapTab()">
+        <Network :size="14" /><span>思维导图</span>
+      </button>
       <button type="button" :class="{ active: activeTab === 'nodes' }" @click="activeTab = 'nodes'">节点流水</button>
     </nav>
 
@@ -678,6 +762,29 @@ async function forceStopRun() {
             </template>
           </el-table-column>
         </el-table>
+      </div>
+
+      <div v-show="activeTab === 'mindmap'" class="rv-mindmap">
+        <div v-if="mindMapNodes.length > 1" class="rv-mindmap-tabs">
+          <button
+            v-for="(doc, index) in mindMapNodes"
+            :key="doc.node.nodeId"
+            type="button"
+            :class="{ active: index === selectedMindMapIndex }"
+            @click="selectMindMap(index)"
+          >
+            {{ doc.title }}
+          </button>
+        </div>
+        <div class="rv-mindmap-main">
+          <template v-if="currentMindMap && mindMapMarkdown">
+            <MindMapViewer :markdown="mindMapMarkdown" height="100%" />
+          </template>
+          <div v-else class="rv-empty">
+            <div class="rv-empty-title">没有可展示的思维导图</div>
+            <div class="rv-empty-sub">运行完成后，思维导图会显示在这里。</div>
+          </div>
+        </div>
       </div>
 
       <div v-show="activeTab === 'result'" class="rv-body">
@@ -764,7 +871,17 @@ async function forceStopRun() {
                 <Minimize v-if="fullscreen" :size="14" />
                 <Maximize v-else :size="14" />
               </button>
-              <button v-if="viewingInput" type="button" class="rv-tool-btn" title="返回输出" @click="selectedInputKey = ''; inputText = ''">
+              <button
+                v-if="viewingInput && canCompareInputToOutput"
+                type="button"
+                class="rv-tool-btn"
+                :class="{ active: comparingDiff }"
+                :title="comparingDiff ? '退出对比，返回查看输入' : '将当前输入与最终输出做差异对比'"
+                @click="toggleInputDiff"
+              >
+                <span>{{ comparingDiff ? "退出对比" : "对比输出" }}</span>
+              </button>
+              <button v-if="viewingInput" type="button" class="rv-tool-btn" title="返回输出" @click="selectedInputKey = ''; inputText = ''; comparingDiff = false">
                 <ArrowLeft :size="14" /><span>输出</span>
               </button>
               <button
@@ -793,7 +910,16 @@ async function forceStopRun() {
           </div>
 
           <div ref="docScrollRef" class="rv-doc-scroll">
-            <template v-if="viewingInput">
+            <template v-if="viewingInput && comparingDiff">
+              <article class="rv-paper" :style="paperStyle">
+                <header class="rv-paper-head">
+                  <h1 class="rv-paper-title">链路输入 vs 当前输出</h1>
+                  <p class="rv-paper-meta">{{ selectedInput?.label || "输入素材" }} → {{ currentOutput?.title || "输出文档" }}</p>
+                </header>
+                <DiffViewer :before="inputCompareText" :after="currentMarkdown" />
+              </article>
+            </template>
+            <template v-else-if="viewingInput">
               <article class="rv-paper" :style="paperStyle">
                 <header class="rv-paper-head">
                   <h1 class="rv-paper-title">{{ selectedInput?.label || "输入素材" }}</h1>
@@ -948,6 +1074,9 @@ async function forceStopRun() {
 }
 
 .rv-tabs button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   padding: 0 14px;
   border: none;
   border-bottom: 2px solid transparent;
@@ -975,6 +1104,44 @@ async function forceStopRun() {
   flex: 1;
   padding: 16px;
   overflow-y: auto;
+}
+
+.rv-mindmap {
+  flex: 1;
+  min-height: 0;
+  padding: 16px;
+  overflow: hidden;
+  background: var(--color-canvas);
+}
+
+.rv-mindmap-tabs {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 12px;
+  flex-shrink: 0;
+}
+
+.rv-mindmap-tabs button {
+  padding: 5px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  color: var(--color-text-secondary);
+  font-family: inherit;
+  font-size: 12.5px;
+  cursor: pointer;
+}
+
+.rv-mindmap-tabs button.active {
+  border-color: var(--color-brand);
+  background: var(--color-brand-soft);
+  color: var(--color-brand);
+}
+
+.rv-mindmap-main {
+  height: calc(100vh - 140px);
+  min-height: 400px;
+  overflow: hidden;
 }
 
 .rv-nodes-table {
@@ -1366,19 +1533,20 @@ async function forceStopRun() {
   width: 100%;
   min-height: 480px;
   padding: 14px;
-  border: 1px solid var(--color-border-strong);
-  border-radius: var(--radius-md);
-  background: var(--color-surface-muted);
+  border: 1px solid var(--control-border);
+  border-radius: var(--control-radius);
+  background: var(--control-bg);
   color: var(--color-text);
   font-family: var(--font-mono);
   font-size: 0.85em;
   line-height: 1.7;
   resize: vertical;
   outline: none;
+  transition: border-color 0.12s ease;
 }
 
 .rv-editor:focus {
-  border-color: var(--color-brand);
+  border-color: var(--control-border-hover);
 }
 
 .rv-edit-actions {

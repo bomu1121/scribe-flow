@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed } from "vue";
-import { ElInput, ElSelect, ElOption } from "element-plus";
+import { ElInput } from "element-plus";
+import ModelSelect from "../../ModelSelect.vue";
 
 const props = defineProps<{
   condition?: { field: "charCount" | "wordCount" | "contains"; op: "gt" | "gte" | "lt" | "lte" | "eq" | "contains" | "notContains"; value: string };
@@ -8,6 +9,27 @@ const props = defineProps<{
 const emit = defineEmits<{ update: [value: { field: "charCount" | "wordCount" | "contains"; op: "gt" | "gte" | "lt" | "lte" | "eq" | "contains" | "notContains"; value: string }] }>();
 
 const isContains = computed(() => (props.condition?.field ?? "charCount") === "contains");
+
+const fieldOptions = [
+  { label: "字数", value: "charCount" },
+  { label: "词数", value: "wordCount" },
+  { label: "包含", value: "contains" },
+];
+
+const numericOpOptions = [
+  { label: "大于", value: "gt" },
+  { label: "大于等于", value: "gte" },
+  { label: "小于", value: "lt" },
+  { label: "小于等于", value: "lte" },
+  { label: "等于", value: "eq" },
+];
+
+const containsOpOptions = [
+  { label: "包含", value: "contains" },
+  { label: "不包含", value: "notContains" },
+];
+
+const opOptions = computed(() => (isContains.value ? containsOpOptions : numericOpOptions));
 
 function setField(value: string) {
   const field = value as "charCount" | "wordCount" | "contains";
@@ -30,30 +52,14 @@ function setValue(value: string | number) {
 
 <template>
   <div class="sf-if-card">
-    <label class="sf-node-field">
+    <div class="sf-node-field">
       <span class="sf-node-field-label">判断字段</span>
-      <el-select :model-value="condition?.field ?? 'charCount'" size="small" @update:model-value="setField">
-        <el-option label="字数" value="charCount" />
-        <el-option label="词数" value="wordCount" />
-        <el-option label="包含" value="contains" />
-      </el-select>
-    </label>
-    <label class="sf-node-field">
+      <ModelSelect :model-value="condition?.field ?? 'charCount'" :options="fieldOptions" size="small" @update:model-value="setField" />
+    </div>
+    <div class="sf-node-field">
       <span class="sf-node-field-label">条件</span>
-      <el-select :model-value="condition?.op ?? (isContains ? 'contains' : 'gt')" size="small" @update:model-value="setOp">
-        <template v-if="isContains">
-          <el-option label="包含" value="contains" />
-          <el-option label="不包含" value="notContains" />
-        </template>
-        <template v-else>
-          <el-option label="大于" value="gt" />
-          <el-option label="大于等于" value="gte" />
-          <el-option label="小于" value="lt" />
-          <el-option label="小于等于" value="lte" />
-          <el-option label="等于" value="eq" />
-        </template>
-      </el-select>
-    </label>
+      <ModelSelect :model-value="condition?.op ?? (isContains ? 'contains' : 'gt')" :options="opOptions" size="small" @update:model-value="setOp" />
+    </div>
     <label class="sf-node-field">
       <span class="sf-node-field-label">{{ isContains ? "匹配文字" : "比较值" }}</span>
       <el-input

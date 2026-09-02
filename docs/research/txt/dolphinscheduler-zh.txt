@@ -1,0 +1,12 @@
+-     - -  Apache DolphinScheduler  -
+-   Foundation
+-   License
+-   Apache Events
+-   Security
+-   Sponsorship
+-   Thanks
+-   Privacy
+
+Copyright © 2019-2024 The Apache Software Foundation. Apache DolphinScheduler, DolphinScheduler, and its feather logo are trademarks of The Apache Software Foundation.
+
+

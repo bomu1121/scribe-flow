@@ -85,6 +85,11 @@ export interface RunNodeLog {
   createdAt: number;
 }
 
+export interface ResultDelta {
+  label: string;
+  tone: "same" | "up" | "down" | "changed" | "new";
+}
+
 /** SSE 事件（M3 运行引擎）。 */
 export type RunEvent =
   | { type: "run.started"; run: RunMeta }
@@ -92,7 +97,7 @@ export type RunEvent =
   | { type: "node.progress"; runId: string; nodeId: string; progress: number; message: string }
   | { type: "node.retry"; runId: string; nodeId: string; attempt: number; maxRetries: number; error: string }
   | { type: "node.skipped"; runId: string; nodeId: string; reason: string }
-  | { type: "node.done"; runId: string; nodeId: string; summary: string; preview?: string }
+  | { type: "node.done"; runId: string; nodeId: string; summary: string; preview?: string; delta?: ResultDelta }
   | { type: "node.error"; runId: string; nodeId: string; error: string }
   | { type: "run.done"; runId: string; status: RunStatus };
 

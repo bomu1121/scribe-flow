@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed } from "vue";
-import { ElInput, ElSelect, ElOption } from "element-plus";
+import { ElInput } from "element-plus";
+import ModelSelect from "../../ModelSelect.vue";
 
 const props = defineProps<{
   operation?: "findReplace" | "regexReplace" | "template" | "cleanup";
@@ -16,6 +17,13 @@ const emit = defineEmits<{
 
 const operation = computed(() => props.operation ?? "findReplace");
 
+const operationOptions = [
+  { label: "查找替换", value: "findReplace" },
+  { label: "正则替换", value: "regexReplace" },
+  { label: "模板渲染", value: "template" },
+  { label: "清理", value: "cleanup" },
+];
+
 function setOperation(value: string) {
   emit("update", { operation: value as "findReplace" | "regexReplace" | "template" | "cleanup" });
 }
@@ -27,15 +35,10 @@ function patch(p: Record<string, string>) {
 
 <template>
   <div class="sf-text-tool-card">
-    <label class="sf-node-field">
+    <div class="sf-node-field">
       <span class="sf-node-field-label">操作</span>
-      <el-select :model-value="operation" size="small" @update:model-value="setOperation">
-        <el-option label="查找替换" value="findReplace" />
-        <el-option label="正则替换" value="regexReplace" />
-        <el-option label="模板渲染" value="template" />
-        <el-option label="清理" value="cleanup" />
-      </el-select>
-    </label>
+      <ModelSelect :model-value="operation" :options="operationOptions" size="small" @update:model-value="setOperation" />
+    </div>
 
     <template v-if="operation === 'findReplace'">
       <label class="sf-node-field">

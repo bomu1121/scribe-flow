@@ -1,0 +1,72 @@
+- - -  - - - - - -                      -  -  Integrate AI | Build | n8n Docs    - - -           - - - -
+n8n Docs
+
+⌘  Ctrl   k
+
+Forum  Changelog    More
+
+-      Get started
+-      Deploy
+-      Build
+-      Nodes
+-      Connect
+-      Administer
+-      Contribute
+
+n8n Docs
+
+-   Build
+-   Understand workflows
+-    Build and manage agents   Preview
+
+-   Ways of building workflows
+-   Manage workflows
+-   Flow logic
+-   Work with data
+-   Code in n8n
+-   Integrate AI         -   MCP servers
+-   Understand AI components
+-   LangChain in n8n
+-   Test and improve AI workflows
+-   AI examples
+
+-   Keyboard shortcuts
+
+On this page
+
+For the complete documentation index, see  llms.txt . This page is also available as  Markdown .
+Copy
+On this page
+-     Build
+
+## Integrate AI
+n8n lets you build AI workflows that connect different LLM providers such as OpenAI, Anthropic, and Google, add tools and memory, and combine several models in one workflow.
+MCP servers         Understand AI components         LangChain in n8n         Test and improve AI workflows         AI examples       See   Build   for other workflow-building topics.
+
+Previous  Pagination
+Next  MCP servers
+
+Last updated  4 days ago
+Was this helpful?
+
+## Company
+-  n8n.io
+-  Careers
+-  Blog
+
+## Resources
+-  Templates
+-  Academy
+-  Changelog
+
+## Legal and privacy
+-  Security
+-  Sustainable use license
+-  Privacy
+
+x-twitter                   discord              linkedin              youtube
+© 2026 n8n | All rights reserved
+
+Was this helpful?
+
+

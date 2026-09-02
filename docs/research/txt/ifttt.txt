@@ -1,0 +1,719 @@
+
+
+-
+-
+-
+-
+
+-
+
+Explore Integrations - IFTTT
+
+-
+
+-
+
+-
+-
+-
+-
+-
+-
+-
+-
+- -
+-
+
+-
+-
+
+-
+
+IFTTT
+IFTTT
+
+Explore
+
+Plans
+
+Log in
+
+Get started
+
+Mobile menu
+
+Close menu
+
+## Explore
+
+All
+Applets
+Services
+Stories
+
+Recent
+
+-
+
+Recommendations
+
+-
+
+Webhooks
+Service
+
+-
+
+X (Twitter)
+Service
+
+-
+
+YouTube
+Service
+
+-
+
+Discord
+Service
+
+-
+
+Google Sheets
+Service
+
+-
+
+MyQ
+Service
+
+-
+
+Gmail
+Service
+
+-
+
+Instagram
+Service
+
+-
+
+See all results
+
+-
+
+## Popular
+
+## What your automations say about your aesthetic
+
+-
+
+-
+
+Save new Spotify Discover Weekly songs to an archive
+
+Spotify
+
+-
+
+-
+
+Add new Spotify liked songs to a playlist
+
+by
+
+thatjimmi
+
+-
+
+-
+
+-
+
+Sync Evernote and Todoist
+
+Todoist
+
+-
+
+-
+
+-
+
+Get a 6:00 AM Weather Underground email forecast
+
+Weather Underground
+
+-
+
+Fitbit
+
+-
+
+Sonos
+
+-
+
+## Productivity
+
+## Everything you can automate with Google on IFTTT
+
+-
+
+-
+
+-
+
+Email me free Steam game deals from Reddit
+
+Reddit
+
+-
+
+-
+
+-
+
+Email new Google Contacts details via Gmail
+
+Google
+
+-
+
+-
+
+-
+
+Set your Android wallpaper to NASA’s Image of the Day
+
+by
+
+IFTTT
+
+-
+
+-
+
+-
+
+Forward Android SMS to your Email inbox
+
+by
+
+IFTTT
+
+## Give your AI assistant 1,000+ services to act on
+Have Claude, ChatGPT, or Cursor build and run your automations with IFTTT MCP.
+Set up IFTTT MCP
+
+-
+
+## Productivity
+
+## What kind of automator are you?
+
+-
+
+-
+
+-
+
+Text your lost Android phone to turn the ringer volume up 100%
+
+by
+
+calumptrck
+
+-
+
+-
+
+-
+
+Call your phone monthly to keep Google Voice active
+
+by
+
+hsharris1990
+
+-
+
+-
+
+-
+
+Back up new texts you receive on your Android device to a Google Spreadsheet
+
+Google
+
+-
+
+-
+
+-
+
+Get a weekly Email Digest of top EatCheapAndHealthy Reddit posts
+
+Reddit
+
+-
+
+Monzo
+
+-
+
+Fitbit
+
+-
+
+## Productivity
+
+## 6 calendar automations your week needs
+
+-
+
+## Productivity
+
+## What your desk setup says about your productivity style
+
+-
+
+-
+
+-
+
+Mute Android ringtone automatically at bedtime
+
+by
+
+IFTTT
+
+-
+
+-
+
+-
+
+Save new photos you're tagged in on Facebook to Dropbox
+
+Dropbox
+
+-
+
+-
+
+-
+
+-
+
+Get alerts if there's disease outbreak news from the World Health Organization
+
+by
+
+IFTTT
+
+-
+
+-
+
+-
+
+Publish new RSS feed items to your Weebly blog
+
+by
+
+eguidesservice
+
+-
+
+August
+
+-
+
+Garageio
+
+-
+
+## Productivity
+
+## The 10 AI tools taking over your feed just joined your workflow
+
+## Create your own Applet from scratch
+Get started  Get started
+
+-
+
+## Business
+
+## 20 new business tools to run, grow, and scale your business
+
+-
+
+-
+
+-
+
+Add completed Todoist tasks to a weekly email digest
+
+Todoist
+
+-
+
+-
+
+-
+
+Mute Android phone when you arrive at work
+
+by
+
+IFTTT
+
+-
+
+-
+
+-
+
+Start music playback with a button tap
+
+by
+
+kurokodairu
+
+-
+
+-
+
+-
+
+Get a daily email with a new recommended Applet
+
+by
+
+chloe
+
+-
+
+iRobot
+
+-
+
+LIFX
+
+-
+
+## Productivity
+
+## New on IFTTT for June 2026
+
+-
+
+## Popular
+
+## We tested these 24 Applets so you don't have to
+
+-
+
+-
+
+-
+
+Log every X post to Google Sheets
+
+X (Twitter)
+
+-
+
+-
+
+-
+
+Send a Gmail message when you press the Button widget
+
+Google
+
+-
+
+-
+
+-
+
+Add Webhooks data to Google Sheets automatically
+
+Webhooks
+
+-
+
+-
+
+-
+
+-
+
+Get Email and IFTTT alerts when a stock drops by set percentage
+
+by
+
+IFTTT
+
+-
+
+Sonos
+
+-
+
+Qapital
+
+-
+
+## Popular
+
+## 20 Applets, millions of runs, and we're only halfway through 2026
+
+-
+
+## Popular
+
+## What is IFTTT MCP?
+
+-
+
+-
+
+-
+
+Share Instagram photos on Twitter only when you include a specific #hashtag in the caption
+
+Instagram
+
+-
+
+-
+
+-
+
+Send an Android SMS when a Webhooks request is received
+
+by
+
+mike_ifttt_community_team
+
+-
+
+-
+
+-
+
+Turn ringer volume up after a missed call
+
+by
+
+robertogt
+
+-
+
+-
+
+-
+
+Get an email when a webhook is triggered
+
+Webhooks
+
+-
+
+## Popular
+
+## New on IFTTT for May 2026
+
+-
+
+## Productivity
+
+## Which generation are you according to your Applets?
+
+-
+
+-
+
+-
+
+Activate Smart Life scene via Webhook
+
+Webhooks
+
+-
+
+-
+
+-
+
+Get a notification when there's breaking NASA news
+
+by
+
+IFTTT
+
+-
+
+-
+
+-
+
+Send a Webhooks request for new YouTube search videos
+
+Webhooks
+
+-
+
+-
+
+-
+
+Log Android outgoing calls to Google Sheets
+
+Google
+
+-
+
+## Popular
+
+## How to use IFTTT MCP with Claude
+
+## Haven't found the right Applet?
+Create your own  Create your own
+
+## Don't see what you're looking for?
+
+Make your own Applets using any combination of triggers and actions.
+
+Create an Applet
+Create an Applet
+
+All services
+New services
+Popular services
+
+## No results found
+
+We couldn't find an Applet or service that matched your query. Please try again or create your own Applet.
+
+Create an Applet
+
+IFTTT
+IFTTT
+
+Get the best business tools.
+
+Try it free
+
+IFTTT
+IFTTT
+
+Explore
+
+-
+Services
+
+-
+Stories
+
+-
+Applets
+
+-
+IFTTT MCP
+
+-
+Help Center
+
+-
+Content Map
+
+-
+Search
+
+-
+Plans
+
+-
+Developer docs
+
+Top Integrations
+
+-
+Discord and Instagram
+
+-
+iOS Calendar and Notion
+
+-
+Google Calendar and Google Sheets
+
+-
+Google Assistant and My Q
+
+-
+BotGhost and Spotify
+
+-
+SMS and Twitter
+
+-
+iOS Reminders and Notion
+
+-
+iOS Calendar and Todoist
+
+-
+Telegram and Twitter
+
+-
+Discord and Twitter
+
+Latest Stories
+
+-
+How to automate with AI
+
+-
+Best Twitter automation tools
+
+-
+Best time management apps and tools
+
+-
+What is workflow automation?
+
+-
+How to use RSS Feeds
+
+-
+What are webhooks?
+
+-
+11 best Pomodoro productivity apps
+
+-
+How to automate Threads
+
+-
+How to automate social media posts
+
+-
+Best social media tools for automation
+
+-
+
+-
+
+Developers
+Careers
+Partner program
+Contact
+Privacy
+About
+
+

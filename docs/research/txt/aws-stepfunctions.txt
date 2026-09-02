@@ -1,0 +1,675 @@
+
+
+-
+-
+-
+-
+-
+-
+-
+features
+-
+-
+
+-
+-
+-
+-
+-
+-
+
+-
+-
+
+-
+
+-
+-
+-
+-
+-
+-
+-
+
+Skip to main content
+
+Interested in cloud offerings specifically available in the China region? Please visit  www.amazonaws.cn . Learn about the China region free tier at  www.amazonaws.cn/free .
+
+-
+
+Filter: All
+
+-
+
+-
+
+-
+
+English
+
+-   Contact us
+
+-   AWS Marketplace
+
+-   Support
+
+-   My account
+
+-
+
+-
+
+-
+
+re:Invent
+
+-
+
+Discover AWS
+
+-
+
+Products
+
+-
+
+Solutions
+
+-
+
+Pricing
+
+-
+
+Resources
+
+-
+
+Search
+
+Filter: All
+
+-
+
+Sign in to console
+
+-   Create account
+
+Explore topics
+
+re:Invent 2026
+
+The session catalog is live. Explore what's waiting for you
+
+Customer Stories
+
+See how customers innovate with AWS data & AI
+
+Independent Software Vendors
+
+AI for software & tech: build, scale, and monetize
+
+AI for Small Businesses
+
+Solutions designed for your business. Delivered by AWS Partners
+
+Agent Toolkit
+
+Give AI coding agents up-to-date docs and AWS resource access
+
+Amazon Quick
+
+Answers grounded in your actual business data
+
+News & announcements
+
+AWS blog
+
+About AWS
+
+AWS is the world's most comprehensive cloud, enabling organizations to accelerate innovation, reduce costs, and scale more efficiently
+
+-  Why AWS
+
+-  Getting Started
+
+-  Security
+
+-  Compliance
+
+-  Trust Center
+
+-  Sustainability
+
+-  Global Infrastructure
+
+-  Featured Products
+
+-  Analytics
+
+-  Application Integration
+
+-  Artificial Intelligence
+
+-  Business Applications
+
+-  Compute
+
+-  Customer Experience
+
+-  Databases
+
+-  Developer Tools
+
+-  End User Computing
+
+-  Game Tech
+
+-  Management Tools
+
+-  Media Services
+
+-  Migration & Modernization
+
+-  Multicloud & Hybrid
+
+-  Networking & Content Delivery
+
+-  Operations
+
+-  Security & Identity
+
+-  Storage
+
+-  Supply Chain
+
+Browse all products
+
+Featured Products
+
+Get started with one of these featured services or browse all
+Browse all products
+
+Amazon Quick
+
+AI-powered assistant for work with research, business insights, automation, and no-code app building
+
+Transform
+
+Eliminate tech debt with agentic AI to modernize legacy systems and code
+
+Aurora
+
+Serverless relational database service for PostgreSQL, MySQL, and DSQL
+
+Amazon Bedrock
+
+The end-to-end platform for building generative AI applications and agents
+
+Amazon Connect Customer
+
+AI-native solution for delivering exceptional experiences across customer interactions
+
+EC2
+
+Secure and resizable compute capacity for virtually any workload
+
+Nova
+
+Foundation models delivering frontier intelligence and top price performance
+
+OpenSearch Service
+
+Real-time search, observability, and security analytics
+
+S3
+
+Virtually unlimited secure object storage for AI, analytics, and archives
+
+What’s new
+
+Explore new capabilities and the latest technologies
+
+Customer success stories
+
+Learn how customers around the world accelerate their cloud
+
+-  By industry
+
+-  By organization type
+
+-  Solutions Library
+
+Industry solutions on AWS
+
+Transform your industry with AWS cloud solutions. Access proven architectures, compliance guides, and success stories of customers using AWS products tailored to your sector. Explore AWS solutions for your industry.
+Go to industry hub
+
+Advertising and Marketing
+
+Turn data into customer-winning campaigns
+
+Aerospace and Satellite
+
+Cloud solutions to help customers build satellites, conduct space and launch operations, and reimagine space exploration
+
+Automotive
+
+Build smarter vehicles and transform mobility with cloud solutions
+
+Education
+
+Solutions to help facilitate teaching, learning, student engagement, better learning outcomes and modernize IT operations
+
+Energy and Utilities
+
+Revamp legacy operations and accelerate the development of innovative renewable energy business models
+
+Financial Services
+
+Develop innovative and secure solutions across banking, capital markets, insurance, and payments
+
+Games
+
+Enable game development for every genre and platform, from AAA titles to indie studios
+
+Government
+
+Solutions designed to help government agencies modernize, meet mandates, reduce costs, and deliver mission outcomes
+
+Healthcare and Life Sciences
+
+Accelerate innovation and improve patient care with healthcare data management and security
+
+Manufacturing
+
+Optimize production and speed time-to-market
+
+Media and Entertainment
+
+Transform media & entertainment with the most purpose-built capabilities and partner solutions of any cloud
+
+Nonprofit
+
+Cloud solutions to help nonprofits and NGOs maximize their mission impact and donor relationships
+
+Retail and Consumer Goods
+
+Empower brands to drive market differentiation and growth with cloud solutions
+
+Semiconductor
+
+Design and deliver next-generation chip solutions with cloud technology
+
+Sports
+
+Fuel innovative fan, broadcast, and athlete experiences
+
+Sustainability
+
+Tools and resources to help organizations achieve their sustainability goals with AWS
+
+Telecommunications
+
+Accelerate innovation, scale with confidence, and add agility with cloud-based telecom solutions
+
+Travel and Hospitality
+
+Elevate travel and hospitality with solutions that boost customer experiences and operational efficiency
+
+What's new
+
+Explore new capabilities and the latest technologies
+
+Customer success stories
+
+Learn how customers around the world accelerate their cloud
+
+Pricing overview & tools
+
+AWS Pricing
+
+Learn about pricing and plans in one place
+
+AWS Pricing Calculator
+
+Estimate the cost for your architecture solution
+
+AWS Free Tier
+
+Get free, hands-on experience with AWS products and services
+
+AWS Offers
+
+Explore different offer programs to gain hands-on experience
+
+AWS Savings Plans
+
+Flexible pricing model offering lower prices
+
+Single-product pricing
+
+Amazon S3
+
+Amazon Bedrock
+
+Amazon RDS
+
+Amazon EC2
+
+Amazon SageMaker
+
+Browse all product pricing
+
+Learn
+
+Documentation
+
+Get detailed technical guides and references for all AWS services and tools
+
+Training & Certification
+
+Build and validate your AWS cloud skills and technical expertise
+
+Cloud term glossary
+
+Learn more about key cloud computing concepts
+
+Whitepapers
+
+Expand your knowledge of the cloud with expert guides and diagrams
+
+Cloud fundamentals
+
+Step-by-step instructions for common AWS tasks
+
+Tutorials
+
+Get started with step-by-step instructions
+
+Connect & Support
+
+Builder Center
+
+Learn, build, and connect with builders in the AWS community
+
+Events and webinars
+
+Connect, collaborate, and learn from AWS experts in the cloud computing community
+
+Partner Network
+
+Collaborate with AWS partners to grow your business
+
+Marketplace
+
+Find, test, buy, and deploy third-party software
+
+Support
+
+Access proactive guidance, issue resolution, and helpful tools
+
+Professional services
+
+Accelerate business transformation with expert guidance and packaged solutions
+
+AWS Step Functions
+
+-   Overview
+
+-   Features
+
+-   Pricing
+
+-   Use Cases
+
+-   Customers
+
+-  More
+
+-  Application Integration
+
+-  AWS Step Functions
+
+-  Features
+
+## AWS Step Functions features
+
+## Why AWS Step Functions?
+
+##
+
+AWS Step Functions  provides serverless orchestration for modern applications. Orchestration centrally manages a workflow by breaking it into multiple steps, adding flow logic, and tracking the inputs and outputs between the steps.
+
+As your applications execute, Step Functions maintains application state, tracking exactly which workflow step your application is in, and stores an event log of data that is passed between application components. That means that if networks fail or components hang, your application can pick up right where it left off.
+
+Application development is faster and more intuitive with Step Functions, because you can define and manage the workflow of your application independently from its business logic. Making changes to one does not affect the other.
+
+You can easily update and modify workflows in one place, without having to struggle with managing, monitoring and maintaining multiple point-to-point integrations. You can also easily integrate with virtually any SaaS application directly from your workflows.
+
+Step Functions frees your functions and containers from excess code, so your applications are faster to write, more resilient, and easier to maintain.
+
+-   General
+
+19
+
+## General
+Open all
+
+##    Visual and easy -to-use workflow configuration
+
+Using AWS Step Functions, you define your workflows as state machines, which transform complex code into easy to understand statements and diagrams. Building apps, and confirming that they are implementing your desired functionality, is quicker and easier. Read more about   how Step Functions works  .
+
+##    Built-in error handling, timeouts and parallel processing flow for distributed applications
+
+AWS Step Functions provides ready-made steps for your workflow called states that implement basic service primitives for you, which means you can remove that logic from your application. States can pass data to other states and microservices, handle exceptions, add timeouts, make decisions, execute multiple paths in parallel, and more. Learn more about   states  .
+
+##    Enhanced variable and payload management
+
+AWS Step Functions provides enhanced variable and payload management features to speed up the development of your applications. This allows developers to store and reference payload data more easily within Step Functions workflows using Variables. You can assign and reference data at any state in your workflows without passing through intermediate states, simplifying payload management across workflow states. Developers can utilize built-in data transformation capabilities with JSONata that reduces the need for custom code, improving productivity. JSONata adds comprehensive data transformation capabilities like date/time formatting and mathematical operations, and allows you to perform data manipulations directly in workflows. You can also incrementally adopt Variables and JSONata in both new and existing workflows, at either the workflow or individual state level, while existing workflows remain fully functional without requiring any changes. These capabilities enable developers to create more complex and efficient workflows with fewer states further reducing overall costs.
+
+##    Direct integration with 220 AWS services and over 10,000 APIs
+
+Using AWS Step Functions Service Integrations, you can configure your Step Functions workflow to call over 220 AWS services. This includes:
+
+- Compute services (AWS Lambda, Amazon ECS, Amazon EKS, and AWS Fargate)
+
+- Database services (Amazon DynamoDB)
+
+- Messaging services (Amazon SNS and Amazon SQS), data processing
+
+- Analytics services (Amazon Athena, AWS Batch, AWS Glue, Amazon EMR, and AWS Glue DataBrew)
+
+- Machine learning services (Amazon SageMaker)
+
+- APIs created by Amazon API Gateway
+
+Learn more about   Service Integrations
+
+##    Accelerate innovation and simplify modernization of distributed applications with seamless integration across private and public networks
+
+AWS Step Functions supports integration with AWS services, SaaS applications, and private APIs, powered by AWS PrivateLink and Amazon VPC Lattice, making it easier for customers to accelerate innovation and simplify modernization of distributed applications across public and private networks, both on-premises and in the cloud. You can bring the capabilities of AWS cloud and external SaaS applications to new and existing workloads, achieving higher performance, agility, and lower costs. You can build, manage, and orchestrate multi-step workflows composed of your applications, AWS services and SaaS applications, without needing to write custom code or maintain additional infrastructure. With fully-managed connectivity to private resources, you can securely orchestrate workflows across your legacy systems and cloud-native applications, allowing you to accelerate your innovations on AWS while driving higher security and regulatory compliance. These advancements allow you to achieve faster time to market by eliminating the need to write and maintain custom networking or integration code, enabling developers to build extensible systems and add new capabilities easily.
+
+##    Coordination of distributed components
+
+AWS Step Functions can coordinate any application that can make an HTTPS connection, regardless of where it is hosted—for example, on Amazon EC2 instances, mobile devices, or on-premises servers. Using Step Functions, you can quickly create distributed applications that leverage AWS services as well as your own microservices. Learn more about   activity tasks  .
+
+##    Component Resuability enables robust and efficient application development
+
+AWS Step Functions coordinates your existing Lambda functions and microservices into robust applications, and lets you quickly rewire them into new compositions. The tasks in your workflow can run anywhere, including on instances, containers, functions, and mobile devices. Learn how to   reuse existing application components  .
+
+##    Shorten development cycles with separation of workflow logic
+
+AWS Step Functions keeps the logic of your application strictly separated from the implementation of your application. You can add, move, swap, and reorder steps without having to make changes to your business logic. Through this separation of concerns, your workflows gain modularity, simplified maintenance, scalability, and code reuse.
+
+##    Built-in state management and workflow progress tracking
+
+AWS Step Functions maintains the state of your application during execution, including tracking what step of execution it is in, and storing data that is moving between the steps of your workflow. This means you don't have to manage state yourself with data stores or by building complex state management into all of your tasks.
+
+##    Built-in error handling
+
+AWS Step Functions automatically handles errors and exceptions with built-in try/catch and retry, whether the task takes seconds or months to complete. You can automatically retry failed or timed-out tasks, respond differently to different types of errors, and recover gracefully by falling back to designated clean up and recovery code. Learn more about   Step Functions error handling   and how you can   handle error conditions using a state machine  .
+
+##    Real-time and auditable workflow execution history
+
+AWS Step Functions delivers real-time diagnostics and dashboards, integrates with Amazon CloudWatch and AWS CloudTrail, and logs every execution, including overall state, failed steps, inputs, and outputs. If things go wrong, you can quickly identify not only where, but why, and quickly troubleshoot and remediate failures. Learn more about Step Functions   monitoring and logging  .
+
+##    Visual operator dashboard for monitoring and troubleshooting
+
+Launching an application is as simple as pressing a button, then watching the steps execute visually, so you can quickly verify that everything is operating in order – and as expected. The console clearly highlights errors, so you can quickly pinpoint their root-cause, and troubleshoot issues.
+
+##    High availability and fault tolerant workflows
+
+AWS Step Functions has built-in fault tolerance and maintains service capacity across multiple Availability Zones in each region to protect applications against individual machine or data center failures. This helps ensure high availability for both the service itself and for the application workflow it operates.
+
+##    Serverless solutions that scale
+
+AWS Step Functions automatically scales the operations and underlying compute to run the steps of your application for you in response to changing workloads. Step Functions scales automatically to help ensure the performance of your application workflow remains consistent as the frequency of requests increases.
+
+##    High volume orchestration for event processing workflows such as IoT and data ingestion
+
+AWS Step Functions adds Express Workflows. Express Workflows support event rates greater than 100,000 per second, enabling you to build high volume, short duration workflows.
+
+Express Workflows can coordinate AWS Lambda function invocations,  AWS IoT Rules Engine  actions, and  Amazon EventBridge  events from over a  hundred AWS third-party SaaS event sources .
+
+Learn more about  Express and Standard workflows and how they can be used in sample automating architectures in the Step Functions use cases page .
+
+##    Large-scale parallel processing
+
+Step Functions can iterate over objects such as images, logs, or CSV files stored in Amazon S3, then launch and coordinate thousands of parallel workflows to process the data. You can more quickly and more easily scale thousands of concurrent workflow executions, helping you analyze millions of logs, iterate over terabytes of data or process documents, images, and video files. Learn more about the  Step Functions Map state  for building large-scale parallel workflows.
+
+##    Security
+
+AWS Step Functions is integrated with AWS Identity and Access Management (IAM), and recommends a least-privileged IAM policy for all of the resources used in your workflow. Step Functions supports VPC Endpoints (VPCE) using AWS PrivateLink. You can access AWS Step Functions from VPC-enabled AWS Lambda functions and other AWS services without traversing the public internet. Learn more about   Step Functions security and authentication  .
+
+##    Compliance
+
+AWS Step Functions is a HIPAA eligible service, and can be used with applications containing healthcare-related information such as personal health information (PHI). Step Functions is also compliant with SOC (System & Organization Control) measures, and the results of these third-party audits are available on the AWS SOC Compliance site. AWS Step Functions also conforms to other common compliance standards. Understand the compliance scope by reviewing the   AWS Cloud Security site  .
+
+##    Pay per use
+
+With AWS Step Functions, you pay for each transition from one state to the next. Billing is metered by state transition, and you do not pay for idle time, regardless of how long each state persists (up to one year). This keeps Step Functions cost-effective as you scale from a few executions to tens of millions. Learn more about   Step Functions pricing  .
+
+## Next steps
+
+Contact us
+
+## Have more questions?
+
+Contact us
+
+Pricing
+
+## Learn about Amazon Step Functions pricing
+
+Visit the pricing page
+
+Create an AWS account
+
+## Learn
+
+-  What Is AWS?
+
+-  What Is Cloud Computing?
+
+-  What Is Agentic AI?
+
+-  Cloud Computing Concepts Hub
+
+-  AWS Cloud Security
+
+-  What's New
+
+-  Blogs
+
+-  Press Releases
+
+## Resources
+
+-  Getting Started
+
+-  Training
+
+-  AWS Trust Center
+
+-  AWS Solutions Library
+
+-  Architecture Center
+
+-  Product and Technical FAQs
+
+-  Analyst Reports
+
+-  AWS Partners
+
+## Developers
+
+-  Builder Center
+
+-  SDKs & Tools
+
+-  .NET on AWS
+
+-  Python on AWS
+
+-  Java on AWS
+
+-  PHP on AWS
+
+-  JavaScript on AWS
+
+## Help
+
+-  Contact Us
+
+-  File a Support Ticket
+
+-  AWS re:Post
+
+-  Knowledge Center
+
+-  AWS Support Overview
+
+-  AWS Accessibility
+
+-  Legal
+
+-  Event Code of Conduct
+
+-  Event Terms & Conditions
+
+English
+
+Back to top
+
+Amazon is an equal opportunity employer and does not discriminate on the basis of protected veteran status, disability or other legally protected status. Veterans, military spouses, and people with disabilities are encouraged to apply.
+
+x
+
+facebook
+
+linkedin
+
+instagram
+
+twitch
+
+youtube
+
+podcasts
+
+email
+
+-  Privacy
+
+-  Site terms
+
+-  Your Privacy Choices
+
+California Consumer Privacy Act (CCPA) Opt-Out Icon
+
+-  Cookie Preferences
+
+© 2026, Amazon Web Services, Inc. or its affiliates. All rights reserved.
+
+

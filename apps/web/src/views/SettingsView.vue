@@ -342,7 +342,7 @@ async function testAsr() {
         <h2 class="sf-settings-title">语音识别</h2>
         <p class="sf-settings-desc">转写节点使用云 ASR，支持 MiMo-V2.5 与 OpenAI 兼容端点。</p>
         <div class="sf-settings-form">
-          <label class="sf-field">
+          <div class="sf-field">
             <span class="sf-field-label">引擎</span>
             <ModelSelect
               v-model="form.asrEngine"
@@ -351,7 +351,7 @@ async function testAsr() {
               :prefix-icon="Mic"
               @change="(value: string) => switchAsr(value as AsrEngine)"
             />
-          </label>
+          </div>
           <label class="sf-field">
             <span class="sf-field-label">接口地址</span>
             <el-input v-model="form.asrBaseUrl" class="sf-field-control" :placeholder="form.asrEngine === 'mimo' ? 'https://api.xiaomimimo.com/v1' : 'https://api.openai.com/v1'" />

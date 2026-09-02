@@ -1,5 +1,5 @@
 import type { ViewportTransform } from "@vue-flow/core";
-import type { AsrEngine, BiliSourceItem, GraphEdge, GraphNode, NodeRunStatus, NodeType, PageRef, SourceVideoItem, WorkflowGraph } from "@scribe-flow/shared";
+import type { AsrEngine, BiliSourceItem, GraphEdge, GraphNode, NodeRunStatus, NodeType, PageRef, ResultDelta, SourceVideoItem, WorkflowGraph } from "@scribe-flow/shared";
 
 export const SCRIBE_NODE_TYPE = "scribe";
 export const SCRIBE_EDGE_TYPE = "scribe";
@@ -28,6 +28,8 @@ export interface ScribeNodeData {
   status?: NodeRunStatus;
   summary?: string;
   preview?: string;
+  /** 相对直接上游的变化徽标；运行态字段，不持久化到工程图。 */
+  delta?: ResultDelta;
   url?: string;
   pageInfo?: PageRef;
   /** 多选模式：一张卡片里的多个 B 站视频/分P。 */
@@ -55,6 +57,9 @@ export interface ScribeNodeData {
   template?: string;
   granularity?: "coarse" | "medium" | "fine";
   maxChapters?: number;
+  branchSize?: "auto" | "few" | "many";
+  maxDepth?: number;
+  theme?: "paper" | "presentation" | "academic";
   /** 运行时注入的右键菜单动作，不会持久化。 */
   ctx?: NodeContextActions;
 }
@@ -115,6 +120,7 @@ export function toBusinessGraph(nodes: ScribeFlowNode[], edges: ScribeFlowEdge[]
     delete data.status;
     delete data.summary;
     delete data.preview;
+    delete data.delta;
     return {
       id: node.id,
       type: node.data.nodeType,
@@ -167,5 +173,7 @@ export function emptyNodeData(type: NodeType): Record<string, unknown> {
       return { label: "文本工具", operation: "findReplace", find: "", replace: "" };
     case "process.chapter":
       return { label: "章节切分", granularity: "medium", maxChapters: 20, retry: { maxRetries: 2, backoffMs: 3000 } };
+    case "process.mindmap":
+      return { label: "思维导图", branchSize: "auto", maxDepth: 4, theme: "paper", retry: { maxRetries: 2, backoffMs: 3000 } };
   }
 }

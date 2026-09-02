@@ -105,6 +105,58 @@ function textPolishGraph(): WorkflowGraph {
   };
 }
 
+/** 模板五：文稿转思维导图（粘贴文稿 → 校对 → 思维导图 → 输出）。 */
+function textMindMapGraph(): WorkflowGraph {
+  return {
+    schemaVersion: 1,
+    nodes: [
+      node("source.text", "n_text", 0, 80, { label: "已有文稿", text: "" }),
+      node("process.refine", "n_refine", 340, 80, { label: "AI 校对" }),
+      node("process.mindmap", "n_mindmap", 680, 80, {
+        label: "思维导图",
+        branchSize: "auto",
+        maxDepth: 4,
+        theme: "paper",
+        retry: { maxRetries: 2, backoffMs: 3000 },
+      }),
+      node("process.output", "n_out", 1020, 80, { label: "输出", fileName: "思维导图.md" }),
+    ],
+    edges: [
+      edge("e1", "n_text", "n_refine", "transcript", "transcript"),
+      edge("e2", "n_refine", "n_mindmap", "transcript", "in"),
+      edge("e3", "n_mindmap", "n_out", "doc", "noteDoc"),
+    ],
+    viewport: { x: 0, y: 0, zoom: 1 },
+  };
+}
+
+/** 模板六：视频转思维导图（B站视频 → 转写 → 校对 → 思维导图 → 输出）。 */
+function videoMindMapGraph(): WorkflowGraph {
+  return {
+    schemaVersion: 1,
+    nodes: [
+      node("source.bili", "n_src", 0, 80, { label: "B站链接", url: "" }),
+      node("process.transcribe", "n_asr", 340, 80, { label: "转写" }),
+      node("process.refine", "n_refine", 680, 80, { label: "AI 校对" }),
+      node("process.mindmap", "n_mindmap", 1020, 80, {
+        label: "思维导图",
+        branchSize: "auto",
+        maxDepth: 4,
+        theme: "paper",
+        retry: { maxRetries: 2, backoffMs: 3000 },
+      }),
+      node("process.output", "n_out", 1360, 80, { label: "输出", fileName: "思维导图.md" }),
+    ],
+    edges: [
+      edge("e1", "n_src", "n_asr", "audio", "audio"),
+      edge("e2", "n_asr", "n_refine", "transcript", "transcript"),
+      edge("e3", "n_refine", "n_mindmap", "transcript", "in"),
+      edge("e4", "n_mindmap", "n_out", "doc", "noteDoc"),
+    ],
+    viewport: { x: 0, y: 0, zoom: 1 },
+  };
+}
+
 export const WORKFLOW_TEMPLATES: WorkflowTemplate[] = [
   {
     id: "template.video-basic",
@@ -129,5 +181,17 @@ export const WORKFLOW_TEMPLATES: WorkflowTemplate[] = [
     name: "文稿转笔记",
     description: "粘贴已有文稿 → AI 校对 → 一个 AI 加工步骤 → 输出",
     graph: textPolishGraph(),
+  },
+  {
+    id: "template.text-mindmap",
+    name: "文稿转思维导图",
+    description: "已有文稿 → AI 校对 → 思维导图 → 输出，把长文/讲稿整理成导图",
+    graph: textMindMapGraph(),
+  },
+  {
+    id: "template.video-mindmap",
+    name: "视频转思维导图",
+    description: "B站视频 → 转写 → AI 校对 → 思维导图 → 输出，把视频内容整理成导图",
+    graph: videoMindMapGraph(),
   },
 ];

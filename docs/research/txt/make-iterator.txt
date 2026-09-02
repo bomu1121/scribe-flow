@@ -1,0 +1,192 @@
+Get started - Help Center             -  - - - -   - - - -  -  - -  - - - - - -                                                                            - - - -
+
+Help Center
+-
+
+## How can we help?
+
+Developer Hub
+Community
+Academy
+Contact support
+Make.com
+
+## Get started
+
+A step-by-step guide to building your first automation
+
+## Explore more
+
+Discover powerful tools and features to automate without limits
+
+## Your organization
+
+Learn how to manage your profile, notifications, and login
+
+## Error handling
+
+Dive into resolving errors and keep your scenarios running smoothly
+
+## Popular apps
+
+SEE ALL
+
+-
+
+Google Sheets
+
+-
+
+Google Drive
+
+-
+
+Google Docs
+
+-
+
+Anthropic Claude
+
+-
+
+Gmail
+
+-
+
+Email
+
+-
+
+OpenAI
+
+SEE ALL APPS
+-
+
+Canva
+
+-
+
+Airtable
+
+-
+
+Notion
+
+-
+
+LinkedIn
+
+-
+
+Hubspot CRM
+
+## Releases and updates
+
+SEE ALL
+
+-
+
+Forms, Mail, layouts, new automations, and more!
+
+Improvement -->
+
+November 1, 2024 -->
+
+-
+
+Introducing the new Marketplace. 78 new apps added.
+
+Fixes
+Apps Update
+Bug -->
+
+October 18, 2024 -->
+
+-
+
+Make AI now available for all users.
+
+Apps Update -->
+
+October 5, 2024 -->
+
+-
+
+Audit Log released. Module outputs failed to load properly fixed.
+
+Bug
+New Feature -->
+
+September 23, 2024 -->
+
+-
+
+Apps updates
+
+September 23, 2024 -->
+
+-
+
+Analytics dashboard, profile setting updates, and more
+
+September 23, 2024 -->
+
+-
+
+New Snapchat integration
+
+September 23, 2024 -->
+
+-
+
+Scenario inputs now available for all users
+
+September 23, 2024 -->
+
+SEE ALL
+
+## More resources
+
+## Make Academy
+
+Master Make at your own pace with our free online courses
+
+## Make Community
+
+Connect with other Makers to share ideas and find solutions
+
+## Blog
+
+Check out our guides, tips, and stories about automating with Make
+
+Didn't find the answer you need?
+
+Contact Support
+
+Follow us on social media
+
+## Useful links
+
+-  Pricing
+
+-  Partner Directory
+
+-  Idea Exchange
+
+-  Status Page
+
+-  Privacy Notice
+
+## Resources
+
+-  Templates
+
+-  Developer Hub
+
+-  Academy
+
+-  Community
+
+-  Blog
+
+

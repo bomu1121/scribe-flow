@@ -87,7 +87,7 @@ export function createRun(db: AppDatabase, projectId: string, scope: RunScope, n
 
   // 执行前预检：缺失必要密钥时直接拒绝启动，避免“跑起来后才失败”。
   const scopeNodeIds = nodeIdsForScope(graph, scope, nodeId);
-  const needsAi = graph.nodes.some((n) => scopeNodeIds.has(n.id) && (n.type === "process.refine" || n.type === "process.prompt"));
+  const needsAi = graph.nodes.some((n) => scopeNodeIds.has(n.id) && (n.type === "process.refine" || n.type === "process.prompt" || n.type === "process.mindmap"));
   const needsAsr = graph.nodes.some((n) => scopeNodeIds.has(n.id) && n.type === "process.transcribe");
   if (needsAi && !getAiConfig(db).apiKey) throw new Error("未配置 AI 模型密钥，请先到设置页填写");
   if (needsAsr && !getAsrConfig(db).apiKey) throw new Error("未配置语音识别密钥，请先到设置页填写");

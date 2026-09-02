@@ -1,0 +1,77 @@
+- - - - - - -  -                                   Zapier developer docs: integrations, MCP, SDK, and CLI       - - -               - - - - - - - - -
+
+## Documentation Index
+Fetch the complete documentation index at:   /llms.txt
+Use this file to discover all available pages before exploring further.
+Skip to main content
+Zapier  home page
+
+Search...
+
+⌘ K          Ask Assistant  ⌘ I
+-   Sign Up
+-      Sign Up
+
+Search...
+
+Navigation
+
+Zapier developer docs: integrations, MCP, SDK, and CLI
+
+Home
+Install
+API Reference
+Integrations
+Powered by Zapier
+White Label
+MCP
+SDK
+Connectors
+
+-
+Community
+-
+Changelog
+-
+Contact Us
+
+##
+
+-     Install Zapier
+
+Developer Documentation
+
+## Build safely with Zapier
+Everything you need to give agents and builders safe, governed access to 9,000+ apps, through Zapier SDK, Zapier MCP, Zapier CLI, or embedded in your product.
+
+## Explore by product
+
+## Integrations
+Build a Zapier integration - design triggers and actions for your product, wire up
+authentication, then publish to the App Directory.
+
+## Powered by Zapier
+Bring Zapier’s automation into your own product so customers can build workflows and
+run actions without leaving your app.
+
+## White Label
+Embed Zapier’s automation capabilities directly into your product so users can connect
+apps and run automations under your brand.
+
+## Zapier MCP
+Give any MCP-compatible AI client governed access to 9,000+ apps through one connection:
+no code, no infrastructure, SOC 2 certified.
+
+## Zapier SDK
+The code-file interface to Zapier. Give coding agents programmatic access to 9,000+ apps:
+Zapier handles OAuth, credentials, and API complexity so you never touch a token.
+
+## Zapier Connectors
+Public-code, agent-callable tools for a growing set of the apps Zapier integrates with. Agents discover them on npm and
+skill registries, then run them as an agent skill, a CLI, a typed Node module, or a local MCP server.
+
+Assistant
+
+Responses are generated using AI and may contain mistakes.
+
+

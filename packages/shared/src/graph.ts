@@ -107,6 +107,17 @@ export interface ChapterData {
   maxChapters?: number;
 }
 
+export interface MindMapData {
+  /** 导图标题；缺省由服务端根据输入首句/文稿生成。 */
+  title?: string;
+  /** 主分支数量倾向。 */
+  branchSize?: "auto" | "few" | "many";
+  /** 层级上限（不含中心主题），默认 4。 */
+  maxDepth?: number;
+  /** 导图主题标识，第一版只影响 Markmap frontmatter 的少量配色。 */
+  theme?: "paper" | "presentation" | "academic";
+}
+
 export type NodeType =
   | "source.bili"
   | "source.file"
@@ -118,7 +129,8 @@ export type NodeType =
   | "process.output"
   | "flow.if"
   | "process.text"
-  | "process.chapter";
+  | "process.chapter"
+  | "process.mindmap";
 
 export interface NodeBase {
   id: string;
@@ -145,7 +157,8 @@ export type GraphNode =
   | (NodeBase & { type: "process.output"; data: NodeBase["data"] & OutputData })
   | (NodeBase & { type: "flow.if"; data: NodeBase["data"] & IfData })
   | (NodeBase & { type: "process.text"; data: NodeBase["data"] & TextToolData })
-  | (NodeBase & { type: "process.chapter"; data: NodeBase["data"] & ChapterData });
+  | (NodeBase & { type: "process.chapter"; data: NodeBase["data"] & ChapterData })
+  | (NodeBase & { type: "process.mindmap"; data: NodeBase["data"] & MindMapData });
 
 export interface GraphEdge {
   id: string;
@@ -180,6 +193,7 @@ export const NODE_TYPE_LABELS: Record<NodeType, string> = {
   "flow.if": "条件分支",
   "process.text": "文本工具",
   "process.chapter": "章节切分",
+  "process.mindmap": "思维导图",
 };
 
 /** 每个节点类型的端口定义。 */
@@ -227,6 +241,12 @@ export const NODE_PORTS: Record<NodeType, { inputs: PortSpec[]; outputs: PortSpe
   "process.chapter": {
     inputs: [{ id: "in", type: "transcript", label: "文稿" }],
     outputs: [{ id: "chapters", type: "noteBlock", label: "章节" }],
+  },
+  "process.mindmap": {
+    inputs: [
+      { id: "in", type: "transcript", label: "输入", accepts: ["transcript", "noteBlock", "noteDoc"] },
+    ],
+    outputs: [{ id: "doc", type: "noteDoc", label: "导图 Markdown" }],
   },
 };
 

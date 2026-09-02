@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { FileOutput, FileText, FileUp, FolderHeart, GitBranch, GitMerge, Link2, ListTree, Mic, Replace, Sparkles, WandSparkles } from "lucide-vue-next";
+import { FileOutput, FileText, FileUp, FolderHeart, GitBranch, GitMerge, Link2, ListTree, Mic, Network, Replace, Sparkles, WandSparkles } from "lucide-vue-next";
 import { NODE_TYPE_LABELS, type NodeType } from "@scribe-flow/shared";
 
 type PaletteItemType = NodeType | "source.biliCollection";
@@ -41,6 +41,7 @@ const groups: PaletteGroup[] = [
       { type: "process.refine", icon: WandSparkles },
       { type: "process.prompt", icon: Sparkles },
       { type: "process.chapter", icon: ListTree },
+      { type: "process.mindmap", icon: Network },
     ],
   },
   {

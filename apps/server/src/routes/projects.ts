@@ -40,6 +40,7 @@ function cleanGraph(graph: WorkflowGraph): WorkflowGraph {
       delete data.status;
       delete data.summary;
       delete data.preview;
+      delete data.delta;
       return { ...node, data } as GraphNode;
     }),
   };

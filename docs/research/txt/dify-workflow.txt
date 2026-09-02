@@ -1,0 +1,173 @@
+- - - - - - -  -                                  -  Workflow & Chatflow - Dify Docs       - - -               - - - - - - - - -
+
+## Documentation Index
+Fetch the complete documentation index at:   /llms.txt
+Use this file to discover all available pages before exploring further.
+Skip to main content
+
+Dify Docs  home page       English
+Cloud
+-    Use
+-    Learn
+-    Developer Resources
+
+Search...
+
+⌘ K
+-   GitHub
+-    Try Dify
+
+Dify Docs  home page       Search or ask...
+
+Navigation
+Workflow & Chatflow
+Workflow & Chatflow
+
+-     Overview
+
+##  Orchestrate
+
+-    Workflow & Chatflow
+
+-     Overview
+
+-     Orchestration Logic
+
+-    Nodes
+
+-     Hotkeys
+
+-     Version Control
+
+-     Snippets
+
+-    Debug
+
+-    Agent   New
+
+-    Basic Apps
+
+-     App Toolkit
+
+-     Go to Anything
+
+##  Publish
+
+-     Overview
+
+-    Web App
+
+-     MCP Server
+
+-     Marketplace
+
+##  Monitor
+
+-     Dashboard
+
+-     Logs
+
+-     Annotation System
+
+-    Integrations
+
+##  Knowledge
+
+-     Overview
+
+-    Create
+
+-    Manage
+
+-     Test Retrieval
+
+-     Integrate in Apps
+
+-     Request Rate Limit
+
+-     Data Storage Limit
+
+##  Integrations
+
+-     Overview
+
+-     Model Providers
+
+-     Tools
+
+-    Custom Endpoint
+
+##  Workspace
+
+-     Overview
+
+-     Manage Apps
+
+-     Manage Members
+
+-     Personal Settings
+
+-     Billing
+
+Workflow & Chatflow
+
+## Workflow & Chatflow
+Copy page  Copy page
+
+Build agentic workflows that combine AI models, tools, and logic into reliable, repeatable processes
+
+Copy page  Copy page
+
+##   ​
+
+Why Agentic Workflows
+
+AI models are powerful, but on their own they can be unpredictable—they may hallucinate, miss steps, or produce inconsistent outputs. In production environments, especially for teams and enterprises where reliability matters, you need more control over how AI operates.
+Agentic workflows solve this by embedding AI capabilities within a structured, repeatable process. Instead of relying on a single model to figure everything out, you design a flow that orchestrates models, tools, and logic step by step—with clear conditions, checkpoints, and fallback paths.
+The AI is still doing the heavy lifting, but within boundaries you define.
+
+##   ​
+
+Workflow vs. Chatflow
+
+Dify offers two app types for building agentic workflows:  Workflow  and  Chatflow . Both are built on a shared visual canvas and node system.
+To build a flow, connect nodes that each handle a specific step, such as calling a model, retrieving knowledge, running code, or branching on conditions. Most of the work is  drag, connect, and configure —code is only needed when your logic calls for it.
+Their core difference is how users interact with the app:
+
+-
+A  Workflow  runs once from start to finish.
+It takes an input, processes it through the flow, and returns a result. Use it for tasks like automated report generation, data processing pipelines, or batch processing.
+
+-
+A  Chatflow  adds a conversation layer.
+Users interact through a chat interface, and each message triggers the flow you designed before a response is generated. Use it for interactive assistants, guided Q&A, or any conversational scenario that requires structured processing behind each reply.
+
+Chatflows support optional features like content moderation, text to speech, and more. See  App Toolkit  for details.
+
+They also start and end with different nodes:
+Workflow  Chatflow
+Starts with   User Input  or  Trigger   User Input
+Ends with   Output  node (optional)   Answer  node (required)
+
+A Trigger runs a workflow automatically: on a schedule, when a webhook fires, or from an integration event. Chatflows always start from a user message, so they don’t have Triggers.
+For how to compose either type, see  Orchestration Logic .
+Last modified on   July 2, 2026
+Was this page helpful?
+Yes          No
+
+Use Dify
+Previous
+
+Orchestration Logic
+Next
+
+⌘ I
+
+x      github      linkedin
+Powered by                    This documentation is built and hosted on Mintlify, a developer documentation platform
+
+##           On this page
+-  Why Agentic Workflows
+-  Workflow vs. Chatflow
+
+

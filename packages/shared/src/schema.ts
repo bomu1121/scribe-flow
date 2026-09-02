@@ -95,6 +95,12 @@ const nodeDataByType = {
     granularity: z.enum(["coarse", "medium", "fine"]),
     maxChapters: z.number().int().min(1).max(50).optional(),
   }),
+  mindMap: baseDataSchema.extend({
+    title: z.string().optional(),
+    branchSize: z.enum(["auto", "few", "many"]).optional(),
+    maxDepth: z.number().int().min(3).max(5).optional(),
+    theme: z.enum(["paper", "presentation", "academic"]).optional(),
+  }),
 };
 
 function nodeOf(type: string, data: z.ZodTypeAny) {
@@ -118,6 +124,7 @@ export const graphNodeSchema = z.discriminatedUnion("type", [
   nodeOf("flow.if", nodeDataByType.ifData),
   nodeOf("process.text", nodeDataByType.textTool),
   nodeOf("process.chapter", nodeDataByType.chapter),
+  nodeOf("process.mindmap", nodeDataByType.mindMap),
 ]);
 
 export const graphEdgeSchema = z.object({

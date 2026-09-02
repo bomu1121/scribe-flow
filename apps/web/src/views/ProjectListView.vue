@@ -1,20 +1,57 @@
 <script setup lang="ts">
 import { onMounted, ref } from "vue";
 import { useRouter } from "vue-router";
-import { ElButton, ElDialog, ElDropdown, ElDropdownItem, ElDropdownMenu, ElMessage, ElMessageBox } from "element-plus";
+import { ElButton, ElDialog, ElDropdown, ElDropdownItem, ElDropdownMenu, ElMessage, ElMessageBox, ElTag } from "element-plus";
 import { FileUp, FolderOpen, MoreHorizontal, Plus } from "lucide-vue-next";
-import { WORKFLOW_TEMPLATES, type ProjectListItem } from "@scribe-flow/shared";
+import { WORKFLOW_TEMPLATES, type ProjectListItem, type RunMeta, type RunStatus } from "@scribe-flow/shared";
 import { useProjectsStore } from "@/stores/projects";
+import { useRunsStore } from "@/stores/runs";
 
 const router = useRouter();
 const store = useProjectsStore();
+const runsStore = useRunsStore();
 
 const showCreate = ref(false);
 const creating = ref(false);
 const fileInput = ref<HTMLInputElement | null>(null);
 
+function isProjectRunning(projectId: string): boolean {
+  return runsStore.runs.some((r) => r.projectId === projectId && r.status === "running");
+}
+
+function latestRun(projectId: string): RunMeta | undefined {
+  // runsStore.runs 按 createdAt 倒序，取第一条即最近一次运行。
+  return runsStore.runs.find((r) => r.projectId === projectId);
+}
+
+function runStatusLabel(status: RunStatus): string {
+  const labels: Record<RunStatus, string> = {
+    running: "运行中",
+    success: "成功",
+    error: "失败",
+    cancelled: "已取消",
+  };
+  return labels[status] ?? status;
+}
+
+function runStatusType(status: RunStatus): "primary" | "success" | "danger" | "info" {
+  const types: Record<RunStatus, "primary" | "success" | "danger" | "info"> = {
+    running: "primary",
+    success: "success",
+    error: "danger",
+    cancelled: "info",
+  };
+  return types[status] ?? "info";
+}
+
+function openLatestRun(project: ProjectListItem) {
+  const run = latestRun(project.id);
+  if (run) void router.push(`/project/${project.id}/run/${run.id}`);
+}
+
 onMounted(() => {
   void store.loadList();
+  void runsStore.load();
 });
 
 async function createFromTemplate(templateId?: string) {
@@ -146,8 +183,15 @@ function onImportFile(event: Event) {
         <h3 class="sf-project-name">{{ project.name }}</h3>
         <p class="sf-project-desc">{{ project.description || "无说明" }}</p>
         <footer class="sf-project-meta tnum">
-          <span>{{ project.nodeCount }} 个节点</span>
-          <span>更新于 {{ new Date(project.updatedAt).toLocaleString("zh-CN") }}</span>
+          <div class="sf-project-meta-left">
+            <el-tag v-if="isProjectRunning(project.id)" type="primary" size="small" effect="light">运行中</el-tag>
+            <span>{{ project.nodeCount }} 个节点</span>
+          </div>
+          <button v-if="latestRun(project.id)" type="button" class="sf-last-run" title="查看最近一次运行结果" @click.stop="openLatestRun(project)">
+            <el-tag :type="runStatusType(latestRun(project.id)!.status)" size="small" effect="light">{{ runStatusLabel(latestRun(project.id)!.status) }}</el-tag>
+            <span>上次 #{{ latestRun(project.id)!.id.slice(-6) }}</span>
+          </button>
+          <span v-else>更新于 {{ new Date(project.updatedAt).toLocaleString("zh-CN") }}</span>
         </footer>
       </article>
     </div>
@@ -155,11 +199,11 @@ function onImportFile(event: Event) {
     <div v-else class="sf-empty">
       <div class="sf-empty-icon"><FolderOpen :size="22" /></div>
       <div class="sf-empty-title">还没有工程</div>
-      <div class="sf-empty-desc">创建一个空白工程，或从「视频转笔记（单线）」模板开始。</div>
+      <div class="sf-empty-desc">创建一个空白工程，或从「文稿转思维导图」模板开始。</div>
     </div>
 
     <el-dialog v-model="showCreate" title="新建工程" width="560px">
-      <p class="sf-dialog-desc">工作流模板只决定加工路径。观点提炼、技术文案提炼、信息溯源等提示词块，在画布的「AI 加工」节点中选择。</p>
+      <p class="sf-dialog-desc">工作流模板只决定加工路径。提示词块在「AI 加工」节点中选择，思维导图在「思维导图」节点中配置。</p>
       <div class="sf-tpl-grid">
         <button type="button" class="sf-tpl-card" :disabled="creating" @click="createFromTemplate()">
           <span class="sf-tpl-name">空白工程</span>
@@ -303,6 +347,35 @@ function onImportFile(event: Event) {
   border-top: 1px solid var(--color-border);
   font-size: 11px;
   color: var(--color-text-tertiary);
+}
+
+.sf-project-meta-left {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.sf-last-run {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 6px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-muted);
+  color: var(--color-text-secondary);
+  font-family: inherit;
+  font-size: 11px;
+  cursor: pointer;
+  transition:
+    border-color var(--dur-1) var(--ease-out),
+    color var(--dur-1) var(--ease-out);
+}
+
+.sf-last-run:hover {
+  border-color: var(--color-brand);
+  color: var(--color-brand);
 }
 
 .sf-empty {

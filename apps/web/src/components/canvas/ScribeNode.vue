@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from "vue";
-import { ElInput, ElMessage, ElUpload, type UploadRequestOptions } from "element-plus";
-import { Cloud, Eye, FileOutput, FileText, FileUp, GitBranch, GitMerge, Link2, ListTree, Mic, Replace, Sparkles, WandSparkles } from "lucide-vue-next";
+import { ElInput, ElMessage, ElMessageBox, ElUpload, type UploadRequestOptions } from "element-plus";
+import { Cloud, Eye, FileOutput, FileText, FileUp, GitBranch, GitMerge, Link2, ListTree, Mic, Network, Replace, Sparkles, WandSparkles } from "lucide-vue-next";
 import { Handle, Position, type NodeProps } from "@vue-flow/core";
 import { ContextMenuContent, ContextMenuItem, ContextMenuPortal, ContextMenuRoot, ContextMenuSeparator, ContextMenuTrigger } from "reka-ui";
 import { NODE_PORTS, NODE_TYPE_LABELS, type NodeType, type UploadedFile, type VideoPreview } from "@scribe-flow/shared";
@@ -10,6 +10,7 @@ import IfCard from "./node-cards/IfCard.vue";
 import TextToolCard from "./node-cards/TextToolCard.vue";
 import ChapterCard from "./node-cards/ChapterCard.vue";
 import RetryFields from "./node-cards/RetryFields.vue";
+import { renderMarkdown } from "@/lib/markdown";
 import { usePromptsStore } from "@/stores/prompts";
 import { api } from "@/lib/api";
 import type { ScribeNodeData } from "@/utils/flow";
@@ -179,6 +180,8 @@ const typeIcon = computed(() => {
       return Replace;
     case "process.chapter":
       return ListTree;
+    case "process.mindmap":
+      return Network;
   }
 });
 
@@ -186,10 +189,15 @@ const statusClass = computed(() => (props.data.status ? `is-${props.data.status}
 const sizeClass = computed(() => `sf-node--${nodeType.value.replaceAll(".", "-")}`);
 
 const canViewOutput = computed(() =>
-  ["source.text", "process.transcribe", "process.refine", "process.prompt", "process.merge", "process.output", "flow.if", "process.text", "process.chapter"].includes(
+  ["source.text", "process.transcribe", "process.refine", "process.prompt", "process.merge", "process.output", "flow.if", "process.text", "process.chapter", "process.mindmap"].includes(
     nodeType.value,
   ),
 );
+
+const hasResult = computed(() => Boolean(data.value.summary));
+/** 方案 A+B：画布常态不展示正文；只有选中且已完成的节点才展开结构化摘要，完整内容仍走抽屉。 */
+const canShowResultDetail = computed(() => props.selected && data.value.status === "done" && Boolean(data.value.preview) && canViewOutput.value);
+const renderedResultDetail = computed(() => (data.value.preview ? renderMarkdown(data.value.preview) : ""));
 
 const asrOptions = [
   { label: "MiMo-V2.5", value: "mimo", icon: Mic },
@@ -224,6 +232,24 @@ function commit() {
   props.data.ctx?.commit();
 }
 
+async function renameNode() {
+  try {
+    const { value } = await ElMessageBox.prompt("输入新的模块名称", "重命名模块", {
+      inputValue: label.value,
+      inputPattern: /\S+/,
+      inputErrorMessage: "模块名称不能为空",
+      confirmButtonText: "确定",
+      cancelButtonText: "取消",
+    });
+    const next = value.trim();
+    if (!next || next === label.value) return;
+    patch({ label: next });
+    commit();
+  } catch {
+    // 用户取消时不处理
+  }
+}
+
 function patchIf(value: ScribeNodeData["condition"]) {
   patch({ condition: value });
   commit();
@@ -243,6 +269,29 @@ function patchRetry(value: { maxRetries?: number; backoffMs?: number }) {
   patch({ retry: value });
   commit();
 }
+
+function patchMindMap(value: Record<string, unknown>) {
+  patch(value);
+  commit();
+}
+
+const branchSizeOptions = [
+  { label: "自动（4-7 个）", value: "auto" },
+  { label: "精简（3-5 个）", value: "few" },
+  { label: "详细（6-9 个）", value: "many" },
+];
+
+const depthOptions = [
+  { label: "3 层", value: "3" },
+  { label: "4 层（推荐）", value: "4" },
+  { label: "5 层", value: "5" },
+];
+
+const themeOptions = [
+  { label: "纸面", value: "paper" },
+  { label: "演示", value: "presentation" },
+  { label: "学术", value: "academic" },
+];
 </script>
 
 <template>
@@ -262,13 +311,7 @@ function patchRetry(value: { maxRetries?: number; backoffMs?: number }) {
           <span class="sf-node-icon">
             <component :is="typeIcon" :size="13" />
           </span>
-          <input
-            class="sf-node-title-input"
-            :value="label"
-            :aria-label="`节点名称：${label}`"
-            @input="patch({ label: ($event.target as HTMLInputElement).value })"
-            @blur="commit"
-          />
+          <span class="sf-node-title" :title="label" :aria-label="`节点名称：${label}`">{{ label }}</span>
           <button
             v-if="canViewOutput"
             type="button"
@@ -377,10 +420,10 @@ function patchRetry(value: { maxRetries?: number; backoffMs?: number }) {
           </template>
 
           <template v-else-if="nodeType === 'process.transcribe'">
-            <label class="sf-node-field">
+            <div class="sf-node-field">
               <span class="sf-node-field-label">ASR 引擎</span>
               <ModelSelect v-model="asrEngine" :options="asrOptions" size="small" placeholder="选择 ASR 引擎" :prefix-icon="Mic" />
-            </label>
+            </div>
           </template>
 
           <template v-else-if="nodeType === 'process.refine'">
@@ -398,7 +441,7 @@ function patchRetry(value: { maxRetries?: number; backoffMs?: number }) {
           </template>
 
           <template v-else-if="nodeType === 'process.prompt'">
-            <label class="sf-node-field">
+            <div class="sf-node-field">
               <span class="sf-node-field-label">提示词块</span>
               <ModelSelect
                 v-model="promptBlockId"
@@ -409,7 +452,7 @@ function patchRetry(value: { maxRetries?: number; backoffMs?: number }) {
                 placeholder="选择提示词块"
                 :prefix-icon="Sparkles"
               />
-            </label>
+            </div>
             <label class="sf-node-field">
               <span class="sf-node-field-label">输出名称</span>
               <el-input
@@ -454,6 +497,47 @@ function patchRetry(value: { maxRetries?: number; backoffMs?: number }) {
             <ChapterCard :granularity="data.granularity" :max-chapters="data.maxChapters" @update="patchChapter" />
           </template>
 
+          <template v-else-if="nodeType === 'process.mindmap'">
+            <label class="sf-node-field">
+              <span class="sf-node-field-label">导图标题（可选）</span>
+              <el-input
+                class="sf-node-control"
+                size="small"
+                :model-value="data.title ?? ''"
+                placeholder="留空由 AI 提炼"
+                @update:model-value="(v: string | number) => patch({ title: String(v) })"
+                @blur="commit"
+              />
+            </label>
+            <div class="sf-node-field">
+              <span class="sf-node-field-label">分支数量</span>
+              <ModelSelect
+                :model-value="data.branchSize ?? 'auto'"
+                :options="branchSizeOptions"
+                size="small"
+                @update:model-value="(v: string) => patchMindMap({ branchSize: v as 'auto' | 'few' | 'many' })"
+              />
+            </div>
+            <div class="sf-node-field">
+              <span class="sf-node-field-label">层级上限</span>
+              <ModelSelect
+                :model-value="String(data.maxDepth ?? 4)"
+                :options="depthOptions"
+                size="small"
+                @update:model-value="(v: string) => patchMindMap({ maxDepth: Number(v) })"
+              />
+            </div>
+            <div class="sf-node-field">
+              <span class="sf-node-field-label">主题</span>
+              <ModelSelect
+                :model-value="data.theme ?? 'paper'"
+                :options="themeOptions"
+                size="small"
+                @update:model-value="(v: string) => patchMindMap({ theme: v as 'paper' | 'presentation' | 'academic' })"
+              />
+            </div>
+          </template>
+
           <template v-else-if="nodeType === 'process.merge'">
             <label class="sf-node-field">
               <span class="sf-node-field-label">合并标题</span>
@@ -480,11 +564,10 @@ function patchRetry(value: { maxRetries?: number; backoffMs?: number }) {
                 @blur="commit"
               />
             </label>
-            <div class="sf-node-output-preview">{{ data.summary ?? "输出预览（运行后显示）" }}</div>
           </template>
 
           <details
-            v-if="['process.transcribe', 'process.refine', 'process.prompt', 'process.chapter'].includes(nodeType)"
+            v-if="['process.transcribe', 'process.refine', 'process.prompt', 'process.chapter', 'process.mindmap'].includes(nodeType)"
             class="sf-node-advanced"
           >
             <summary class="sf-node-advanced-summary">高级（失败重试）</summary>
@@ -492,9 +575,14 @@ function patchRetry(value: { maxRetries?: number; backoffMs?: number }) {
           </details>
         </div>
 
-        <div v-if="data.summary || data.preview" class="sf-node-result">
-          <div v-if="data.preview" class="sf-node-result-preview">{{ data.preview }}</div>
-          <div v-if="data.summary" class="sf-node-result-meta tnum">{{ data.summary }}</div>
+        <div v-if="hasResult" class="sf-node-result" :class="data.status ? `is-${data.status}` : ''">
+          <span v-if="data.status" class="sf-node-result-status" />
+          <span class="sf-node-result-meta tnum">{{ data.summary }}</span>
+          <span v-if="data.delta" class="sf-node-result-delta tnum" :class="`is-${data.delta.tone}`">{{ data.delta.label }}</span>
+        </div>
+        <div v-if="canShowResultDetail" class="sf-node-result-detail">
+          <div class="sf-node-result-detail-text markdown-body" v-html="renderedResultDetail" />
+          <button type="button" class="sf-node-result-detail-open" @click.stop="props.data.ctx?.viewOutput()">查看完整输出</button>
         </div>
 
         <Handle
@@ -512,6 +600,7 @@ function patchRetry(value: { maxRetries?: number; backoffMs?: number }) {
         <ContextMenuItem class="sf-node-menu-item" :disabled="props.data.ctx?.running" title="运行中不可启动新运行" @select="props.data.ctx?.runNode()">运行此节点</ContextMenuItem>
         <ContextMenuItem class="sf-node-menu-item" :disabled="props.data.ctx?.running" title="运行中不可启动新运行" @select="props.data.ctx?.runFromNode()">从此节点运行</ContextMenuItem>
         <ContextMenuSeparator class="sf-node-menu-sep" />
+        <ContextMenuItem class="sf-node-menu-item" @select="renameNode">重命名</ContextMenuItem>
         <ContextMenuItem class="sf-node-menu-item" @select="props.data.ctx?.duplicate()">复制</ContextMenuItem>
         <ContextMenuItem class="sf-node-menu-item" :disabled="true" title="M4 接入">复制输出</ContextMenuItem>
         <ContextMenuSeparator class="sf-node-menu-sep" />
@@ -560,6 +649,9 @@ function patchRetry(value: { maxRetries?: number; backoffMs?: number }) {
 }
 .sf-node--process-chapter {
   width: 240px;
+}
+.sf-node--process-mindmap {
+  width: 300px;
 }
 
 .sf-node.is-selected {
@@ -615,32 +707,19 @@ function patchRetry(value: { maxRetries?: number; backoffMs?: number }) {
   flex-shrink: 0;
 }
 
-.sf-node-title-input {
+.sf-node-title {
   flex: 1;
   min-width: 0;
   height: 24px;
-  padding: 0 6px;
-  border: 1px solid transparent;
-  border-radius: var(--radius-sm);
-  background: transparent;
+  line-height: 24px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   color: var(--color-text);
-  font-family: inherit;
   font-size: 13px;
   font-weight: 600;
-  transition:
-    background-color var(--dur-1) var(--ease-out),
-    border-color var(--dur-1) var(--ease-out);
-}
-
-.sf-node-title-input:hover {
-  background: var(--color-surface-muted);
-  border-color: var(--color-border);
-}
-
-.sf-node-title-input:focus {
-  outline: none;
-  background: var(--color-surface);
-  border-color: var(--color-brand);
+  cursor: default;
+  user-select: none;
 }
 
 .sf-node-status {
@@ -658,28 +737,122 @@ function patchRetry(value: { maxRetries?: number; backoffMs?: number }) {
 }
 
 .sf-node-result {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   margin-top: 8px;
-  padding: 7px 8px;
+  padding: 5px 8px;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-sm);
   background: var(--color-surface-muted);
 }
 
-.sf-node-result-preview {
+.sf-node-result-status {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--color-text-tertiary);
+  flex-shrink: 0;
+}
+
+.sf-node-result.is-done .sf-node-result-status {
+  background: var(--color-success);
+}
+
+.sf-node-result.is-error .sf-node-result-status {
+  background: var(--color-error);
+}
+
+.sf-node-result.is-running .sf-node-result-status {
+  background: var(--color-brand);
+}
+
+.sf-node-result.is-skipped .sf-node-result-status {
+  background: var(--color-text-tertiary);
+}
+
+.sf-node-result-meta {
+  flex: 1;
+  min-width: 0;
+  font-size: 10.5px;
+  line-height: 1.4;
+  color: var(--color-text-tertiary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sf-node-result-delta {
+  flex-shrink: 0;
+  padding: 1px 6px;
+  border-radius: 999px;
+  font-size: 9.5px;
+  line-height: 1.6;
+  white-space: nowrap;
+}
+
+.sf-node-result-delta.is-same {
+  background: var(--color-ink-soft);
+  color: var(--color-text-tertiary);
+}
+
+.sf-node-result-delta.is-up {
+  background: var(--color-brand-soft);
+  color: var(--color-brand);
+}
+
+.sf-node-result-delta.is-down,
+.sf-node-result-delta.is-changed {
+  background: var(--color-warning-soft);
+  color: var(--color-warning);
+}
+
+.sf-node-result-delta.is-new {
+  background: var(--color-success-soft);
+  color: var(--color-success);
+}
+
+.sf-node-result-detail {
+  margin-top: 8px;
+  padding: 8px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-muted);
+}
+
+.sf-node-result-detail-text {
   font-size: 11px;
-  line-height: 1.5;
+  line-height: 1.6;
   color: var(--color-text-secondary);
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
+  max-height: 120px;
   overflow: hidden;
   word-break: break-word;
 }
 
-.sf-node-result-meta {
-  margin-top: 4px;
-  font-size: 10px;
-  color: var(--color-text-tertiary);
+.sf-node-result-detail-text :deep(p) {
+  margin: 0 0 6px;
+}
+
+.sf-node-result-detail-text :deep(p:last-child) {
+  margin-bottom: 0;
+}
+
+.sf-node-result-detail-open {
+  display: inline-flex;
+  align-items: center;
+  margin-top: 8px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--color-brand);
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.sf-node-result-detail-open:hover {
+  text-decoration: underline;
 }
 
 .sf-node-output-btn {
@@ -989,17 +1162,6 @@ function patchRetry(value: { maxRetries?: number; backoffMs?: number }) {
   text-align: right;
 }
 
-.sf-node-field {
-  display: flex;
-  flex-direction: column;
-  gap: 7px;
-}
-
-.sf-node-field-label {
-  font-size: 11px;
-  color: var(--color-text-tertiary);
-}
-
 .sf-node-advanced {
   margin-top: 8px;
   padding-top: 8px;
@@ -1019,25 +1181,6 @@ function patchRetry(value: { maxRetries?: number; backoffMs?: number }) {
 
 .sf-node-select {
   width: 100%;
-}
-
-.sf-node-hint {
-  font-size: 11px;
-  color: var(--color-text-tertiary);
-  line-height: 1.5;
-}
-
-.sf-node-output-preview {
-  display: grid;
-  place-items: center;
-  min-height: 88px;
-  padding: 10px;
-  border: 1px dashed var(--color-border);
-  border-radius: var(--radius-md);
-  background: var(--color-surface-muted);
-  color: var(--color-text-tertiary);
-  font-size: 11.5px;
-  text-align: center;
 }
 
 .sf-handle {
