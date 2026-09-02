@@ -297,8 +297,8 @@ async function run() {
     await waitFor("!!document.querySelector('.sf-settings-form .el-segmented')", 5000);
     check("设置页 ASR 分段控件渲染", true);
     await evalJs("document.querySelectorAll('.sf-settings-nav-item')[3].click(); true");
-    await waitFor("document.querySelectorAll('.sf-block-card').length >= 3", 5000);
-    check("提示词块库渲染内置 3 块", await evalJs("document.querySelectorAll('.sf-block-card').length >= 3"));
+    await waitFor("document.querySelectorAll('.sf-block-card').length >= 4", 5000);
+    check("提示词块库渲染内置 4 块", await evalJs("document.querySelectorAll('.sf-block-card').length >= 4"));
     await evalJs("document.querySelectorAll('.sf-settings-nav-item')[5].click(); true");
     await waitFor("!!document.querySelector('.sf-data-grid')", 5000);
     check("数据与工程页渲染数据信息", await evalJs("document.querySelectorAll('.sf-data-cell').length >= 3"));

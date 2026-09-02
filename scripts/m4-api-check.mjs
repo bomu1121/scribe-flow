@@ -54,7 +54,7 @@ async function waitRun(runId) {
 async function run() {
   // 1. 提示词块库
   const initial = await j("GET", "/api/prompts");
-  check("GET /api/prompts 返回内置 3 块", initial.status === 200 && initial.data?.items?.filter((b) => b.builtin).length === 3);
+  check("GET /api/prompts 返回内置 4 块", initial.status === 200 && initial.data?.items?.filter((b) => b.builtin).length === 4);
 
   const created = await j("POST", "/api/prompts", { name: "M4 验收块", prompt: "这是验收提示词。" });
   check("POST /api/prompts 创建自定义块", created.status === 201 && created.data?.id?.startsWith("custom."), created.data?.id ?? "");
