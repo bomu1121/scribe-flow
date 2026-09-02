@@ -58,6 +58,7 @@ export const runNodeResults = sqliteTable("run_node_results", {
   nodeType: text("node_type").notNull(),
   nodeLabel: text("node_label"),
   status: text("status", { enum: ["queued", "running", "done", "error", "cancelled", "skipped"] }).notNull(),
+  attempts: integer("attempts").notNull().default(1),
   elapsedMs: integer("elapsed_ms").notNull().default(0),
   summary: text("summary"),
   error: text("error"),

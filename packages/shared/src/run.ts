@@ -30,6 +30,7 @@ export interface RunNodeResult {
   nodeLabel?: string;
   status: NodeResultStatus;
   elapsedMs: number;
+  attempts?: number;
   summary?: string;
   error?: string;
   output?: NodeOutput;
@@ -89,6 +90,8 @@ export type RunEvent =
   | { type: "run.started"; run: RunMeta }
   | { type: "node.started"; runId: string; nodeId: string }
   | { type: "node.progress"; runId: string; nodeId: string; progress: number; message: string }
+  | { type: "node.retry"; runId: string; nodeId: string; attempt: number; maxRetries: number; error: string }
+  | { type: "node.skipped"; runId: string; nodeId: string; reason: string }
   | { type: "node.done"; runId: string; nodeId: string; summary: string; preview?: string }
   | { type: "node.error"; runId: string; nodeId: string; error: string }
   | { type: "run.done"; runId: string; status: RunStatus };

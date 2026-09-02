@@ -1,6 +1,6 @@
 import { canConnect, type PortSpec, type PortType } from "./port";
 
-export type NodeRunStatus = "idle" | "queued" | "running" | "done" | "error" | "cancelled";
+export type NodeRunStatus = "idle" | "queued" | "running" | "done" | "error" | "cancelled" | "skipped";
 
 export interface PageRef {
   cid: number;
@@ -75,6 +75,38 @@ export interface OutputData {
   fileName?: string;
 }
 
+export interface RetryConfig {
+  /** 最大重试次数（不含首次执行），默认 2。 */
+  maxRetries?: number;
+  /** 首次重试退避毫秒数，后续按次数递增，默认 3000。 */
+  backoffMs?: number;
+}
+
+export interface IfCondition {
+  field: "charCount" | "wordCount" | "contains";
+  op: "gt" | "gte" | "lt" | "lte" | "eq" | "contains" | "notContains";
+  /** contains 系列为要匹配的文本；其余为数字字符串。 */
+  value: string;
+}
+
+export interface IfData {
+  condition: IfCondition;
+}
+
+export interface TextToolData {
+  operation: "findReplace" | "regexReplace" | "template" | "cleanup";
+  find?: string;
+  replace?: string;
+  pattern?: string;
+  flags?: string;
+  template?: string;
+}
+
+export interface ChapterData {
+  granularity: "coarse" | "medium" | "fine";
+  maxChapters?: number;
+}
+
 export type NodeType =
   | "source.bili"
   | "source.file"
@@ -83,7 +115,10 @@ export type NodeType =
   | "process.refine"
   | "process.prompt"
   | "process.merge"
-  | "process.output";
+  | "process.output"
+  | "flow.if"
+  | "process.text"
+  | "process.chapter";
 
 export interface NodeBase {
   id: string;
@@ -94,6 +129,8 @@ export interface NodeBase {
     status?: NodeRunStatus;
     /** 运行后的产物摘要，如「12 个观点块 · 1.2k 字」。 */
     summary?: string;
+    /** 失败重试策略（仅对转写/AI/章节等外部调用节点生效）。 */
+    retry?: RetryConfig;
   };
 }
 
@@ -105,7 +142,10 @@ export type GraphNode =
   | (NodeBase & { type: "process.refine"; data: NodeBase["data"] & AiNodeData })
   | (NodeBase & { type: "process.prompt"; data: NodeBase["data"] & AiNodeData })
   | (NodeBase & { type: "process.merge"; data: NodeBase["data"] & MergeData })
-  | (NodeBase & { type: "process.output"; data: NodeBase["data"] & OutputData });
+  | (NodeBase & { type: "process.output"; data: NodeBase["data"] & OutputData })
+  | (NodeBase & { type: "flow.if"; data: NodeBase["data"] & IfData })
+  | (NodeBase & { type: "process.text"; data: NodeBase["data"] & TextToolData })
+  | (NodeBase & { type: "process.chapter"; data: NodeBase["data"] & ChapterData });
 
 export interface GraphEdge {
   id: string;
@@ -137,6 +177,9 @@ export const NODE_TYPE_LABELS: Record<NodeType, string> = {
   "process.prompt": "AI 提示词",
   "process.merge": "合并",
   "process.output": "输出",
+  "flow.if": "条件分支",
+  "process.text": "文本工具",
+  "process.chapter": "章节切分",
 };
 
 /** 每个节点类型的端口定义。 */
@@ -163,6 +206,27 @@ export const NODE_PORTS: Record<NodeType, { inputs: PortSpec[]; outputs: PortSpe
   "process.output": {
     inputs: [{ id: "noteDoc", type: "noteDoc", label: "笔记文档" }],
     outputs: [],
+  },
+  "flow.if": {
+    inputs: [
+      { id: "in", type: "transcript", label: "输入", accepts: ["transcript", "noteBlock", "noteDoc"] },
+    ],
+    outputs: [
+      { id: "true", type: "transcript", label: "是", accepts: ["transcript", "noteBlock", "noteDoc"] },
+      { id: "false", type: "transcript", label: "否", accepts: ["transcript", "noteBlock", "noteDoc"] },
+    ],
+  },
+  "process.text": {
+    inputs: [
+      { id: "in", type: "transcript", label: "输入", accepts: ["transcript", "noteBlock", "noteDoc"] },
+    ],
+    outputs: [
+      { id: "out", type: "transcript", label: "输出", accepts: ["transcript", "noteBlock", "noteDoc"] },
+    ],
+  },
+  "process.chapter": {
+    inputs: [{ id: "in", type: "transcript", label: "文稿" }],
+    outputs: [{ id: "chapters", type: "noteBlock", label: "章节" }],
   },
 };
 

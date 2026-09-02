@@ -20,6 +20,7 @@
     "smoke:ui": "node scripts/cdp-ui-smoke.mjs",
     "check:api:m2": "node scripts/m2-api-check.mjs",
     "check:api:m3": "node scripts/m3-api-check.mjs",
-    "check:api:m4": "node scripts/m4-api-check.mjs"
+    "check:api:m4": "node scripts/m4-api-check.mjs",
+    "check:api:m6": "node scripts/m6-api-check.mjs"
   }
 }

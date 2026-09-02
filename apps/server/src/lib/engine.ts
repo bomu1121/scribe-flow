@@ -24,6 +24,21 @@ import { getAiConfig, getAsrConfig, getSettings } from "./settings";
 
 const MAX_INLINE_TEXT = 200_000;
 
+/** 只有外部调用类节点才自动重试；本地节点失败重试无意义。 */
+const RETRYABLE_NODE_TYPES = new Set(["process.transcribe", "process.refine", "process.prompt", "process.chapter"]);
+
+/** 判断一次失败是否值得重试：取消与配置类错误不重试，其余（超时/网络/5xx/空结果）重试。 */
+function isRetryableError(error: Error, cancelled: boolean): boolean {
+  if (cancelled) return false;
+  const message = error.message;
+  if (/运行已取消|未配置.*密钥|没有可.*输入|文稿为空|链接为空|缺少 BV|缺少 cid|文件为空|正则表达式无效|文稿过短/.test(message)) return false;
+  return true;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 interface ActiveRun {
   id: string;
   projectId: string;
@@ -35,6 +50,8 @@ interface ActiveRun {
   cancelled: boolean;
   listeners: Set<(event: RunEvent) => void>;
   outputs: Map<string, NodeOutput[]>;
+  /** 条件分支节点执行后的分支结果（true/false），用于下游按 handle 取数与跳过。 */
+  branches: Map<string, "true" | "false">;
   nodeAborts: Map<string, AbortController>;
   startedAt: number;
 }
@@ -64,6 +81,76 @@ function previewFor(output: NodeOutput): string | undefined {
 
 function nodeLabel(node: GraphNode): string {
   return String((node.data as { label?: string }).label ?? NODE_TYPE_LABELS[node.type] ?? node.type);
+}
+
+/** 中文字符 + 英文单词数（近似）。 */
+function countWords(text: string): number {
+  const chinese = text.match(/[\u4e00-\u9fa5]/g)?.length ?? 0;
+  const english = text.replace(/[\u4e00-\u9fa5]/g, " ").match(/[A-Za-z0-9]+(?:['’-][A-Za-z0-9]+)*/g)?.length ?? 0;
+  return chinese + english;
+}
+
+function applyTextOperation(
+  operation: string,
+  text: string,
+  data: Record<string, unknown>,
+): string {
+  switch (operation) {
+    case "findReplace": {
+      const find = String(data.find ?? "");
+      const replace = String(data.replace ?? "");
+      if (!find) return text;
+      return text.split(find).join(replace);
+    }
+    case "regexReplace": {
+      const pattern = String(data.pattern ?? "");
+      if (!pattern) throw new Error("正则表达式无效：pattern 为空");
+      const flags = String(data.flags ?? "");
+      try {
+        return text.replace(new RegExp(pattern, flags), String(data.replace ?? ""));
+      } catch (err) {
+        throw new Error(`正则表达式无效：${err instanceof Error ? err.message : "未知错误"}`);
+      }
+    }
+    case "template": {
+      const template = String(data.template ?? "");
+      if (!template.includes("{{input}}")) return template ? `${template}\n\n${text}` : text;
+      return template.split("{{input}}").join(text);
+    }
+    case "cleanup":
+      return text
+        .replace(/[ \t]+\n/g, "\n")
+        .replace(/\n{3,}/g, "\n\n")
+        .trim();
+    default:
+      throw new Error(`文本工具暂不支持该操作：${operation}`);
+  }
+}
+
+/** 解析章节切分的 LLM 输出；非法 JSON 抛中文错误。 */
+function parseChaptersJson(raw: string, maxChapters: number): { title: string; content: string }[] {
+  const start = raw.indexOf("{");
+  const end = raw.lastIndexOf("}");
+  const fragment = start >= 0 && end > start ? raw.slice(start, end + 1) : raw.trim();
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(fragment);
+  } catch (err) {
+    throw new Error(`章节切分结果不是有效 JSON：${err instanceof Error ? err.message : "解析失败"}`);
+  }
+  const list = Array.isArray(parsed) ? parsed : (parsed as { chapters?: unknown })?.chapters;
+  if (!Array.isArray(list)) throw new Error("章节切分结果缺少 chapters 数组");
+  const chapters = list
+    .map((item) => {
+      const obj = item as { title?: unknown; content?: unknown };
+      return { title: String(obj.title ?? "").trim(), content: String(obj.content ?? "").trim() };
+    })
+    .filter((c) => c.title && c.content);
+  if (chapters.length === 0) throw new Error("章节切分结果为空");
+  if (chapters.length > maxChapters) {
+    throw new Error(`章节数量 ${chapters.length} 超过上限 ${maxChapters}，请调大“最多章节”或改用更粗的粒度`);
+  }
+  return chapters;
 }
 
 export class RunEngine {
@@ -104,6 +191,7 @@ export class RunEngine {
       cancelled: false,
       listeners: new Set(),
       outputs: new Map(),
+      branches: new Map(),
       nodeAborts: new Map(),
       startedAt: Date.now(),
     };
@@ -190,12 +278,14 @@ export class RunEngine {
   private async runLoop(active: ActiveRun) {
     const concurrency = Math.min(4, Math.max(1, getSettings(this.db).general.concurrency || 2));
     const done = new Set<string>();
+    const skipped = new Set<string>();
     const running = new Map<string, Promise<"done" | "error">>();
     const failed = new Set<string>();
 
     try {
       while (done.size + failed.size < active.order.length) {
         if (active.cancelled) break;
+        await this.skipBlocked(active, done, failed, skipped);
         const ready = active.order.filter((id) => !done.has(id) && !failed.has(id) && !running.has(id) && this.depsDone(active, id, done));
         for (const nodeId of ready) {
           if (running.size >= concurrency) break;
@@ -245,6 +335,32 @@ export class RunEngine {
       if (!done.has(edge.source)) return false;
     }
     return true;
+  }
+
+  /** 条件分支跳过传播：某个节点的所有上游都永久断供（分支未命中或上游已跳过）时，把它标为 skipped。 */
+  private async skipBlocked(active: ActiveRun, done: Set<string>, failed: Set<string>, skipped: Set<string>): Promise<void> {
+    for (const nodeId of active.order) {
+      if (done.has(nodeId) || failed.has(nodeId)) continue;
+      const incoming = active.graph.edges.filter((e) => e.target === nodeId && active.nodeIds.has(e.source));
+      if (incoming.length === 0) continue;
+      const allBlocked = incoming.every((e) => this.isEdgeBlocked(active, e, skipped));
+      if (!allBlocked) continue;
+      const reason = "条件分支未命中，跳过";
+      await this.updateNode(active, nodeId, "skipped", 0, undefined, undefined, reason);
+      this.emit(active, { type: "node.skipped", runId: active.id, nodeId, reason });
+      done.add(nodeId);
+      skipped.add(nodeId);
+    }
+  }
+
+  /** 一条边是否永久断供：来源是已跳过的节点，或来源是已执行的条件分支且输出 handle 与命中分支不符。 */
+  private isEdgeBlocked(active: ActiveRun, edge: { source: string; sourceHandle?: string }, skipped: Set<string>): boolean {
+    if (skipped.has(edge.source)) return true;
+    const source = active.graph.nodes.find((n) => n.id === edge.source);
+    if (source?.type !== "flow.if") return false;
+    const branch = active.branches.get(edge.source);
+    if (!branch) return false;
+    return branch !== (edge.sourceHandle || "true");
   }
 
   /** 单节点/局部运行：不在本次运行内的上游节点，从最近一次成功结果取输入（支持多输出节点）。 */
@@ -301,6 +417,11 @@ export class RunEngine {
       if (edge.target !== node.id) continue;
       const source = active.graph.nodes.find((n) => n.id === edge.source);
       if (!source) continue;
+      // 条件分支按 handle 取数：分支不匹配的边不传输入。
+      if (source.type === "flow.if" && active.nodeIds.has(source.id)) {
+        const branch = active.branches.get(source.id);
+        if (branch && branch !== (edge.sourceHandle || "true")) continue;
+      }
       const outputs = active.nodeIds.has(source.id) ? (active.outputs.get(source.id) ?? []) : await this.previousOutputs(source.id);
       for (const output of outputs) items.push({ sourceNodeId: source.id, output, position: items.length });
     }
@@ -375,8 +496,17 @@ export class RunEngine {
     // 多输出音视频来源（多选卡片）没有可合并的文本，主输出保留第一个音频即可；
     // 完整多输出仍通过 active.outputs / run_node_inputs 传递给下游。
     if (outputs.every((output) => output.kind === "audio")) return outputs[0];
+    const firstKind = outputs[0]?.kind;
     const kind: NodeOutput["kind"] =
-      node.type === "process.prompt" ? "noteBlock" : node.type === "process.merge" || node.type === "process.output" ? "noteDoc" : "text";
+      node.type === "process.prompt"
+        ? "noteBlock"
+        : node.type === "process.chapter"
+          ? "noteDoc"
+          : node.type === "flow.if" || node.type === "process.text"
+            ? (firstKind ?? "text")
+            : node.type === "process.merge" || node.type === "process.output"
+              ? "noteDoc"
+              : "text";
     const text = outputs
       .map((output) => output.text ?? "")
       .filter(Boolean)
@@ -395,28 +525,46 @@ export class RunEngine {
     const started = Date.now();
     const abort = new AbortController();
     active.nodeAborts.set(nodeId, abort);
-    await this.updateNode(active, nodeId, "running", 0, undefined, undefined);
+    const data = node.data as Record<string, unknown>;
+    const retry = (data.retry as { maxRetries?: number; backoffMs?: number } | undefined) ?? {};
+    const maxRetries = RETRYABLE_NODE_TYPES.has(node.type) ? Math.max(0, Number(retry.maxRetries ?? 2) || 0) : 0;
+    const backoffMs = Math.max(100, Number(retry.backoffMs ?? 3000) || 3000);
+    await this.updateNode(active, nodeId, "running", 0, undefined, undefined, undefined, 1);
     this.emit(active, { type: "node.started", runId: active.id, nodeId });
 
+    let attempts = 0;
     try {
       const inputs = await this.resolveInputs(active, node);
       await this.persistInputs(active, node.id, inputs.items);
-      const result = await this.runNode(active, node, inputs, abort.signal);
-      if (active.cancelled) throw new Error("运行已取消");
-      const elapsed = Date.now() - started;
-      const combined = this.combineOutputs(node, result.outputs);
-      await this.updateNode(active, nodeId, "done", elapsed, result.summary, combined);
-      this.emit(active, { type: "node.done", runId: active.id, nodeId, summary: result.summary ?? "完成", preview: previewFor(combined) });
-      active.outputs.set(nodeId, result.outputs);
-      return "done";
-    } catch (err) {
-      const message = err instanceof Error ? err.message : "节点执行失败";
-      const elapsed = Date.now() - started;
-      const status = active.cancelled ? "cancelled" : "error";
-      const finalError = active.cancelled ? "已取消" : message;
-      await this.updateNode(active, nodeId, status, elapsed, undefined, undefined, finalError);
-      this.emit(active, { type: "node.error", runId: active.id, nodeId, error: finalError });
-      return status === "cancelled" ? "done" : "error";
+      while (true) {
+        attempts += 1;
+        try {
+          const result = await this.runNode(active, node, inputs, abort.signal);
+          if (active.cancelled) throw new Error("运行已取消");
+          const elapsed = Date.now() - started;
+          const combined = this.combineOutputs(node, result.outputs);
+          await this.updateNode(active, nodeId, "done", elapsed, result.summary, combined, undefined, attempts);
+          this.emit(active, { type: "node.done", runId: active.id, nodeId, summary: result.summary ?? "完成", preview: previewFor(combined) });
+          active.outputs.set(nodeId, result.outputs);
+          return "done";
+        } catch (err) {
+          const message = err instanceof Error ? err.message : "节点执行失败";
+          const error = err instanceof Error ? err : new Error(message);
+          if (attempts <= maxRetries && isRetryableError(error, active.cancelled)) {
+            const wait = backoffMs * attempts;
+            this.emit(active, { type: "node.retry", runId: active.id, nodeId, attempt: attempts, maxRetries, error: message });
+            await this.updateNode(active, nodeId, "running", 0, undefined, undefined, undefined, attempts + 1);
+            await sleep(wait);
+            continue;
+          }
+          const elapsed = Date.now() - started;
+          const status = active.cancelled ? "cancelled" : "error";
+          const finalError = active.cancelled ? "已取消" : message;
+          await this.updateNode(active, nodeId, status, elapsed, undefined, undefined, finalError, attempts);
+          this.emit(active, { type: "node.error", runId: active.id, nodeId, error: finalError });
+          return status === "cancelled" ? "done" : "error";
+        }
+      }
     } finally {
       active.nodeAborts.delete(nodeId);
     }
@@ -585,6 +733,79 @@ export class RunEngine {
         return { outputs: [{ kind: "noteDoc", text: inputs.text, path: rel, size: inputs.text.length }], summary: `${fileName} · ${inputs.text.length} 字` };
       }
 
+      case "flow.if": {
+        if (!inputs.text) throw new Error("没有可判断的输入");
+        const cond = data.condition as { field?: string; op?: string; value?: string } | undefined;
+        if (!cond?.field || !cond.op) throw new Error("条件分支未配置条件");
+        const field = cond.field;
+        const op = cond.op;
+        const rawValue = String(cond.value ?? "");
+        let matched: boolean;
+        let actualText: string;
+        if (field === "contains") {
+          matched = inputs.text.includes(rawValue);
+          if (op === "notContains") matched = !matched;
+          actualText = `包含"${rawValue}"`;
+        } else {
+          const value = field === "charCount" ? inputs.text.length : countWords(inputs.text);
+          const target = Number(rawValue);
+          if (!Number.isFinite(target)) throw new Error(`条件比较值不是有效数字：${rawValue}`);
+          switch (op) {
+            case "gt": matched = value > target; break;
+            case "gte": matched = value >= target; break;
+            case "lt": matched = value < target; break;
+            case "lte": matched = value <= target; break;
+            case "eq": matched = value === target; break;
+            default: throw new Error(`条件分支不支持该操作符：${op}`);
+          }
+          actualText = `${value} ${op} ${rawValue}`;
+        }
+        const branch = matched ? "true" : "false";
+        active.branches.set(node.id, branch);
+        const kind: NodeOutput["kind"] = inputs.items.find((i) => i.output.kind !== "audio")?.output.kind ?? "text";
+        return {
+          outputs: [{ kind, text: inputs.text, size: inputs.text.length }],
+          summary: `条件${matched ? "成立" : "不成立"} · ${actualText}`,
+        };
+      }
+
+      case "process.text": {
+        const textItems = inputs.items.filter((i) => i.output.kind !== "audio" && i.output.text?.trim());
+        if (textItems.length === 0) throw new Error("没有文本输入");
+        const operation = String(data.operation ?? "cleanup");
+        const outputs: NodeOutput[] = textItems.map((item) => {
+          const text = applyTextOperation(operation, item.output.text ?? "", data);
+          return { kind: item.output.kind as NodeOutput["kind"], text, size: text.length };
+        });
+        const total = outputs.reduce((sum, output) => sum + (output.text?.length ?? 0), 0);
+        return { outputs, summary: `${outputs.length} 个输入 · ${total} 字` };
+      }
+
+      case "process.chapter": {
+        if (!inputs.text) throw new Error("没有可切分的文稿输入");
+        const text = inputs.text.trim();
+        if (text.length < 200) throw new Error("文稿过短，不适合章节切分");
+        const aiConfig = getAiConfig(this.db);
+        if (!aiConfig.apiKey) throw new Error("未配置 AI 模型密钥，请到设置页填写");
+        const granularity = String(data.granularity ?? "medium");
+        const maxChapters = Math.min(50, Math.max(1, Number(data.maxChapters ?? 20) || 20));
+        const granularityLabel =
+          granularity === "coarse" ? "粗粒度（章节数 ≤ 12）" : granularity === "fine" ? "细粒度（章节数 ≤ 30）" : "中粒度（章节数 ≤ 20）";
+        const model = String(data.model ?? "").trim() || aiConfig.model;
+        const system = `你是内容编辑。把下面的文稿切分为章节。只输出 JSON，格式：{"chapters":[{"title":"章节标题","content":"本章内容"}]}。要求：章节数不超过 ${maxChapters}；粒度：${granularityLabel}；保持原文信息完整，不新增观点。`;
+        await this.log(active, node.id, "ai-request", `${model}\n\n${system}`);
+        const result = await chatCompletion({ ...aiConfig, model }, system, text, signal);
+        await this.log(active, node.id, "ai-response", result);
+        const chapters = parseChaptersJson(result, maxChapters);
+        const outputs: NodeOutput[] = chapters.map((c) => ({
+          kind: "noteBlock",
+          text: `## ${c.title}\n\n${c.content}`,
+          size: c.title.length + c.content.length + 4,
+        }));
+        const total = outputs.reduce((sum, output) => sum + (output.size ?? 0), 0);
+        return { outputs, summary: `${chapters.length} 章 · ${total} 字` };
+      }
+
       default:
         throw new Error(`节点类型暂不支持：${(node as { type: string }).type}`);
     }
@@ -611,6 +832,7 @@ export class RunEngine {
     summary?: string,
     output?: NodeOutput,
     error?: string,
+    attempts = 1,
   ) {
     const node = active.graph.nodes.find((n) => n.id === nodeId);
     const values = {
@@ -619,6 +841,7 @@ export class RunEngine {
       nodeType: node?.type ?? "",
       nodeLabel: node ? nodeLabel(node) : "",
       status,
+      attempts,
       elapsedMs,
       summary,
       error,
@@ -735,6 +958,7 @@ export class RunEngine {
       nodeLabel: r.nodeLabel ?? undefined,
       status: r.status,
       elapsedMs: r.elapsedMs,
+      attempts: r.attempts,
       summary: r.summary ?? undefined,
       error: r.error ?? undefined,
       output: r.outputKind

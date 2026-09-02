@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { PortSpec } from "./port";
 import { NODE_PORTS, type GraphEdge, type GraphNode, type NodeType, type WorkflowGraph } from "./graph";
 
 const positionSchema = z.object({
@@ -24,10 +25,18 @@ const biliSourceItemSchema = z.object({
   duration: z.number().optional(),
 });
 
+const retrySchema = z
+  .object({
+    maxRetries: z.number().int().min(0).max(10).optional(),
+    backoffMs: z.number().int().min(100).max(60000).optional(),
+  })
+  .optional();
+
 const baseDataSchema = z.object({
   label: z.string().optional(),
-  status: z.enum(["idle", "queued", "running", "done", "error", "cancelled"]).optional(),
+  status: z.enum(["idle", "queued", "running", "done", "error", "cancelled", "skipped"]).optional(),
   summary: z.string().optional(),
+  retry: retrySchema,
 });
 
 const nodeDataByType = {
@@ -67,6 +76,25 @@ const nodeDataByType = {
   output: baseDataSchema.extend({
     fileName: z.string().optional(),
   }),
+  ifData: baseDataSchema.extend({
+    condition: z.object({
+      field: z.enum(["charCount", "wordCount", "contains"]),
+      op: z.enum(["gt", "gte", "lt", "lte", "eq", "contains", "notContains"]),
+      value: z.string(),
+    }),
+  }),
+  textTool: baseDataSchema.extend({
+    operation: z.enum(["findReplace", "regexReplace", "template", "cleanup"]),
+    find: z.string().optional(),
+    replace: z.string().optional(),
+    pattern: z.string().optional(),
+    flags: z.string().optional(),
+    template: z.string().optional(),
+  }),
+  chapter: baseDataSchema.extend({
+    granularity: z.enum(["coarse", "medium", "fine"]),
+    maxChapters: z.number().int().min(1).max(50).optional(),
+  }),
 };
 
 function nodeOf(type: string, data: z.ZodTypeAny) {
@@ -87,6 +115,9 @@ export const graphNodeSchema = z.discriminatedUnion("type", [
   nodeOf("process.prompt", nodeDataByType.ai),
   nodeOf("process.merge", nodeDataByType.merge),
   nodeOf("process.output", nodeDataByType.output),
+  nodeOf("flow.if", nodeDataByType.ifData),
+  nodeOf("process.text", nodeDataByType.textTool),
+  nodeOf("process.chapter", nodeDataByType.chapter),
 ]);
 
 export const graphEdgeSchema = z.object({
@@ -141,12 +172,12 @@ export const graphSchema = z
     }
   });
 
-function sourceHandleType(node: { type: string }, handle?: string) {
-  return NODE_PORTS[node.type as NodeType]?.outputs.find((p) => p.id === handle)?.type;
+function sourceHandleType(node: { type: string }, handle?: string): PortSpec | undefined {
+  return NODE_PORTS[node.type as NodeType]?.outputs.find((p) => p.id === handle);
 }
 
-function targetHandleType(node: { type: string }, handle?: string) {
-  return NODE_PORTS[node.type as NodeType]?.inputs.find((p) => p.id === handle)?.type;
+function targetHandleType(node: { type: string }, handle?: string): PortSpec | undefined {
+  return NODE_PORTS[node.type as NodeType]?.inputs.find((p) => p.id === handle);
 }
 
 /** 解析并校验 graph，失败抛 ZodError。 */

@@ -655,6 +655,9 @@ async function forceStopRun() {
           <el-table-column label="产物 / 错误" min-width="220">
             <template #default="{ row }">
               <span v-if="asNode(row).error" class="rv-node-error">{{ asNode(row).error }}</span>
+              <span v-else-if="(asNode(row).attempts ?? 1) > 1" class="rv-node-retry">
+                {{ asNode(row).summary || "—" }} · 重试 {{ asNode(row).attempts! - 1 }} 次
+              </span>
               <span v-else>{{ asNode(row).summary || "—" }}</span>
             </template>
           </el-table-column>
@@ -980,6 +983,10 @@ async function forceStopRun() {
 
 .rv-node-error {
   color: var(--color-error);
+}
+
+.rv-node-retry {
+  color: var(--color-text-secondary);
 }
 
 .rv-body {

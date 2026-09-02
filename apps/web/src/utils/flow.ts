@@ -45,6 +45,16 @@ export interface ScribeNodeData {
   model?: string;
   outputName?: string;
   title?: string;
+  retry?: { maxRetries?: number; backoffMs?: number };
+  condition?: { field: "charCount" | "wordCount" | "contains"; op: "gt" | "gte" | "lt" | "lte" | "eq" | "contains" | "notContains"; value: string };
+  operation?: "findReplace" | "regexReplace" | "template" | "cleanup";
+  find?: string;
+  replace?: string;
+  pattern?: string;
+  flags?: string;
+  template?: string;
+  granularity?: "coarse" | "medium" | "fine";
+  maxChapters?: number;
   /** 运行时注入的右键菜单动作，不会持久化。 */
   ctx?: NodeContextActions;
 }
@@ -142,14 +152,20 @@ export function emptyNodeData(type: NodeType): Record<string, unknown> {
     case "source.text":
       return { label: "文本", text: "" };
     case "process.transcribe":
-      return { label: "转写" };
+      return { label: "转写", retry: { maxRetries: 2, backoffMs: 3000 } };
     case "process.refine":
-      return { label: "AI 校对" };
+      return { label: "AI 校对", retry: { maxRetries: 2, backoffMs: 3000 } };
     case "process.prompt":
-      return { label: "AI 加工", promptBlockId: undefined, outputName: "" };
+      return { label: "AI 加工", promptBlockId: undefined, outputName: "", retry: { maxRetries: 2, backoffMs: 3000 } };
     case "process.merge":
       return { label: "合并", title: "" };
     case "process.output":
       return { label: "输出", fileName: "笔记.md" };
+    case "flow.if":
+      return { label: "条件分支", condition: { field: "charCount", op: "gt", value: "5000" } };
+    case "process.text":
+      return { label: "文本工具", operation: "findReplace", find: "", replace: "" };
+    case "process.chapter":
+      return { label: "章节切分", granularity: "medium", maxChapters: 20, retry: { maxRetries: 2, backoffMs: 3000 } };
   }
 }

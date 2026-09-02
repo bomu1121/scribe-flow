@@ -1,11 +1,15 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import { ElInput, ElMessage, ElUpload, type UploadRequestOptions } from "element-plus";
-import { Cloud, Eye, FileOutput, FileText, FileUp, GitMerge, Link2, Mic, Sparkles, WandSparkles } from "lucide-vue-next";
+import { Cloud, Eye, FileOutput, FileText, FileUp, GitBranch, GitMerge, Link2, ListTree, Mic, Replace, Sparkles, WandSparkles } from "lucide-vue-next";
 import { Handle, Position, type NodeProps } from "@vue-flow/core";
 import { ContextMenuContent, ContextMenuItem, ContextMenuPortal, ContextMenuRoot, ContextMenuSeparator, ContextMenuTrigger } from "reka-ui";
 import { NODE_PORTS, NODE_TYPE_LABELS, type NodeType, type UploadedFile, type VideoPreview } from "@scribe-flow/shared";
 import ModelSelect from "../ModelSelect.vue";
+import IfCard from "./node-cards/IfCard.vue";
+import TextToolCard from "./node-cards/TextToolCard.vue";
+import ChapterCard from "./node-cards/ChapterCard.vue";
+import RetryFields from "./node-cards/RetryFields.vue";
 import { usePromptsStore } from "@/stores/prompts";
 import { api } from "@/lib/api";
 import type { ScribeNodeData } from "@/utils/flow";
@@ -169,6 +173,12 @@ const typeIcon = computed(() => {
       return GitMerge;
     case "process.output":
       return FileOutput;
+    case "flow.if":
+      return GitBranch;
+    case "process.text":
+      return Replace;
+    case "process.chapter":
+      return ListTree;
   }
 });
 
@@ -176,7 +186,9 @@ const statusClass = computed(() => (props.data.status ? `is-${props.data.status}
 const sizeClass = computed(() => `sf-node--${nodeType.value.replaceAll(".", "-")}`);
 
 const canViewOutput = computed(() =>
-  ["source.text", "process.transcribe", "process.refine", "process.prompt", "process.merge", "process.output"].includes(nodeType.value),
+  ["source.text", "process.transcribe", "process.refine", "process.prompt", "process.merge", "process.output", "flow.if", "process.text", "process.chapter"].includes(
+    nodeType.value,
+  ),
 );
 
 const asrOptions = [
@@ -210,6 +222,26 @@ function patch(p: Record<string, unknown>) {
 
 function commit() {
   props.data.ctx?.commit();
+}
+
+function patchIf(value: ScribeNodeData["condition"]) {
+  patch({ condition: value });
+  commit();
+}
+
+function patchTextTool(value: Record<string, unknown>) {
+  patch(value);
+  commit();
+}
+
+function patchChapter(value: { granularity: ScribeNodeData["granularity"]; maxChapters: number }) {
+  patch(value);
+  commit();
+}
+
+function patchRetry(value: { maxRetries?: number; backoffMs?: number }) {
+  patch({ retry: value });
+  commit();
 }
 </script>
 
@@ -402,6 +434,26 @@ function commit() {
             </label>
           </template>
 
+          <template v-else-if="nodeType === 'flow.if'">
+            <IfCard :condition="data.condition" @update="patchIf" />
+          </template>
+
+          <template v-else-if="nodeType === 'process.text'">
+            <TextToolCard
+              :operation="data.operation"
+              :find="data.find"
+              :replace="data.replace"
+              :pattern="data.pattern"
+              :flags="data.flags"
+              :template="data.template"
+              @update="patchTextTool"
+            />
+          </template>
+
+          <template v-else-if="nodeType === 'process.chapter'">
+            <ChapterCard :granularity="data.granularity" :max-chapters="data.maxChapters" @update="patchChapter" />
+          </template>
+
           <template v-else-if="nodeType === 'process.merge'">
             <label class="sf-node-field">
               <span class="sf-node-field-label">合并标题</span>
@@ -430,6 +482,14 @@ function commit() {
             </label>
             <div class="sf-node-output-preview">{{ data.summary ?? "输出预览（运行后显示）" }}</div>
           </template>
+
+          <details
+            v-if="['process.transcribe', 'process.refine', 'process.prompt', 'process.chapter'].includes(nodeType)"
+            class="sf-node-advanced"
+          >
+            <summary class="sf-node-advanced-summary">高级（失败重试）</summary>
+            <RetryFields :retry="data.retry" @update="patchRetry" />
+          </details>
         </div>
 
         <div v-if="data.summary || data.preview" class="sf-node-result">
@@ -492,6 +552,15 @@ function commit() {
 .sf-node--process-output {
   width: 320px;
 }
+.sf-node--flow-if {
+  width: 300px;
+}
+.sf-node--process-text {
+  width: 260px;
+}
+.sf-node--process-chapter {
+  width: 240px;
+}
 
 .sf-node.is-selected {
   border-color: var(--node-selected-border);
@@ -517,6 +586,15 @@ function commit() {
 
 .sf-node.is-error .sf-node-status {
   background: var(--color-error);
+}
+
+.sf-node.is-skipped {
+  border-color: var(--color-border);
+  opacity: 0.72;
+}
+
+.sf-node.is-skipped .sf-node-status {
+  background: var(--color-text-tertiary);
 }
 
 .sf-node-head {
@@ -920,6 +998,23 @@ function commit() {
 .sf-node-field-label {
   font-size: 11px;
   color: var(--color-text-tertiary);
+}
+
+.sf-node-advanced {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--color-border);
+}
+
+.sf-node-advanced-summary {
+  font-size: 11px;
+  color: var(--color-text-tertiary);
+  cursor: pointer;
+  user-select: none;
+}
+
+.sf-node-advanced-summary:hover {
+  color: var(--color-text-secondary);
 }
 
 .sf-node-select {

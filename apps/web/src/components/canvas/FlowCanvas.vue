@@ -13,7 +13,7 @@ import {
 import { Background } from "@vue-flow/background";
 import { Controls } from "@vue-flow/controls";
 import { MiniMap } from "@vue-flow/minimap";
-import { NODE_TYPE_LABELS, PORT_TYPES, canConnect, nextEdgeId, nextNodeId, type BiliSourceItem, type NodeType, type WorkflowGraph } from "@scribe-flow/shared";
+import { NODE_PORTS, NODE_TYPE_LABELS, canConnectSpecs, nextEdgeId, nextNodeId, type BiliSourceItem, type NodeType, type PortSpec, type RunNodeResult, type WorkflowGraph } from "@scribe-flow/shared";
 import { ElDialog, ElInput } from "element-plus";
 import ScribeNode from "./ScribeNode.vue";
 import FlowEdge from "./FlowEdge.vue";
@@ -192,10 +192,13 @@ function onConnect(connection: Connection) {
 
 function validateConnection(connection: Connection): boolean {
   if (!connection.source || !connection.target || connection.source === connection.target) return false;
-  const from = connection.sourceHandle as (typeof PORT_TYPES)[number] | null;
-  const to = connection.targetHandle as (typeof PORT_TYPES)[number] | null;
-  if (!from || !to || !PORT_TYPES.includes(from) || !PORT_TYPES.includes(to)) return false;
-  return canConnect(from, to);
+  const sourceNode = nodesRef.value.find((n) => n.id === connection.source);
+  const targetNode = nodesRef.value.find((n) => n.id === connection.target);
+  if (!sourceNode || !targetNode) return false;
+  const from: PortSpec | undefined = NODE_PORTS[sourceNode.data.nodeType]?.outputs.find((p) => p.id === connection.sourceHandle);
+  const to: PortSpec | undefined = NODE_PORTS[targetNode.data.nodeType]?.inputs.find((p) => p.id === connection.targetHandle);
+  if (!from || !to) return false;
+  return canConnectSpecs(from, to);
 }
 
 function onNodeClick(event: NodeMouseEvent) {
@@ -505,6 +508,9 @@ const NODE_LAYOUT_WIDTH: Record<NodeType, number> = {
   "process.prompt": 320,
   "process.merge": 224,
   "process.output": 320,
+  "flow.if": 300,
+  "process.text": 260,
+  "process.chapter": 240,
 };
 
 // ---------- 布局 ----------
@@ -563,6 +569,12 @@ function applyRunEvent(event: import("@scribe-flow/shared").RunEvent) {
   else if (event.type === "node.progress") {
     patch.status = "running";
     patch.summary = `${event.message} ${event.progress}%`;
+  } else if (event.type === "node.retry") {
+    patch.status = "running";
+    patch.summary = `重试 ${event.attempt}/${event.maxRetries}…`;
+  } else if (event.type === "node.skipped") {
+    patch.status = "skipped";
+    patch.summary = event.reason;
   } else if (event.type === "node.done") {
     patch.status = "done";
     patch.summary = event.summary;
@@ -574,6 +586,36 @@ function applyRunEvent(event: import("@scribe-flow/shared").RunEvent) {
   nodesRef.value = nodesRef.value.map((node) =>
     node.id === event.nodeId ? { ...node, data: { ...node.data, ...patch } as ScribeNodeData } : node,
   );
+}
+
+/** 重新进入画布时用运行快照恢复节点状态（不触发自动保存）。 */
+function applyRunSnapshot(nodeResults: RunNodeResult[]) {
+  const byId = new Map(nodeResults.map((n) => [n.nodeId, n]));
+  nodesRef.value = nodesRef.value.map((node) => {
+    const result = byId.get(node.id);
+    if (!result) return node;
+    const patch: Record<string, unknown> = {};
+    const status =
+      result.status === "running"
+        ? "running"
+        : result.status === "done"
+          ? "done"
+          : result.status === "error"
+            ? "error"
+            : result.status === "skipped"
+              ? "skipped"
+              : result.status === "cancelled"
+                ? "cancelled"
+                : "idle";
+    patch.status = status;
+    if (result.summary) patch.summary = result.summary;
+    if (result.error) patch.summary = result.error;
+    if (result.output?.text && (result.output.kind === "text" || result.output.kind === "noteBlock" || result.output.kind === "noteDoc")) {
+      const preview = result.output.text.replace(/\s+/g, " ").trim().slice(0, 120);
+      if (preview) patch.preview = preview;
+    }
+    return { ...node, data: { ...node.data, ...patch } as ScribeNodeData };
+  });
 }
 
 defineExpose({
@@ -591,6 +633,7 @@ defineExpose({
   autoLayout,
   focusNode,
   applyRunEvent,
+  applyRunSnapshot,
 });
 </script>
 

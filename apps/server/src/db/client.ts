@@ -83,6 +83,7 @@ function ensureSchema(sqlite: Database.Database) {
       node_type TEXT NOT NULL,
       node_label TEXT,
       status TEXT NOT NULL,
+      attempts INTEGER NOT NULL DEFAULT 1,
       elapsed_ms INTEGER NOT NULL DEFAULT 0,
       summary TEXT,
       error TEXT,
@@ -142,5 +143,11 @@ function ensureSchema(sqlite: Database.Database) {
   const inputColumns = sqlite.prepare("PRAGMA table_info(run_node_inputs)").all() as Array<{ name: string }>;
   if (!inputColumns.some((col) => col.name === "result_text")) {
     sqlite.exec("ALTER TABLE run_node_inputs ADD COLUMN result_text TEXT");
+  }
+
+  // M6：run_node_results 增加 attempts 列（失败重试次数记录）。
+  const resultColumns = sqlite.prepare("PRAGMA table_info(run_node_results)").all() as Array<{ name: string }>;
+  if (!resultColumns.some((col) => col.name === "attempts")) {
+    sqlite.exec("ALTER TABLE run_node_results ADD COLUMN attempts INTEGER NOT NULL DEFAULT 1");
   }
 }
