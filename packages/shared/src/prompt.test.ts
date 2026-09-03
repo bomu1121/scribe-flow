@@ -33,4 +33,21 @@ describe("builtin prompt blocks", () => {
     expect(ids).toContain("builtin.cascade");
     expect(ids).toContain("builtin.knowledge");
   });
+
+  it("新增历史认知加工内置块", () => {
+    const history = BUILTIN_PROMPT_BLOCKS.find((block) => block.id === "builtin.history");
+    expect(history).toBeDefined();
+    expect(history?.name).toBe("历史认知加工");
+    expect(history?.series).toBe("历史认知加工");
+    expect(history?.version).toBe("v1");
+    expect(history?.recommended).toBe(true);
+  });
+
+  it("历史认知加工提示词包含事实/观点分层与轻量笔记约束", () => {
+    const history = BUILTIN_PROMPT_BLOCKS.find((block) => block.id === "builtin.history");
+    expect(history?.prompt).toContain("## 事实 vs 作者观点");
+    expect(history?.prompt).toContain("## 可以带走的看历史角度");
+    expect(history?.prompt).toContain("不用今天的价值观简单批判古人");
+    expect(history?.prompt).toContain("存疑/可能有争议");
+  });
 });
