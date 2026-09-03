@@ -46,6 +46,8 @@ export interface AiTestResult {
 export const useSettingsStore = defineStore("settings", () => {
   const settings = ref<AppSettings | null>(null);
   const loading = ref(false);
+  /** Obsidian 库内目录列表，由设置页读取后供节点下拉选择复用。 */
+  const obsidianFolders = ref<string[]>([]);
   /** 保存在 sessionStorage 中，刷新页面后仍可回显；关闭标签页后清除。 */
   const aiKeyDraft = ref(readKeyDraft(AI_KEY_DRAFT_STORAGE));
   const asrKeyDraft = ref(readKeyDraft(ASR_KEY_DRAFT_STORAGE));
@@ -57,6 +59,7 @@ export const useSettingsStore = defineStore("settings", () => {
     loading.value = true;
     try {
       settings.value = await api.get<AppSettings>("/api/settings");
+      await loadObsidianFolders();
     } finally {
       loading.value = false;
     }
@@ -64,6 +67,11 @@ export const useSettingsStore = defineStore("settings", () => {
 
   async function save(patch: UpdateSettingsRequest) {
     settings.value = await api.put<AppSettings>("/api/settings", patch);
+  }
+
+  async function loadObsidianFolders() {
+    const data = await api.get<{ items: string[] }>("/api/settings/obsidian/folders");
+    obsidianFolders.value = data.items ?? [];
   }
 
   async function testAi(payload?: AiTestPayload): Promise<AiTestResult> {
@@ -81,5 +89,5 @@ export const useSettingsStore = defineStore("settings", () => {
     return result.content ?? "连接正常";
   }
 
-  return { settings, loading, aiKeyDraft, asrKeyDraft, load, save, testAi, testAsr, fetchAiModels };
+  return { settings, loading, obsidianFolders, aiKeyDraft, asrKeyDraft, load, save, loadObsidianFolders, testAi, testAsr, fetchAiModels };
 });

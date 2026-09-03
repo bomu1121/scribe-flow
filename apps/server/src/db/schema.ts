@@ -40,6 +40,8 @@ export const runs = sqliteTable("runs", {
   projectId: text("project_id").notNull(),
   status: text("status", { enum: ["running", "success", "error", "cancelled"] }).notNull(),
   scope: text("scope", { enum: ["all", "fromNode", "node"] }).notNull(),
+  /** 当 scope 为 fromNode/node 时，记录本次运行的起点节点；历史行可能为空。 */
+  nodeId: text("node_id"),
   createdAt: integer("created_at").notNull(),
   finishedAt: integer("finished_at"),
   elapsedMs: integer("elapsed_ms"),

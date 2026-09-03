@@ -118,6 +118,22 @@ export interface MindMapData {
   theme?: "paper" | "presentation" | "academic";
 }
 
+/** Obsidian 笔记输出节点：把上游 Markdown 包装成 Obsidian 友好 frontmatter 并写入本地库。 */
+export interface ObsidianData {
+  /** 笔记标题；缺省取正文第一个 H1，再缺省用“未命名笔记”。 */
+  title?: string;
+  /** 标签，逗号分隔，写入 frontmatter tags 列表。 */
+  tags?: string;
+  /** 来源说明，如“B站 / 本地文件 / 网页”。 */
+  source?: string;
+  /** 作者 / UP 主。 */
+  author?: string;
+  /** 原始链接。 */
+  url?: string;
+  /** vault 内相对子目录；缺省用设置里的默认目录。 */
+  folder?: string;
+}
+
 export type NodeType =
   | "source.bili"
   | "source.file"
@@ -130,7 +146,8 @@ export type NodeType =
   | "flow.if"
   | "process.text"
   | "process.chapter"
-  | "process.mindmap";
+  | "process.mindmap"
+  | "process.obsidian";
 
 export interface NodeBase {
   id: string;
@@ -158,7 +175,8 @@ export type GraphNode =
   | (NodeBase & { type: "flow.if"; data: NodeBase["data"] & IfData })
   | (NodeBase & { type: "process.text"; data: NodeBase["data"] & TextToolData })
   | (NodeBase & { type: "process.chapter"; data: NodeBase["data"] & ChapterData })
-  | (NodeBase & { type: "process.mindmap"; data: NodeBase["data"] & MindMapData });
+  | (NodeBase & { type: "process.mindmap"; data: NodeBase["data"] & MindMapData })
+  | (NodeBase & { type: "process.obsidian"; data: NodeBase["data"] & ObsidianData });
 
 export interface GraphEdge {
   id: string;
@@ -194,6 +212,24 @@ export const NODE_TYPE_LABELS: Record<NodeType, string> = {
   "process.text": "文本工具",
   "process.chapter": "章节切分",
   "process.mindmap": "思维导图",
+  "process.obsidian": "Obsidian 笔记",
+};
+
+/** 画布节点卡片宽度（px）；与 apps/web/src/components/canvas/ScribeNode.vue 的 .sf-node--* 宽度保持一致。 */
+export const NODE_CARD_WIDTH: Record<NodeType, number> = {
+  "source.bili": 380,
+  "source.file": 320,
+  "source.text": 340,
+  "process.transcribe": 224,
+  "process.refine": 224,
+  "process.prompt": 320,
+  "process.merge": 224,
+  "process.output": 320,
+  "flow.if": 300,
+  "process.text": 260,
+  "process.chapter": 240,
+  "process.mindmap": 300,
+  "process.obsidian": 300,
 };
 
 /** 每个节点类型的端口定义。 */
@@ -247,6 +283,12 @@ export const NODE_PORTS: Record<NodeType, { inputs: PortSpec[]; outputs: PortSpe
       { id: "in", type: "transcript", label: "输入", accepts: ["transcript", "noteBlock", "noteDoc"] },
     ],
     outputs: [{ id: "doc", type: "noteDoc", label: "导图 Markdown" }],
+  },
+  "process.obsidian": {
+    inputs: [
+      { id: "in", type: "noteDoc", label: "输入", accepts: ["transcript", "noteBlock", "noteDoc"] },
+    ],
+    outputs: [],
   },
 };
 

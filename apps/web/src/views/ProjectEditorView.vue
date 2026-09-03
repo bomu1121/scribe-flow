@@ -336,11 +336,13 @@ async function resumeRun(run: RunMeta) {
     if (detail.status !== "running") {
       running.value = false;
       activeRun.value = null;
+      const snapshot = await mergedNodeResults(detail);
+      flowCanvasRef.value?.applyRunSnapshot(snapshot);
       showNotice(`运行 #${run.id.slice(-6)} 已结束：${runStatusLabels[detail.status] ?? detail.status}`);
       void runsStore.load();
       return;
     }
-    const snapshot = detail.nodeResults ?? [];
+    const snapshot = await mergedNodeResults(detail);
     pendingRunSnapshot = snapshot;
     if (flowCanvasRef.value) {
       flowCanvasRef.value.applyRunSnapshot(snapshot);
@@ -353,7 +355,8 @@ async function resumeRun(run: RunMeta) {
   if (disposed) return;
 
   stopRunEvents = subscribeRunEvents(run.id, (event) => {
-    flowCanvasRef.value?.applyRunEvent(event);
+    // run.started 在 startRun/resumeRun 中已提前应用过，避免重复清空/打断正在恢复的运行状态。
+    if (event.type !== "run.started") flowCanvasRef.value?.applyRunEvent(event);
     if (event.type === "node.started") showNotice(`${nodeName(event.nodeId)} 开始执行`);
     else if (event.type === "node.progress") showNotice(event.message);
     else if (event.type === "node.done") showNotice(`${nodeName(event.nodeId)} 完成`);
@@ -367,6 +370,7 @@ async function resumeRun(run: RunMeta) {
       stopRunEvents?.();
       stopRunEvents = null;
       subscribedRunId = null;
+      void syncFinalRun(event.runId);
       void runsStore.load();
     }
   });
@@ -387,12 +391,56 @@ async function reconcileActiveRun() {
       stopRunEvents = null;
       subscribedRunId = null;
       showNotice(`运行结束：${runStatusLabels[detail.status] ?? detail.status}`);
+      const snapshot = await mergedNodeResults(detail);
+      if (flowCanvasRef.value) flowCanvasRef.value.applyRunSnapshot(snapshot);
       void runsStore.load();
     } else if (!stopRunEvents) {
       await resumeRun(run);
     }
   } catch {
     // 暂时无法确认状态，保持当前显示，等待下一次轮询或 SSE 重连。
+  }
+}
+
+/** 局部运行的结果只包含本次执行节点；把更早运行中“缺失节点”的成功结果合并回来，避免上游结果从图上消失。 */
+async function mergedNodeResults(detail: RunDetail): Promise<RunNodeResult[]> {
+  const expectedIds = new Set((detail.graph?.nodes ?? graph.value.nodes).map((n) => n.id));
+  const resultMap = new Map<string, RunNodeResult>();
+  for (const nr of detail.nodeResults ?? []) resultMap.set(nr.nodeId, nr);
+  if (detail.scope === "all" || resultMap.size >= expectedIds.size) return [...resultMap.values()];
+
+  try {
+    const list = await api.get<{ items: RunMeta[] }>(`/api/runs?projectId=${encodeURIComponent(detail.projectId)}&limit=200`);
+    let sawCurrent = false;
+    for (const run of list.items) {
+      if (!sawCurrent) {
+        if (run.id === detail.id) sawCurrent = true;
+        continue;
+      }
+      if (resultMap.size >= expectedIds.size) break;
+      if (run.status !== "success") continue;
+      const older = await api.get<RunDetail>(`/api/runs/${run.id}`);
+      for (const nr of older.nodeResults ?? []) {
+        if (expectedIds.has(nr.nodeId) && nr.status === "done" && !resultMap.has(nr.nodeId)) {
+          resultMap.set(nr.nodeId, nr);
+        }
+      }
+    }
+  } catch {
+    // 合并失败时保留当前快照，不阻塞界面。
+  }
+  return [...resultMap.values()];
+}
+
+/** 运行结束后主动拉取最终快照并同步到画布，避免 SSE 丢事件导致下游节点停留在旧状态。 */
+async function syncFinalRun(runId: string) {
+  try {
+    const detail = await api.get<RunDetail>(`/api/runs/${runId}`);
+    if (disposed) return;
+    const snapshot = await mergedNodeResults(detail);
+    if (flowCanvasRef.value) flowCanvasRef.value.applyRunSnapshot(snapshot);
+  } catch {
+    // 同步失败不打断主流程，后续可通过刷新/上次结果恢复。
   }
 }
 
@@ -407,7 +455,7 @@ async function restoreLastRun() {
     if (disposed) return;
     if (detail.status === "running") return;
     lastRun.value = latest;
-    const snapshot = detail.nodeResults ?? [];
+    const snapshot = await mergedNodeResults(detail);
     pendingRunSnapshot = snapshot;
     if (flowCanvasRef.value) {
       flowCanvasRef.value.applyRunSnapshot(snapshot);
@@ -492,7 +540,8 @@ async function startRun(scope: "all" | "fromNode" | "node", nodeId?: string) {
       subscribedRunId = null;
       flowCanvasRef.value?.applyRunEvent({ type: "run.started", run });
       stopRunEvents = subscribeRunEvents(run.id, (event) => {
-        flowCanvasRef.value?.applyRunEvent(event);
+        // 上面已手动应用过 run.started，SSE 的首个 run.started 不再重复清空节点。
+        if (event.type !== "run.started") flowCanvasRef.value?.applyRunEvent(event);
         if (event.type === "node.started") showNotice(`${nodeName(event.nodeId)} 开始执行`);
         else if (event.type === "node.progress") showNotice(event.message);
         else if (event.type === "node.done") showNotice(`${nodeName(event.nodeId)} 完成`);
@@ -506,6 +555,7 @@ async function startRun(scope: "all" | "fromNode" | "node", nodeId?: string) {
           stopRunEvents?.();
           stopRunEvents = null;
           subscribedRunId = null;
+          void syncFinalRun(event.runId);
           void runsStore.load();
         }
       });

@@ -34,6 +34,19 @@ const updateSchema = z.object({
       outputDir: z.string().trim().max(200).optional(),
     })
     .optional(),
+  obsidian: z
+    .object({
+      vaultPath: z.string().trim().max(500).optional(),
+      folder: z.string().trim().max(200).optional(),
+      tagTaxonomy: z.record(z.string(), z.array(z.string())).optional(),
+      autoTagEnabled: z.boolean().optional(),
+      tagMinCount: z.number().int().min(1).max(20).optional(),
+      tagMaxCount: z.number().int().min(1).max(30).optional(),
+      autoLinkEnabled: z.boolean().optional(),
+      autoLinkMax: z.number().int().min(0).max(20).optional(),
+      autoLinkBidirectional: z.boolean().optional(),
+    })
+    .optional(),
 });
 
 const aiTestSchema = z.object({
@@ -150,6 +163,26 @@ export function settingsApi(db: AppDatabase, engine: RunEngine, dataDir: string)
     } finally {
       await rm(dir, { recursive: true, force: true }).catch(() => undefined);
     }
+  });
+
+  api.get("/obsidian/folders", async (c) => {
+    const vaultPath = getSettings(db).obsidian.vaultPath.trim();
+    if (!vaultPath) return c.json({ items: [] });
+    const items: string[] = [];
+    const walk = async (dir: string, rel: string, depth: number) => {
+      if (depth > 3) return;
+      const entries = await readdir(dir, { withFileTypes: true }).catch(() => []);
+      for (const entry of entries) {
+        if (!entry.isDirectory()) continue;
+        if (entry.name.startsWith(".")) continue;
+        const childRel = rel ? `${rel}/${entry.name}` : entry.name;
+        items.push(childRel);
+        await walk(join(dir, entry.name), childRel, depth + 1);
+      }
+    };
+    await walk(vaultPath, "", 0);
+    items.sort((a, b) => a.localeCompare(b, "zh-CN"));
+    return c.json({ items });
   });
 
   api.get("/data", async (c) => {

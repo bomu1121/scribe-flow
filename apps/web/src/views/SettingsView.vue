@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { onMounted, reactive, ref, watch } from "vue";
-import { ElButton, ElInput, ElMessage, ElMessageBox, ElOption, ElSelect, ElTag } from "element-plus";
+import { computed, onMounted, reactive, ref, watch } from "vue";
+import { ElButton, ElInput, ElInputNumber, ElMessage, ElMessageBox, ElOption, ElSelect, ElSwitch, ElTag } from "element-plus";
 import { Cloud, Mic, PlugZap, Save, Trash2 } from "lucide-vue-next";
 import ModelSelect from "../components/ModelSelect.vue";
 import type { AiProvider, AsrEngine, PromptBlock } from "@scribe-flow/shared";
@@ -17,6 +17,7 @@ const groups = [
   { key: "ai", label: "AI 模型" },
   { key: "asr", label: "语音识别" },
   { key: "general", label: "常规" },
+  { key: "obsidian", label: "Obsidian" },
   { key: "prompts", label: "提示词块库" },
   { key: "bili", label: "B 站账号" },
   { key: "data", label: "数据与工程" },
@@ -36,6 +37,15 @@ const form = reactive({
   asrKey: "",
   concurrency: 2,
   outputDir: "outputs",
+  obsidianVaultPath: "",
+  obsidianFolder: "00-Inbox",
+  obsidianTagTaxonomyText: "{}",
+  obsidianAutoTagEnabled: true,
+  obsidianTagMinCount: 5,
+  obsidianTagMaxCount: 10,
+  obsidianAutoLinkEnabled: true,
+  obsidianAutoLinkMax: 5,
+  obsidianAutoLinkBidirectional: false,
 });
 
 const DEEPSEEK_DEFAULT_MODELS = ["deepseek-chat", "deepseek-reasoner"] as const;
@@ -70,6 +80,42 @@ const asrOptions = [
 
 const blockForm = reactive({ id: "", name: "", prompt: "" });
 const dataInfo = ref<{ dataDir: string; runCount: number; finishedRunCount: number; outputFiles: number; outputBytes: number } | null>(null);
+
+const seriesFilter = ref("all");
+const versionFilter = ref("all");
+
+function blockSeries(block: PromptBlock): string {
+  return block.series || (block.builtin ? "其他内置" : "自定义");
+}
+
+const seriesOptions = computed(() => {
+  const seen = new Set<string>();
+  for (const block of promptsStore.allBlocks) seen.add(blockSeries(block));
+  return Array.from(seen);
+});
+
+const versionOptions = computed(() => {
+  const seen = new Set<string>();
+  for (const block of promptsStore.allBlocks) {
+    if (seriesFilter.value !== "all" && blockSeries(block) !== seriesFilter.value) continue;
+    if (block.version) seen.add(block.version);
+  }
+  return Array.from(seen).sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+});
+
+const filteredBlocks = computed(() => {
+  return promptsStore.allBlocks.filter((block) => {
+    if (seriesFilter.value !== "all" && blockSeries(block) !== seriesFilter.value) return false;
+    if (versionFilter.value !== "all" && block.version !== versionFilter.value) return false;
+    return true;
+  });
+});
+
+watch(seriesFilter, () => {
+  if (versionFilter.value !== "all" && !versionOptions.value.includes(versionFilter.value)) {
+    versionFilter.value = "all";
+  }
+});
 
 function editBlock(block: PromptBlock) {
   blockForm.id = block.id;
@@ -176,6 +222,15 @@ function fillForm() {
   form.asrModel = store.settings.asr.model;
   form.concurrency = store.settings.general.concurrency;
   form.outputDir = store.settings.general.outputDir;
+  form.obsidianVaultPath = store.settings.obsidian.vaultPath;
+  form.obsidianFolder = store.settings.obsidian.folder;
+  form.obsidianTagTaxonomyText = JSON.stringify(store.settings.obsidian.tagTaxonomy ?? {}, null, 2);
+  form.obsidianAutoTagEnabled = store.settings.obsidian.autoTagEnabled;
+  form.obsidianTagMinCount = store.settings.obsidian.tagMinCount;
+  form.obsidianTagMaxCount = store.settings.obsidian.tagMaxCount;
+  form.obsidianAutoLinkEnabled = store.settings.obsidian.autoLinkEnabled;
+  form.obsidianAutoLinkMax = store.settings.obsidian.autoLinkMax;
+  form.obsidianAutoLinkBidirectional = store.settings.obsidian.autoLinkBidirectional;
   form.aiKey = store.aiKeyDraft || "";
   form.asrKey = store.asrKeyDraft || "";
   if (form.aiProvider === "deepseek") {
@@ -189,6 +244,7 @@ function fillForm() {
 onMounted(async () => {
   await store.load();
   fillForm();
+  await store.loadObsidianFolders();
   await promptsStore.load();
   if (form.aiProvider === "deepseek" && (store.settings?.ai.hasKey || form.aiKey)) {
     await refreshAiModels();
@@ -222,15 +278,34 @@ function switchAsr(engine: AsrEngine) {
 }
 
 async function saveAll() {
+  let tagTaxonomy: Record<string, string[]>;
+  try {
+    tagTaxonomy = JSON.parse(form.obsidianTagTaxonomyText || "{}") as Record<string, string[]>;
+  } catch {
+    ElMessage.error("标签词表不是合法 JSON，请检查格式");
+    return;
+  }
   try {
     if (form.aiProvider === "deepseek") await refreshAiModels();
     await store.save({
       ai: { provider: form.aiProvider, baseUrl: form.aiBaseUrl, model: form.aiModel, apiKey: form.aiKey || undefined },
       asr: { engine: form.asrEngine, baseUrl: form.asrBaseUrl, model: form.asrModel, apiKey: form.asrKey || undefined },
       general: { concurrency: form.concurrency, outputDir: form.outputDir },
+      obsidian: {
+        vaultPath: form.obsidianVaultPath,
+        folder: form.obsidianFolder,
+        tagTaxonomy,
+        autoTagEnabled: form.obsidianAutoTagEnabled,
+        tagMinCount: form.obsidianTagMinCount,
+        tagMaxCount: form.obsidianTagMaxCount,
+        autoLinkEnabled: form.obsidianAutoLinkEnabled,
+        autoLinkMax: form.obsidianAutoLinkMax,
+        autoLinkBidirectional: form.obsidianAutoLinkBidirectional,
+      },
     });
     ElMessage.success("设置已保存");
     await store.load();
+    await store.loadObsidianFolders();
     fillForm();
   } catch (err) {
     ElMessage.error(err instanceof Error ? err.message : "保存失败");
@@ -393,14 +468,71 @@ async function testAsr() {
         </div>
       </template>
 
+      <template v-else-if="active === 'obsidian'">
+        <h2 class="sf-settings-title">Obsidian</h2>
+        <p class="sf-settings-desc">配置 Obsidian 库、自动打标与自动关联；Obsidian 笔记节点会自动保存到这里。</p>
+        <div class="sf-settings-form">
+          <label class="sf-field">
+            <span class="sf-field-label">Obsidian 库路径</span>
+            <el-input v-model="form.obsidianVaultPath" class="sf-field-control" placeholder="D:\知识库" />
+          </label>
+          <label class="sf-field">
+            <span class="sf-field-label">默认保存目录</span>
+            <el-input v-model="form.obsidianFolder" class="sf-field-control" placeholder="00-Inbox" />
+          </label>
+          <div class="sf-settings-actions">
+            <el-button class="sf-btn" plain @click="store.loadObsidianFolders()"><span>读取目录</span></el-button>
+          </div>
+          <p class="sf-settings-desc">当前已读取目录：{{ store.obsidianFolders.length }} 个</p>
+
+          <div class="sf-settings-divider">AI 结构化提取</div>
+          <label class="sf-field sf-field-row">
+            <span class="sf-field-label">自动提取 人物 / 事件 / 时期</span>
+            <el-switch v-model="form.obsidianAutoTagEnabled" />
+          </label>
+
+          <div class="sf-settings-divider">自动关联相关笔记</div>
+          <label class="sf-field sf-field-row">
+            <span class="sf-field-label">写入后自动关联相关笔记</span>
+            <el-switch v-model="form.obsidianAutoLinkEnabled" />
+          </label>
+          <label class="sf-field">
+            <span class="sf-field-label">最多关联篇数</span>
+            <el-input-number v-model="form.obsidianAutoLinkMax" :min="0" :max="20" size="small" />
+          </label>
+
+          <div class="sf-settings-actions">
+            <el-button class="sf-btn" type="primary" @click="saveAll"><span>保存设置</span></el-button>
+          </div>
+        </div>
+      </template>
+
       <template v-else-if="active === 'prompts'">
         <h2 class="sf-settings-title">提示词块库</h2>
-        <p class="sf-settings-desc">内置块只读；自定义块由 AI 加工节点引用，修改后下一次运行生效。</p>
+        <p class="sf-settings-desc">内置块只读，可按模板系列与版本筛选；自定义块由 AI 加工节点引用，修改后下一次运行生效。</p>
+        <div class="sf-block-filters">
+          <label class="sf-field sf-block-filter">
+            <span class="sf-field-label">模板系列</span>
+            <el-select v-model="seriesFilter" class="sf-field-control" size="small">
+              <el-option label="全部系列" value="all" />
+              <el-option v-for="series in seriesOptions" :key="series" :label="series" :value="series" />
+            </el-select>
+          </label>
+          <label class="sf-field sf-block-filter">
+            <span class="sf-field-label">版本</span>
+            <el-select v-model="versionFilter" class="sf-field-control" size="small" :disabled="versionOptions.length === 0">
+              <el-option label="全部版本" value="all" />
+              <el-option v-for="version in versionOptions" :key="version" :label="version" :value="version" />
+            </el-select>
+          </label>
+        </div>
         <div class="sf-blocks">
-          <article v-for="block in promptsStore.allBlocks" :key="block.id" class="sf-block-card">
+          <article v-for="block in filteredBlocks" :key="block.id" class="sf-block-card">
             <header class="sf-block-head">
               <span class="sf-block-name">{{ block.name }}</span>
               <el-tag v-if="block.builtin" size="small" type="info">内置</el-tag>
+              <el-tag v-if="block.version" size="small" type="warning">{{ block.version }}</el-tag>
+              <el-tag v-if="block.recommended" size="small" type="success">推荐</el-tag>
               <span class="sf-block-actions">
                 <template v-if="!block.builtin">
                   <el-button size="small" text @click="editBlock(block)">编辑</el-button>
@@ -408,6 +540,7 @@ async function testAsr() {
                 </template>
               </span>
             </header>
+            <p v-if="block.series" class="sf-block-series">{{ block.series }}</p>
             <p class="sf-block-prompt">{{ block.prompt.slice(0, 120) }}{{ block.prompt.length > 120 ? "…" : "" }}</p>
           </article>
         </div>
@@ -541,10 +674,35 @@ async function testAsr() {
   width: 100%;
 }
 
+.sf-field-row {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+}
+
+.sf-field-sep {
+  color: var(--color-text-tertiary);
+}
+
+.sf-field-mono :deep(.el-textarea__inner) {
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
 .sf-settings-actions {
   display: flex;
   gap: 8px;
   margin-top: 4px;
+}
+
+.sf-settings-divider {
+  margin: 4px 0 0;
+  padding-top: 12px;
+  border-top: 1px solid var(--color-border);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-text);
 }
 
 .sf-btn {
@@ -559,6 +717,17 @@ async function testAsr() {
   color: var(--color-text-tertiary);
   font-size: 13px;
   text-align: center;
+}
+
+.sf-block-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.sf-block-filter {
+  width: 180px;
 }
 
 .sf-blocks {
@@ -578,7 +747,8 @@ async function testAsr() {
 .sf-block-head {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
+  flex-wrap: wrap;
 }
 
 .sf-block-name {
@@ -593,8 +763,14 @@ async function testAsr() {
   align-items: center;
 }
 
-.sf-block-prompt {
+.sf-block-series {
   margin: 6px 0 0;
+  font-size: 11px;
+  color: var(--color-text-tertiary);
+}
+
+.sf-block-prompt {
+  margin: 4px 0 0;
   font-size: 12px;
   color: var(--color-text-secondary);
   line-height: 1.6;

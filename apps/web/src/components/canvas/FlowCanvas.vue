@@ -13,7 +13,7 @@ import {
 import { Background } from "@vue-flow/background";
 import { Controls } from "@vue-flow/controls";
 import { MiniMap } from "@vue-flow/minimap";
-import { NODE_PORTS, NODE_TYPE_LABELS, canConnectSpecs, nextEdgeId, nextNodeId, type BiliSourceItem, type NodeType, type PortSpec, type ResultDelta, type RunNodeResult, type WorkflowGraph } from "@scribe-flow/shared";
+import { NODE_CARD_WIDTH, NODE_PORTS, NODE_TYPE_LABELS, canConnectSpecs, nextEdgeId, nextNodeId, type BiliSourceItem, type NodeType, type PortSpec, type ResultDelta, type RunNodeResult, type WorkflowGraph } from "@scribe-flow/shared";
 import { ElDialog, ElInput } from "element-plus";
 import ScribeNode from "./ScribeNode.vue";
 import FlowEdge from "./FlowEdge.vue";
@@ -499,25 +499,10 @@ function pickSearchType(type: NodeType) {
   addNodeAtCenter(type);
 }
 
-const NODE_LAYOUT_WIDTH: Record<NodeType, number> = {
-  "source.bili": 380,
-  "source.file": 320,
-  "source.text": 340,
-  "process.transcribe": 224,
-  "process.refine": 224,
-  "process.prompt": 320,
-  "process.merge": 224,
-  "process.output": 320,
-  "flow.if": 300,
-  "process.text": 260,
-  "process.chapter": 240,
-  "process.mindmap": 300,
-};
-
 // ---------- 布局 ----------
 
 async function autoLayout() {
-  const children = nodesRef.value.map((node) => ({ id: node.id, width: NODE_LAYOUT_WIDTH[node.data.nodeType] ?? 224, height: 120 }));
+  const children = nodesRef.value.map((node) => ({ id: node.id, width: NODE_CARD_WIDTH[node.data.nodeType] ?? 224, height: 120 }));
   const edges = edgesRef.value.map((edge) => ({ id: edge.id, sources: [edge.source], targets: [edge.target] }));
   try {
     const ELK = (await import("elkjs/lib/elk.bundled.js")).default;
@@ -558,10 +543,35 @@ function focusNode(nodeId: string) {
   void flowRef.value?.setCenter(node.position.x + 100, node.position.y + 60, { zoom: 1.2, duration: 300 });
 }
 
+/** 计算一次运行中会真正被执行的节点；不在范围内的节点应保留上次状态，避免局部运行时被误清空。 */
+function runScopeNodeIds(scope: "all" | "fromNode" | "node", nodeId?: string): Set<string> {
+  const all = new Set(nodesRef.value.map((n) => n.id));
+  if (scope === "node" && nodeId) return new Set([nodeId]);
+  if (scope === "fromNode" && nodeId) {
+    const result = new Set([nodeId]);
+    let changed = true;
+    while (changed) {
+      changed = false;
+      for (const edge of edgesRef.value) {
+        if (result.has(edge.source) && !result.has(edge.target)) {
+          result.add(edge.target);
+          changed = true;
+        }
+      }
+    }
+    return result;
+  }
+  return all;
+}
+
 /** 运行事件驱动节点状态；不触发自动保存（运行态不进 graph 快照）。 */
 function applyRunEvent(event: import("@scribe-flow/shared").RunEvent) {
   if (event.type === "run.started") {
-    nodesRef.value = nodesRef.value.map((node) => ({ ...node, data: { ...node.data, status: "idle", summary: undefined, preview: undefined, delta: undefined } }));
+    const resetIds = runScopeNodeIds(event.run.scope, event.run.nodeId);
+    nodesRef.value = nodesRef.value.map((node) => {
+      if (!resetIds.has(node.id)) return node;
+      return { ...node, data: { ...node.data, status: "idle", summary: undefined, preview: undefined, delta: undefined } };
+    });
     return;
   }
   if (!("nodeId" in event)) return;

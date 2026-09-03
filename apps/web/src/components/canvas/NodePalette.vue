@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { FileOutput, FileText, FileUp, FolderHeart, GitBranch, GitMerge, Link2, ListTree, Mic, Network, Replace, Sparkles, WandSparkles } from "lucide-vue-next";
+import { BookOpen, FileOutput, FileText, FileUp, FolderHeart, GitBranch, GitMerge, Link2, ListTree, Mic, Network, Replace, Sparkles, WandSparkles } from "lucide-vue-next";
 import { NODE_TYPE_LABELS, type NodeType } from "@scribe-flow/shared";
 
 type PaletteItemType = NodeType | "source.biliCollection";
@@ -58,6 +58,7 @@ const groups: PaletteGroup[] = [
     items: [
       { type: "process.merge", icon: GitMerge },
       { type: "process.output", icon: FileOutput },
+      { type: "process.obsidian", icon: BookOpen },
     ],
   },
 ];

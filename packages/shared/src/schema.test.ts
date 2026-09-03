@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { canConnect, canConnectSpecs, type PortSpec } from "./port";
-import { isValidConnection, type GraphNode } from "./graph";
+import { isValidConnection, NODE_CARD_WIDTH, type GraphNode } from "./graph";
 import { WORKFLOW_TEMPLATES } from "./templates";
 import { safeParseGraph } from "./schema";
 
@@ -142,10 +142,22 @@ describe("graph", () => {
 });
 
 describe("templates", () => {
-  it("4 个内置模板都能通过 graph 校验", () => {
+  it("6 个内置模板都能通过 graph 校验", () => {
     for (const t of WORKFLOW_TEMPLATES) {
       const result = safeParseGraph(t.graph);
       expect(result.success).toBe(true);
+    }
+  });
+
+  it("模板中同排相连的节点不会横向重叠", () => {
+    for (const t of WORKFLOW_TEMPLATES) {
+      const nodesById = new Map(t.graph.nodes.map((n) => [n.id, n]));
+      for (const e of t.graph.edges) {
+        const source = nodesById.get(e.source);
+        const target = nodesById.get(e.target);
+        if (!source || !target || source.position.y !== target.position.y) continue;
+        expect(source.position.x + NODE_CARD_WIDTH[source.type]).toBeLessThanOrEqual(target.position.x);
+      }
     }
   });
 

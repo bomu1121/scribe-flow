@@ -21,9 +21,38 @@ const GENERAL_DEFAULTS: Record<string, string> = {
   "general.outputDir": "outputs",
 };
 
+const OBSIDIAN_DEFAULTS: Record<string, string> = {
+  "obsidian.vaultPath": "",
+  "obsidian.folder": "00-Inbox",
+  "obsidian.autoTagEnabled": "true",
+  "obsidian.tagMinCount": "5",
+  "obsidian.tagMaxCount": "10",
+  "obsidian.autoLinkEnabled": "true",
+  "obsidian.autoLinkMax": "5",
+  "obsidian.autoLinkBidirectional": "false",
+};
+
+const DEFAULT_TAG_TAXONOMY: Record<string, string[]> = {
+  来源: ["B站", "文稿", "本地视频", "网页", "播客"],
+  类型: ["视频笔记", "学习笔记", "思维导图", "会议纪要"],
+  领域: ["历史", "AI", "编程", "效率", "心理", "知识管理"],
+  概念: ["Obsidian", "PARA", "Zettelkasten", "RAG", "双链", "Templater", "Dataview"],
+  状态: ["未整理", "已整理"],
+};
+
 function raw(db: AppDatabase, key: string, fallback: string): string {
   const row = db.select().from(appSettings).where(eq(appSettings.key, key)).get();
   return row?.value ?? fallback;
+}
+
+function rawJson<T>(db: AppDatabase, key: string, fallback: T): T {
+  const value = raw(db, key, "");
+  if (!value) return fallback;
+  try {
+    return JSON.parse(value) as T;
+  } catch {
+    return fallback;
+  }
 }
 
 export function getSettings(db: AppDatabase): AppSettings {
@@ -43,6 +72,17 @@ export function getSettings(db: AppDatabase): AppSettings {
     general: {
       concurrency: Number(raw(db, "general.concurrency", GENERAL_DEFAULTS["general.concurrency"]) ?? 2),
       outputDir: raw(db, "general.outputDir", GENERAL_DEFAULTS["general.outputDir"]) ?? "outputs",
+    },
+    obsidian: {
+      vaultPath: raw(db, "obsidian.vaultPath", OBSIDIAN_DEFAULTS["obsidian.vaultPath"]) ?? "",
+      folder: raw(db, "obsidian.folder", OBSIDIAN_DEFAULTS["obsidian.folder"]) ?? "00-Inbox",
+      tagTaxonomy: rawJson<Record<string, string[]>>(db, "obsidian.tagTaxonomy", DEFAULT_TAG_TAXONOMY),
+      autoTagEnabled: raw(db, "obsidian.autoTagEnabled", OBSIDIAN_DEFAULTS["obsidian.autoTagEnabled"]) === "true",
+      tagMinCount: Number(raw(db, "obsidian.tagMinCount", OBSIDIAN_DEFAULTS["obsidian.tagMinCount"]) ?? 5) || 5,
+      tagMaxCount: Number(raw(db, "obsidian.tagMaxCount", OBSIDIAN_DEFAULTS["obsidian.tagMaxCount"]) ?? 10) || 10,
+      autoLinkEnabled: raw(db, "obsidian.autoLinkEnabled", OBSIDIAN_DEFAULTS["obsidian.autoLinkEnabled"]) === "true",
+      autoLinkMax: Number(raw(db, "obsidian.autoLinkMax", OBSIDIAN_DEFAULTS["obsidian.autoLinkMax"]) ?? 5) || 5,
+      autoLinkBidirectional: raw(db, "obsidian.autoLinkBidirectional", OBSIDIAN_DEFAULTS["obsidian.autoLinkBidirectional"]) === "true",
     },
   };
 }
@@ -88,5 +128,16 @@ export function updateSettings(db: AppDatabase, patch: UpdateSettingsRequest) {
   if (patch.general) {
     if (patch.general.concurrency) set(db, "general.concurrency", String(Math.min(4, Math.max(1, patch.general.concurrency))));
     if (patch.general.outputDir) set(db, "general.outputDir", patch.general.outputDir.trim().replace(/[\\/]+$/, "") || "outputs");
+  }
+  if (patch.obsidian) {
+    if (patch.obsidian.vaultPath !== undefined) set(db, "obsidian.vaultPath", patch.obsidian.vaultPath.trim().replace(/[\\/]+$/, ""));
+    if (patch.obsidian.folder !== undefined) set(db, "obsidian.folder", patch.obsidian.folder.trim().replace(/^[\\/]+|[\\/]+$/g, "") || "00-Inbox");
+    if (patch.obsidian.tagTaxonomy !== undefined) set(db, "obsidian.tagTaxonomy", JSON.stringify(patch.obsidian.tagTaxonomy));
+    if (patch.obsidian.autoTagEnabled !== undefined) set(db, "obsidian.autoTagEnabled", patch.obsidian.autoTagEnabled ? "true" : "false");
+    if (patch.obsidian.tagMinCount !== undefined) set(db, "obsidian.tagMinCount", String(Math.max(1, Math.min(20, patch.obsidian.tagMinCount))));
+    if (patch.obsidian.tagMaxCount !== undefined) set(db, "obsidian.tagMaxCount", String(Math.max(1, Math.min(30, patch.obsidian.tagMaxCount))));
+    if (patch.obsidian.autoLinkEnabled !== undefined) set(db, "obsidian.autoLinkEnabled", patch.obsidian.autoLinkEnabled ? "true" : "false");
+    if (patch.obsidian.autoLinkMax !== undefined) set(db, "obsidian.autoLinkMax", String(Math.max(0, Math.min(20, patch.obsidian.autoLinkMax))));
+    if (patch.obsidian.autoLinkBidirectional !== undefined) set(db, "obsidian.autoLinkBidirectional", patch.obsidian.autoLinkBidirectional ? "true" : "false");
   }
 }

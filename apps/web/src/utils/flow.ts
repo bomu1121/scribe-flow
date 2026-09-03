@@ -47,6 +47,10 @@ export interface ScribeNodeData {
   model?: string;
   outputName?: string;
   title?: string;
+  tags?: string;
+  source?: string;
+  author?: string;
+  folder?: string;
   retry?: { maxRetries?: number; backoffMs?: number };
   condition?: { field: "charCount" | "wordCount" | "contains"; op: "gt" | "gte" | "lt" | "lte" | "eq" | "contains" | "notContains"; value: string };
   operation?: "findReplace" | "regexReplace" | "template" | "cleanup";
@@ -175,5 +179,7 @@ export function emptyNodeData(type: NodeType): Record<string, unknown> {
       return { label: "章节切分", granularity: "medium", maxChapters: 20, retry: { maxRetries: 2, backoffMs: 3000 } };
     case "process.mindmap":
       return { label: "思维导图", branchSize: "auto", maxDepth: 4, theme: "paper", retry: { maxRetries: 2, backoffMs: 3000 } };
+    case "process.obsidian":
+      return { label: "Obsidian 笔记", folder: "" };
   }
 }

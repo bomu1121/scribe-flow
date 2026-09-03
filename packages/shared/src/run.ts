@@ -9,6 +9,8 @@ export interface RunMeta {
   projectName?: string;
   status: RunStatus;
   scope: RunScope;
+  /** 当 scope 为 fromNode/node 时，记录本次运行的起点节点。 */
+  nodeId?: string;
   createdAt: number;
   finishedAt?: number;
   elapsedMs?: number;
@@ -126,6 +128,26 @@ export interface AppSettings {
     concurrency: number;
     outputDir: string;
   };
+  obsidian: {
+    /** Obsidian 库根目录，例如 D:\\知识库。 */
+    vaultPath: string;
+    /** vault 内保存笔记的相对子目录，例如 00-Inbox。 */
+    folder: string;
+    /** 受控标签词表：维度 -> 标签数组。 */
+    tagTaxonomy: Record<string, string[]>;
+    /** 是否启用 AI 自动补全标签。 */
+    autoTagEnabled: boolean;
+    /** 最少标签数。 */
+    tagMinCount: number;
+    /** 最多标签数。 */
+    tagMaxCount: number;
+    /** 是否启用保存后自动关联相关笔记。 */
+    autoLinkEnabled: boolean;
+    /** 相关笔记最多数量。 */
+    autoLinkMax: number;
+    /** 是否双向回链旧笔记。 */
+    autoLinkBidirectional: boolean;
+  };
 }
 
 export interface UpdateSettingsRequest {
@@ -145,5 +167,16 @@ export interface UpdateSettingsRequest {
   general?: {
     concurrency?: number;
     outputDir?: string;
+  };
+  obsidian?: {
+    vaultPath?: string;
+    folder?: string;
+    tagTaxonomy?: Record<string, string[]>;
+    autoTagEnabled?: boolean;
+    tagMinCount?: number;
+    tagMaxCount?: number;
+    autoLinkEnabled?: boolean;
+    autoLinkMax?: number;
+    autoLinkBidirectional?: boolean;
   };
 }

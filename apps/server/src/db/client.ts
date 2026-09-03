@@ -138,6 +138,9 @@ function ensureSchema(sqlite: Database.Database) {
   if (!runColumns.some((col) => col.name === "graph_json")) {
     sqlite.exec("ALTER TABLE runs ADD COLUMN graph_json TEXT");
   }
+  if (!runColumns.some((col) => col.name === "node_id")) {
+    sqlite.exec("ALTER TABLE runs ADD COLUMN node_id TEXT");
+  }
 
   // 幂等迁移：旧库 run_node_inputs 表没有 result_text 时补列。
   const inputColumns = sqlite.prepare("PRAGMA table_info(run_node_inputs)").all() as Array<{ name: string }>;

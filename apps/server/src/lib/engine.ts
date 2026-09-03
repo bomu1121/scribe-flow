@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import { and, desc, eq, notInArray } from "drizzle-orm";
+import { and, desc, eq, inArray, notInArray } from "drizzle-orm";
 import {
   BUILTIN_PROMPT_BLOCKS,
   NODE_TYPE_LABELS,
@@ -72,6 +72,124 @@ interface ResolvedInputs {
 
 function escapePathName(value: string): string {
   return value.replace(/[\\/:*?"<>|]/g, "_").slice(0, 80);
+}
+
+/** 解析 AI 返回的 JSON 标签数组；失败返回空数组。 */
+function parseTagArray(raw: string): string[] {
+  const start = raw.indexOf("[");
+  const end = raw.lastIndexOf("]");
+  if (start < 0 || end <= start) return [];
+  try {
+    const parsed = JSON.parse(raw.slice(start, end + 1));
+    if (Array.isArray(parsed)) {
+      return parsed
+        .map((item) => String(item).trim())
+        .filter((tag) => tag && !/\s/.test(tag));
+    }
+  } catch {
+    // 忽略解析失败，由调用方降级
+  }
+  return [];
+}
+
+/** 解析 AI 返回的人物/事件/时期 JSON。 */
+function parseHistoryEntities(raw: string): { persons: string[]; events: string[]; periods: string[] } {
+  const empty = { persons: [], events: [], periods: [] };
+  const start = raw.indexOf("{");
+  const end = raw.lastIndexOf("}");
+  if (start < 0 || end <= start) return empty;
+  try {
+    const parsed = JSON.parse(raw.slice(start, end + 1)) as Record<string, unknown>;
+    const toList = (value: unknown) =>
+      Array.isArray(value)
+        ? value
+            .map((item) => String(item).trim())
+            .filter((item) => item)
+            .slice(0, 5)
+        : typeof value === "string" && value.trim()
+          ? [value.trim()]
+          : [];
+    return {
+      persons: toList(parsed["人物"]),
+      events: toList(parsed["事件"]),
+      periods: toList(parsed["时期"]),
+    };
+  } catch {
+    return empty;
+  }
+}
+
+/** 解析 YAML frontmatter 中的列表字段（如人物/事件）。 */
+function parseYamlFieldList(content: string, field: string): string[] {
+  const match = content.match(/^---\n([\s\S]*?)\n---/);
+  if (!match) return [];
+  const yaml = match[1];
+  const lines = yaml.split(/\r?\n/);
+  const result: string[] = [];
+  let inField = false;
+  const fieldKey = field.toLowerCase();
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (new RegExp(`^${field}:\\s*$`, "i").test(trimmed)) {
+      inField = true;
+      continue;
+    }
+    if (inField) {
+      if (/^[^-\s]/.test(trimmed)) {
+        inField = false;
+      } else {
+        const item = trimmed.match(/^-\s*(.+)$/);
+        if (item) result.push(item[1].trim().replace(/^["']|["']$/g, ""));
+        continue;
+      }
+    }
+    const inline = trimmed.match(new RegExp(`^${field}:\\s*(.+)$`, "i"));
+    if (inline) {
+      result.push(
+        ...inline[1]
+          .split(/[,，\s]+/)
+          .map((value) => value.trim().replace(/^["']|["']$/g, ""))
+          .filter(Boolean),
+      );
+    }
+  }
+  return result.filter((value) => value);
+}
+
+/** 简单解析 Markdown 文件 frontmatter 中的 tags 列表。 */
+function parseYamlTags(content: string): string[] {
+  const match = content.match(/^---\n([\s\S]*?)\n---/);
+  if (!match) return [];
+  const yaml = match[1];
+  const lines = yaml.split(/\r?\n/);
+  const tags: string[] = [];
+  let inTags = false;
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (/^tags:\s*$/i.test(trimmed)) {
+      inTags = true;
+      continue;
+    }
+    if (inTags) {
+      if (/^[^-\s]/.test(trimmed)) {
+        inTags = false;
+      } else {
+        const item = trimmed.match(/^-\s*(.+)$/);
+        if (item) tags.push(item[1].trim().replace(/^["']|["']$/g, ""));
+        continue;
+      }
+    }
+    const inline = trimmed.match(/^tags:\s*(.+)$/i);
+    if (inline) {
+      tags.push(
+        ...inline[1]
+          .split(/[,，\s]+/)
+          .map((tag) => tag.trim().replace(/^["']|["']$/g, ""))
+          .filter(Boolean),
+      );
+    }
+  }
+  return tags.filter((tag) => tag);
 }
 
 function previewFor(output: NodeOutput): string | undefined {
@@ -385,16 +503,23 @@ export class RunEngine {
     return branch !== (edge.sourceHandle || "true");
   }
 
-  /** 单节点/局部运行：不在本次运行内的上游节点，从最近一次成功结果取输入（支持多输出节点）。 */
-  private async previousOutputs(nodeId: string): Promise<NodeOutput[]> {
+  /** 单节点/局部运行：不在本次运行内的上游节点，从当前工程的最近一次成功结果取输入（支持多输出节点）。 */
+  private async previousOutputs(nodeId: string, projectId: string): Promise<NodeOutput[]> {
+    const runIds = this.db
+      .select({ id: runs.id })
+      .from(runs)
+      .where(eq(runs.projectId, projectId))
+      .all()
+      .map((r) => r.id);
+    if (runIds.length === 0) return [];
     const row = this.db
       .select()
       .from(runNodeResults)
-      .where(eq(runNodeResults.nodeId, nodeId))
+      .where(and(eq(runNodeResults.nodeId, nodeId), eq(runNodeResults.status, "done"), inArray(runNodeResults.runId, runIds)))
       .orderBy(desc(runNodeResults.updatedAt))
       .limit(1)
       .get();
-    if (!row || row.status !== "done" || !row.outputKind) return [];
+    if (!row || !row.outputKind) return [];
     if (row.nodeType === "process.transcribe" || row.nodeType === "process.refine" || row.nodeType === "process.prompt") {
       const inputRows = this.db
         .select()
@@ -433,6 +558,47 @@ export class RunEngine {
     return [{ kind: row.outputKind, text: row.outputText ?? undefined, path: row.outputPath ?? undefined, size: row.outputSize ?? undefined }];
   }
 
+  /** 沿上游链路找来源节点，用于 Obsidian 输出节点自动带出来源/作者/链接/标题。 */
+  private upstreamSourceMeta(active: ActiveRun, nodeId: string): { source?: string; author?: string; url?: string; title?: string } {
+    const queue = [nodeId];
+    const seen = new Set<string>();
+    while (queue.length > 0) {
+      const current = queue.shift()!;
+      if (seen.has(current)) continue;
+      seen.add(current);
+      for (const edge of active.graph.edges) {
+        if (edge.target !== current) continue;
+        const source = active.graph.nodes.find((n) => n.id === edge.source);
+        if (!source) continue;
+        const data = source.data as Record<string, unknown>;
+        if (source.type === "source.bili") {
+          const items = Array.isArray(data.items)
+            ? (data.items as { bvid?: string; uploader?: string; title?: string }[])
+            : [];
+          const first = items[0];
+          const bvid = String(first?.bvid ?? "").trim() || String(data.url ?? "").match(/BV[0-9A-Za-z]+/)?.[0] || "";
+          return {
+            source: "B站",
+            author: String(data.uploader ?? first?.uploader ?? "").trim() || undefined,
+            url: String(data.url ?? "").trim() || (bvid ? `https://www.bilibili.com/video/${bvid}` : undefined),
+            title: String(data.title ?? first?.title ?? "").trim() || undefined,
+          };
+        }
+        if (source.type === "source.file") {
+          return {
+            source: "本地文件",
+            title: String(data.fileName ?? "").trim() || undefined,
+          };
+        }
+        if (source.type === "source.text") {
+          return { source: "文本" };
+        }
+        queue.push(source.id);
+      }
+    }
+    return {};
+  }
+
   private async resolveInputs(active: ActiveRun, node: GraphNode): Promise<ResolvedInputs> {
     const items: ResolvedInput[] = [];
     for (const edge of active.graph.edges) {
@@ -444,7 +610,7 @@ export class RunEngine {
         const branch = active.branches.get(source.id);
         if (branch && branch !== (edge.sourceHandle || "true")) continue;
       }
-      const outputs = active.nodeIds.has(source.id) ? (active.outputs.get(source.id) ?? []) : await this.previousOutputs(source.id);
+      const outputs = active.nodeIds.has(source.id) ? (active.outputs.get(source.id) ?? []) : await this.previousOutputs(source.id, active.projectId);
       for (const output of outputs) items.push({ sourceNodeId: source.id, output, position: items.length });
     }
     const audioPaths = items
@@ -873,9 +1039,230 @@ export class RunEngine {
         return { outputs: [{ kind: "noteDoc", text: markdown, size: markdown.length }], summary };
       }
 
+      case "process.obsidian": {
+        if (!inputs.text) throw new Error("没有可写入 Obsidian 的文稿");
+        const settings = getSettings(this.db);
+        const vaultPath = settings.obsidian.vaultPath.trim();
+        if (!vaultPath) throw new Error("未配置 Obsidian 库路径，请到设置页填写");
+        const folder = (String(data.folder ?? "").trim() || settings.obsidian.folder || "00-Inbox").replace(/^[\\/]+|[\\/]+$/g, "");
+        const segments = folder.split(/[\\/]+/).filter(Boolean);
+        if (segments.some((segment) => segment === "..")) throw new Error("Obsidian 保存目录不能包含 ..");
+        const dir = join(vaultPath, ...segments);
+        await mkdir(dir, { recursive: true });
+        const text = inputs.text.trim();
+        const meta = this.upstreamSourceMeta(active, node.id);
+        const source = String(data.source ?? "").trim() || meta.source || "";
+        const author = String(data.author ?? "").trim() || meta.author || "";
+        const url = String(data.url ?? "").trim() || meta.url || "";
+        let title = String(data.title ?? "").trim();
+        if (!title) {
+          const firstHeading = text.match(/^#\s+(.+)$/m)?.[1]?.trim() ?? "";
+          title = meta.title || firstHeading || "未命名笔记";
+        }
+        const created = new Date().toISOString().slice(0, 10);
+        const noteType = source === "文本" ? "学习笔记" : source === "B站" || source === "本地文件" ? "视频笔记" : "笔记";
+        const explicitTags = String(data.tags ?? "")
+          .split(/[,，\s]+/)
+          .map((tag) => tag.trim())
+          .filter(Boolean);
+        // 简单历史知识库模式：AI 只提取人物/事件/时期，不做精细标签。
+        const entities = settings.obsidian.autoTagEnabled
+          ? await this.extractHistoryEntities(text, signal)
+          : { persons: [], events: [], periods: [] };
+        const frontmatterLines = [
+          "---",
+          `标题: ${title}`,
+          `类型: ${noteType}`,
+          source ? `来源: ${source}` : undefined,
+          author ? `作者: ${author}` : undefined,
+          url ? `原始链接: ${url}` : undefined,
+          `创建日期: ${created}`,
+          ...(explicitTags.length > 0 ? ["tags:", ...explicitTags.map((tag) => `  - ${tag}`)] : []),
+          ...(entities.persons.length > 0 ? ["人物:", ...entities.persons.map((person) => `  - ${person}`)] : []),
+          ...(entities.events.length > 0 ? ["事件:", ...entities.events.map((event) => `  - ${event}`)] : []),
+          ...(entities.periods.length > 0 ? [`时期: ${entities.periods[0]}`] : []),
+          "---",
+        ].filter((line): line is string => typeof line === "string");
+        const body = text.startsWith("# ") ? text : `# ${title}\n\n${text}`;
+        let markdown = `${frontmatterLines.join("\n")}\n\n${body}\n`;
+        const fileName = `${escapePathName(title)}.md`;
+        const outPath = join(dir, fileName);
+
+        // 自动关联：只按人物/事件/时期判断相关性，找到后写入 [[链接]]。
+        let relatedNames: string[] = [];
+        if (settings.obsidian.autoLinkEnabled && settings.obsidian.autoLinkMax > 0) {
+          const existingNotes = await this.scanObsidianNotes(vaultPath, outPath);
+          relatedNames = this.findRelatedNoteNames(
+            { persons: entities.persons, events: entities.events, periods: entities.periods, title },
+            existingNotes,
+            settings.obsidian.autoLinkMax || 5,
+          );
+          if (relatedNames.length > 0) {
+            markdown += `\n## 相关笔记\n${relatedNames.map((name) => `- [[${name}]]`).join("\n")}\n`;
+          }
+        }
+
+        await writeFile(outPath, markdown, "utf8");
+        await this.log(active, node.id, "info", `已写入 Obsidian：${outPath}`);
+        const linkText = relatedNames.length > 0 ? ` · 关联 ${relatedNames.length} 篇` : "";
+        return {
+          outputs: [{ kind: "noteDoc", text: markdown, size: markdown.length, path: outPath }],
+          summary: `已保存到 Obsidian：${folder}/${fileName}${linkText}`,
+        };
+      }
+
       default:
         throw new Error(`节点类型暂不支持：${(node as { type: string }).type}`);
     }
+  }
+
+  /** AI 从正文提取历史笔记需要的人物/事件/时期。 */
+  private async extractHistoryEntities(text: string, signal?: AbortSignal): Promise<{ persons: string[]; events: string[]; periods: string[] }> {
+    const empty = { persons: [], events: [], periods: [] };
+    try {
+      const aiConfig = getAiConfig(this.db);
+      if (!aiConfig.apiKey) return empty;
+      const system = `你是历史笔记结构化助手。请从下面的笔记中提取三类信息：
+1. 人物：提到的重要历史人物，使用规范姓名；
+2. 事件：涉及的历史事件/事迹；
+3. 时期：历史时期或朝代。
+
+只输出 JSON，不要解释，格式：{"人物":["..."],"事件":["..."],"时期":["..."]}。每个字段最多 5 个。`;
+      const result = await chatCompletion({ ...aiConfig }, system, text.slice(0, 12000), signal);
+      return parseHistoryEntities(result);
+    } catch {
+      return empty;
+    }
+  }
+
+  /** 根据受控词表 + AI 生成 Obsidian 标签。 */
+  private async buildObsidianTags(input: { text: string; source: string; noteType: string; explicitTags: string[]; signal?: AbortSignal }): Promise<string[]> {
+    const obsidian = getSettings(this.db).obsidian;
+    const min = Math.max(1, obsidian.tagMinCount || 5);
+    const max = Math.max(min, obsidian.tagMaxCount || 10);
+    const taxonomyTags = Object.values(obsidian.tagTaxonomy ?? {})
+      .flat()
+      .map((tag) => tag.trim())
+      .filter(Boolean);
+    const taxonomyLower = new Set(taxonomyTags.map((tag) => tag.toLowerCase()));
+    const tags = [...input.explicitTags.map((tag) => tag.trim()).filter(Boolean)];
+
+    const addTag = (tag: string) => {
+      const value = tag.trim();
+      if (value && !tags.some((existing) => existing.toLowerCase() === value.toLowerCase())) tags.push(value);
+    };
+
+    if (input.source === "B站") addTag("B站");
+    else if (input.source === "文本") addTag("文稿");
+    else if (input.source === "本地文件") addTag("本地视频");
+    else if (input.source) addTag(input.source);
+
+    if (input.noteType === "学习笔记") addTag("学习笔记");
+    else if (input.noteType === "视频笔记") addTag("视频笔记");
+    addTag("未整理");
+
+    if (obsidian.autoTagEnabled && tags.length < min) {
+      try {
+        const aiConfig = getAiConfig(this.db);
+        if (aiConfig.apiKey) {
+          const system = `你是知识库打标助手。请根据下面的笔记内容，为 Obsidian 笔记生成标签。
+要求：
+1. 优先从“可用标签”中选择；
+2. 如果确实需要，最多新增 3 个不在可用标签中的标签；
+3. 最终输出 ${min}-${max} 个标签；
+4. 不要解释，只输出 JSON 数组；
+5. 标签不能包含空格。
+
+可用标签：
+${JSON.stringify(taxonomyTags)}`;
+          const result = await chatCompletion({ ...aiConfig }, system, input.text.slice(0, 12000), input.signal);
+          const generated = parseTagArray(result);
+          let addedNew = 0;
+          for (const tag of generated) {
+            if (tags.length >= max) break;
+            if (taxonomyLower.has(tag.toLowerCase())) {
+              addTag(tag);
+            } else if (addedNew < 3) {
+              addTag(tag);
+              addedNew += 1;
+            }
+          }
+        }
+      } catch {
+        // AI 打标失败不阻塞保存
+      }
+    }
+
+    if (tags.length === 0) addTag("笔记");
+    return tags.slice(0, max);
+  }
+
+  /** 扫描 Obsidian 库内已有笔记（跳过模板/附件/隐藏目录）。 */
+  private async scanObsidianNotes(
+    vaultPath: string,
+    excludePath: string,
+  ): Promise<Array<{ absPath: string; name: string; persons: string[]; events: string[]; periods: string[]; content: string }>> {
+    const results: Array<{ absPath: string; name: string; persons: string[]; events: string[]; periods: string[]; content: string }> = [];
+    const walk = async (dir: string, rel: string) => {
+      const entries = await readdir(dir, { withFileTypes: true }).catch(() => []);
+      for (const entry of entries) {
+        if (entry.name.startsWith(".")) continue;
+        if (entry.isDirectory()) {
+          if (entry.name === "90-Templates" || entry.name === "Attachments") continue;
+          await walk(join(dir, entry.name), rel ? `${rel}/${entry.name}` : entry.name);
+        } else if (entry.isFile() && entry.name.endsWith(".md")) {
+          const abs = join(dir, entry.name);
+          if (resolve(abs) === resolve(excludePath)) continue;
+          const content = await readFile(abs, "utf8").catch(() => "");
+          if (!content.trim()) continue;
+          results.push({
+            absPath: abs,
+            name: entry.name.replace(/\.md$/, ""),
+            persons: parseYamlFieldList(content, "人物"),
+            events: parseYamlFieldList(content, "事件"),
+            periods: parseYamlFieldList(content, "时期"),
+            content,
+          });
+        }
+      }
+    };
+    await walk(vaultPath, "");
+    return results;
+  }
+
+  /** 根据当前笔记的人物/事件/时期，找出库内相关笔记名。 */
+  private findRelatedNoteNames(
+    current: { persons: string[]; events: string[]; periods: string[]; title: string },
+    notes: Array<{ name: string; persons: string[]; events: string[]; periods: string[]; content: string }>,
+    max: number,
+  ): string[] {
+    const scored: Array<{ name: string; score: number }> = [];
+    for (const note of notes) {
+      let score = 0;
+      for (const person of current.persons) {
+        const lower = person.toLowerCase();
+        if (note.persons.some((candidate) => candidate.toLowerCase() === lower)) score += 4;
+        if (note.name.toLowerCase().includes(lower)) score += 2;
+        if (note.content.toLowerCase().includes(lower)) score += 1;
+      }
+      for (const event of current.events) {
+        const lower = event.toLowerCase();
+        if (note.events.some((candidate) => candidate.toLowerCase() === lower)) score += 4;
+        if (note.name.toLowerCase().includes(lower)) score += 2;
+        if (note.content.toLowerCase().includes(lower)) score += 1;
+      }
+      for (const period of current.periods) {
+        const lower = period.toLowerCase();
+        if (note.periods.some((candidate) => candidate.toLowerCase() === lower)) score += 3;
+        if (note.name.toLowerCase().includes(lower)) score += 1;
+        if (note.content.toLowerCase().includes(lower)) score += 1;
+      }
+      if (current.title && note.name.toLowerCase().includes(current.title.toLowerCase())) score += 2;
+      // 至少达到强相关阈值才认为相关，避免误连。
+      if (score >= 3) scored.push({ name: note.name, score });
+    }
+    scored.sort((a, b) => b.score - a.score);
+    return scored.slice(0, max).map((item) => item.name);
   }
 
   private async progress(active: ActiveRun, nodeId: string, progress: number, message: string) {
@@ -1012,6 +1399,7 @@ export class RunEngine {
       projectName: project?.name,
       status: row.status,
       scope: row.scope,
+      nodeId: row.nodeId ?? undefined,
       createdAt: row.createdAt,
       finishedAt: row.finishedAt ?? undefined,
       elapsedMs: row.elapsedMs ?? undefined,

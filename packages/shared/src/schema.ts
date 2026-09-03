@@ -101,6 +101,14 @@ const nodeDataByType = {
     maxDepth: z.number().int().min(3).max(5).optional(),
     theme: z.enum(["paper", "presentation", "academic"]).optional(),
   }),
+  obsidian: baseDataSchema.extend({
+    title: z.string().optional(),
+    tags: z.string().optional(),
+    source: z.string().optional(),
+    author: z.string().optional(),
+    url: z.string().optional(),
+    folder: z.string().optional(),
+  }),
 };
 
 function nodeOf(type: string, data: z.ZodTypeAny) {
@@ -125,6 +133,7 @@ export const graphNodeSchema = z.discriminatedUnion("type", [
   nodeOf("process.text", nodeDataByType.textTool),
   nodeOf("process.chapter", nodeDataByType.chapter),
   nodeOf("process.mindmap", nodeDataByType.mindMap),
+  nodeOf("process.obsidian", nodeDataByType.obsidian),
 ]);
 
 export const graphEdgeSchema = z.object({

@@ -1,4 +1,4 @@
-import type { GraphEdge, GraphNode, NodeType, WorkflowGraph } from "./graph";
+import { NODE_CARD_WIDTH, type GraphEdge, type GraphNode, type NodeType, type WorkflowGraph } from "./graph";
 import type { WorkflowTemplate } from "./project";
 
 function node(type: NodeType, id: string, x: number, y: number, data: GraphNode["data"]): GraphNode {
@@ -7,6 +7,14 @@ function node(type: NodeType, id: string, x: number, y: number, data: GraphNode[
 
 function edge(id: string, source: string, target: string, sourceHandle: string, targetHandle: string): GraphEdge {
   return { id, source, target, sourceHandle, targetHandle };
+}
+
+/** 模板节点横向最小间距：按节点实际宽度排布，避免新建工程时相邻卡片重叠。 */
+const TEMPLATE_H_GAP = 80;
+
+/** 已知 fromX 处放置 type 节点后，下一个同排节点的 x 坐标。 */
+function nextColumnX(type: NodeType, fromX: number): number {
+  return fromX + NODE_CARD_WIDTH[type] + TEMPLATE_H_GAP;
 }
 
 /**
@@ -18,14 +26,18 @@ function edge(id: string, source: string, target: string, sourceHandle: string, 
 
 /** 模板一：视频转笔记（单线）。 */
 function videoBasicGraph(): WorkflowGraph {
+  const asrX = nextColumnX("source.bili", 0);
+  const refineX = nextColumnX("process.transcribe", asrX);
+  const promptX = nextColumnX("process.refine", refineX);
+  const outX = nextColumnX("process.prompt", promptX);
   return {
     schemaVersion: 1,
     nodes: [
       node("source.bili", "n_src", 0, 40, { label: "B站链接", url: "" }),
-      node("process.transcribe", "n_asr", 300, 40, { label: "转写" }),
-      node("process.refine", "n_refine", 600, 40, { label: "AI 校对" }),
-      node("process.prompt", "n_prompt", 900, 40, { label: "AI 加工", outputName: "加工结果" }),
-      node("process.output", "n_out", 1200, 40, { label: "输出", fileName: "笔记.md" }),
+      node("process.transcribe", "n_asr", asrX, 40, { label: "转写" }),
+      node("process.refine", "n_refine", refineX, 40, { label: "AI 校对" }),
+      node("process.prompt", "n_prompt", promptX, 40, { label: "AI 加工", outputName: "加工结果" }),
+      node("process.output", "n_out", outX, 40, { label: "输出", fileName: "笔记.md" }),
     ],
     edges: [
       edge("e1", "n_src", "n_asr", "audio", "audio"),
@@ -39,15 +51,19 @@ function videoBasicGraph(): WorkflowGraph {
 
 /** 模板二：视频多路笔记（同一视频并行两个 AI 加工分支）。 */
 function videoBranchesGraph(): WorkflowGraph {
+  const asrX = nextColumnX("source.bili", 0);
+  const promptX = nextColumnX("process.transcribe", asrX);
+  const mergeX = nextColumnX("process.prompt", promptX);
+  const outX = nextColumnX("process.merge", mergeX);
   return {
     schemaVersion: 1,
     nodes: [
       node("source.bili", "n_src", 0, 80, { label: "B站链接", url: "" }),
-      node("process.transcribe", "n_asr", 300, 80, { label: "转写" }),
-      node("process.prompt", "n_prompt_a", 600, 0, { label: "AI 加工 A", outputName: "加工 A" }),
-      node("process.prompt", "n_prompt_b", 600, 160, { label: "AI 加工 B", outputName: "加工 B" }),
-      node("process.merge", "n_merge", 900, 80, { label: "合并", title: "合并笔记" }),
-      node("process.output", "n_out", 1200, 80, { label: "输出", fileName: "笔记.md" }),
+      node("process.transcribe", "n_asr", asrX, 80, { label: "转写" }),
+      node("process.prompt", "n_prompt_a", promptX, 0, { label: "AI 加工 A", outputName: "加工 A" }),
+      node("process.prompt", "n_prompt_b", promptX, 160, { label: "AI 加工 B", outputName: "加工 B" }),
+      node("process.merge", "n_merge", mergeX, 80, { label: "合并", title: "合并笔记" }),
+      node("process.output", "n_out", outX, 80, { label: "输出", fileName: "笔记.md" }),
     ],
     edges: [
       edge("e1", "n_src", "n_asr", "audio", "audio"),
@@ -63,15 +79,18 @@ function videoBranchesGraph(): WorkflowGraph {
 
 /** 模板三：文稿多路对照（已有文稿并行三个 AI 加工分支）。 */
 function textCompareGraph(): WorkflowGraph {
+  const promptX = nextColumnX("source.text", 0);
+  const mergeX = nextColumnX("process.prompt", promptX);
+  const outX = nextColumnX("process.merge", mergeX);
   return {
     schemaVersion: 1,
     nodes: [
       node("source.text", "n_text", 0, 120, { label: "已有文稿", text: "" }),
-      node("process.prompt", "n_a", 340, -40, { label: "AI 加工 A", outputName: "加工 A" }),
-      node("process.prompt", "n_b", 340, 120, { label: "AI 加工 B", outputName: "加工 B" }),
-      node("process.prompt", "n_c", 340, 280, { label: "AI 加工 C", outputName: "加工 C" }),
-      node("process.merge", "n_merge", 680, 120, { label: "合并", title: "多路对照" }),
-      node("process.output", "n_out", 980, 120, { label: "输出", fileName: "对照笔记.md" }),
+      node("process.prompt", "n_a", promptX, -40, { label: "AI 加工 A", outputName: "加工 A" }),
+      node("process.prompt", "n_b", promptX, 120, { label: "AI 加工 B", outputName: "加工 B" }),
+      node("process.prompt", "n_c", promptX, 280, { label: "AI 加工 C", outputName: "加工 C" }),
+      node("process.merge", "n_merge", mergeX, 120, { label: "合并", title: "多路对照" }),
+      node("process.output", "n_out", outX, 120, { label: "输出", fileName: "对照笔记.md" }),
     ],
     edges: [
       edge("e1", "n_text", "n_a", "transcript", "transcript"),
@@ -88,13 +107,16 @@ function textCompareGraph(): WorkflowGraph {
 
 /** 模板四：文稿转笔记（粘贴文稿 → 校对 → 单线加工）。 */
 function textPolishGraph(): WorkflowGraph {
+  const refineX = nextColumnX("source.text", 0);
+  const promptX = nextColumnX("process.refine", refineX);
+  const outX = nextColumnX("process.prompt", promptX);
   return {
     schemaVersion: 1,
     nodes: [
       node("source.text", "n_text", 0, 40, { label: "已有文稿", text: "" }),
-      node("process.refine", "n_refine", 300, 40, { label: "AI 校对" }),
-      node("process.prompt", "n_prompt", 600, 40, { label: "AI 加工", outputName: "加工结果" }),
-      node("process.output", "n_out", 900, 40, { label: "输出", fileName: "笔记.md" }),
+      node("process.refine", "n_refine", refineX, 40, { label: "AI 校对" }),
+      node("process.prompt", "n_prompt", promptX, 40, { label: "AI 加工", outputName: "加工结果" }),
+      node("process.output", "n_out", outX, 40, { label: "输出", fileName: "笔记.md" }),
     ],
     edges: [
       edge("e1", "n_text", "n_refine", "transcript", "transcript"),
@@ -107,19 +129,22 @@ function textPolishGraph(): WorkflowGraph {
 
 /** 模板五：文稿转思维导图（粘贴文稿 → 校对 → 思维导图 → 输出）。 */
 function textMindMapGraph(): WorkflowGraph {
+  const refineX = nextColumnX("source.text", 0);
+  const mindmapX = nextColumnX("process.refine", refineX);
+  const outX = nextColumnX("process.mindmap", mindmapX);
   return {
     schemaVersion: 1,
     nodes: [
       node("source.text", "n_text", 0, 80, { label: "已有文稿", text: "" }),
-      node("process.refine", "n_refine", 340, 80, { label: "AI 校对" }),
-      node("process.mindmap", "n_mindmap", 680, 80, {
+      node("process.refine", "n_refine", refineX, 80, { label: "AI 校对" }),
+      node("process.mindmap", "n_mindmap", mindmapX, 80, {
         label: "思维导图",
         branchSize: "auto",
         maxDepth: 4,
         theme: "paper",
         retry: { maxRetries: 2, backoffMs: 3000 },
       }),
-      node("process.output", "n_out", 1020, 80, { label: "输出", fileName: "思维导图.md" }),
+      node("process.output", "n_out", outX, 80, { label: "输出", fileName: "思维导图.md" }),
     ],
     edges: [
       edge("e1", "n_text", "n_refine", "transcript", "transcript"),
@@ -130,22 +155,89 @@ function textMindMapGraph(): WorkflowGraph {
   };
 }
 
-/** 模板六：视频转思维导图（B站视频 → 转写 → 校对 → 思维导图 → 输出）。 */
-function videoMindMapGraph(): WorkflowGraph {
+/** 模板七：视频转 Obsidian 笔记（B站视频 → 转写 → 校对 → AI 加工 → Obsidian 笔记）。 */
+function videoObsidianGraph(): WorkflowGraph {
+  const asrX = nextColumnX("source.bili", 0);
+  const refineX = nextColumnX("process.transcribe", asrX);
+  const promptX = nextColumnX("process.refine", refineX);
+  const obsidianX = nextColumnX("process.prompt", promptX);
   return {
     schemaVersion: 1,
     nodes: [
       node("source.bili", "n_src", 0, 80, { label: "B站链接", url: "" }),
-      node("process.transcribe", "n_asr", 340, 80, { label: "转写" }),
-      node("process.refine", "n_refine", 680, 80, { label: "AI 校对" }),
-      node("process.mindmap", "n_mindmap", 1020, 80, {
+      node("process.transcribe", "n_asr", asrX, 80, { label: "转写" }),
+      node("process.refine", "n_refine", refineX, 80, { label: "AI 校对" }),
+      node("process.prompt", "n_prompt", promptX, 80, {
+        label: "AI 加工",
+        outputName: "加工结果",
+        retry: { maxRetries: 2, backoffMs: 3000 },
+      }),
+      node("process.obsidian", "n_obsidian", obsidianX, 80, {
+        label: "Obsidian 笔记",
+        tags: "视频笔记",
+        folder: "00-Inbox",
+      }),
+    ],
+    edges: [
+      edge("e1", "n_src", "n_asr", "audio", "audio"),
+      edge("e2", "n_asr", "n_refine", "transcript", "transcript"),
+      edge("e3", "n_refine", "n_prompt", "transcript", "transcript"),
+      edge("e4", "n_prompt", "n_obsidian", "noteBlock", "in"),
+    ],
+    viewport: { x: 0, y: 0, zoom: 1 },
+  };
+}
+
+/** 模板八：文稿转 Obsidian 笔记（已有文稿 → 校对 → AI 加工 → Obsidian 笔记）。 */
+function textObsidianGraph(): WorkflowGraph {
+  const refineX = nextColumnX("source.text", 0);
+  const promptX = nextColumnX("process.refine", refineX);
+  const obsidianX = nextColumnX("process.prompt", promptX);
+  return {
+    schemaVersion: 1,
+    nodes: [
+      node("source.text", "n_text", 0, 80, { label: "已有文稿", text: "" }),
+      node("process.refine", "n_refine", refineX, 80, { label: "AI 校对" }),
+      node("process.prompt", "n_prompt", promptX, 80, {
+        label: "AI 加工",
+        outputName: "加工结果",
+        retry: { maxRetries: 2, backoffMs: 3000 },
+      }),
+      node("process.obsidian", "n_obsidian", obsidianX, 80, {
+        label: "Obsidian 笔记",
+        tags: "学习笔记",
+        folder: "00-Inbox",
+      }),
+    ],
+    edges: [
+      edge("e1", "n_text", "n_refine", "transcript", "transcript"),
+      edge("e2", "n_refine", "n_prompt", "transcript", "transcript"),
+      edge("e3", "n_prompt", "n_obsidian", "noteBlock", "in"),
+    ],
+    viewport: { x: 0, y: 0, zoom: 1 },
+  };
+}
+
+/** 模板六：视频转思维导图（B站视频 → 转写 → 校对 → 思维导图 → 输出）。 */
+function videoMindMapGraph(): WorkflowGraph {
+  const asrX = nextColumnX("source.bili", 0);
+  const refineX = nextColumnX("process.transcribe", asrX);
+  const mindmapX = nextColumnX("process.refine", refineX);
+  const outX = nextColumnX("process.mindmap", mindmapX);
+  return {
+    schemaVersion: 1,
+    nodes: [
+      node("source.bili", "n_src", 0, 80, { label: "B站链接", url: "" }),
+      node("process.transcribe", "n_asr", asrX, 80, { label: "转写" }),
+      node("process.refine", "n_refine", refineX, 80, { label: "AI 校对" }),
+      node("process.mindmap", "n_mindmap", mindmapX, 80, {
         label: "思维导图",
         branchSize: "auto",
         maxDepth: 4,
         theme: "paper",
         retry: { maxRetries: 2, backoffMs: 3000 },
       }),
-      node("process.output", "n_out", 1360, 80, { label: "输出", fileName: "思维导图.md" }),
+      node("process.output", "n_out", outX, 80, { label: "输出", fileName: "思维导图.md" }),
     ],
     edges: [
       edge("e1", "n_src", "n_asr", "audio", "audio"),
@@ -193,5 +285,17 @@ export const WORKFLOW_TEMPLATES: WorkflowTemplate[] = [
     name: "视频转思维导图",
     description: "B站视频 → 转写 → AI 校对 → 思维导图 → 输出，把视频内容整理成导图",
     graph: videoMindMapGraph(),
+  },
+  {
+    id: "template.video-obsidian",
+    name: "视频转 Obsidian 笔记",
+    description: "B站视频 → 转写 → AI 校对 → AI 加工 → 直接保存到 Obsidian 库",
+    graph: videoObsidianGraph(),
+  },
+  {
+    id: "template.text-obsidian",
+    name: "文稿转 Obsidian 笔记",
+    description: "已有文稿 → AI 校对 → AI 加工 → 直接保存到 Obsidian 库",
+    graph: textObsidianGraph(),
   },
 ];

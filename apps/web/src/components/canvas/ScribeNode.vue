@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import { ElInput, ElMessage, ElMessageBox, ElUpload, type UploadRequestOptions } from "element-plus";
-import { Cloud, Eye, FileOutput, FileText, FileUp, GitBranch, GitMerge, Link2, ListTree, Mic, Network, Replace, Sparkles, WandSparkles } from "lucide-vue-next";
+import { BookOpen, Cloud, Eye, FileOutput, FileText, FileUp, GitBranch, GitMerge, Link2, ListTree, Mic, Network, Replace, Sparkles, WandSparkles } from "lucide-vue-next";
 import { Handle, Position, type NodeProps } from "@vue-flow/core";
 import { ContextMenuContent, ContextMenuItem, ContextMenuPortal, ContextMenuRoot, ContextMenuSeparator, ContextMenuTrigger } from "reka-ui";
 import { NODE_PORTS, NODE_TYPE_LABELS, type NodeType, type UploadedFile, type VideoPreview } from "@scribe-flow/shared";
@@ -10,6 +10,7 @@ import IfCard from "./node-cards/IfCard.vue";
 import TextToolCard from "./node-cards/TextToolCard.vue";
 import ChapterCard from "./node-cards/ChapterCard.vue";
 import RetryFields from "./node-cards/RetryFields.vue";
+import ObsidianCard from "./node-cards/ObsidianCard.vue";
 import { renderMarkdown } from "@/lib/markdown";
 import { usePromptsStore } from "@/stores/prompts";
 import { api } from "@/lib/api";
@@ -182,6 +183,8 @@ const typeIcon = computed(() => {
       return ListTree;
     case "process.mindmap":
       return Network;
+    case "process.obsidian":
+      return BookOpen;
   }
 });
 
@@ -189,7 +192,7 @@ const statusClass = computed(() => (props.data.status ? `is-${props.data.status}
 const sizeClass = computed(() => `sf-node--${nodeType.value.replaceAll(".", "-")}`);
 
 const canViewOutput = computed(() =>
-  ["source.text", "process.transcribe", "process.refine", "process.prompt", "process.merge", "process.output", "flow.if", "process.text", "process.chapter", "process.mindmap"].includes(
+  ["source.text", "process.transcribe", "process.refine", "process.prompt", "process.merge", "process.output", "flow.if", "process.text", "process.chapter", "process.mindmap", "process.obsidian"].includes(
     nodeType.value,
   ),
 );
@@ -205,7 +208,12 @@ const asrOptions = [
 ];
 
 const promptOptions = computed(() =>
-  promptsStore.allBlocks.map((block) => ({ label: `${block.name}${block.builtin ? "（内置）" : ""}`, value: block.id })),
+  promptsStore.allBlocks.map((block) => {
+    const parts = [block.name];
+    if (block.version) parts.push(block.version);
+    if (block.builtin) parts.push("内置");
+    return { label: parts.join(" · "), value: block.id };
+  }),
 );
 
 const asrEngine = computed<string>({
@@ -271,6 +279,11 @@ function patchRetry(value: { maxRetries?: number; backoffMs?: number }) {
 }
 
 function patchMindMap(value: Record<string, unknown>) {
+  patch(value);
+  commit();
+}
+
+function patchObsidian(value: Record<string, unknown>) {
   patch(value);
   commit();
 }
@@ -538,6 +551,10 @@ const themeOptions = [
             </div>
           </template>
 
+          <template v-else-if="nodeType === 'process.obsidian'">
+            <ObsidianCard :folder="data.folder" @update="patchObsidian" />
+          </template>
+
           <template v-else-if="nodeType === 'process.merge'">
             <label class="sf-node-field">
               <span class="sf-node-field-label">合并标题</span>
@@ -651,6 +668,9 @@ const themeOptions = [
   width: 240px;
 }
 .sf-node--process-mindmap {
+  width: 300px;
+}
+.sf-node--process-obsidian {
   width: 300px;
 }
 

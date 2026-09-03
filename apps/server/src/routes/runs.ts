@@ -20,10 +20,15 @@ import { projects, runNodeLogs, runNodeResults, runs, type RunRow } from "../db/
 import { nextRunId, type RunEngine } from "../lib/engine";
 import { getAiConfig, getAsrConfig } from "../lib/settings";
 
-const startSchema = z.object({
-  scope: z.enum(["all", "fromNode", "node"]),
-  nodeId: z.string().optional(),
-});
+const startSchema = z
+  .object({
+    scope: z.enum(["all", "fromNode", "node"]),
+    nodeId: z.string().optional(),
+  })
+  .refine((data) => data.scope === "all" || Boolean(data.nodeId), {
+    message: "scope 为 fromNode/node 时必须提供 nodeId",
+    path: ["nodeId"],
+  });
 
 function rowToMeta(row: RunRow, projectName?: string): RunMeta {
   return {
@@ -32,6 +37,7 @@ function rowToMeta(row: RunRow, projectName?: string): RunMeta {
     projectName,
     status: row.status,
     scope: row.scope,
+    nodeId: row.nodeId ?? undefined,
     createdAt: row.createdAt,
     finishedAt: row.finishedAt ?? undefined,
     elapsedMs: row.elapsedMs ?? undefined,
@@ -78,6 +84,7 @@ function nodeIdsForScope(graph: ReturnType<typeof parseGraph>, scope: RunScope, 
 export function createRun(db: AppDatabase, projectId: string, scope: RunScope, nodeId?: string) {
   const project = db.select().from(projects).where(eq(projects.id, projectId)).get();
   if (!project) throw new Error("工程不存在");
+  if (scope !== "all" && !nodeId) throw new Error("缺少节点 ID：scope 为 fromNode/node 时必须提供 nodeId");
   const existingRunning = db.select().from(runs).where(and(eq(runs.projectId, projectId), eq(runs.status, "running"))).get();
   if (existingRunning) throw new Error("该工程已有运行正在进行，请先等待或停止");
   const graph = parseGraph(JSON.parse(project.graphJson));
@@ -108,7 +115,7 @@ export function createRun(db: AppDatabase, projectId: string, scope: RunScope, n
 
   const id = nextRunId();
   const createdAt = Date.now();
-  db.insert(runs).values({ id, projectId, status: "running", scope, createdAt, graphJson: JSON.stringify(graph) }).run();
+  db.insert(runs).values({ id, projectId, status: "running", scope, nodeId: scope === "all" ? undefined : nodeId, createdAt, graphJson: JSON.stringify(graph) }).run();
   return { id, graph };
 }
 
@@ -188,6 +195,9 @@ export function runsApi(db: AppDatabase, engine: RunEngine, dataDir: string) {
           await send({ type: "node.done", runId, nodeId: node.nodeId, summary: node.summary ?? "完成", preview });
         } else if (node.status === "error") {
           await send({ type: "node.error", runId, nodeId: node.nodeId, error: node.error ?? "失败" });
+        } else if (node.status === "running") {
+          // 连接/重连时补发 running 状态，避免前端只收到 run.started 后没有节点动效。
+          await send({ type: "node.started", runId, nodeId: node.nodeId });
         }
       }
       if (currentRun.status !== "running") {
