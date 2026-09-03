@@ -4,17 +4,20 @@ import { useRoute, useRouter } from "vue-router";
 import { Activity, LayoutGrid, PenLine, Settings } from "lucide-vue-next";
 import { useRunsStore } from "@/stores/runs";
 import { usePromptsStore } from "@/stores/prompts";
+import { useUiStore } from "@/stores/ui";
 import BiliAccountButton from "@/components/auth/BiliAccountButton.vue";
 
 const route = useRoute();
 const router = useRouter();
 const runsStore = useRunsStore();
 const promptsStore = usePromptsStore();
+const uiStore = useUiStore();
+
+const isImmersive = computed(() => route.meta.immersive === true);
 
 const navItems = [
   { to: "/", label: "工程", icon: LayoutGrid },
   { to: "/runs", label: "运行记录", icon: Activity },
-  { to: "/settings", label: "设置", icon: Settings },
 ];
 
 const pageTitle = computed(() => String(route.meta.title ?? "ScribeFlow"));
@@ -31,9 +34,9 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="app-root">
-    <aside class="sf-side">
-      <div class="sf-brand">
+  <div class="app-root" :class="{ 'app-root--immersive': isImmersive }">
+    <aside v-if="!isImmersive" class="sf-side">
+      <div class="sf-brand" title="ScribeFlow">
         <span class="sf-brand-mark"><PenLine :size="16" /></span>
         <div class="sf-brand-text">
           <span class="sf-brand-name">ScribeFlow</span>
@@ -41,21 +44,24 @@ onBeforeUnmount(() => {
         </div>
       </div>
 
-      <nav class="sf-nav">
-        <RouterLink v-for="item in navItems" :key="item.to" :to="item.to" class="sf-nav-item">
-          <component :is="item.icon" :size="16" />
+      <nav class="sf-nav" aria-label="主导航">
+        <RouterLink v-for="item in navItems" :key="item.to" :to="item.to" class="sf-nav-item" :title="item.label">
+          <component :is="item.icon" :size="17" />
           <span>{{ item.label }}</span>
         </RouterLink>
       </nav>
 
       <div class="sf-side-foot">
-        <BiliAccountButton />
+        <BiliAccountButton compact />
+        <button type="button" class="sf-rail-btn" title="设置" aria-label="设置" @click="uiStore.openSettings()">
+          <Settings :size="17" />
+        </button>
         <span class="sf-version tnum">v0.1.0 · M0</span>
       </div>
     </aside>
 
     <main class="sf-main">
-      <header class="sf-topbar">
+      <header v-if="!isImmersive" class="sf-topbar">
         <h1 class="sf-topbar-title">{{ pageTitle }}</h1>
         <div class="sf-topbar-right">
           <button type="button" class="sf-running-pill tnum" title="查看运行记录" aria-label="查看运行记录" @click="router.push('/runs')">
@@ -68,7 +74,7 @@ onBeforeUnmount(() => {
       </div>
     </main>
 
-    <nav class="sf-bottom-nav" aria-label="移动端导航">
+    <nav v-if="!isImmersive" class="sf-bottom-nav" aria-label="移动端导航">
       <RouterLink v-for="item in navItems" :key="item.to" :to="item.to" class="sf-bottom-nav-item">
         <component :is="item.icon" :size="18" />
         <span>{{ item.label }}</span>
@@ -78,9 +84,14 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
+.app-root--immersive {
+  grid-template-columns: minmax(0, 1fr);
+}
+
 .sf-side {
   display: flex;
   flex-direction: column;
+  align-items: center;
   min-height: 0;
   background: var(--color-surface);
   border-right: 1px solid var(--color-border);
@@ -88,9 +99,11 @@ onBeforeUnmount(() => {
 
 .sf-brand {
   display: flex;
+  flex-direction: column;
   align-items: center;
-  gap: 10px;
-  padding: 16px 14px;
+  gap: 4px;
+  width: 100%;
+  padding: 12px 0;
   border-bottom: 1px solid var(--color-border);
 }
 
@@ -106,47 +119,37 @@ onBeforeUnmount(() => {
 }
 
 .sf-brand-text {
-  display: flex;
-  flex-direction: column;
-  line-height: 1.25;
-  min-width: 0;
-}
-
-.sf-brand-name {
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--color-text);
-  letter-spacing: -0.01em;
-}
-
-.sf-brand-sub {
-  font-size: 10.5px;
-  color: var(--color-text-tertiary);
+  display: none;
 }
 
 .sf-nav {
   flex: 1;
   display: flex;
   flex-direction: column;
-  gap: 2px;
-  padding: 12px 8px;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+  padding: 10px 0;
   overflow-y: auto;
 }
 
 .sf-nav-item {
   display: flex;
   align-items: center;
-  gap: 10px;
-  height: 36px;
-  padding: 0 12px;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  padding: 0;
   border-radius: var(--radius-md);
   color: var(--color-text-secondary);
-  font-size: 13px;
-  font-weight: 500;
   text-decoration: none;
   transition:
     background-color var(--dur-1) var(--ease-out),
     color var(--dur-1) var(--ease-out);
+}
+
+.sf-nav-item span {
+  display: none;
 }
 
 .sf-nav-item:hover {
@@ -162,15 +165,36 @@ onBeforeUnmount(() => {
 .sf-side-foot {
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  padding: 10px;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+  padding: 8px 0;
   border-top: 1px solid var(--color-border);
 }
 
 .sf-version {
-  font-size: 10px;
-  color: var(--color-text-tertiary);
-  text-align: center;
+  display: none;
+}
+
+.sf-rail-btn {
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  transition:
+    background-color var(--dur-1) var(--ease-out),
+    color var(--dur-1) var(--ease-out);
+}
+
+.sf-rail-btn:hover {
+  background: var(--color-ink-soft);
+  color: var(--color-text);
 }
 
 .sf-main {
@@ -227,6 +251,10 @@ onBeforeUnmount(() => {
     grid-template-columns: 1fr;
   }
 
+  .app-root--immersive {
+    grid-template-columns: 1fr;
+  }
+
   .sf-side {
     display: none;
   }
@@ -261,6 +289,10 @@ onBeforeUnmount(() => {
 
   .sf-content {
     padding-bottom: 56px;
+  }
+
+  .app-root--immersive .sf-content {
+    padding-bottom: 0;
   }
 }
 </style>

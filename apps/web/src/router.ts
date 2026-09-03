@@ -11,7 +11,7 @@ const routes = [
     path: "/project/:id",
     name: "project-editor",
     component: () => import("@/views/ProjectEditorView.vue"),
-    meta: { title: "画布编辑器" },
+    meta: { title: "画布编辑器", immersive: true },
   },
   {
     path: "/project/:id/run/:runId",

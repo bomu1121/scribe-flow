@@ -8,6 +8,7 @@ import FlowCanvas from "@/components/canvas/FlowCanvas.vue";
 import NodePalette from "@/components/canvas/NodePalette.vue";
 import SourcePickerDialog from "@/components/canvas/SourcePickerDialog.vue";
 import DiffViewer from "@/components/DiffViewer.vue";
+import BiliAccountButton from "@/components/auth/BiliAccountButton.vue";
 import { api } from "@/lib/api";
 import { renderMarkdown } from "@/lib/markdown";
 import { subscribeRunEvents } from "@/lib/sse";
@@ -222,7 +223,7 @@ function showNotice(message: string) {
 function onPaletteAdd(type: NodeType | "source.biliCollection") {
   if (type === "source.biliCollection") {
     if (!authStore.loggedIn) {
-      ElMessage.info("请先点击左下角「未登录 B 站」扫码登录");
+      ElMessage.info("请先点击右上角 B 站头像扫码登录");
       return;
     }
     biliPickerVisible.value = true;
@@ -747,6 +748,7 @@ function downloadNodeOutput() {
           <StopCircle :size="14" />
           <span>停止</span>
         </el-button>
+        <BiliAccountButton compact />
         <el-dropdown trigger="click" @command="(cmd) => onMoreCommand(String(cmd))">
           <button type="button" class="sf-icon-btn" title="更多操作">
             <MoreHorizontal :size="16" />

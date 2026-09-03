@@ -9,6 +9,10 @@
   background: var(--color-bg);
 }
 
+.app-root--immersive {
+  grid-template-columns: minmax(0, 1fr);
+}
+
 body {
   margin: 0;
   font-family: var(--font-family);

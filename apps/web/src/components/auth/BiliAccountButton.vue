@@ -5,6 +5,7 @@ import { CircleUserRound, LogOut } from "lucide-vue-next";
 import { useAuthStore } from "@/stores/auth";
 import BiliLoginDialog from "./BiliLoginDialog.vue";
 
+const props = withDefaults(defineProps<{ compact?: boolean }>(), { compact: false });
 const store = useAuthStore();
 const showLogin = ref(false);
 
@@ -33,10 +34,10 @@ async function logout() {
 
 <template>
   <el-dropdown v-if="store.loggedIn && store.user" trigger="click" placement="top-end" @command="(cmd) => cmd === 'logout' && logout()">
-    <button type="button" class="sf-account" title="B 站账号">
+    <button type="button" class="sf-account" :class="{ 'sf-account--compact': props.compact }" title="B 站账号">
       <img v-if="store.user.face" :src="store.user.face" class="sf-account-avatar" alt="头像" referrerpolicy="no-referrer" />
       <CircleUserRound v-else :size="16" />
-      <span class="sf-account-name">{{ store.user.uname }}</span>
+      <span class="sf-account-name sf-account-label">{{ store.user.uname }}</span>
     </button>
     <template #dropdown>
       <el-dropdown-menu>
@@ -45,9 +46,9 @@ async function logout() {
     </template>
   </el-dropdown>
 
-  <button v-else type="button" class="sf-account" title="登录 B 站（仅扫码）" @click="showLogin = true">
+  <button v-else type="button" class="sf-account" :class="{ 'sf-account--compact': props.compact }" title="登录 B 站（仅扫码）" @click="showLogin = true">
     <CircleUserRound :size="16" />
-    <span>未登录 B 站</span>
+    <span class="sf-account-label">未登录 B 站</span>
   </button>
 
   <BiliLoginDialog v-model:open="showLogin" @logged-in="showLogin = false" />
@@ -72,6 +73,18 @@ async function logout() {
   transition:
     border-color var(--dur-1) var(--ease-out),
     background-color var(--dur-1) var(--ease-out);
+}
+
+.sf-account--compact {
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  text-align: center;
+}
+
+.sf-account--compact .sf-account-label {
+  display: none;
 }
 
 .sf-account:hover {
