@@ -215,12 +215,9 @@ async function run() {
 
     await evalJs("document.querySelector('.sf-palette-node-btn')?.click(); true");
     await waitFor("!!document.querySelector('.sf-palette-expanded .sf-palette-item')");
-    await evalJs("[...document.querySelectorAll('.sf-palette-expanded .sf-palette-item')].find((b) => (b.title || b.textContent).includes('B站链接'))?.click(); true");
-    await waitFor("!!document.querySelector('.vue-flow__node .sf-node-batch')");
-    check("批量选择按钮已启用", await evalJs("!document.querySelector('.vue-flow__node .sf-node-batch').disabled"));
-    await evalJs("document.querySelector('.vue-flow__node .sf-node-batch').click(); true");
+    await evalJs("[...document.querySelectorAll('.sf-palette-expanded .sf-palette-item')].find((b) => (b.title || b.textContent).includes('B站收藏'))?.click(); true");
     const loginHintShown = await waitFor("!!document.querySelector('.el-message') && document.querySelector('.el-message').textContent.includes('请先')", 4000);
-    check("未登录点击批量入口被拦截", loginHintShown);
+    check("未登录点击 B 站收藏被拦截", loginHintShown);
 
     await evalJs("document.querySelector('.sf-palette-node-btn')?.click(); true");
     await waitFor("!!document.querySelector('.sf-palette-expanded .sf-palette-item')");
