@@ -887,7 +887,7 @@ export class RunEngine {
           (node.type === "process.refine"
             ? "你是文字校对编辑。修正转写文稿中的错别字、重复与语气词，保持原意与信息完整，只输出校对后的文稿。"
             : "你是内容编辑。按用户要求整理文稿，只输出整理结果。");
-        const model = String(data.model ?? "").trim() || aiConfig.model;
+        const model = aiConfig.model;
         const parts: string[] = [];
         for (let i = 0; i < textItems.length; i += 1) {
           const item = textItems[i];
@@ -987,7 +987,7 @@ export class RunEngine {
         const maxChapters = Math.min(50, Math.max(1, Number(data.maxChapters ?? 20) || 20));
         const granularityLabel =
           granularity === "coarse" ? "粗粒度（章节数 ≤ 12）" : granularity === "fine" ? "细粒度（章节数 ≤ 30）" : "中粒度（章节数 ≤ 20）";
-        const model = String(data.model ?? "").trim() || aiConfig.model;
+        const model = aiConfig.model;
         const system = `你是内容编辑。把下面的文稿切分为章节。只输出 JSON，格式：{"chapters":[{"title":"章节标题","content":"本章内容"}]}。要求：章节数不超过 ${maxChapters}；粒度：${granularityLabel}；保持原文信息完整，不新增观点。`;
         await this.log(active, node.id, "ai-request", `${model}\n\n${system}`);
         const result = await chatCompletion({ ...aiConfig, model }, system, text, signal);
@@ -1017,7 +1017,7 @@ export class RunEngine {
         const titleHint = String(data.title ?? "").trim()
           ? `导图标题必须使用用户指定的“${String(data.title).trim()}”，不要另取标题。`
           : "为导图取一个不超过 20 字的中心主题标题。";
-        const model = String(data.model ?? "").trim() || aiConfig.model;
+        const model = aiConfig.model;
         const system = `你是思维导图结构化编辑。请把下面“校对后的原稿”整理成思维导图。
 要求：
 1. 只输出 JSON，不要输出解释或 Markdown 代码块。

@@ -67,8 +67,6 @@ const nodeDataByType = {
   ai: baseDataSchema.extend({
     promptBlockId: z.string().optional(),
     promptOverride: z.string().optional(),
-    model: z.string().optional(),
-    outputName: z.string().optional(),
   }),
   merge: baseDataSchema.extend({
     title: z.string().optional(),

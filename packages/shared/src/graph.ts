@@ -63,8 +63,6 @@ export interface AiNodeData {
   promptBlockId?: string;
   /** 节点级覆盖提示词（覆盖块内容）。 */
   promptOverride?: string;
-  model?: string;
-  outputName?: string;
 }
 
 export interface MergeData {

@@ -440,17 +440,7 @@ const themeOptions = [
           </template>
 
           <template v-else-if="nodeType === 'process.refine'">
-            <label class="sf-node-field">
-              <span class="sf-node-field-label">输出名称</span>
-              <el-input
-                class="sf-node-control"
-                size="small"
-                :model-value="data.outputName ?? ''"
-                placeholder="如：校对稿"
-                @update:model-value="(v: string | number) => patch({ outputName: String(v) })"
-                @blur="commit"
-              />
-            </label>
+            <!-- AI 校对使用默认模型与默认校对提示词，节点内无需额外表单。 -->
           </template>
 
           <template v-else-if="nodeType === 'process.prompt'">
@@ -466,28 +456,6 @@ const themeOptions = [
                 :prefix-icon="Sparkles"
               />
             </div>
-            <label class="sf-node-field">
-              <span class="sf-node-field-label">输出名称</span>
-              <el-input
-                class="sf-node-control"
-                size="small"
-                :model-value="data.outputName ?? ''"
-                placeholder="如：观点笔记"
-                @update:model-value="(v: string | number) => patch({ outputName: String(v) })"
-                @blur="commit"
-              />
-            </label>
-            <label class="sf-node-field">
-              <span class="sf-node-field-label">模型覆盖（可选）</span>
-              <el-input
-                class="sf-node-control"
-                size="small"
-                :model-value="data.model ?? ''"
-                placeholder="不填则跟随默认模型"
-                @update:model-value="(v: string | number) => patch({ model: String(v) })"
-                @blur="commit"
-              />
-            </label>
           </template>
 
           <template v-else-if="nodeType === 'flow.if'">

@@ -36,7 +36,7 @@ function videoBasicGraph(): WorkflowGraph {
       node("source.bili", "n_src", 0, 40, { label: "B站链接", url: "" }),
       node("process.transcribe", "n_asr", asrX, 40, { label: "转写" }),
       node("process.refine", "n_refine", refineX, 40, { label: "AI 校对" }),
-      node("process.prompt", "n_prompt", promptX, 40, { label: "AI 加工", outputName: "加工结果" }),
+      node("process.prompt", "n_prompt", promptX, 40, { label: "AI 加工" }),
       node("process.output", "n_out", outX, 40, { label: "输出", fileName: "笔记.md" }),
     ],
     edges: [
@@ -60,8 +60,8 @@ function videoBranchesGraph(): WorkflowGraph {
     nodes: [
       node("source.bili", "n_src", 0, 80, { label: "B站链接", url: "" }),
       node("process.transcribe", "n_asr", asrX, 80, { label: "转写" }),
-      node("process.prompt", "n_prompt_a", promptX, 0, { label: "AI 加工 A", outputName: "加工 A" }),
-      node("process.prompt", "n_prompt_b", promptX, 160, { label: "AI 加工 B", outputName: "加工 B" }),
+      node("process.prompt", "n_prompt_a", promptX, 0, { label: "AI 加工 A" }),
+      node("process.prompt", "n_prompt_b", promptX, 160, { label: "AI 加工 B" }),
       node("process.merge", "n_merge", mergeX, 80, { label: "合并", title: "合并笔记" }),
       node("process.output", "n_out", outX, 80, { label: "输出", fileName: "笔记.md" }),
     ],
@@ -86,9 +86,9 @@ function textCompareGraph(): WorkflowGraph {
     schemaVersion: 1,
     nodes: [
       node("source.text", "n_text", 0, 120, { label: "已有文稿", text: "" }),
-      node("process.prompt", "n_a", promptX, -40, { label: "AI 加工 A", outputName: "加工 A" }),
-      node("process.prompt", "n_b", promptX, 120, { label: "AI 加工 B", outputName: "加工 B" }),
-      node("process.prompt", "n_c", promptX, 280, { label: "AI 加工 C", outputName: "加工 C" }),
+      node("process.prompt", "n_a", promptX, -40, { label: "AI 加工 A" }),
+      node("process.prompt", "n_b", promptX, 120, { label: "AI 加工 B" }),
+      node("process.prompt", "n_c", promptX, 280, { label: "AI 加工 C" }),
       node("process.merge", "n_merge", mergeX, 120, { label: "合并", title: "多路对照" }),
       node("process.output", "n_out", outX, 120, { label: "输出", fileName: "对照笔记.md" }),
     ],
@@ -115,7 +115,7 @@ function textPolishGraph(): WorkflowGraph {
     nodes: [
       node("source.text", "n_text", 0, 40, { label: "已有文稿", text: "" }),
       node("process.refine", "n_refine", refineX, 40, { label: "AI 校对" }),
-      node("process.prompt", "n_prompt", promptX, 40, { label: "AI 加工", outputName: "加工结果" }),
+      node("process.prompt", "n_prompt", promptX, 40, { label: "AI 加工" }),
       node("process.output", "n_out", outX, 40, { label: "输出", fileName: "笔记.md" }),
     ],
     edges: [
@@ -169,7 +169,6 @@ function videoObsidianGraph(): WorkflowGraph {
       node("process.refine", "n_refine", refineX, 80, { label: "AI 校对" }),
       node("process.prompt", "n_prompt", promptX, 80, {
         label: "AI 加工",
-        outputName: "加工结果",
         retry: { maxRetries: 2, backoffMs: 3000 },
       }),
       node("process.obsidian", "n_obsidian", obsidianX, 80, {
@@ -200,7 +199,6 @@ function textObsidianGraph(): WorkflowGraph {
       node("process.refine", "n_refine", refineX, 80, { label: "AI 校对" }),
       node("process.prompt", "n_prompt", promptX, 80, {
         label: "AI 加工",
-        outputName: "加工结果",
         retry: { maxRetries: 2, backoffMs: 3000 },
       }),
       node("process.obsidian", "n_obsidian", obsidianX, 80, {

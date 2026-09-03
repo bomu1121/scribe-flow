@@ -44,8 +44,6 @@ export interface ScribeNodeData {
   asrEngine?: AsrEngine;
   promptBlockId?: string;
   promptOverride?: string;
-  model?: string;
-  outputName?: string;
   title?: string;
   tags?: string;
   source?: string;
@@ -166,7 +164,7 @@ export function emptyNodeData(type: NodeType): Record<string, unknown> {
     case "process.refine":
       return { label: "AI 校对", retry: { maxRetries: 2, backoffMs: 3000 } };
     case "process.prompt":
-      return { label: "AI 加工", promptBlockId: undefined, outputName: "", retry: { maxRetries: 2, backoffMs: 3000 } };
+      return { label: "AI 加工", promptBlockId: undefined, retry: { maxRetries: 2, backoffMs: 3000 } };
     case "process.merge":
       return { label: "合并", title: "" };
     case "process.output":
