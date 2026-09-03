@@ -13,8 +13,7 @@ import {
 import { Background } from "@vue-flow/background";
 import { Controls } from "@vue-flow/controls";
 import { MiniMap } from "@vue-flow/minimap";
-import { NODE_CARD_WIDTH, NODE_PORTS, NODE_TYPE_LABELS, canConnectSpecs, nextEdgeId, nextNodeId, type BiliSourceItem, type NodeType, type PortSpec, type ResultDelta, type RunNodeResult, type WorkflowGraph } from "@scribe-flow/shared";
-import { ElDialog, ElInput } from "element-plus";
+import { NODE_CARD_WIDTH, NODE_PORTS, canConnectSpecs, nextEdgeId, nextNodeId, type BiliSourceItem, type NodeType, type PortSpec, type ResultDelta, type RunNodeResult, type WorkflowGraph } from "@scribe-flow/shared";
 import ScribeNode from "./ScribeNode.vue";
 import FlowEdge from "./FlowEdge.vue";
 import {
@@ -54,8 +53,6 @@ const flowRef = ref<{
   setCenter: (x: number, y: number, options?: { zoom?: number; duration?: number }) => Promise<boolean>;
 } | null>(null);
 const containerRef = ref<HTMLDivElement | null>(null);
-const showNodeSearch = ref(false);
-const searchKeyword = ref("");
 
 const nodeTypes = { [SCRIBE_NODE_TYPE]: markRaw(ScribeNode) };
 const edgeTypes = { [SCRIBE_EDGE_TYPE]: markRaw(FlowEdge) };
@@ -475,30 +472,6 @@ function onDrop(event: DragEvent) {
   addNodeAt(type, position);
 }
 
-// ---------- 画布空白双击搜索 ----------
-
-const searchableTypes = Object.keys(NODE_TYPE_LABELS) as NodeType[];
-const filteredTypes = ref<NodeType[]>(searchableTypes);
-
-function onCanvasDoubleClick(event: MouseEvent) {
-  const target = event.target as HTMLElement;
-  if (target.closest(".vue-flow__node")) return;
-  searchKeyword.value = "";
-  filteredTypes.value = searchableTypes;
-  showNodeSearch.value = true;
-}
-
-function updateSearch(value: string | number) {
-  searchKeyword.value = String(value);
-  const q = String(value).trim().toLowerCase();
-  filteredTypes.value = q ? searchableTypes.filter((type) => NODE_TYPE_LABELS[type].toLowerCase().includes(q)) : searchableTypes;
-}
-
-function pickSearchType(type: NodeType) {
-  showNodeSearch.value = false;
-  addNodeAtCenter(type);
-}
-
 // ---------- 布局 ----------
 
 async function autoLayout() {
@@ -687,7 +660,7 @@ defineExpose({
 </script>
 
 <template>
-  <div ref="containerRef" class="sf-flow-canvas" @drop.prevent="onDrop" @dragover.prevent @dblclick="onCanvasDoubleClick">
+  <div ref="containerRef" class="sf-flow-canvas" @drop.prevent="onDrop" @dragover.prevent>
     <VueFlow
       ref="flowRef"
       :nodes="nodesRef"
@@ -716,22 +689,6 @@ defineExpose({
       <Controls position="bottom-left" />
       <MiniMap position="bottom-right" :pannable="true" :zoomable="true" />
     </VueFlow>
-
-    <el-dialog v-model="showNodeSearch" title="添加节点" width="440px">
-      <p class="sf-node-search-desc">输入节点名过滤，回车或点击添加。</p>
-      <el-input
-        :model-value="searchKeyword"
-        placeholder="搜索节点…"
-        autofocus
-        @update:model-value="updateSearch"
-      />
-      <div class="sf-node-search-list">
-        <button v-for="type in filteredTypes" :key="type" type="button" class="sf-node-search-item" @click="pickSearchType(type)">
-          {{ NODE_TYPE_LABELS[type] }}
-        </button>
-        <p v-if="filteredTypes.length === 0" class="sf-node-search-empty">没有匹配的节点类型</p>
-      </div>
-    </el-dialog>
   </div>
 </template>
 
@@ -742,44 +699,5 @@ defineExpose({
   min-width: 0;
   height: 100%;
   background: var(--color-canvas);
-}
-
-.sf-node-search-desc {
-  margin: 0 0 10px;
-  font-size: 12.5px;
-  color: var(--color-text-secondary);
-}
-
-.sf-node-search-list {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  margin-top: 10px;
-  max-height: 240px;
-  overflow-y: auto;
-}
-
-.sf-node-search-item {
-  padding: 8px 10px;
-  border: none;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--color-text);
-  font-family: inherit;
-  font-size: 13px;
-  text-align: left;
-  cursor: pointer;
-}
-
-.sf-node-search-item:hover {
-  background: var(--color-ink-soft);
-}
-
-.sf-node-search-empty {
-  margin: 0;
-  padding: 12px 0;
-  font-size: 12.5px;
-  color: var(--color-text-tertiary);
-  text-align: center;
 }
 </style>
