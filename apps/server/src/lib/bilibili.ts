@@ -175,9 +175,14 @@ export async function fetchFavFolders(cookie: string, mid: number): Promise<Sour
     count?: number;
     list?: { id: number; title: string; cover?: string; media_count?: number; attr?: number }[];
   }>(`https://api.bilibili.com/x/v3/fav/folder/created/list-all?up_mid=${mid}`, cookie);
-  return (data.list ?? [])
-    .filter((f) => (f.attr ?? 0) !== 1)
-    .map((f) => ({ id: String(f.id), title: f.title, cover: coverHttps(f.cover), count: Number(f.media_count ?? 0) }));
+  // 不过滤 attr：B 站的默认收藏夹可能以 attr=1（私密 + 默认）返回，直接过滤会把
+  // 最大的一个收藏夹从来源选择器里漏掉，导致“B 站收藏比实际少很多”。
+  return (data.list ?? []).map((f) => ({
+    id: String(f.id),
+    title: f.title,
+    cover: coverHttps(f.cover),
+    count: Number(f.media_count ?? 0),
+  }));
 }
 
 interface FavMediaItem {
