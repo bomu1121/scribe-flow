@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref } from "vue";
-import { BookOpen, FileOutput, FileText, FileUp, FolderHeart, GitBranch, GitMerge, Link2, ListTree, Mic, Network, PanelLeftClose, PanelLeftOpen, Replace, Settings, Sparkles, WandSparkles } from "lucide-vue-next";
+import { Blocks, BookOpen, FileOutput, FileText, FileUp, FolderHeart, GitBranch, GitMerge, Link2, ListTree, Mic, Network, Replace, Settings, Sparkles, WandSparkles } from "lucide-vue-next";
 import { NODE_TYPE_LABELS, type NodeType } from "@scribe-flow/shared";
 import { useUiStore } from "@/stores/ui";
 
@@ -88,33 +88,17 @@ function onDragStart(event: DragEvent, type: PaletteItemType) {
 
 <template>
   <aside class="sf-palette" :class="{ 'is-open': open }">
-    <button
-      type="button"
-      class="sf-palette-toggle"
-      :title="open ? '收起节点库' : '展开节点库'"
-      :aria-label="open ? '收起节点库' : '展开节点库'"
-      @click="toggle"
-    >
-      <component :is="open ? PanelLeftClose : PanelLeftOpen" :size="16" />
-    </button>
-
     <div class="sf-palette-rail">
-      <div v-for="group in groups" :key="group.key" class="sf-palette-rail-group">
-        <button
-          v-for="item in group.items"
-          :key="item.type"
-          type="button"
-          class="sf-palette-rail-item"
-          :draggable="!item.action"
-          :title="item.label ?? NODE_TYPE_LABELS[item.type as NodeType]"
-          @dragstart="onDragStart($event, item.type)"
-          @click="onAdd(item.type)"
-        >
-          <span class="sf-palette-icon">
-            <component :is="item.icon" :size="15" />
-          </span>
-        </button>
-      </div>
+      <button
+        type="button"
+        class="sf-palette-node-btn"
+        :class="{ active: open }"
+        :title="open ? '收起节点列表' : '节点'"
+        :aria-label="open ? '收起节点列表' : '节点'"
+        @click="toggle"
+      >
+        <Blocks :size="17" />
+      </button>
     </div>
 
     <div class="sf-palette-foot">
@@ -161,53 +145,23 @@ function onDragStart(event: DragEvent, type: PaletteItemType) {
   background: var(--color-surface);
 }
 
-.sf-palette-toggle {
-  display: grid;
-  place-items: center;
-  width: 36px;
-  height: 36px;
-  margin-bottom: 8px;
-  padding: 0;
-  border: none;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--color-text-secondary);
-  cursor: pointer;
-  transition:
-    background-color var(--dur-1) var(--ease-out),
-    color var(--dur-1) var(--ease-out);
-}
-
-.sf-palette-toggle:hover,
-.sf-palette.is-open .sf-palette-toggle {
-  background: var(--color-ink-soft);
-  color: var(--color-text);
-}
-
 .sf-palette-rail {
   flex: 1;
   min-height: 0;
   width: 100%;
-  overflow-y: auto;
   display: flex;
   flex-direction: column;
   align-items: center;
+  padding-top: 2px;
+  gap: 4px;
 }
 
-.sf-palette-rail-group {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  margin-bottom: 4px;
-}
-
-.sf-palette-rail-item,
+.sf-palette-node-btn,
 .sf-palette-settings {
   display: grid;
   place-items: center;
   width: 36px;
   height: 36px;
-  margin: 2px 0;
   padding: 0;
   border: none;
   border-radius: var(--radius-sm);
@@ -219,10 +173,16 @@ function onDragStart(event: DragEvent, type: PaletteItemType) {
     color var(--dur-1) var(--ease-out);
 }
 
-.sf-palette-rail-item:hover,
+.sf-palette-node-btn:hover,
+.sf-palette-node-btn.active,
 .sf-palette-settings:hover {
   background: var(--color-ink-soft);
   color: var(--color-text);
+}
+
+.sf-palette.is-open .sf-palette-node-btn {
+  background: var(--color-brand-soft);
+  color: var(--color-brand);
 }
 
 .sf-palette-icon {

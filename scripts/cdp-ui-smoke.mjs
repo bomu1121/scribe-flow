@@ -213,18 +213,24 @@ async function run() {
     await navigate(`${APP_URL}project/${tempId}`);
     await waitFor("!!document.querySelector('.sf-palette')");
 
-    await evalJs("[...document.querySelectorAll('.sf-palette-rail-item')].find((b) => (b.title || b.textContent).includes('B站链接'))?.click(); true");
+    await evalJs("document.querySelector('.sf-palette-node-btn')?.click(); true");
+    await waitFor("!!document.querySelector('.sf-palette-expanded .sf-palette-item')");
+    await evalJs("[...document.querySelectorAll('.sf-palette-expanded .sf-palette-item')].find((b) => (b.title || b.textContent).includes('B站链接'))?.click(); true");
     await waitFor("!!document.querySelector('.vue-flow__node .sf-node-batch')");
     check("批量选择按钮已启用", await evalJs("!document.querySelector('.vue-flow__node .sf-node-batch').disabled"));
     await evalJs("document.querySelector('.vue-flow__node .sf-node-batch').click(); true");
     const loginHintShown = await waitFor("!!document.querySelector('.el-message') && document.querySelector('.el-message').textContent.includes('请先')", 4000);
     check("未登录点击批量入口被拦截", loginHintShown);
 
-    await evalJs("[...document.querySelectorAll('.sf-palette-rail-item')].find((b) => (b.title || b.textContent).includes('本地文件'))?.click(); true");
+    await evalJs("document.querySelector('.sf-palette-node-btn')?.click(); true");
+    await waitFor("!!document.querySelector('.sf-palette-expanded .sf-palette-item')");
+    await evalJs("[...document.querySelectorAll('.sf-palette-expanded .sf-palette-item')].find((b) => (b.title || b.textContent).includes('本地文件'))?.click(); true");
     await waitFor("!!document.querySelector('.vue-flow__node .sf-node-upload')");
     check("本地文件节点渲染 el-upload 拖拽区", true);
 
-    await evalJs("[...document.querySelectorAll('.sf-palette-rail-item')].find((b) => (b.title || b.textContent).includes('文本'))?.click(); true");
+    await evalJs("document.querySelector('.sf-palette-node-btn')?.click(); true");
+    await waitFor("!!document.querySelector('.sf-palette-expanded .sf-palette-item')");
+    await evalJs("[...document.querySelectorAll('.sf-palette-expanded .sf-palette-item')].find((b) => (b.title || b.textContent).includes('文本'))?.click(); true");
     await waitFor("!!document.querySelector('.sf-node-text-error')");
     check("空文稿显示校验错误", await evalJs("document.querySelector('.sf-node-text-error').textContent.includes('不能为空')"));
     await evalJs("(() => { const ta = document.querySelector('.vue-flow__node .el-textarea__inner'); ta.value = '你好'; ta.dispatchEvent(new Event('input', { bubbles: true })); return true; })()");
