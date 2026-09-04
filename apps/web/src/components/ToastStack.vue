@@ -129,7 +129,6 @@ function titleFor(type: ToastType, title?: string) {
   place-items: center;
   width: 20px;
   height: 20px;
-  margin-top: 2px;
   border-radius: 50%;
   color: var(--color-on-error);
   flex-shrink: 0;
@@ -167,7 +166,6 @@ function titleFor(type: ToastType, title?: string) {
   gap: 12px;
   min-width: 0;
   flex: 1;
-  padding-top: 2px;
 }
 
 .sf-toast-title {
