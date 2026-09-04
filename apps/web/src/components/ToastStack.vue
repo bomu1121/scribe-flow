@@ -129,6 +129,7 @@ function titleFor(type: ToastType, title?: string) {
   place-items: center;
   width: 20px;
   height: 20px;
+  margin-top: 2px;
   border-radius: 50%;
   color: var(--color-on-error);
   flex-shrink: 0;
