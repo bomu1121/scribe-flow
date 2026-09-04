@@ -674,8 +674,6 @@ defineExpose({
       :max-zoom="4"
       :delete-key-code="null"
       :zoom-on-double-click="false"
-      :snap-to-grid="true"
-      :snap-grid="[8, 8]"
       multi-selection-key-code="Shift"
       :is-valid-connection="validateConnection"
       :fit-view-on-init="true"
