@@ -121,6 +121,8 @@
 | ComfyUI | 节点图运行语义清晰：按依赖执行、节点级状态、队列与重跑 | 暗色霓虹、线缆视觉 |
 | [Obsidian Canvas](https://obsidian.md) / [Scrintal](https://www.scrintal.com) / Milanote | 卡片画布克制感：卡片轻、连线细 | 手动摆放为主，缺少“运行/产物”概念 |
 
+**UI/交互主力参考（2026-09 用户确认）**：**n8n、Langflow、ComfyUI** 三家的 UI 与交互最贴合本项目审美，定为后续视觉/交互设计的主参照系，里程碑验收以此三家为准。其中 ComfyUI 只借鉴其**交互行为**（节点图操作、节点状态、结果预览、运行语义），**不采用暗色霓虹视觉**——浅色纸灰方向（见 §3.5）不变。官方站点：[n8n](https://n8n.io) · [docs.n8n.io](https://docs.n8n.io) · [GitHub](https://github.com/n8n-io/n8n)；[Langflow](https://www.langflow.org) · [docs.langflow.org](https://docs.langflow.org) · [GitHub](https://github.com/langflow-ai/langflow)；[ComfyUI](https://www.comfy.org) · [docs.comfy.org（中文）](https://docs.comfy.org/zh/index.html) · [GitHub](https://github.com/comfyanonymous/ComfyUI)。
+
 **共性规律**：
 - 主流是**左=节点库，中=画布**（n8n/ComfyUI 另有右检查器，本项目按用户偏好改为节点卡片内操作，换取更大画布）。
 - 运行状态必须**就地可视化**：节点徽章/边框/输出缩略，不藏在全局抽屉里。
@@ -132,11 +134,11 @@
 
 | 项目 | Stars | 许可证 | 画布技术 | 对 ScribeFlow 的用途 |
 |---|---|---|---|---|
-| **n8n** | ~202k | Sustainable Use License（fair-code，源码可见、不可照抄商用） | **Vue Flow**（见 [PR #22399 Update vue-flow packages](https://github.com/n8n-io/n8n/pull/22399)） | **交互规范母本**：节点创建、连线校验、运行态、输出查看等逐项复刻其“行为” |
-| **Langflow** | ~154k | MIT | @xyflow/react（React Flow） | LLM 流节点组织与结果面板的**交互参考**；MIT 可读源码 |
+| **n8n** | ~202k | Sustainable Use License（fair-code，源码可见、不可照抄商用） | **Vue Flow**（见 [PR #22399 Update vue-flow packages](https://github.com/n8n-io/n8n/pull/22399)） | **交互规范母本**（UI/交互主力参考之一）：节点创建、连线校验、运行态、输出查看等逐项复刻其“行为” |
+| **Langflow** | ~154k | MIT | @xyflow/react（React Flow） | LLM 流节点组织与结果面板的**交互参考**（UI/交互主力参考之一）；MIT 可读源码 |
 | **Dify** | ~154k | 修改版 Apache-2.0（附加条件） | reactflow | 工作流产品形态参考；**代码谨慎使用** |
 | **Flowise** | ~55k | Apache-2.0（enterprise 目录除外） | reactflow | LLM 节点分类/配置面板参考 |
-| **ComfyUI** | ~130k | GPL-3.0 | litegraph.js | 运行队列/节点级重跑语义参考；**代码不可用** |
+| **ComfyUI** | ~130k | GPL-3.0 | litegraph.js | 运行队列/节点级重跑语义参考 + 节点图交互/预览参考（UI/交互主力参考之一，**仅取交互行为，不取暗色霓虹视觉**）；**代码不可用** |
 | **Node-RED** | ~24k | Apache-2.0 | 自研旧式画布 | 交互稳但年代旧；仅作兜底参考 |
 | **Excalidraw** | ~131k | MIT | 自研自由画板 | 偏手绘白板，不适合节点图；不采用 |
 | **tldraw** | ~50k | 自定 License（非 OSI） | 自研画布 SDK | 不适合节点图，许可证受限；不采用 |
@@ -145,7 +147,7 @@
 
 **结论：直接套用的组合拳**
 1. **引擎层直接依赖** `@vue-flow/core` + `@vue-flow/background` + `@vue-flow/controls` + `@vue-flow/minimap`（MIT），不自己实现画布几何、命中测试、连线、缩放这些最容易出 bug 且最难修的部分。
-2. **交互层照搬 n8n 编辑器**（n8n 就是 Vue Flow 的最大规模生产案例）：逐条复刻交互清单，见 3.3。
+2. **交互层照搬 n8n 编辑器**（n8n 就是 Vue Flow 的最大规模生产案例）：逐条复刻交互清单，见 3.3；**Langflow / ComfyUI 与 n8n 并列为本项目 UI/交互主力参考**——观感与交互细节统一以这三家为准（ComfyUI 仅取交互，不取其暗色视觉）。
 3. **业务形态参考 Langflow / Flowise**（MIT/Apache，可读源码）：LLM 节点的分类、参数面板、结果查看方式。
 4. **许可证红线**：n8n、Dify、tldraw、ComfyUI 均不可直接抄代码；可复刻“交互行为”。实际可复用的代码只来自 MIT/Apache-2.0 项目（Vue Flow、Langflow、Flowise 非 enterprise 部分、Node-RED）。
 

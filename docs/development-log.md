@@ -122,6 +122,7 @@ scribe-flow/
 8. 输入框/下拉聚焦态最终规范：**无 ring、无 outline，仅 1px 品牌蓝边框，颜色过渡包含 border-color**；节点选中只 1px 边框 + 中性阴影，无背景色。
 9. 通用 UI 路线反转（2026-08-28）：自设定样式连续不达标，调研确认 n8n 等同类产品采用 Element Plus；废弃 shadcn-vue 复制件，通用控件全部改用 Element Plus，设计令牌通过 `--el-*` 变量桥接；遮罩加深至 0.55、控件描边用强档令牌、节点阴影分级。
 10. 「订阅合集」口径（2026-08-28）：B 站「订阅/收藏别人的合集」无稳定公开接口；经用户确认改为「我的合集」，走官方 `x/polymer/web-space/seasons_series_list` 稳定接口。
+11. UI/交互主力参考（2026-09 用户确认）：**n8n、Langflow、ComfyUI** 为后续视觉/交互设计主参照系与验收基准；ComfyUI 仅借鉴交互行为（节点操作/状态/预览/运行语义），不采用暗色霓虹视觉，浅色纸灰方向不变。详见 [scribe-flow-proposal.md](./scribe-flow-proposal.md) §3.1/§3.2。
 
 ## 6. 验证方式与结果
 
