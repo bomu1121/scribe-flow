@@ -953,8 +953,7 @@ function downloadNodeOutput() {
 .sf-editor-float-actions {
   position: absolute;
   top: 10px;
-  left: 50%;
-  transform: translateX(-50%);
+  right: 12px;
   z-index: var(--z-dropdown);
   display: flex;
   align-items: center;
