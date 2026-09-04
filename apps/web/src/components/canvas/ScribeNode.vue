@@ -1,11 +1,12 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from "vue";
+import { computed, onBeforeUnmount, onMounted, provide, ref, watch } from "vue";
 import { ElInput, ElMessage, ElMessageBox, ElUpload, type UploadRequestOptions } from "element-plus";
-import { BookOpen, Cloud, Eye, FileOutput, FileText, FileUp, GitBranch, GitMerge, Link2, ListTree, Mic, Network, Replace, Sparkles, WandSparkles } from "lucide-vue-next";
-import { Handle, Position, type NodeProps } from "@vue-flow/core";
-import { ContextMenuContent, ContextMenuItem, ContextMenuPortal, ContextMenuRoot, ContextMenuSeparator, ContextMenuTrigger } from "reka-ui";
+import { PhBookOpenText, PhCloud, PhDotsThreeVertical, PhFileArrowDown, PhFileText, PhGitBranch, PhGitMerge, PhMagicWand, PhMicrophone, PhPlay, PhShareNetwork, PhSlidersHorizontal, PhSparkle, PhSwap, PhTreeStructure, PhUploadSimple, PhVideo } from "@phosphor-icons/vue";
+import { Handle, Position, useVueFlow, type NodeProps } from "@vue-flow/core";
+import { ContextMenuContent, ContextMenuItem, ContextMenuPortal, ContextMenuRoot, ContextMenuSeparator, ContextMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuPortal, DropdownMenuRoot, DropdownMenuSeparator, DropdownMenuTrigger } from "reka-ui";
 import { NODE_PORTS, NODE_TYPE_LABELS, type NodeType, type UploadedFile, type VideoPreview } from "@scribe-flow/shared";
 import ModelSelect from "../ModelSelect.vue";
+import NodeFieldLabel from "./NodeFieldLabel.vue";
 import IfCard from "./node-cards/IfCard.vue";
 import TextToolCard from "./node-cards/TextToolCard.vue";
 import ChapterCard from "./node-cards/ChapterCard.vue";
@@ -17,6 +18,11 @@ import { api } from "@/lib/api";
 import type { ScribeNodeData } from "@/utils/flow";
 
 const props = defineProps<NodeProps<ScribeNodeData>>();
+
+const { viewport } = useVueFlow();
+const flowZoom = computed(() => viewport.value.zoom);
+const flowMenuStyle = computed(() => ({ zoom: String(flowZoom.value) }));
+provide("sf-flow-zoom", flowZoom);
 
 const promptsStore = usePromptsStore();
 const data = computed(() => props.data);
@@ -157,34 +163,67 @@ const ports = computed(() => NODE_PORTS[nodeType.value]);
 const defaultLabel = computed(() => NODE_TYPE_LABELS[nodeType.value]);
 const label = computed(() => props.data.label || defaultLabel.value);
 
+const nodeDescriptions: Record<NodeType, string> = {
+  "source.bili": "粘贴 B 站视频或合集链接",
+  "source.file": "上传或拖入本地音视频文件",
+  "source.text": "粘贴已有文稿作为处理起点",
+  "process.transcribe": "将音频/视频转写为文稿",
+  "process.refine": "对文稿进行 AI 校对与修正",
+  "process.prompt": "使用提示词块对文稿做 AI 加工",
+  "process.merge": "将多个笔记块合并为一份文档",
+  "process.output": "将结果保存为 Markdown 文件",
+  "flow.if": "根据条件决定下游执行分支",
+  "process.text": "查找替换、正则或模板等文本处理",
+  "process.chapter": "将长文稿切分为章节笔记",
+  "process.mindmap": "将文稿整理为思维导图 Markdown",
+  "process.obsidian": "将结果写入 Obsidian 笔记库",
+};
+
+const nodeDescription = computed(() => nodeDescriptions[nodeType.value] ?? "");
+
+const hasAdvanced = computed(() => ["process.transcribe", "process.refine", "process.prompt", "process.chapter", "process.mindmap"].includes(nodeType.value));
+const advancedOpen = ref(false);
+
+watch(
+  () => props.selected,
+  (selected) => {
+    if (!selected) advancedOpen.value = false;
+  },
+);
+
+function toggleAdvanced() {
+  if (!hasAdvanced.value) return;
+  advancedOpen.value = !advancedOpen.value;
+}
+
 const typeIcon = computed(() => {
   switch (nodeType.value) {
     case "source.bili":
-      return Link2;
+      return PhVideo;
     case "source.file":
-      return FileUp;
+      return PhUploadSimple;
     case "source.text":
-      return FileText;
+      return PhFileText;
     case "process.transcribe":
-      return Mic;
+      return PhMicrophone;
     case "process.refine":
-      return WandSparkles;
+      return PhMagicWand;
     case "process.prompt":
-      return Sparkles;
+      return PhSparkle;
     case "process.merge":
-      return GitMerge;
+      return PhGitMerge;
     case "process.output":
-      return FileOutput;
+      return PhFileArrowDown;
     case "flow.if":
-      return GitBranch;
+      return PhGitBranch;
     case "process.text":
-      return Replace;
+      return PhSwap;
     case "process.chapter":
-      return ListTree;
+      return PhTreeStructure;
     case "process.mindmap":
-      return Network;
+      return PhShareNetwork;
     case "process.obsidian":
-      return BookOpen;
+      return PhBookOpenText;
   }
 });
 
@@ -202,9 +241,16 @@ const hasResult = computed(() => Boolean(data.value.summary));
 const canShowResultDetail = computed(() => props.selected && data.value.status === "done" && Boolean(data.value.preview) && canViewOutput.value);
 const renderedResultDetail = computed(() => (data.value.preview ? renderMarkdown(data.value.preview) : ""));
 
+function onNodeDoubleClick(event: MouseEvent) {
+  if (!canViewOutput.value) return;
+  const target = event.target as HTMLElement | null;
+  if (target?.closest("input, textarea, button, select, [contenteditable], .el-upload, .el-select, .sf-model-select, .sf-node-run-btn")) return;
+  props.data.ctx?.viewOutput();
+}
+
 const asrOptions = [
-  { label: "MiMo-V2.5", value: "mimo", icon: Mic },
-  { label: "OpenAI 兼容", value: "openai-compatible", icon: Cloud },
+  { label: "MiMo-V2.5", value: "mimo", icon: PhMicrophone },
+  { label: "OpenAI 兼容", value: "openai-compatible", icon: PhCloud },
 ];
 
 const promptOptions = computed(() =>
@@ -310,7 +356,7 @@ const themeOptions = [
 <template>
   <ContextMenuRoot>
     <ContextMenuTrigger as-child>
-      <div class="sf-node" :class="[statusClass, sizeClass, { 'is-selected': props.selected }]">
+      <div class="sf-node" :class="[statusClass, sizeClass, { 'is-selected': props.selected }]" @dblclick="onNodeDoubleClick">
         <Handle
           v-for="port in ports.inputs"
           :key="port.id"
@@ -320,22 +366,69 @@ const themeOptions = [
           class="sf-handle sf-handle--target"
         />
 
+        <div v-if="props.selected" class="sf-node-selection-bar">
+          <div class="sf-node-selection-bar-left">
+            <button
+              type="button"
+              class="sf-node-bar-btn"
+              :class="{ active: advancedOpen }"
+              :disabled="!hasAdvanced"
+              :title="hasAdvanced ? (advancedOpen ? '收起高级设置' : '展开高级设置') : '该节点暂无高级设置'"
+              @click.stop="toggleAdvanced"
+              @dblclick.stop
+            >
+              <PhSlidersHorizontal :size="13" />
+              <span>高级设置</span>
+            </button>
+          </div>
+          <DropdownMenuRoot>
+            <DropdownMenuTrigger as-child>
+              <button
+                type="button"
+                class="sf-node-bar-more"
+                title="更多操作"
+                aria-label="更多操作"
+                @click.stop
+                @dblclick.stop
+              >
+                <PhDotsThreeVertical :size="15" />
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuPortal>
+              <DropdownMenuContent class="sf-node-menu" side="bottom" align="start" :side-offset="6" :collision-padding="8" :style="flowMenuStyle">
+                <DropdownMenuItem class="sf-node-menu-item" :disabled="props.data.ctx?.running" title="运行中不可启动新运行" @select="props.data.ctx?.runNode()">运行此节点</DropdownMenuItem>
+                <DropdownMenuItem class="sf-node-menu-item" :disabled="props.data.ctx?.running" title="运行中不可启动新运行" @select="props.data.ctx?.runFromNode()">从此节点运行</DropdownMenuItem>
+                <DropdownMenuSeparator class="sf-node-menu-sep" />
+                <DropdownMenuItem class="sf-node-menu-item" @select="renameNode">重命名</DropdownMenuItem>
+                <DropdownMenuItem class="sf-node-menu-item" @select="props.data.ctx?.duplicate()">复制</DropdownMenuItem>
+                <DropdownMenuItem class="sf-node-menu-item" :disabled="true" title="M4 接入">复制输出</DropdownMenuItem>
+                <DropdownMenuSeparator class="sf-node-menu-sep" />
+                <DropdownMenuItem class="sf-node-menu-item sf-node-menu-item--danger" @select="props.data.ctx?.remove()">删除</DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenuPortal>
+          </DropdownMenuRoot>
+        </div>
+
         <div class="sf-node-head">
-          <span class="sf-node-icon">
-            <component :is="typeIcon" :size="13" />
-          </span>
-          <span class="sf-node-title" :title="label" :aria-label="`节点名称：${label}`">{{ label }}</span>
-          <button
-            v-if="canViewOutput"
-            type="button"
-            class="sf-node-output-btn"
-            :title="`查看 ${label} 的输出`"
-            :aria-label="`查看 ${label} 的输出`"
-            @click.stop="props.data.ctx?.viewOutput()"
-          >
-            <Eye :size="13" />
-          </button>
-          <span class="sf-node-status" />
+          <div class="sf-node-head-top">
+            <span class="sf-node-icon">
+              <component :is="typeIcon" :size="17" />
+            </span>
+            <span class="sf-node-title" :title="label" :aria-label="`节点名称：${label}`">{{ label }}</span>
+            <span class="sf-node-status" />
+            <button
+              type="button"
+              class="sf-node-run-btn"
+              :disabled="props.data.ctx?.running"
+              :title="props.data.ctx?.running ? '运行中不可启动新运行' : '从此节点运行'"
+              :aria-label="`从此节点运行 ${label}`"
+              @click.stop="props.data.ctx?.runFromNode()"
+              @dblclick.stop
+            >
+              <PhPlay :size="13" />
+            </button>
+          </div>
+          <p class="sf-node-desc">{{ nodeDescription }}</p>
         </div>
 
         <div class="sf-node-body">
@@ -363,14 +456,17 @@ const themeOptions = [
               </div>
             </template>
             <template v-else>
-              <el-input
-                class="sf-node-control"
-                size="small"
-                :model-value="data.url"
-                placeholder="粘贴 B 站视频链接（支持分 P）"
-                @update:model-value="(v: string | number) => { const value = String(v); patch({ url: value }); schedulePreview(value); }"
-                @blur="commit"
-              />
+              <div class="sf-node-field">
+                <NodeFieldLabel label="链接" hint="粘贴 B 站视频链接（支持分 P）；输入后自动解析封面、UP 主与分 P 信息" />
+                <el-input
+                  class="sf-node-control"
+                  size="small"
+                  :model-value="data.url"
+                  placeholder="输入内容…"
+                  @update:model-value="(v: string | number) => { const value = String(v); patch({ url: value }); schedulePreview(value); }"
+                  @blur="commit"
+                />
+              </div>
               <div v-if="previewLoading" class="sf-node-preview sf-node-preview--loading tnum">正在解析视频信息…</div>
               <div v-else-if="preview" class="sf-node-preview">
                 <img :src="preview.cover" class="sf-node-cover" alt="视频封面" referrerpolicy="no-referrer" loading="lazy" />
@@ -385,7 +481,6 @@ const themeOptions = [
                 </div>
               </div>
               <div v-else-if="previewError" class="sf-node-preview sf-node-preview--error">{{ previewError }}</div>
-              <div v-else class="sf-node-hint tnum">输入链接后自动解析封面、UP 主与分 P 信息</div>
               <div v-if="preview && preview.pages.length > 1" class="sf-node-pages">
                 <div class="sf-node-pages-head">
                   <span class="sf-node-pages-title">选择分P（可多选）</span>
@@ -403,31 +498,37 @@ const themeOptions = [
           </template>
 
           <template v-else-if="nodeType === 'source.file'">
-            <el-upload
-              class="sf-node-upload"
-              drag
-              :show-file-list="false"
-              :http-request="uploadFile"
-              accept=".mp4,.m4a,.mkv,.flv,.mov,.wav,.mp3,.aac,.webm,.m4v,audio/*,video/*"
-            >
-              <div class="sf-node-drop" :class="{ 'has-file': Boolean(data.fileName) }">
-                <FileUp :size="18" />
-                <span v-if="data.fileName" class="sf-node-file-name">{{ data.fileName }}</span>
-                <span v-else>点击或拖入本地音视频</span>
-              </div>
-            </el-upload>
+            <div class="sf-node-field">
+              <span class="sf-node-field-label">本地音视频</span>
+              <el-upload
+                class="sf-node-upload"
+                drag
+                :show-file-list="false"
+                :http-request="uploadFile"
+                accept=".mp4,.m4a,.mkv,.flv,.mov,.wav,.mp3,.aac,.webm,.m4v,audio/*,video/*"
+              >
+                <div class="sf-node-drop" :class="{ 'has-file': Boolean(data.fileName) }">
+                  <PhUploadSimple :size="18" />
+                  <span v-if="data.fileName" class="sf-node-file-name">{{ data.fileName }}</span>
+                  <span v-else>点击或拖入本地音视频</span>
+                </div>
+              </el-upload>
+            </div>
           </template>
 
           <template v-else-if="nodeType === 'source.text'">
-            <el-input
-              class="sf-node-textarea"
-              type="textarea"
-              :rows="6"
-              :model-value="data.text"
-              placeholder="粘贴已有文稿…"
-              @update:model-value="(v: string | number) => patch({ text: String(v) })"
-              @blur="commit"
-            />
+            <div class="sf-node-field">
+              <NodeFieldLabel label="已有文稿" hint="粘贴已有文稿，作为工作流的处理起点" />
+              <el-input
+                class="sf-node-textarea"
+                type="textarea"
+                :rows="6"
+                :model-value="data.text"
+                placeholder="输入内容…"
+                @update:model-value="(v: string | number) => patch({ text: String(v) })"
+                @blur="commit"
+              />
+            </div>
             <span v-if="textError" class="sf-node-text-error">{{ textError }}</span>
             <span v-else class="sf-node-text-count tnum">{{ String(data.text ?? '').length }} / 50000</span>
           </template>
@@ -435,7 +536,7 @@ const themeOptions = [
           <template v-else-if="nodeType === 'process.transcribe'">
             <div class="sf-node-field">
               <span class="sf-node-field-label">ASR 引擎</span>
-              <ModelSelect v-model="asrEngine" :options="asrOptions" size="small" placeholder="选择 ASR 引擎" :prefix-icon="Mic" />
+              <ModelSelect v-model="asrEngine" :options="asrOptions" size="small" placeholder="选择 ASR 引擎" :prefix-icon="PhMicrophone" />
             </div>
           </template>
 
@@ -453,7 +554,7 @@ const themeOptions = [
                 clearable
                 filterable
                 placeholder="选择提示词块"
-                :prefix-icon="Sparkles"
+                :prefix-icon="PhSparkle"
               />
             </div>
           </template>
@@ -480,12 +581,12 @@ const themeOptions = [
 
           <template v-else-if="nodeType === 'process.mindmap'">
             <label class="sf-node-field">
-              <span class="sf-node-field-label">导图标题（可选）</span>
+              <NodeFieldLabel label="导图标题（可选）" hint="留空时由 AI 自动提炼标题" />
               <el-input
                 class="sf-node-control"
                 size="small"
                 :model-value="data.title ?? ''"
-                placeholder="留空由 AI 提炼"
+                placeholder="输入内容…"
                 @update:model-value="(v: string | number) => patch({ title: String(v) })"
                 @blur="commit"
               />
@@ -525,12 +626,12 @@ const themeOptions = [
 
           <template v-else-if="nodeType === 'process.merge'">
             <label class="sf-node-field">
-              <span class="sf-node-field-label">合并标题</span>
+              <NodeFieldLabel label="合并标题" hint="合并后文档的标题" />
               <el-input
                 class="sf-node-control"
                 size="small"
                 :model-value="data.title ?? ''"
-                placeholder="合并文档标题"
+                placeholder="输入内容…"
                 @update:model-value="(v: string | number) => patch({ title: String(v) })"
                 @blur="commit"
               />
@@ -539,35 +640,32 @@ const themeOptions = [
 
           <template v-else-if="nodeType === 'process.output'">
             <label class="sf-node-field">
-              <span class="sf-node-field-label">输出文件名</span>
+              <NodeFieldLabel label="输出文件名" hint="例如：笔记.md" />
               <el-input
                 class="sf-node-control"
                 size="small"
                 :model-value="data.fileName ?? ''"
-                placeholder="笔记.md"
+                placeholder="输入内容…"
                 @update:model-value="(v: string | number) => patch({ fileName: String(v) })"
                 @blur="commit"
               />
             </label>
           </template>
 
-          <details
-            v-if="['process.transcribe', 'process.refine', 'process.prompt', 'process.chapter', 'process.mindmap'].includes(nodeType)"
-            class="sf-node-advanced"
-          >
-            <summary class="sf-node-advanced-summary">高级（失败重试）</summary>
+          <div v-if="hasAdvanced && advancedOpen" class="sf-node-advanced">
+            <div class="sf-node-advanced-title">高级（失败重试）</div>
             <RetryFields :retry="data.retry" @update="patchRetry" />
-          </details>
+          </div>
         </div>
 
+        <div v-if="canShowResultDetail" class="sf-node-result-detail">
+          <div class="sf-node-result-detail-text markdown-body" v-html="renderedResultDetail" />
+          <button type="button" class="sf-node-result-detail-open" @click.stop="props.data.ctx?.viewOutput()">查看完整输出</button>
+        </div>
         <div v-if="hasResult" class="sf-node-result" :class="data.status ? `is-${data.status}` : ''">
           <span v-if="data.status" class="sf-node-result-status" />
           <span class="sf-node-result-meta tnum">{{ data.summary }}</span>
           <span v-if="data.delta" class="sf-node-result-delta tnum" :class="`is-${data.delta.tone}`">{{ data.delta.label }}</span>
-        </div>
-        <div v-if="canShowResultDetail" class="sf-node-result-detail">
-          <div class="sf-node-result-detail-text markdown-body" v-html="renderedResultDetail" />
-          <button type="button" class="sf-node-result-detail-open" @click.stop="props.data.ctx?.viewOutput()">查看完整输出</button>
         </div>
 
         <Handle
@@ -581,7 +679,7 @@ const themeOptions = [
       </div>
     </ContextMenuTrigger>
     <ContextMenuPortal>
-      <ContextMenuContent class="sf-node-menu" align="start">
+      <ContextMenuContent class="sf-node-menu" align="start" :side-offset="4" :collision-padding="8" :style="flowMenuStyle">
         <ContextMenuItem class="sf-node-menu-item" :disabled="props.data.ctx?.running" title="运行中不可启动新运行" @select="props.data.ctx?.runNode()">运行此节点</ContextMenuItem>
         <ContextMenuItem class="sf-node-menu-item" :disabled="props.data.ctx?.running" title="运行中不可启动新运行" @select="props.data.ctx?.runFromNode()">从此节点运行</ContextMenuItem>
         <ContextMenuSeparator class="sf-node-menu-sep" />
@@ -600,14 +698,18 @@ const themeOptions = [
   position: relative;
   width: 224px;
   padding: 10px 12px 12px;
-  border: 1px solid var(--node-border);
+  border: 1.5px solid var(--node-border);
   border-radius: var(--node-radius);
   background: var(--color-surface);
-  box-shadow: var(--shadow-card);
+  box-shadow: none;
   transition:
     border-color var(--dur-2) var(--ease-out),
     box-shadow var(--dur-2) var(--ease-out),
     background-color var(--dur-2) var(--ease-out);
+}
+
+.sf-node:hover {
+  box-shadow: var(--shadow-card);
 }
 
 /* 卡片按内容自适应：入口要大，方便批量选视频 */
@@ -643,8 +745,7 @@ const themeOptions = [
 }
 
 .sf-node.is-selected {
-  border-color: var(--node-selected-border);
-  box-shadow: var(--shadow-overlay);
+  border-color: var(--control-border-focus);
 }
 
 .sf-node.is-running {
@@ -677,36 +778,130 @@ const themeOptions = [
   background: var(--color-text-tertiary);
 }
 
+.sf-node-selection-bar {
+  position: absolute;
+  top: -40px;
+  left: -1.5px;
+  right: -1.5px;
+  z-index: var(--z-dropdown);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  height: 32px;
+  padding: 0 6px 0 10px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-md);
+}
+
+.sf-node-selection-bar-left {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+}
+
+.sf-node-bar-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 24px;
+  padding: 0 8px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text-secondary);
+  font-family: inherit;
+  font-size: 11.5px;
+  font-weight: 500;
+  cursor: pointer;
+  transition:
+    background-color var(--dur-1) var(--ease-out),
+    color var(--dur-1) var(--ease-out);
+}
+
+.sf-node-bar-btn:hover:not(:disabled),
+.sf-node-bar-btn.active {
+  background: var(--color-ink-soft);
+  color: var(--color-text);
+}
+
+.sf-node-bar-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.sf-node-bar-more {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text-tertiary);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition:
+    background-color var(--dur-1) var(--ease-out),
+    color var(--dur-1) var(--ease-out);
+}
+
+.sf-node-bar-more:hover {
+  background: var(--color-ink-soft);
+  color: var(--color-text);
+}
+
 .sf-node-head {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: -10px -12px 8px;
+  padding: 8px 12px 10px;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.sf-node-head-top {
   display: flex;
   align-items: center;
   gap: 7px;
-  margin-bottom: 8px;
+  min-width: 0;
 }
 
 .sf-node-icon {
-  display: grid;
-  place-items: center;
-  width: 22px;
-  height: 22px;
-  border-radius: var(--radius-sm);
-  background: var(--color-ink-soft);
-  color: var(--color-text-secondary);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--color-text);
   flex-shrink: 0;
 }
 
 .sf-node-title {
   flex: 1;
   min-width: 0;
-  height: 24px;
-  line-height: 24px;
+  height: 22px;
+  line-height: 22px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   color: var(--color-text);
   font-size: 13px;
-  font-weight: 600;
+  font-weight: 500;
   cursor: default;
+  user-select: none;
+}
+
+.sf-node-desc {
+  margin: 0;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--color-text-tertiary);
+  font-size: 11px;
+  line-height: 1.4;
   user-select: none;
 }
 
@@ -728,10 +923,10 @@ const themeOptions = [
   display: flex;
   align-items: center;
   gap: 6px;
-  margin-top: 8px;
-  padding: 5px 8px;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm);
+  margin: 8px -12px -12px;
+  padding: 6px 12px;
+  border: 0;
+  border-radius: 0 0 calc(var(--node-radius) - 1px) calc(var(--node-radius) - 1px);
   background: var(--color-surface-muted);
 }
 
@@ -843,13 +1038,13 @@ const themeOptions = [
   text-decoration: underline;
 }
 
-.sf-node-output-btn {
+.sf-node-run-btn {
   display: grid;
   place-items: center;
   width: 24px;
   height: 24px;
   padding: 0;
-  border: 1px solid transparent;
+  border: none;
   border-radius: var(--radius-sm);
   background: transparent;
   color: var(--color-text-tertiary);
@@ -857,14 +1052,17 @@ const themeOptions = [
   flex-shrink: 0;
   transition:
     background-color var(--dur-1) var(--ease-out),
-    color var(--dur-1) var(--ease-out),
-    border-color var(--dur-1) var(--ease-out);
+    color var(--dur-1) var(--ease-out);
 }
 
-.sf-node-output-btn:hover {
-  border-color: var(--color-brand-border);
-  background: var(--color-brand-soft);
-  color: var(--color-brand);
+.sf-node-run-btn:hover:not(:disabled) {
+  background: var(--color-ink-soft);
+  color: var(--color-text);
+}
+
+.sf-node-run-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
 }
 
 .sf-node-preview {
@@ -1156,6 +1354,12 @@ const themeOptions = [
   border-top: 1px solid var(--color-border);
 }
 
+.sf-node-advanced-title {
+  margin-bottom: 6px;
+  font-size: 11px;
+  color: var(--color-text-tertiary);
+}
+
 .sf-node-advanced-summary {
   font-size: 11px;
   color: var(--color-text-tertiary);
@@ -1193,21 +1397,32 @@ const themeOptions = [
 </style>
 
 <style>
-/* 右键菜单经 Teleport 挂到 body：必须用全局样式，不能 scoped */
+/* 右键/更多菜单经 Teleport 挂到 body：必须用全局样式，不能 scoped */
 .sf-node-menu {
-  z-index: var(--z-context);
-  min-width: 148px;
-  padding: 4px;
+  z-index: var(--z-dropdown-modal);
+  min-width: 196px;
+  max-width: calc(100vw - 16px);
+  max-height: min(420px, calc(100vh - 24px));
+  padding: 6px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
   border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-lg);
   background: var(--color-surface);
   box-shadow: var(--shadow-overlay);
+  transform-origin: var(--reka-popper-transform-origin, top center);
+  animation: sf-dropdown-in var(--dur-2) var(--ease-out);
+}
+
+.sf-node-menu[data-state="closed"] {
+  animation: sf-dropdown-out var(--dur-1) var(--ease-out);
 }
 
 .sf-node-menu-item {
-  padding: 7px 10px;
+  min-height: 32px;
+  padding: 6px 12px;
   border-radius: var(--radius-sm);
-  font-size: 12.5px;
+  font-size: 13px;
   color: var(--color-text);
   cursor: pointer;
 }

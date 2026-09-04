@@ -2,6 +2,7 @@
 import { computed } from "vue";
 import { ElInput } from "element-plus";
 import ModelSelect from "../../ModelSelect.vue";
+import NodeFieldLabel from "../NodeFieldLabel.vue";
 
 const props = defineProps<{
   condition?: { field: "charCount" | "wordCount" | "contains"; op: "gt" | "gte" | "lt" | "lte" | "eq" | "contains" | "notContains"; value: string };
@@ -53,7 +54,7 @@ function setValue(value: string | number) {
 <template>
   <div class="sf-if-card">
     <div class="sf-node-field">
-      <span class="sf-node-field-label">判断字段</span>
+      <NodeFieldLabel label="判断字段" hint="满足走「是」，否则走「否」；未命中分支自动跳过" />
       <ModelSelect :model-value="condition?.field ?? 'charCount'" :options="fieldOptions" size="small" @update:model-value="setField" />
     </div>
     <div class="sf-node-field">
@@ -61,15 +62,17 @@ function setValue(value: string | number) {
       <ModelSelect :model-value="condition?.op ?? (isContains ? 'contains' : 'gt')" :options="opOptions" size="small" @update:model-value="setOp" />
     </div>
     <label class="sf-node-field">
-      <span class="sf-node-field-label">{{ isContains ? "匹配文字" : "比较值" }}</span>
+      <NodeFieldLabel
+        :label="isContains ? '匹配文字' : '比较值'"
+        :hint="isContains ? '输入要匹配的文字' : '例如：5000'"
+      />
       <el-input
         :model-value="condition?.value ?? ''"
         size="small"
-        :placeholder="isContains ? '输入要匹配的文字' : '如 5000'"
+        placeholder="输入内容…"
         @update:model-value="setValue"
       />
     </label>
-    <div class="sf-node-hint">满足走「是」，否则走「否」；未命中分支自动跳过</div>
   </div>
 </template>
 

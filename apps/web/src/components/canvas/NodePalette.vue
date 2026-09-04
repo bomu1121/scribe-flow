@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref } from "vue";
-import { Blocks, BookOpen, FileOutput, FileText, FileUp, FolderHeart, GitBranch, GitMerge, Link2, ListTree, Mic, Network, Replace, Settings, Sparkles, WandSparkles } from "lucide-vue-next";
+import { PhBookOpenText, PhFileArrowDown, PhFileText, PhFolderStar, PhGearSix, PhGitBranch, PhGitMerge, PhMagicWand, PhMicrophone, PhShareNetwork, PhSparkle, PhSquaresFour, PhSwap, PhTreeStructure, PhUploadSimple, PhVideo } from "@phosphor-icons/vue";
 import { NODE_TYPE_LABELS, type NodeType } from "@scribe-flow/shared";
 import { useUiStore } from "@/stores/ui";
 
@@ -25,42 +25,42 @@ const groups: PaletteGroup[] = [
     key: "source",
     label: "来源",
     items: [
-      { type: "source.bili", icon: Link2 },
-      { type: "source.biliCollection", icon: FolderHeart, label: "B站收藏", action: true },
-      { type: "source.file", icon: FileUp },
-      { type: "source.text", icon: FileText },
+      { type: "source.bili", icon: PhVideo },
+      { type: "source.biliCollection", icon: PhFolderStar, label: "B站收藏", action: true },
+      { type: "source.file", icon: PhUploadSimple },
+      { type: "source.text", icon: PhFileText },
     ],
   },
   {
     key: "transcribe",
     label: "转写",
-    items: [{ type: "process.transcribe", icon: Mic }],
+    items: [{ type: "process.transcribe", icon: PhMicrophone }],
   },
   {
     key: "ai",
     label: "AI 加工",
     items: [
-      { type: "process.refine", icon: WandSparkles },
-      { type: "process.prompt", icon: Sparkles },
-      { type: "process.chapter", icon: ListTree },
-      { type: "process.mindmap", icon: Network },
+      { type: "process.refine", icon: PhMagicWand },
+      { type: "process.prompt", icon: PhSparkle },
+      { type: "process.chapter", icon: PhTreeStructure },
+      { type: "process.mindmap", icon: PhShareNetwork },
     ],
   },
   {
     key: "text-logic",
     label: "文本与逻辑",
     items: [
-      { type: "process.text", icon: Replace },
-      { type: "flow.if", icon: GitBranch },
+      { type: "process.text", icon: PhSwap },
+      { type: "flow.if", icon: PhGitBranch },
     ],
   },
   {
     key: "organize",
     label: "组织与输出",
     items: [
-      { type: "process.merge", icon: GitMerge },
-      { type: "process.output", icon: FileOutput },
-      { type: "process.obsidian", icon: BookOpen },
+      { type: "process.merge", icon: PhGitMerge },
+      { type: "process.output", icon: PhFileArrowDown },
+      { type: "process.obsidian", icon: PhBookOpenText },
     ],
   },
 ];
@@ -97,13 +97,13 @@ function onDragStart(event: DragEvent, type: PaletteItemType) {
         :aria-label="open ? '收起节点列表' : '节点'"
         @click="toggle"
       >
-        <Blocks :size="17" />
+        <PhSquaresFour :size="17" />
       </button>
     </div>
 
     <div class="sf-palette-foot">
       <button type="button" class="sf-palette-settings" title="设置" aria-label="设置" @click="ui.openSettings()">
-        <Settings :size="16" />
+        <PhGearSix :size="16" />
       </button>
     </div>
 
@@ -122,7 +122,7 @@ function onDragStart(event: DragEvent, type: PaletteItemType) {
             @click="onAdd(item.type)"
           >
             <span class="sf-palette-icon">
-              <component :is="item.icon" :size="13" />
+              <component :is="item.icon" :size="16" />
             </span>
             <span>{{ item.label ?? NODE_TYPE_LABELS[item.type as NodeType] }}</span>
           </button>
@@ -138,7 +138,7 @@ function onDragStart(event: DragEvent, type: PaletteItemType) {
   display: flex;
   flex-direction: column;
   align-items: center;
-  width: 52px;
+  width: var(--sidebar-width);
   flex-shrink: 0;
   padding: 8px 0;
   border-right: 1px solid var(--color-border);
@@ -186,12 +186,10 @@ function onDragStart(event: DragEvent, type: PaletteItemType) {
 }
 
 .sf-palette-icon {
-  display: grid;
-  place-items: center;
-  width: 20px;
-  height: 20px;
-  border-radius: var(--radius-xs);
-  color: var(--color-text-secondary);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: inherit;
   flex-shrink: 0;
 }
 

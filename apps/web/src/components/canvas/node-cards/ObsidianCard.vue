@@ -3,6 +3,7 @@ import { computed, ref } from "vue";
 import { ElButton, ElOption, ElSelect } from "element-plus";
 import { RefreshCw } from "lucide-vue-next";
 import { useSettingsStore } from "@/stores/settings";
+import NodeFieldLabel from "../NodeFieldLabel.vue";
 
 const props = defineProps<{ folder?: string }>();
 const emit = defineEmits<{ update: [value: { folder?: string }] }>();
@@ -28,7 +29,10 @@ function onFolderChange(value: string | number | undefined) {
 <template>
   <div class="sf-obsidian-card">
     <div class="sf-node-field">
-      <span class="sf-node-field-label">保存目录</span>
+      <NodeFieldLabel
+        label="保存目录"
+        :hint="folders.length === 0 ? '目录列表为空，请先到设置页读取 Obsidian 目录' : '标题 / 来源 / 作者 / 链接自动从上游获取，无需填写'"
+      />
       <div class="sf-obsidian-folder-row">
         <ElSelect
           :model-value="folder || ''"
@@ -47,8 +51,6 @@ function onFolderChange(value: string | number | undefined) {
         </ElButton>
       </div>
     </div>
-    <div v-if="folders.length === 0" class="sf-node-hint">目录列表为空，请先到设置页读取 Obsidian 目录</div>
-    <div v-else class="sf-node-hint">标题 / 来源 / 作者 / 链接自动从上游获取，无需填写</div>
   </div>
 </template>
 

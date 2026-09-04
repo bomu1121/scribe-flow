@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ElInputNumber } from "element-plus";
 import ModelSelect from "../../ModelSelect.vue";
+import NodeFieldLabel from "../NodeFieldLabel.vue";
 
 const props = defineProps<{ granularity?: "coarse" | "medium" | "fine"; maxChapters?: number }>();
 const emit = defineEmits<{ update: [value: { granularity: "coarse" | "medium" | "fine"; maxChapters: number }] }>();
@@ -23,14 +24,13 @@ function setMaxChapters(value: number | undefined) {
 <template>
   <div class="sf-chapter-card">
     <div class="sf-node-field">
-      <span class="sf-node-field-label">粒度</span>
+      <NodeFieldLabel label="粒度" hint="输出多个「章节」笔记块，可接合并节点生成带目录笔记" />
       <ModelSelect :model-value="granularity ?? 'medium'" :options="granularityOptions" size="small" @update:model-value="setGranularity" />
     </div>
     <label class="sf-node-field">
       <span class="sf-node-field-label">最多章节</span>
       <el-input-number :model-value="maxChapters ?? 20" :min="1" :max="50" size="small" @update:model-value="setMaxChapters" />
     </label>
-    <div class="sf-node-hint">输出多个「章节」笔记块，可接合并节点生成带目录笔记</div>
   </div>
 </template>
 

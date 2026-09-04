@@ -685,7 +685,7 @@ defineExpose({
       @node-drag-stop="onNodeDragStop"
       @viewport-change="onViewportChange"
     >
-      <Background :gap="12" pattern-color="var(--canvas-dot-color)" />
+      <Background :gap="12" :size="2" pattern-color="var(--canvas-dot-color)" />
       <Controls position="bottom-left" />
       <MiniMap position="bottom-right" :pannable="true" :zoomable="true" />
     </VueFlow>

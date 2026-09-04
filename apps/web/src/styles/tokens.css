@@ -58,7 +58,7 @@
   --edge-running-color: var(--color-brand);
   --handle-color: #aeb6bf;
   --handle-hover-color: var(--color-brand);
-  --canvas-dot-color: rgba(22, 24, 29, 0.04);
+  --canvas-dot-color: rgba(22, 24, 29, 0.12);
 
   /* 字体 */
   --font-family:
@@ -80,12 +80,13 @@
   --control-height: 36px;
   --control-height-sm: 32px;
   --control-padding-x: 10px;
-  --control-radius: 8px;
-  --control-radius-sm: 6px;
+  --control-radius: 4px;
+  --control-radius-sm: 4px;
   --control-font-size: 13px;
   --control-font-size-sm: 12px;
   --control-border: var(--color-border);
-  --control-border-hover: var(--color-border-strong);
+  --control-border-hover: var(--color-text-tertiary);
+  --control-border-focus: var(--color-text-tertiary);
   --control-bg: var(--color-surface);
   --control-bg-muted: var(--color-surface-muted);
   --control-placeholder: var(--color-text-tertiary);
@@ -97,6 +98,8 @@
   --z-popover: 1130;
   --z-dropdown: 1150;
   --z-context: 1300;
+  /* Teleport 浮层若出现在 Element Plus overlay（z 2000+）内，必须高于 EP overlay */
+  --z-dropdown-modal: 3000;
 
   /* 阴影（两档，禁止发光） */
   --shadow-xs: 0 1px 2px rgba(22, 24, 29, 0.04);

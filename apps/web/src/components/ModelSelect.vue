@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from "vue";
+import { computed, inject, nextTick, ref, watch } from "vue";
 import type { Component } from "vue";
 import { Check, ChevronDown, X } from "lucide-vue-next";
+import { PopoverContent, PopoverPortal, PopoverRoot, PopoverTrigger } from "reka-ui";
 
 export interface ModelSelectOption {
   label: string;
@@ -37,6 +38,17 @@ const emit = defineEmits<{
 const open = ref(false);
 const keyword = ref("");
 const rootRef = ref<HTMLElement | null>(null);
+const searchRef = ref<HTMLInputElement | null>(null);
+const triggerLocalWidth = ref(0);
+
+/** 画布节点由 Vue Flow 的 transform 统一缩放；Teleport 到 body 的浮层需要同步 zoom。 */
+const injectedScale = inject<{ value: number } | number>("sf-flow-zoom", 1);
+const flowScale = computed(() => (typeof injectedScale === "number" ? injectedScale : injectedScale.value));
+
+const menuStyle = computed<Record<string, string>>(() => ({
+  minWidth: `${triggerLocalWidth.value}px`,
+  zoom: String(flowScale.value),
+}));
 
 const selected = computed(() => props.options.find((option) => option.value === props.modelValue));
 const currentIcon = computed(() => props.prefixIcon || selected.value?.icon || props.options[0]?.icon);
@@ -47,10 +59,16 @@ const filteredOptions = computed(() => {
   return props.options.filter((option) => option.label.toLowerCase().includes(q));
 });
 
-function toggle() {
-  if (!open.value) keyword.value = "";
-  open.value = !open.value;
-}
+watch(open, (isOpen) => {
+  if (!isOpen) return;
+  keyword.value = "";
+
+  const screenWidth = rootRef.value?.getBoundingClientRect().width ?? 0;
+  const scale = flowScale.value || 1;
+  triggerLocalWidth.value = screenWidth / scale;
+
+  nextTick(() => searchRef.value?.focus());
+});
 
 function clear() {
   emit("update:modelValue", "");
@@ -63,67 +81,67 @@ function choose(option: ModelSelectOption) {
   emit("change", option.value);
   open.value = false;
 }
-
-function onDocumentClick(event: MouseEvent) {
-  if (rootRef.value && !rootRef.value.contains(event.target as Node)) {
-    open.value = false;
-  }
-}
-
-function onKeydown(event: KeyboardEvent) {
-  if (event.key === "Escape") open.value = false;
-}
-
-onMounted(() => {
-  document.addEventListener("click", onDocumentClick);
-  document.addEventListener("keydown", onKeydown);
-});
-
-onBeforeUnmount(() => {
-  document.removeEventListener("click", onDocumentClick);
-  document.removeEventListener("keydown", onKeydown);
-});
 </script>
 
 <template>
   <div ref="rootRef" class="sf-model-select" :class="[`is-${size}`, { 'is-open': open }]">
-    <button type="button" class="sf-model-select__trigger" @click="toggle">
-      <span v-if="currentIcon" class="sf-model-select__prefix">
-        <component :is="currentIcon" :size="size === 'small' ? 14 : 15" />
-      </span>
-      <span class="sf-model-select__value" :class="{ 'is-placeholder': !selected }">
-        {{ selected?.label || placeholder }}
-      </span>
-      <span v-if="clearable && selected" class="sf-model-select__clear" title="清除" @click.stop="clear">
-        <X :size="14" />
-      </span>
-      <span class="sf-model-select__arrow">
-        <ChevronDown :size="14" />
-      </span>
-    </button>
-
-    <div v-if="open" class="sf-model-select__menu">
-      <div v-if="filterable" class="sf-model-select__search">
-        <input v-model="keyword" class="sf-model-select__search-input" type="text" placeholder="搜索…" @click.stop />
-      </div>
-      <div class="sf-model-select__options">
-        <button
-          v-for="option in filteredOptions"
-          :key="option.value"
-          type="button"
-          class="sf-model-select__option"
-          :class="{ 'is-selected': option.value === modelValue }"
-          @click="choose(option)"
-        >
-          <span v-if="option.icon" class="sf-model-select__option-icon">
-            <component :is="option.icon" :size="15" />
+    <PopoverRoot v-model:open="open">
+      <PopoverTrigger as-child>
+        <button type="button" class="sf-model-select__trigger">
+          <span v-if="currentIcon" class="sf-model-select__prefix">
+            <component :is="currentIcon" :size="size === 'small' ? 14 : 15" />
           </span>
-          <span class="sf-model-select__option-label">{{ option.label }}</span>
-          <Check :size="14" class="sf-model-select__check" />
+          <span class="sf-model-select__value" :class="{ 'is-placeholder': !selected }">
+            {{ selected?.label || placeholder }}
+          </span>
+          <span v-if="clearable && selected" class="sf-model-select__clear" title="清除" @click.stop="clear">
+            <X :size="14" />
+          </span>
+          <span class="sf-model-select__arrow">
+            <ChevronDown :size="14" />
+          </span>
         </button>
-        <p v-if="filteredOptions.length === 0" class="sf-model-select__empty">无匹配项</p>
-      </div>
-    </div>
+      </PopoverTrigger>
+
+      <PopoverPortal>
+        <PopoverContent
+          class="sf-model-select__menu"
+          :data-size="size"
+          side="bottom"
+          :side-offset="size === 'small' ? 4 : 6"
+          align="start"
+          :collision-padding="8"
+          :style="menuStyle"
+        >
+          <div v-if="filterable" class="sf-model-select__search">
+            <input
+              ref="searchRef"
+              v-model="keyword"
+              class="sf-model-select__search-input"
+              type="text"
+              placeholder="搜索…"
+            />
+          </div>
+          <div class="sf-model-select__options">
+            <button
+              v-for="option in filteredOptions"
+              :key="option.value"
+              type="button"
+              class="sf-model-select__option"
+              :class="{ 'is-selected': option.value === modelValue }"
+              @click="choose(option)"
+            >
+              <span v-if="option.icon" class="sf-model-select__option-icon">
+                <component :is="option.icon" :size="15" />
+              </span>
+              <span class="sf-model-select__option-label">{{ option.label }}</span>
+              <Check :size="14" class="sf-model-select__check" />
+            </button>
+            <p v-if="filteredOptions.length === 0" class="sf-model-select__empty">无匹配项</p>
+          </div>
+        </PopoverContent>
+      </PopoverPortal>
+    </PopoverRoot>
   </div>
 </template>
 
@@ -157,7 +175,7 @@ onBeforeUnmount(() => {
 }
 
 .sf-model-select.is-open .sf-model-select__trigger {
-  border-color: var(--control-border-hover);
+  border-color: var(--control-border-focus);
   box-shadow: none;
 }
 
@@ -204,19 +222,32 @@ onBeforeUnmount(() => {
   color: var(--color-text);
 }
 
+.sf-model-select.is-small .sf-model-select__trigger {
+  height: var(--control-height-sm);
+  font-size: var(--control-font-size-sm);
+  border-radius: var(--control-radius);
+}
+</style>
+
+<style>
+/* PopoverContent 经 Teleport 挂到 body：浮层必须用全局样式，不能 scoped */
 .sf-model-select__menu {
-  position: absolute;
-  top: calc(100% + 6px);
-  left: 0;
-  right: 0;
-  width: 100%;
-  min-width: 100%;
+  z-index: var(--z-dropdown-modal);
+  max-width: calc(100vw - 16px);
+  max-height: min(360px, calc(100vh - 24px));
+  padding: 6px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
   background: var(--color-surface);
-  border: none;
+  border: 1px solid var(--color-border);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-overlay);
-  padding: 6px;
-  z-index: var(--z-dropdown);
+  transform-origin: var(--reka-popper-transform-origin, top center);
+  animation: sf-dropdown-in var(--dur-2) var(--ease-out);
+}
+
+.sf-model-select__menu[data-state="closed"] {
+  animation: sf-dropdown-out var(--dur-1) var(--ease-out);
 }
 
 .sf-model-select__search {
@@ -240,7 +271,7 @@ onBeforeUnmount(() => {
 }
 
 .sf-model-select__search-input:focus {
-  border-color: var(--control-border-hover);
+  border-color: var(--control-border-focus);
 }
 
 .sf-model-select__search-input::placeholder {
@@ -248,8 +279,9 @@ onBeforeUnmount(() => {
 }
 
 .sf-model-select__options {
-  max-height: 220px;
+  max-height: 260px;
   overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 .sf-model-select__empty {
@@ -265,8 +297,8 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: 10px;
   width: 100%;
-  height: 40px;
-  padding: 0 10px;
+  min-height: 40px;
+  padding: 6px 10px;
   border: none;
   border-radius: var(--radius-sm);
   background: transparent;
@@ -312,18 +344,12 @@ onBeforeUnmount(() => {
   opacity: 1;
 }
 
-.sf-model-select.is-small .sf-model-select__trigger {
-  height: var(--control-height-sm);
-  font-size: var(--control-font-size-sm);
-  border-radius: var(--control-radius);
+.sf-model-select__menu[data-size="small"] {
+  padding: 4px;
 }
 
-.sf-model-select.is-small .sf-model-select__menu {
-  top: calc(100% + 4px);
-}
-
-.sf-model-select.is-small .sf-model-select__option {
-  height: 36px;
+.sf-model-select__menu[data-size="small"] .sf-model-select__option {
+  min-height: 36px;
   font-size: 13px;
 }
 </style>

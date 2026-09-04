@@ -3,6 +3,7 @@ import { createPinia } from "pinia";
 import { ElLoading } from "element-plus";
 import App from "./App.vue";
 import router from "./router";
+import { initDropdownModal } from "./lib/dropdown-modal";
 
 import "@fontsource/geist-sans/400.css";
 import "@fontsource/geist-sans/500.css";
@@ -25,3 +26,4 @@ app.use(router);
 // Element Plus 组件按需显式引入；v-loading 指令全局注册
 app.directive("loading", ElLoading.directive);
 app.mount("#app");
+initDropdownModal();

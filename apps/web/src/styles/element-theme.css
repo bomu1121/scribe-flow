@@ -93,7 +93,7 @@
   --el-input-border-radius: var(--control-radius);
   --el-input-border-color: var(--control-border);
   --el-input-hover-border-color: var(--control-border-hover);
-  --el-input-focus-border-color: var(--control-border-hover);
+  --el-input-focus-border-color: var(--control-border-focus);
   --el-input-bg-color: var(--control-bg);
   --el-input-placeholder-color: var(--control-placeholder);
   --el-input-icon-color: var(--control-placeholder);
@@ -105,6 +105,11 @@
 
 .el-input__wrapper {
   padding: 1px var(--control-padding-x);
+}
+
+.el-input__wrapper.is-focus,
+.el-textarea__inner:focus {
+  box-shadow: 0 0 0 1px var(--el-input-focus-border-color) inset;
 }
 
 .el-textarea {
@@ -156,7 +161,7 @@
 }
 
 .el-select__wrapper.is-focused {
-  box-shadow: 0 0 0 1px var(--control-border-hover) inset;
+  box-shadow: 0 0 0 1px var(--control-border-focus) inset;
 }
 
 .el-select__wrapper.is-hovering:not(.is-focused) {
@@ -168,6 +173,18 @@
   padding: 0 var(--control-padding-x);
   font-size: var(--control-font-size-sm);
   line-height: normal;
+}
+
+/* Element Plus 下拉浮层统一：让下拉菜单/选择器也有足够宽度和一致圆角 */
+.el-dropdown__popper .el-dropdown-menu {
+  min-width: 180px;
+  padding: 6px;
+}
+
+.el-dropdown__popper .el-dropdown-item {
+  min-height: 32px;
+  border-radius: var(--radius-sm);
+  font-size: 13px;
 }
 
 /* 深色模式 v1 不启用，仅预留变量骨架：M5 后如需启用，给 <html> 加 .dark 即可 */

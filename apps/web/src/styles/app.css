@@ -46,7 +46,10 @@ body {
 }
 
 .sf-node-field-label {
-  font-size: 11px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
   font-weight: 500;
   line-height: 1.4;
   color: var(--color-text-secondary);
@@ -63,4 +66,65 @@ body {
   height: 100%;
   overflow-y: auto;
   scrollbar-gutter: stable;
+}
+
+/*
+ * 下拉浮层模态守卫：
+ * 任意下拉/选择/右键菜单打开时，禁止后台元素响应指针事件，
+ * 只保留当前浮层可交互。这样面板打开后其他 hover 效果会统一失效。
+ */
+html.sf-dropdown-modal-open body * {
+  pointer-events: none !important;
+}
+
+html.sf-dropdown-modal-open body :is(
+  .el-select__popper,
+  .el-dropdown__popper,
+  .el-picker__popper,
+  .el-cascader__popper,
+  .el-autocomplete__popper,
+  [data-reka-menu-content],
+  [data-reka-popover-content],
+  .sf-node-menu,
+  .sf-model-select__menu
+),
+html.sf-dropdown-modal-open body :is(
+  .el-select__popper,
+  .el-dropdown__popper,
+  .el-picker__popper,
+  .el-cascader__popper,
+  .el-autocomplete__popper,
+  [data-reka-menu-content],
+  [data-reka-popover-content],
+  .sf-node-menu,
+  .sf-model-select__menu
+) * {
+  pointer-events: auto !important;
+}
+
+/*
+ * 统一下拉浮层动效：只做轻微透明度 + 缩放，避免大幅位移造成的“抖动”感。
+ * Reka UI 会提供 --reka-popper-transform-origin，EP 的 popper 也有自己的过渡，
+ * 这里主要服务自研/无样式菜单。
+ */
+@keyframes sf-dropdown-in {
+  from {
+    opacity: 0;
+    transform: scale(0.98) translateY(-2px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+@keyframes sf-dropdown-out {
+  from {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+  to {
+    opacity: 0;
+    transform: scale(0.99) translateY(-1px);
+  }
 }

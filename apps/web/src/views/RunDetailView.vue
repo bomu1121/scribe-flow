@@ -1546,7 +1546,7 @@ async function forceStopRun() {
 }
 
 .rv-editor:focus {
-  border-color: var(--control-border-hover);
+  border-color: var(--control-border-focus);
 }
 
 .rv-edit-actions {
