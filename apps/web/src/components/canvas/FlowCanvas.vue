@@ -19,6 +19,7 @@ import FlowEdge from "./FlowEdge.vue";
 import {
   cloneGraph,
   emptyNodeData,
+  NODE_DRAG_HANDLE_SELECTOR,
   SCRIBE_EDGE_TYPE,
   SCRIBE_NODE_TYPE,
   toBusinessGraph,
@@ -235,6 +236,7 @@ function makeNode(type: NodeType, position: { x: number; y: number }): ScribeFlo
     type: SCRIBE_NODE_TYPE,
     position,
     selected: false,
+    dragHandle: NODE_DRAG_HANDLE_SELECTOR,
     data,
   };
 }

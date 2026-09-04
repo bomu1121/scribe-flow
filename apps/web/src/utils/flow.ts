@@ -3,6 +3,8 @@ import type { AsrEngine, BiliSourceItem, GraphEdge, GraphNode, NodeRunStatus, No
 
 export const SCRIBE_NODE_TYPE = "scribe";
 export const SCRIBE_EDGE_TYPE = "scribe";
+/** 节点只允许在头部区域拖动。 */
+export const NODE_DRAG_HANDLE_SELECTOR = ".sf-node-head";
 
 export interface NodeContextActions {
   duplicate: () => void;
@@ -72,6 +74,8 @@ export interface ScribeFlowNode {
   type?: string;
   position: { x: number; y: number };
   selected?: boolean;
+  /** Vue Flow 节点拖动句柄选择器；仅命中该选择器的区域可拖动节点。 */
+  dragHandle?: string;
   data: ScribeNodeData;
   [key: string]: unknown;
 }
@@ -93,6 +97,7 @@ export function toFlowNodes(graph: WorkflowGraph, ctxFactory: (nodeId: string) =
     type: SCRIBE_NODE_TYPE,
     position: { ...node.position },
     selected: false,
+    dragHandle: NODE_DRAG_HANDLE_SELECTOR,
     data: {
       ...(node.data as Record<string, unknown>),
       nodeType: node.type,

@@ -366,7 +366,7 @@ const themeOptions = [
           class="sf-handle sf-handle--target"
         />
 
-        <div v-if="props.selected" class="sf-node-selection-bar">
+        <div v-if="props.selected" class="sf-node-selection-bar nodrag">
           <div class="sf-node-selection-bar-left">
             <button
               type="button"
@@ -418,7 +418,7 @@ const themeOptions = [
             <span class="sf-node-status" />
             <button
               type="button"
-              class="sf-node-run-btn"
+              class="sf-node-run-btn nodrag"
               :disabled="props.data.ctx?.running"
               :title="props.data.ctx?.running ? '运行中不可启动新运行' : '从此节点运行'"
               :aria-label="`从此节点运行 ${label}`"
@@ -431,7 +431,7 @@ const themeOptions = [
           <p class="sf-node-desc">{{ nodeDescription }}</p>
         </div>
 
-        <div class="sf-node-body">
+        <div class="sf-node-body nodrag">
           <!-- 来源：B 站链接 / B 站多选收藏。多选时使用“平等列表”卡片，不再强调第一个视频。 -->
           <template v-if="nodeType === 'source.bili'">
             <template v-if="isCollection">
@@ -658,11 +658,11 @@ const themeOptions = [
           </div>
         </div>
 
-        <div v-if="canShowResultDetail" class="sf-node-result-detail">
+        <div v-if="canShowResultDetail" class="sf-node-result-detail nodrag">
           <div class="sf-node-result-detail-text markdown-body" v-html="renderedResultDetail" />
           <button type="button" class="sf-node-result-detail-open" @click.stop="props.data.ctx?.viewOutput()">查看完整输出</button>
         </div>
-        <div v-if="hasResult" class="sf-node-result" :class="data.status ? `is-${data.status}` : ''">
+        <div v-if="hasResult" class="sf-node-result nodrag" :class="data.status ? `is-${data.status}` : ''">
           <span v-if="data.status" class="sf-node-result-status" />
           <span class="sf-node-result-meta tnum">{{ data.summary }}</span>
           <span v-if="data.delta" class="sf-node-result-delta tnum" :class="`is-${data.delta.tone}`">{{ data.delta.label }}</span>
@@ -702,6 +702,7 @@ const themeOptions = [
   border-radius: var(--node-radius);
   background: var(--color-surface);
   box-shadow: none;
+  cursor: default;
   transition:
     border-color var(--dur-2) var(--ease-out),
     box-shadow var(--dur-2) var(--ease-out),
@@ -861,6 +862,11 @@ const themeOptions = [
   margin: -10px -12px 8px;
   padding: 8px 12px 10px;
   border-bottom: 1px solid var(--color-border);
+  cursor: grab;
+}
+
+.sf-node-head:active {
+  cursor: grabbing;
 }
 
 .sf-node-head-top {
@@ -889,7 +895,7 @@ const themeOptions = [
   color: var(--color-text);
   font-size: 13px;
   font-weight: 500;
-  cursor: default;
+  cursor: grab;
   user-select: none;
 }
 
