@@ -4,23 +4,12 @@ import { toast, useToastState, type ToastType } from "@/lib/toast";
 
 const state = useToastState();
 
-const glyphMap: Record<ToastType, string> = {
-  success: "✓",
-  error: "✕",
-  warning: "!",
-  info: "i",
-};
-
 const defaultTitles: Record<ToastType, string> = {
   success: "操作成功",
   error: "操作失败",
   warning: "提示",
   info: "提示",
 };
-
-function glyphFor(type: ToastType) {
-  return glyphMap[type];
-}
 
 function titleFor(type: ToastType, title?: string) {
   return title || defaultTitles[type];
@@ -33,7 +22,62 @@ function titleFor(type: ToastType, title?: string) {
       <TransitionGroup name="sf-toast" tag="div" class="sf-toast-list">
         <div v-for="item in state.items" :key="item.id" class="sf-toast" :class="`sf-toast--${item.type}`">
           <span class="sf-toast-icon">
-            <span class="sf-toast-glyph">{{ glyphFor(item.type) }}</span>
+            <svg
+              v-if="item.type === 'success'"
+              class="sf-toast-svg"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="3.2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+            >
+              <path d="M20 6 9 17l-5-5" />
+            </svg>
+            <svg
+              v-else-if="item.type === 'error'"
+              class="sf-toast-svg"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="3.2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+            >
+              <path d="M18 6 6 18" />
+              <path d="m6 6 12 12" />
+            </svg>
+            <svg
+              v-else-if="item.type === 'warning'"
+              class="sf-toast-svg"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2.4"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+            >
+              <path d="m21.73 18-8-14a2 2 0 0 0-3.46 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z" />
+              <path d="M12 9v4" />
+              <path d="M12 17h.01" />
+            </svg>
+            <svg
+              v-else
+              class="sf-toast-svg"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="3"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+            >
+              <path d="M12 8h.01" />
+              <path d="M12 12v4" />
+            </svg>
           </span>
           <div class="sf-toast-content">
             <span class="sf-toast-title">{{ titleFor(item.type, item.title) }}</span>
@@ -90,11 +134,10 @@ function titleFor(type: ToastType, title?: string) {
   flex-shrink: 0;
 }
 
-.sf-toast-glyph {
-  font-size: 14px;
-  font-weight: 700;
-  line-height: 1;
-  user-select: none;
+.sf-toast-svg {
+  display: block;
+  width: 14px;
+  height: 14px;
 }
 
 .sf-toast--success .sf-toast-icon {
