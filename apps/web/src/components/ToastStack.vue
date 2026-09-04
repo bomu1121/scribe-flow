@@ -170,7 +170,7 @@ function titleFor(type: ToastType, title?: string) {
 }
 
 .sf-toast-title {
-  font-size: 13px;
+  font-size: 15px;
   font-weight: 600;
   line-height: 1.4;
   color: var(--color-text);
