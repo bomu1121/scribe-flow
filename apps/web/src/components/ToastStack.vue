@@ -164,7 +164,7 @@ function titleFor(type: ToastType, title?: string) {
 .sf-toast-content {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 12px;
   min-width: 0;
   flex: 1;
   padding-top: 2px;
