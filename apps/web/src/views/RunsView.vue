@@ -98,7 +98,7 @@ async function removeRun(run: RunMeta) {
     <div v-else-if="filtered.length === 0" class="sf-empty">
       <div class="sf-empty-icon"><Activity :size="22" /></div>
       <div class="sf-empty-title">暂无运行记录</div>
-      <div class="sf-empty-desc">在画布中点击「运行全部」后，运行结果会出现在这里。</div>
+      <div class="sf-empty-desc">在画布中点击「运行」后，运行结果会出现在这里。</div>
     </div>
 
     <el-table v-else :data="filtered" row-key="id" size="small" class="sf-runs-table">

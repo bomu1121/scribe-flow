@@ -2,7 +2,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { ElButton, ElDrawer, ElDropdown, ElDropdownItem, ElDropdownMenu, ElInput, ElMessage } from "element-plus";
-import { ArrowLeft, Check, Copy, Download, ExternalLink, History, LayoutPanelTop, Maximize, MoreHorizontal, Play, Redo2, StopCircle, Trash2, Undo2 } from "lucide-vue-next";
+import { Activity, ArrowLeft, Check, Copy, Download, ExternalLink, History, LayoutPanelTop, Maximize, MoreHorizontal, Play, Redo2, StopCircle, Trash2, Undo2, X } from "lucide-vue-next";
 import { NODE_TYPE_LABELS, emptyGraph, type NodeType, type RunDetail, type RunMeta, type RunNodeInput, type RunNodeResult, type SourceVideoItem, type WorkflowGraph } from "@scribe-flow/shared";
 import FlowCanvas from "@/components/canvas/FlowCanvas.vue";
 import NodePalette from "@/components/canvas/NodePalette.vue";
@@ -42,6 +42,10 @@ const activeRun = ref<RunMeta | null>(null);
 const lastRun = ref<RunMeta | null>(null);
 const running = ref(false);
 const projectRunningRun = computed(() => runsStore.runs.find((r) => r.projectId === projectId.value && r.status === "running") ?? null);
+const activeTaskCount = computed(() => {
+  const localActive = running.value && activeRun.value && !runsStore.runs.some((r) => r.id === activeRun.value?.id && r.status === "running") ? 1 : 0;
+  return runsStore.runningCount + localActive;
+});
 const outputDrawerVisible = ref(false);
 const outputDrawerNodeId = ref("");
 const outputDrawerRunId = ref("");
@@ -732,22 +736,6 @@ function downloadNodeOutput() {
       </div>
 
       <div class="sf-editor-bar-actions">
-        <el-button v-if="lastRun" class="sf-btn" plain @click="router.push(`/project/${projectId}/run/${lastRun.id}`)">
-          <History :size="14" />
-          <span>上次结果</span>
-        </el-button>
-        <el-button class="sf-btn" type="primary" :disabled="running" @click="startRun('all')">
-          <Play :size="14" />
-          <span>运行全部</span>
-        </el-button>
-        <el-button class="sf-btn" plain :disabled="!selectedNodeId || running" @click="selectedNodeId && startRun('fromNode', selectedNodeId)">
-          <Play :size="14" />
-          <span>从选中节点运行</span>
-        </el-button>
-        <el-button class="sf-btn" plain :disabled="!running && !projectRunningRun" @click="stopRun">
-          <StopCircle :size="14" />
-          <span>停止</span>
-        </el-button>
         <BiliAccountButton compact />
         <el-dropdown trigger="click" @command="(cmd) => onMoreCommand(String(cmd))">
           <button type="button" class="sf-icon-btn" title="更多操作">
@@ -772,21 +760,47 @@ function downloadNodeOutput() {
     <div class="sf-editor-main">
       <div class="sf-mobile-hint">画布编辑器需要桌面端（≥1024px）。当前仅作只读预览，请在电脑上打开以编辑。</div>
       <NodePalette @add="onPaletteAdd" />
-      <FlowCanvas
-        v-if="loaded"
-        ref="flowCanvasRef"
-        :key="projectId"
-        :initial-graph="graph"
-        :running="running"
-        @update:graph="onGraphUpdate"
-        @notice="showNotice"
-        @history-change="historyState = $event"
-        @select="selectedNodeId = $event"
-        @run-request="(req) => startRun(req.scope, req.nodeId)"
-        @view-output="viewOutput"
-      />
-      <div v-else class="sf-editor-loading">
-        <span>{{ saveState === "error" ? "工程加载失败" : "正在加载画布…" }}</span>
+      <div class="sf-canvas-wrap">
+        <div v-if="loaded" class="sf-editor-float-actions">
+          <button type="button" class="sf-float-btn sf-float-run" :disabled="running" @click="startRun('all')">
+            <Play :size="13" />
+            <span>运行</span>
+          </button>
+          <button v-if="lastRun" type="button" class="sf-float-btn sf-float-ghost" @click="router.push(`/project/${projectId}/run/${lastRun.id}`)">
+            <History :size="13" />
+            <span>上次结果</span>
+          </button>
+          <span class="sf-float-task" title="当前所有运行中的任务数">
+            <Activity :size="13" />
+            <span>活动任务 {{ activeTaskCount }}</span>
+          </span>
+          <button
+            type="button"
+            class="sf-float-btn sf-float-stop"
+            :disabled="!running && !projectRunningRun"
+            :title="running || projectRunningRun ? '停止运行' : '当前没有运行中的任务'"
+            aria-label="停止运行"
+            @click="stopRun"
+          >
+            <X :size="14" stroke-width="3" />
+          </button>
+        </div>
+        <FlowCanvas
+          v-if="loaded"
+          ref="flowCanvasRef"
+          :key="projectId"
+          :initial-graph="graph"
+          :running="running"
+          @update:graph="onGraphUpdate"
+          @notice="showNotice"
+          @history-change="historyState = $event"
+          @select="selectedNodeId = $event"
+          @run-request="(req) => startRun(req.scope, req.nodeId)"
+          @view-output="viewOutput"
+        />
+        <div v-else class="sf-editor-loading">
+          <span>{{ saveState === "error" ? "工程加载失败" : "正在加载画布…" }}</span>
+        </div>
       </div>
     </div>
 
@@ -890,10 +904,6 @@ function downloadNodeOutput() {
   flex-shrink: 0;
 }
 
-.sf-btn {
-  gap: 6px;
-}
-
 .sf-icon-btn {
   display: grid;
   place-items: center;
@@ -930,6 +940,104 @@ function downloadNodeOutput() {
   flex: 1;
   min-height: 0;
   display: flex;
+}
+
+.sf-canvas-wrap {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+}
+
+.sf-editor-float-actions {
+  position: absolute;
+  top: 10px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: var(--z-dropdown);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 6px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-card);
+}
+
+.sf-float-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  height: 24px;
+  padding: 0 10px;
+  border: none;
+  border-radius: var(--radius-sm);
+  font-family: inherit;
+  font-size: 11.5px;
+  font-weight: 500;
+  line-height: 1;
+  cursor: pointer;
+  white-space: nowrap;
+  transition:
+    background-color var(--dur-1) var(--ease-out),
+    color var(--dur-1) var(--ease-out),
+    opacity var(--dur-1) var(--ease-out);
+}
+
+.sf-float-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.sf-float-run {
+  background: var(--color-brand);
+  color: var(--color-on-brand);
+}
+
+.sf-float-run:hover:not(:disabled) {
+  background: var(--color-brand-hover);
+}
+
+.sf-float-run:active:not(:disabled) {
+  background: var(--color-brand-pressed);
+}
+
+.sf-float-ghost {
+  background: transparent;
+  color: var(--color-text-secondary);
+}
+
+.sf-float-ghost:hover:not(:disabled) {
+  background: var(--color-ink-soft);
+  color: var(--color-text);
+}
+
+.sf-float-task {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 24px;
+  padding: 0 8px;
+  border-radius: var(--radius-sm);
+  color: var(--color-text-secondary);
+  font-size: 11.5px;
+  white-space: nowrap;
+}
+
+.sf-float-stop {
+  width: 24px;
+  padding: 0;
+  background: var(--color-error);
+  color: var(--color-on-error);
+}
+
+.sf-float-stop:hover:not(:disabled) {
+  background: var(--color-error);
+  opacity: 0.9;
 }
 
 .sf-mobile-hint {
