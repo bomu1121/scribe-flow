@@ -70,10 +70,10 @@ function titleFor(type: ToastType, title?: string) {
 .sf-toast {
   display: flex;
   align-items: flex-start;
-  gap: 10px;
-  width: 360px;
+  gap: 8px;
+  width: 340px;
   max-width: 100%;
-  padding: 12px 10px 12px 12px;
+  padding: 10px 8px 10px 10px;
   border: 1px solid var(--color-border);
   border-radius: 2px;
   background: var(--color-surface);
@@ -83,8 +83,8 @@ function titleFor(type: ToastType, title?: string) {
 .sf-toast-icon {
   display: grid;
   place-items: center;
-  width: 28px;
-  height: 28px;
+  width: 20px;
+  height: 20px;
   border-radius: 50%;
   color: var(--color-on-error);
   flex-shrink: 0;
