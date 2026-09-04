@@ -52,6 +52,7 @@ function iconFor(type: ToastType) {
   flex-direction: column;
   align-items: flex-end;
   gap: 8px;
+  width: 100%;
   pointer-events: auto;
 }
 

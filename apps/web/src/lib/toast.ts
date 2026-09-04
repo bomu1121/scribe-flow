@@ -40,7 +40,7 @@ function push(type: ToastType, input: ToastInput, options: ToastOptions = {}): n
     duration: options.duration ?? normalized.duration ?? DEFAULT_DURATION[type],
   };
 
-  state.items.push(item);
+  state.items.unshift(item);
 
   if (item.duration > 0) {
     timers.set(
