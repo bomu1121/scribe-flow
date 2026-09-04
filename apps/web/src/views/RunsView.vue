@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
 import { useRouter } from "vue-router";
-import { ElButton, ElMessage, ElMessageBox, ElOption, ElSelect, ElTable, ElTableColumn, ElTag } from "element-plus";
+import { ElButton, ElMessageBox, ElOption, ElSelect, ElTable, ElTableColumn, ElTag } from "element-plus";
+import { toast } from "@/lib/toast";
 import { Activity, Eye, Trash2 } from "lucide-vue-next";
 import type { RunMeta, RunStatus } from "@scribe-flow/shared";
 import { useRunsStore } from "@/stores/runs";
@@ -67,9 +68,9 @@ async function removeRun(run: RunMeta) {
   }
   try {
     await store.remove(run.id);
-    ElMessage.success("已删除运行");
+    toast.success("已删除运行");
   } catch (err) {
-    ElMessage.error(err instanceof Error ? err.message : "删除失败");
+    toast.error(err instanceof Error ? err.message : "删除失败");
   }
 }
 </script>

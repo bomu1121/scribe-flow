@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import { useRoute, useRouter } from "vue-router";
-import { ElButton, ElDialog, ElMessage, ElOption, ElSelect, ElTable, ElTableColumn, ElTag } from "element-plus";
+import { ElButton, ElDialog, ElOption, ElSelect, ElTable, ElTableColumn, ElTag } from "element-plus";
+import { toast } from "@/lib/toast";
 import {
   ArrowLeft,
   Copy,
@@ -449,7 +450,7 @@ async function loadRun(showLoading = true) {
       stopRunEvents = null;
     }
   } catch (err) {
-    ElMessage.error(err instanceof Error ? err.message : "运行详情加载失败");
+    toast.error(err instanceof Error ? err.message : "运行详情加载失败");
   } finally {
     loading.value = false;
   }
@@ -478,7 +479,7 @@ async function loadOutputContent(nodeId: string) {
       markdown.value = result.text ?? "";
     } catch (err) {
       markdown.value = "";
-      ElMessage.error(err instanceof Error ? err.message : "输出内容读取失败");
+      toast.error(err instanceof Error ? err.message : "输出内容读取失败");
     }
   } else {
     markdown.value = "";
@@ -502,7 +503,7 @@ async function loadMindMapContent(index?: number) {
       mindMapMarkdown.value = result.text ?? "";
     } catch (err) {
       mindMapMarkdown.value = "";
-      ElMessage.error(err instanceof Error ? err.message : "思维导图内容读取失败");
+      toast.error(err instanceof Error ? err.message : "思维导图内容读取失败");
     }
   } else {
     mindMapMarkdown.value = "";
@@ -544,7 +545,7 @@ async function selectInput(key: string) {
         const result = await api.get<{ text: string }>(`/api/runs/${runId}/outputs/${item.sourceNodeId}/content`);
         inputText.value = result.text ?? "";
       } catch (err) {
-        ElMessage.error(err instanceof Error ? err.message : "输入内容读取失败");
+        toast.error(err instanceof Error ? err.message : "输入内容读取失败");
       }
     }
   }
@@ -572,7 +573,7 @@ function toggleEdit() {
 
 function resetDraft() {
   draft.value = markdown.value;
-  ElMessage.success("已恢复为运行原始输出");
+  toast.success("已恢复为运行原始输出");
 }
 
 function setZoom(delta: number) {
@@ -595,7 +596,7 @@ async function toggleFullscreen() {
       await document.exitFullscreen();
     }
   } catch {
-    ElMessage.error("全屏切换失败，请检查浏览器权限");
+    toast.error("全屏切换失败，请检查浏览器权限");
   }
 }
 
@@ -638,9 +639,9 @@ async function copyMarkdown() {
   if (!text) return;
   try {
     await navigator.clipboard.writeText(text);
-    ElMessage.success("已复制到剪贴板");
+    toast.success("已复制到剪贴板");
   } catch {
-    ElMessage.error("复制失败，请手动选择文本");
+    toast.error("复制失败，请手动选择文本");
   }
 }
 
@@ -652,36 +653,37 @@ async function openLogs(nodeId = "") {
     logs.value = data.items ?? [];
   } catch (err) {
     logs.value = [];
-    ElMessage.error(err instanceof Error ? err.message : "日志加载失败");
+    toast.error(err instanceof Error ? err.message : "日志加载失败");
   }
 }
 
 async function retryNode(node: RunNodeResult) {
   try {
     const created = await api.post<{ id: string }>(`/api/runs/${runId}/nodes/${node.nodeId}/retry`);
-    ElMessage.success(`已启动重跑：#${created.id.slice(-6)}`);
+    toast.clear();
+    toast.success(`已启动重跑：#${created.id.slice(-6)}`);
   } catch (err) {
-    ElMessage.error(err instanceof Error ? err.message : "重跑失败");
+    toast.error(err instanceof Error ? err.message : "重跑失败");
   }
 }
 
 async function stopRun() {
   try {
     await api.post<{ ok: boolean }>(`/api/runs/${runId}/stop`);
-    ElMessage.success("已发送停止指令");
+    toast.success("已发送停止指令");
     await loadRun(false);
   } catch (err) {
-    ElMessage.error(err instanceof Error ? err.message : "停止运行失败");
+    toast.error(err instanceof Error ? err.message : "停止运行失败");
   }
 }
 
 async function forceStopRun() {
   try {
     await api.post<{ ok: boolean }>(`/api/runs/${runId}/force-stop`);
-    ElMessage.success("已强制结束运行");
+    toast.success("已强制结束运行");
     await loadRun(false);
   } catch (err) {
-    ElMessage.error(err instanceof Error ? err.message : "强制结束失败");
+    toast.error(err instanceof Error ? err.message : "强制结束失败");
   }
 }
 </script>

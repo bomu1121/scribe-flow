@@ -4,6 +4,7 @@ import { ElConfigProvider } from "element-plus";
 import zhCn from "element-plus/es/locale/lang/zh-cn";
 import AppLayout from "@/layouts/AppLayout.vue";
 import SettingsDialog from "@/components/SettingsDialog.vue";
+import ToastStack from "@/components/ToastStack.vue";
 </script>
 
 <template>
@@ -12,5 +13,6 @@ import SettingsDialog from "@/components/SettingsDialog.vue";
       <RouterView />
     </AppLayout>
     <SettingsDialog />
+    <ToastStack />
   </el-config-provider>
 </template>

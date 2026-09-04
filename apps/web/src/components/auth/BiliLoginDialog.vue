@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from "vue";
-import { ElButton, ElDialog, ElMessage } from "element-plus";
+import { ElButton, ElDialog } from "element-plus";
 import { RefreshCw } from "lucide-vue-next";
+import { toast } from "@/lib/toast";
 import { useAuthStore } from "@/stores/auth";
 
 const props = defineProps<{ open: boolean }>();
@@ -66,7 +67,7 @@ async function poll() {
       clearTimers();
       store.setLoggedIn(result.user);
       phase.value = "waiting";
-      ElMessage.success(`已登录：${result.user.uname}`);
+      toast.success(`已登录：${result.user.uname}`);
       window.setTimeout(() => {
         dialogVisible.value = false;
         emit("logged-in");

@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from "vue";
-import { ElButton, ElInput, ElInputNumber, ElMessage, ElMessageBox, ElOption, ElSelect, ElSwitch, ElTag } from "element-plus";
+import { ElButton, ElInput, ElInputNumber, ElMessageBox, ElOption, ElSelect, ElSwitch, ElTag } from "element-plus";
 import { Cloud, Mic, PlugZap, Save, Trash2 } from "lucide-vue-next";
+import { toast } from "@/lib/toast";
 import ModelSelect from "../components/ModelSelect.vue";
 import type { AiProvider, AsrEngine, PromptBlock } from "@scribe-flow/shared";
 import { api } from "@/lib/api";
@@ -134,9 +135,9 @@ async function saveBlock() {
     if (blockForm.id) await promptsStore.updateBlock(blockForm.id, { name: blockForm.name, prompt: blockForm.prompt });
     else await promptsStore.addBlock(blockForm.name, blockForm.prompt);
     resetBlockForm();
-    ElMessage.success("提示词块已保存");
+    toast.success("提示词块已保存");
   } catch (err) {
-    ElMessage.error(err instanceof Error ? err.message : "保存失败");
+    toast.error(err instanceof Error ? err.message : "保存失败");
   }
 }
 
@@ -154,9 +155,9 @@ async function removeBlock(block: PromptBlock) {
   try {
     await promptsStore.removeBlock(block.id);
     if (blockForm.id === block.id) resetBlockForm();
-    ElMessage.success("已删除");
+    toast.success("已删除");
   } catch (err) {
-    ElMessage.error(err instanceof Error ? err.message : "删除失败");
+    toast.error(err instanceof Error ? err.message : "删除失败");
   }
 }
 
@@ -177,11 +178,11 @@ async function clearFinishedRuns() {
   }
   try {
     const result = await api.post<{ deleted: number }>("/api/settings/clear-runs");
-    ElMessage.success(`已清理 ${result.deleted} 条运行记录`);
+    toast.success(`已清理 ${result.deleted} 条运行记录`);
     await runsStore.load();
     await loadDataInfo();
   } catch (err) {
-    ElMessage.error(err instanceof Error ? err.message : "清理失败");
+    toast.error(err instanceof Error ? err.message : "清理失败");
   }
 }
 
@@ -282,7 +283,7 @@ async function saveAll() {
   try {
     tagTaxonomy = JSON.parse(form.obsidianTagTaxonomyText || "{}") as Record<string, string[]>;
   } catch {
-    ElMessage.error("标签词表不是合法 JSON，请检查格式");
+    toast.error("标签词表不是合法 JSON，请检查格式");
     return;
   }
   try {
@@ -303,12 +304,12 @@ async function saveAll() {
         autoLinkBidirectional: form.obsidianAutoLinkBidirectional,
       },
     });
-    ElMessage.success("设置已保存");
+    toast.success("设置已保存");
     await store.load();
     await store.loadObsidianFolders();
     fillForm();
   } catch (err) {
-    ElMessage.error(err instanceof Error ? err.message : "保存失败");
+    toast.error(err instanceof Error ? err.message : "保存失败");
   }
 }
 
@@ -322,14 +323,14 @@ async function testAi() {
       model: form.aiModel,
       apiKey: form.aiKey || undefined,
     });
-    ElMessage.success(`AI 连接正常：${(result.content ?? "连接正常").slice(0, 40)}`);
+    toast.success(`AI 连接正常：${(result.content ?? "连接正常").slice(0, 40)}`);
     if (result.models?.length > 0) {
       if (form.aiModel && !result.models.includes(form.aiModel)) form.aiModel = result.models[0];
       syncAiModelOptions(result.models);
     }
-    if (result.modelsError) ElMessage.warning(`连接正常，但拉取模型列表失败：${result.modelsError}`);
+    if (result.modelsError) toast.warning(`连接正常，但拉取模型列表失败：${result.modelsError}`);
   } catch (err) {
-    ElMessage.error(err instanceof Error ? err.message : "AI 连接失败");
+    toast.error(err instanceof Error ? err.message : "AI 连接失败");
   } finally {
     aiTesting.value = false;
     aiModelLoading.value = false;
@@ -345,9 +346,9 @@ async function testAsr() {
       model: form.asrModel,
       apiKey: form.asrKey || undefined,
     });
-    ElMessage.success(`ASR 连接正常：${(content ?? "连接正常").slice(0, 40)}`);
+    toast.success(`ASR 连接正常：${(content ?? "连接正常").slice(0, 40)}`);
   } catch (err) {
-    ElMessage.error(err instanceof Error ? err.message : "ASR 连接失败");
+    toast.error(err instanceof Error ? err.message : "ASR 连接失败");
   } finally {
     asrTesting.value = false;
   }

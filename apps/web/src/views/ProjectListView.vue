@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { onMounted, ref } from "vue";
 import { useRouter } from "vue-router";
-import { ElButton, ElDialog, ElDropdown, ElDropdownItem, ElDropdownMenu, ElMessage, ElMessageBox, ElTag } from "element-plus";
+import { ElButton, ElDialog, ElDropdown, ElDropdownItem, ElDropdownMenu, ElMessageBox, ElTag } from "element-plus";
+import { toast } from "@/lib/toast";
 import { FileUp, FolderOpen, MoreHorizontal, Plus } from "lucide-vue-next";
 import { WORKFLOW_TEMPLATES, type ProjectListItem, type RunMeta, type RunStatus } from "@scribe-flow/shared";
 import { useProjectsStore } from "@/stores/projects";
@@ -61,7 +62,7 @@ async function createFromTemplate(templateId?: string) {
     showCreate.value = false;
     await router.push(`/project/${project.id}`);
   } catch (err) {
-    ElMessage.error(err instanceof Error ? err.message : "创建工程失败");
+    toast.error(err instanceof Error ? err.message : "创建工程失败");
   } finally {
     creating.value = false;
   }
@@ -70,9 +71,9 @@ async function createFromTemplate(templateId?: string) {
 async function duplicate(project: ProjectListItem) {
   try {
     const created = await store.duplicateProject(project.id);
-    ElMessage.success(`已创建副本「${created.name}」`);
+    toast.success(`已创建副本「${created.name}」`);
   } catch (err) {
-    ElMessage.error(err instanceof Error ? err.message : "复制工程失败");
+    toast.error(err instanceof Error ? err.message : "复制工程失败");
   }
 }
 
@@ -80,7 +81,7 @@ async function exportProject(project: ProjectListItem) {
   try {
     await store.exportProject(project.id, project.name);
   } catch (err) {
-    ElMessage.error(err instanceof Error ? err.message : "导出工程失败");
+    toast.error(err instanceof Error ? err.message : "导出工程失败");
   }
 }
 
@@ -98,9 +99,9 @@ async function removeProject(project: ProjectListItem) {
 
   try {
     await store.removeProject(project.id);
-    ElMessage.success(`已删除工程「${project.name}」`);
+    toast.success(`已删除工程「${project.name}」`);
   } catch (err) {
-    ElMessage.error(err instanceof Error ? err.message : "删除工程失败");
+    toast.error(err instanceof Error ? err.message : "删除工程失败");
   }
 }
 
@@ -129,10 +130,10 @@ function onImportFile(event: Event) {
   void (async () => {
     try {
       const project = await store.importProject(file);
-      ElMessage.success(`已导入工程「${project.name}」`);
+      toast.success(`已导入工程「${project.name}」`);
       await router.push(`/project/${project.id}`);
     } catch (err) {
-      ElMessage.error(err instanceof Error ? err.message : "导入工程失败");
+      toast.error(err instanceof Error ? err.message : "导入工程失败");
     }
   })();
 }

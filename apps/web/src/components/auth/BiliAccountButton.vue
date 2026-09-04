@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { onMounted, ref } from "vue";
-import { ElDropdown, ElDropdownItem, ElDropdownMenu, ElMessage, ElMessageBox } from "element-plus";
+import { ElDropdown, ElDropdownItem, ElDropdownMenu, ElMessageBox } from "element-plus";
 import { CircleUserRound, LogOut } from "lucide-vue-next";
+import { toast } from "@/lib/toast";
 import { useAuthStore } from "@/stores/auth";
 import BiliLoginDialog from "./BiliLoginDialog.vue";
 
@@ -25,9 +26,9 @@ async function logout() {
   }
   try {
     await store.logout();
-    ElMessage.success("已退出 B 站登录");
+    toast.success("已退出 B 站登录");
   } catch (err) {
-    ElMessage.error(err instanceof Error ? err.message : "退出登录失败");
+    toast.error(err instanceof Error ? err.message : "退出登录失败");
   }
 }
 </script>

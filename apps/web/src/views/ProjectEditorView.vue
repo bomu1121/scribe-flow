@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
-import { ElButton, ElDrawer, ElDropdown, ElDropdownItem, ElDropdownMenu, ElInput, ElMessage } from "element-plus";
+import { ElButton, ElDrawer, ElDropdown, ElDropdownItem, ElDropdownMenu, ElInput } from "element-plus";
+import { toast } from "@/lib/toast";
 import { Activity, ArrowLeft, Check, Copy, Download, ExternalLink, History, LayoutPanelTop, Maximize, MoreHorizontal, Play, Redo2, StopCircle, Trash2, Undo2, X } from "lucide-vue-next";
 import { NODE_TYPE_LABELS, emptyGraph, type NodeType, type RunDetail, type RunMeta, type RunNodeInput, type RunNodeResult, type SourceVideoItem, type WorkflowGraph } from "@scribe-flow/shared";
 import FlowCanvas from "@/components/canvas/FlowCanvas.vue";
@@ -227,7 +228,7 @@ function showNotice(message: string) {
 function onPaletteAdd(type: NodeType | "source.biliCollection") {
   if (type === "source.biliCollection") {
     if (!authStore.loggedIn) {
-      ElMessage.info("请先点击右上角 B 站头像扫码登录");
+      toast.info("请先点击右上角 B 站头像扫码登录");
       return;
     }
     biliPickerVisible.value = true;
@@ -239,7 +240,7 @@ function onPaletteAdd(type: NodeType | "source.biliCollection") {
 function onBiliPickerConfirm(videos: SourceVideoItem[]) {
   if (videos.length > 0) {
     flowCanvasRef.value?.addBiliVideos(videos);
-    ElMessage.success(videos.length > 1 ? `已添加 1 张多选卡片（${videos.length} 个视频）` : "已添加 1 个视频来源");
+    toast.success(videos.length > 1 ? `已添加 1 张多选卡片（${videos.length} 个视频）` : "已添加 1 个视频来源");
   }
 }
 
@@ -279,10 +280,10 @@ function onRename() {
 async function duplicateProject() {
   try {
     const created = await store.duplicateProject(projectId.value);
-    ElMessage.success(`已创建副本「${created.name}」`);
+    toast.success(`已创建副本「${created.name}」`);
     await router.push(`/project/${created.id}`);
   } catch (err) {
-    ElMessage.error(err instanceof Error ? err.message : "复制工程失败");
+    toast.error(err instanceof Error ? err.message : "复制工程失败");
   }
 }
 
@@ -290,7 +291,7 @@ async function exportProject() {
   try {
     await store.exportProject(projectId.value, projectName.value);
   } catch (err) {
-    ElMessage.error(err instanceof Error ? err.message : "导出工程失败");
+    toast.error(err instanceof Error ? err.message : "导出工程失败");
   }
 }
 
@@ -315,7 +316,7 @@ function onMoreCommand(command: string) {
       void exportProject();
       break;
     case "clear-runs":
-      ElMessage.info("清空运行记录将在 M4 接入");
+      toast.info("清空运行记录将在 M4 接入");
       break;
     case "force-stop":
       void forceStopRun();
@@ -367,7 +368,7 @@ async function resumeRun(run: RunMeta) {
     else if (event.type === "node.done") showNotice(`${nodeName(event.nodeId)} 完成`);
     else if (event.type === "node.error") {
       showNotice(`${nodeName(event.nodeId)} 失败：${event.error}`);
-      ElMessage.error(`${nodeName(event.nodeId)} 失败：${event.error}`);
+      toast.error(`${nodeName(event.nodeId)} 失败：${event.error}`);
     } else if (event.type === "run.done") {
       running.value = false;
       activeRun.value = { ...(activeRun.value as RunMeta), status: event.status };
@@ -513,14 +514,14 @@ async function startRun(scope: "all" | "fromNode" | "node", nodeId?: string) {
     try {
       await settingsStore.load();
     } catch {
-      ElMessage.error("设置加载失败，请先到设置页确认密钥");
+      toast.error("设置加载失败，请先到设置页确认密钥");
       return;
     }
   }
   if (disposed) return;
   const missing = missingKeyMessage(scope, nodeId);
   if (missing) {
-    ElMessage.error(missing);
+    toast.error(missing);
     return;
   }
   // 先落盘当前画布，避免运行服务端读到上一次保存的旧图（例如刚粘贴的 B 站链接还没到自动保存）。
@@ -531,7 +532,7 @@ async function startRun(scope: "all" | "fromNode" | "node", nodeId?: string) {
     if (disposed) return;
     saveState.value = "saved";
   } catch (err) {
-    ElMessage.error(err instanceof Error ? err.message : "保存失败，请稍后重试");
+    toast.error(err instanceof Error ? err.message : "保存失败，请稍后重试");
     return;
   }
   try {
@@ -539,6 +540,7 @@ async function startRun(scope: "all" | "fromNode" | "node", nodeId?: string) {
     const run = await api.post<RunMeta>(`/api/projects/${projectId.value}/runs`, { scope, nodeId });
     if (disposed) return;
     activeRun.value = run;
+    toast.clear();
     if (subscribedRunId !== run.id) {
       stopRunEvents?.();
       stopRunEvents = null;
@@ -552,7 +554,7 @@ async function startRun(scope: "all" | "fromNode" | "node", nodeId?: string) {
         else if (event.type === "node.done") showNotice(`${nodeName(event.nodeId)} 完成`);
         else if (event.type === "node.error") {
           showNotice(`${nodeName(event.nodeId)} 失败：${event.error}`);
-          ElMessage.error(`${nodeName(event.nodeId)} 失败：${event.error}`);
+          toast.error(`${nodeName(event.nodeId)} 失败：${event.error}`);
         } else if (event.type === "run.done") {
           running.value = false;
           activeRun.value = { ...(activeRun.value as RunMeta), status: event.status };
@@ -568,7 +570,7 @@ async function startRun(scope: "all" | "fromNode" | "node", nodeId?: string) {
     }
   } catch (err) {
     running.value = false;
-    ElMessage.error(err instanceof Error ? err.message : "启动运行失败");
+    toast.error(err instanceof Error ? err.message : "启动运行失败");
   }
 }
 
@@ -585,11 +587,11 @@ async function stopRun() {
       showNotice("已发送停止指令");
     } else {
       await api.post<{ ok: boolean }>(`/api/runs/${target.id}/force-stop`);
-      ElMessage.success("已强制结束中断的运行");
+      toast.success("已强制结束中断的运行");
       await runsStore.load();
     }
   } catch (err) {
-    ElMessage.error(err instanceof Error ? err.message : "停止运行失败");
+    toast.error(err instanceof Error ? err.message : "停止运行失败");
   }
 }
 
@@ -598,12 +600,12 @@ async function forceStopRun() {
   if (!target) return;
   try {
     await api.post<{ ok: boolean }>(`/api/runs/${target.id}/force-stop`);
-    ElMessage.success("已强制结束运行");
+    toast.success("已强制结束运行");
     if (activeRun.value) activeRun.value = { ...activeRun.value, status: "cancelled" };
     running.value = false;
     await runsStore.load();
   } catch (err) {
-    ElMessage.error(err instanceof Error ? err.message : "强制结束失败");
+    toast.error(err instanceof Error ? err.message : "强制结束失败");
   }
 }
 
@@ -612,7 +614,7 @@ async function viewOutput(nodeId: string) {
     const data = await api.get<{ items: RunMeta[] }>(`/api/runs?projectId=${encodeURIComponent(projectId.value)}&limit=20`);
     const runs = data.items ?? [];
     if (runs.length === 0) {
-      ElMessage.warning("还没有运行记录，请先运行工作流");
+      toast.warning("还没有运行记录，请先运行工作流");
       return;
     }
     for (const run of runs) {
@@ -627,9 +629,9 @@ async function viewOutput(nodeId: string) {
         return;
       }
     }
-    ElMessage.warning("没有找到包含该节点输出的运行记录，请先运行该节点");
+    toast.warning("没有找到包含该节点输出的运行记录，请先运行该节点");
   } catch (err) {
-    ElMessage.error(err instanceof Error ? err.message : "打开输出失败");
+    toast.error(err instanceof Error ? err.message : "打开输出失败");
   }
 }
 
@@ -662,7 +664,7 @@ async function loadNodeOutput(nodeId: string, runId: string, nodeResult: RunNode
     }
   } catch (err) {
     outputDrawerText.value = "";
-    ElMessage.error(err instanceof Error ? err.message : "节点输出读取失败");
+    toast.error(err instanceof Error ? err.message : "节点输出读取失败");
   } finally {
     outputDrawerLoading.value = false;
   }
@@ -697,9 +699,9 @@ async function copyNodeOutput() {
   if (!outputDrawerActiveText.value) return;
   try {
     await navigator.clipboard.writeText(outputDrawerActiveText.value);
-    ElMessage.success("已复制节点内容");
+    toast.success("已复制节点内容");
   } catch {
-    ElMessage.error("复制失败，请手动选择文本");
+    toast.error("复制失败，请手动选择文本");
   }
 }
 

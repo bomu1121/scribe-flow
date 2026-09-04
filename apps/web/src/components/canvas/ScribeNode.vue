@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, provide, ref, watch } from "vue";
-import { ElInput, ElMessage, ElMessageBox, ElTooltip, ElUpload, type UploadRequestOptions } from "element-plus";
+import { ElInput, ElMessageBox, ElTooltip, ElUpload, type UploadRequestOptions } from "element-plus";
 import { PhBookOpenText, PhCloud, PhDotsThreeVertical, PhFileArrowDown, PhFileText, PhGitBranch, PhGitMerge, PhMagicWand, PhMicrophone, PhPlay, PhShareNetwork, PhSlidersHorizontal, PhSparkle, PhSwap, PhTreeStructure, PhUploadSimple, PhVideo } from "@phosphor-icons/vue";
 import { CircleAlert } from "lucide-vue-next";
+import { toast } from "@/lib/toast";
 import { Handle, Position, useVueFlow, type NodeProps } from "@vue-flow/core";
 import { ContextMenuContent, ContextMenuItem, ContextMenuPortal, ContextMenuRoot, ContextMenuSeparator, ContextMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuPortal, DropdownMenuRoot, DropdownMenuSeparator, DropdownMenuTrigger } from "reka-ui";
 import { NODE_PORTS, NODE_TYPE_LABELS, type NodeType, type UploadedFile, type VideoPreview } from "@scribe-flow/shared";
@@ -49,10 +50,10 @@ async function uploadFile(options: UploadRequestOptions) {
     const result = await api.upload<UploadedFile>("/api/files/upload", form);
     patch({ fileId: result.fileId, fileName: result.fileName, filePath: result.storedPath, size: result.size });
     commit();
-    ElMessage.success(`已上传「${result.fileName}」`);
+    toast.success(`已上传「${result.fileName}」`);
     options.onSuccess?.(result);
   } catch (err) {
-    ElMessage.error(err instanceof Error ? err.message : "上传失败");
+    toast.error(err instanceof Error ? err.message : "上传失败");
     (options.onError as ((error: unknown) => void) | undefined)?.(err);
   }
 }
@@ -139,7 +140,7 @@ function confirmPageSelection() {
     pageInfo: { cid: first.cid, page: first.page, part: first.part, duration: first.duration },
   });
   props.data.ctx?.commit();
-  ElMessage.success(items.length > 1 ? `已选择 ${items.length} 个分P，合并为一张卡片` : `已选择 P${first.page}`);
+  toast.success(items.length > 1 ? `已选择 ${items.length} 个分P，合并为一张卡片` : `已选择 P${first.page}`);
 }
 
 onMounted(() => {

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from "vue";
-import { ElButton, ElDialog, ElInput, ElMessage, ElTabPane, ElTable, ElTableColumn, ElTabs, type TableInstance } from "element-plus";
+import { ElButton, ElDialog, ElInput, ElTabPane, ElTable, ElTableColumn, ElTabs, type TableInstance } from "element-plus";
+import { toast } from "@/lib/toast";
 import { Clock3, FolderHeart, ListVideo, PlaySquare } from "lucide-vue-next";
 import type { SourceCollection, SourceVideoItem, VideoPreview } from "@scribe-flow/shared";
 import ModelSelect from "../ModelSelect.vue";
@@ -182,7 +183,7 @@ async function goPage(next: number) {
 async function confirmSelection() {
   if (confirming.value) return;
   if (selected.value.length === 0) {
-    ElMessage.warning("请先选择至少一个视频");
+    toast.warning("请先选择至少一个视频");
     return;
   }
   confirming.value = true;
@@ -210,7 +211,7 @@ async function confirmSelection() {
     emit("confirm", items);
     dialogVisible.value = false;
   } catch (err) {
-    ElMessage.error(err instanceof Error ? err.message : "解析视频信息失败，请稍后重试");
+    toast.error(err instanceof Error ? err.message : "解析视频信息失败，请稍后重试");
   } finally {
     confirming.value = false;
   }
