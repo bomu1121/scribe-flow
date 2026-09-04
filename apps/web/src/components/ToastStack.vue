@@ -1,18 +1,29 @@
 <script setup lang="ts">
-import { CircleAlert, CircleCheck, CircleHelp, CircleX, X } from "lucide-vue-next";
+import { X } from "lucide-vue-next";
 import { toast, useToastState, type ToastType } from "@/lib/toast";
 
 const state = useToastState();
 
-const iconMap: Record<ToastType, typeof CircleCheck> = {
-  success: CircleCheck,
-  error: CircleX,
-  warning: CircleAlert,
-  info: CircleHelp,
+const glyphMap: Record<ToastType, string> = {
+  success: "✓",
+  error: "✕",
+  warning: "!",
+  info: "i",
 };
 
-function iconFor(type: ToastType) {
-  return iconMap[type];
+const defaultTitles: Record<ToastType, string> = {
+  success: "操作成功",
+  error: "操作失败",
+  warning: "提示",
+  info: "提示",
+};
+
+function glyphFor(type: ToastType) {
+  return glyphMap[type];
+}
+
+function titleFor(type: ToastType, title?: string) {
+  return title || defaultTitles[type];
 }
 </script>
 
@@ -22,11 +33,11 @@ function iconFor(type: ToastType) {
       <TransitionGroup name="sf-toast" tag="div" class="sf-toast-list">
         <div v-for="item in state.items" :key="item.id" class="sf-toast" :class="`sf-toast--${item.type}`">
           <span class="sf-toast-icon">
-            <component :is="iconFor(item.type)" :size="17" :stroke-width="2.5" />
+            <span class="sf-toast-glyph">{{ glyphFor(item.type) }}</span>
           </span>
           <div class="sf-toast-content">
-            <span v-if="item.title" class="sf-toast-title">{{ item.title }}</span>
-            <span class="sf-toast-message" :class="{ 'is-main': !item.title }">{{ item.message }}</span>
+            <span class="sf-toast-title">{{ titleFor(item.type, item.title) }}</span>
+            <span class="sf-toast-message">{{ item.message }}</span>
           </div>
           <button type="button" class="sf-toast-close" aria-label="关闭提示" @click="toast.remove(item.id)">
             <X :size="14" />
@@ -64,7 +75,7 @@ function iconFor(type: ToastType) {
   max-width: 100%;
   padding: 12px 10px 12px 12px;
   border: 1px solid var(--color-border);
-  border-radius: var(--radius-lg);
+  border-radius: 2px;
   background: var(--color-surface);
   box-shadow: var(--shadow-overlay);
 }
@@ -77,6 +88,13 @@ function iconFor(type: ToastType) {
   border-radius: 50%;
   color: var(--color-on-error);
   flex-shrink: 0;
+}
+
+.sf-toast-glyph {
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1;
+  user-select: none;
 }
 
 .sf-toast--success .sf-toast-icon {
@@ -121,12 +139,6 @@ function iconFor(type: ToastType) {
   color: var(--color-text-secondary);
   word-break: break-word;
   white-space: pre-wrap;
-}
-
-.sf-toast-message.is-main {
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--color-text);
 }
 
 .sf-toast-close {
