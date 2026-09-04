@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, provide, ref, watch } from "vue";
-import { ElInput, ElMessage, ElMessageBox, ElUpload, type UploadRequestOptions } from "element-plus";
+import { ElInput, ElMessage, ElMessageBox, ElTooltip, ElUpload, type UploadRequestOptions } from "element-plus";
 import { PhBookOpenText, PhCloud, PhDotsThreeVertical, PhFileArrowDown, PhFileText, PhGitBranch, PhGitMerge, PhMagicWand, PhMicrophone, PhPlay, PhShareNetwork, PhSlidersHorizontal, PhSparkle, PhSwap, PhTreeStructure, PhUploadSimple, PhVideo } from "@phosphor-icons/vue";
+import { CircleAlert } from "lucide-vue-next";
 import { Handle, Position, useVueFlow, type NodeProps } from "@vue-flow/core";
 import { ContextMenuContent, ContextMenuItem, ContextMenuPortal, ContextMenuRoot, ContextMenuSeparator, ContextMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuPortal, DropdownMenuRoot, DropdownMenuSeparator, DropdownMenuTrigger } from "reka-ui";
 import { NODE_PORTS, NODE_TYPE_LABELS, type NodeType, type UploadedFile, type VideoPreview } from "@scribe-flow/shared";
@@ -415,7 +416,12 @@ const themeOptions = [
               <component :is="typeIcon" :size="17" />
             </span>
             <span class="sf-node-title" :title="label" :aria-label="`节点名称：${label}`">{{ label }}</span>
-            <span class="sf-node-status" />
+            <el-tooltip v-if="data.status === 'error'" :content="data.summary || '节点运行失败'" placement="top" effect="dark" :show-after="120" :hide-after="0">
+              <span class="sf-node-error-trigger" tabindex="0" aria-label="错误详情">
+                <CircleAlert :size="14" />
+              </span>
+            </el-tooltip>
+            <span v-else class="sf-node-status" />
             <button
               type="button"
               class="sf-node-run-btn nodrag"
@@ -662,7 +668,7 @@ const themeOptions = [
           <div class="sf-node-result-detail-text markdown-body" v-html="renderedResultDetail" />
           <button type="button" class="sf-node-result-detail-open" @click.stop="props.data.ctx?.viewOutput()">查看完整输出</button>
         </div>
-        <div v-if="hasResult" class="sf-node-result nodrag" :class="data.status ? `is-${data.status}` : ''">
+        <div v-if="hasResult && data.status !== 'error'" class="sf-node-result nodrag" :class="data.status ? `is-${data.status}` : ''">
           <span v-if="data.status" class="sf-node-result-status" />
           <span class="sf-node-result-meta tnum">{{ data.summary }}</span>
           <span v-if="data.delta" class="sf-node-result-delta tnum" :class="`is-${data.delta.tone}`">{{ data.delta.label }}</span>
@@ -917,6 +923,28 @@ const themeOptions = [
   border-radius: 50%;
   background: var(--color-border-strong);
   flex-shrink: 0;
+}
+
+.sf-node-error-trigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  color: var(--color-error);
+  border-radius: 50%;
+  cursor: help;
+  flex-shrink: 0;
+  transition:
+    color var(--dur-1) var(--ease-out),
+    background-color var(--dur-1) var(--ease-out);
+}
+
+.sf-node-error-trigger:hover,
+.sf-node-error-trigger:focus-visible {
+  color: var(--color-error);
+  background: var(--color-error-soft);
+  outline: none;
 }
 
 .sf-node-body {
