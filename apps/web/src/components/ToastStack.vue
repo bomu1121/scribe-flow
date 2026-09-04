@@ -117,7 +117,7 @@ function titleFor(type: ToastType, title?: string) {
   gap: 8px;
   width: 340px;
   max-width: 100%;
-  padding: 10px 8px 10px 10px;
+  padding: 20px 18px 20px 20px;
   border: 1px solid var(--color-border);
   border-radius: 2px;
   background: var(--color-surface);
