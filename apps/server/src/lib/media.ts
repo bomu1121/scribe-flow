@@ -49,7 +49,15 @@ export async function downloadBiliAudio(bvid: string, cid: number, cookie: strin
   if (cookie) headers.Cookie = cookie;
 
   const url = `https://api.bilibili.com/x/player/playurl?bvid=${encodeURIComponent(bvid)}&cid=${cid}&fnval=16&fnver=0&fourk=1&qn=64`;
-  const res = await fetch(url, { headers, signal: AbortSignal.timeout(15000) });
+  let res: Response;
+  try {
+    res = await fetch(url, { headers, signal: AbortSignal.timeout(15000) });
+  } catch (err) {
+    // 传输层失败（DNS/建连/超时等）补上上下文；保留 cause 供上层展示真实原因。
+    throw new Error(`获取播放地址失败（BV${bvid}）：${err instanceof Error ? err.message : String(err)}`, {
+      cause: err instanceof Error ? err : undefined,
+    });
+  }
   if (!res.ok) throw new Error(`B 站播放地址请求失败（${res.status}）`);
   const body = (await res.json()) as PlayUrlResponse;
   if (body.code !== 0 || !body.data) throw new Error(body.message || "获取播放地址失败");
@@ -59,14 +67,27 @@ export async function downloadBiliAudio(bvid: string, cid: number, cookie: strin
   if (!audioUrl) throw new Error("该视频没有可下载的音轨");
 
   const outPath = join(destDir, "audio.m4s");
-  const audioRes = await fetch(audioUrl, {
-    headers: {
-      "User-Agent": BILI_USER_AGENT,
-      Referer: "https://www.bilibili.com/",
-    },
-    signal: AbortSignal.timeout(600_000),
-  });
+  let audioRes: Response;
+  try {
+    audioRes = await fetch(audioUrl, {
+      headers: {
+        "User-Agent": BILI_USER_AGENT,
+        Referer: "https://www.bilibili.com/",
+      },
+      signal: AbortSignal.timeout(600_000),
+    });
+  } catch (err) {
+    throw new Error(`音轨下载失败（BV${bvid}）：${err instanceof Error ? err.message : String(err)}`, {
+      cause: err instanceof Error ? err : undefined,
+    });
+  }
   if (!audioRes.ok || !audioRes.body) throw new Error(`音轨下载失败（${audioRes.status}）`);
-  await pipeline(Readable.fromWeb(audioRes.body as never), createWriteStream(outPath));
+  try {
+    await pipeline(Readable.fromWeb(audioRes.body as never), createWriteStream(outPath));
+  } catch (err) {
+    throw new Error(`音轨下载中断（BV${bvid}）：${err instanceof Error ? err.message : String(err)}`, {
+      cause: err instanceof Error ? err : undefined,
+    });
+  }
   return outPath;
 }

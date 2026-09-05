@@ -26,15 +26,35 @@ import { getAiConfig, getAsrConfig, getSettings } from "./settings";
 
 const MAX_INLINE_TEXT = 200_000;
 
-/** 只有外部调用类节点才自动重试；本地节点失败重试无意义。 */
-const RETRYABLE_NODE_TYPES = new Set(["process.transcribe", "process.refine", "process.prompt", "process.chapter", "process.mindmap"]);
+/** 外部调用/网络下载类节点自动重试；本地节点失败重试无意义。B 站下载最常见的失败就是瞬时网络错误。 */
+export const RETRYABLE_NODE_TYPES = new Set(["source.bili", "process.transcribe", "process.refine", "process.prompt", "process.chapter", "process.mindmap"]);
 
-/** 判断一次失败是否值得重试：取消与配置类错误不重试，其余（超时/网络/5xx/空结果）重试。 */
-function isRetryableError(error: Error, cancelled: boolean): boolean {
+/** 判断一次失败是否值得重试：取消、配置类与永久性错误不重试，其余（超时/网络/5xx/空结果）重试。 */
+export function isRetryableError(error: Error, cancelled: boolean): boolean {
   if (cancelled) return false;
   const message = error.message;
-  if (/运行已取消|未配置.*密钥|没有可.*输入|文稿为空|链接为空|缺少 BV|缺少 cid|文件为空|正则表达式无效|文稿过短/.test(message)) return false;
+  if (/运行已取消|未配置.*密钥|没有可.*输入|文稿为空|链接为空|缺少 BV|缺少 cid|文件为空|正则表达式无效|文稿过短|B 站登录已失效|没有可下载的音轨/.test(message)) return false;
   return true;
+}
+
+/** 把错误链（如 undici 的 `fetch failed` → ConnectTimeoutError）压缩成一行可读文本，用于落库与界面展示。 */
+export function describeError(err: unknown, maxLength = 400): string {
+  let current: Error | undefined = err instanceof Error ? err : new Error(typeof err === "string" ? err : "节点执行失败");
+  const parts: string[] = [];
+  let guard = 0;
+  while (current && guard < 6) {
+    guard += 1;
+    const message = current.message?.trim() ?? "";
+    if (message) {
+      const joined = parts.join("\n").toLowerCase();
+      if (!joined.includes(message.toLowerCase())) {
+        parts.push(message.length > 300 ? `${message.slice(0, 300)}…` : message);
+      }
+    }
+    current = (current as Error & { cause?: unknown }).cause as Error | undefined;
+  }
+  const text = parts.join(" ← ");
+  return text.length <= maxLength ? text : `${text.slice(0, maxLength - 1)}…`;
 }
 
 function sleep(ms: number): Promise<void> {
@@ -426,9 +446,16 @@ export class RunEngine {
       while (done.size + failed.size < active.order.length) {
         if (active.cancelled) break;
         await this.skipBlocked(active, done, failed, skipped);
-        const ready = active.order.filter((id) => !done.has(id) && !failed.has(id) && !running.has(id) && this.depsDone(active, id, done));
+        const ready = active.order.filter((id) => !done.has(id) && !failed.has(id) && !running.has(id) && this.isReadyToRun(active, id, done, failed, skipped));
         for (const nodeId of ready) {
           if (running.size >= concurrency) break;
+          // 部分成功：部分上游已失败/被跳过，但仍有可用输入 → 用剩余输入继续，并明确提示。
+          const degraded = this.degradedUpstreamLabels(active, nodeId, done, failed, skipped);
+          if (degraded.length > 0) {
+            const names = degraded.slice(0, 2).join("、");
+            const suffix = degraded.length > 2 ? ` 等 ${degraded.length} 个` : "";
+            this.emit(active, { type: "node.progress", runId: active.id, nodeId, progress: 0, message: `上游「${names}」失败${suffix}，将用其余可用输入继续` });
+          }
           running.set(nodeId, this.executeNode(active, nodeId));
         }
         if (running.size === 0) break;
@@ -450,7 +477,7 @@ export class RunEngine {
         }
       }
     } catch (err) {
-      const message = err instanceof Error ? err.message : "运行失败";
+      const message = describeError(err);
       await this.finishRun(active, "error", message);
       return;
     }
@@ -459,7 +486,14 @@ export class RunEngine {
       await this.finishRun(active, "cancelled");
       return;
     }
-    await this.finishRun(active, failed.size > 0 ? "error" : "success", failed.size > 0 ? "部分节点执行失败" : undefined);
+    const failedLabels = [...failed]
+      .map((id) => {
+        const node = active.graph.nodes.find((n) => n.id === id);
+        return node ? nodeLabel(node) : id;
+      })
+      .join("、");
+    const runError = failed.size > 0 ? `部分节点执行失败${failedLabels ? `：${failedLabels}` : ""}` : undefined;
+    await this.finishRun(active, failed.size > 0 ? "error" : "success", runError);
   }
 
   private async isSettled(promise: Promise<unknown>): Promise<boolean> {
@@ -468,24 +502,68 @@ export class RunEngine {
     return settled;
   }
 
-  private depsDone(active: ActiveRun, nodeId: string, done: Set<string>): boolean {
-    for (const edge of active.graph.edges) {
-      if (edge.target !== nodeId) continue;
-      if (!active.nodeIds.has(edge.source)) continue;
-      if (!done.has(edge.source)) return false;
-    }
-    return true;
+  /** 节点真正需要等待的上游输入边：范围内、且不属于“条件分支未命中”的边。 */
+  private expectedInputEdges(active: ActiveRun, nodeId: string): { source: string; sourceHandle?: string }[] {
+    return active.graph.edges.filter((e) => {
+      if (e.target !== nodeId || !active.nodeIds.has(e.source)) return false;
+      const source = active.graph.nodes.find((n) => n.id === e.source);
+      if (source?.type === "flow.if") {
+        const branch = active.branches.get(e.source);
+        if (branch && branch !== (e.sourceHandle || "true")) return false; // 未命中的分支不提供输入
+      }
+      return true;
+    });
   }
 
-  /** 条件分支跳过传播：某个节点的所有上游都永久断供（分支未命中或上游已跳过）时，把它标为 skipped。 */
+  /**
+   * 节点何时可以执行：期望输入全部尘埃落定（完成/跳过/失败），且至少一路真正成功。
+   * 上游全部断供（无可用输入）的节点不会执行，由 skipBlocked 标记跳过。
+   */
+  private isReadyToRun(active: ActiveRun, nodeId: string, done: Set<string>, failed: Set<string>, skipped: Set<string>): boolean {
+    const expected = this.expectedInputEdges(active, nodeId);
+    if (expected.length === 0) return true;
+    let hasUsableInput = false;
+    for (const edge of expected) {
+      const source = edge.source;
+      if (done.has(source)) {
+        if (!skipped.has(source)) hasUsableInput = true;
+        continue;
+      }
+      if (!failed.has(source)) return false; // 上游仍在运行/排队
+    }
+    return hasUsableInput;
+  }
+
+  /** 部分成功场景下，收集已失败/被跳过但仍不影响本节点运行的上游标签（用于提示）。 */
+  private degradedUpstreamLabels(active: ActiveRun, nodeId: string, done: Set<string>, failed: Set<string>, skipped: Set<string>): string[] {
+    const labels: string[] = [];
+    for (const edge of this.expectedInputEdges(active, nodeId)) {
+      const source = edge.source;
+      if (!failed.has(source) && !(done.has(source) && skipped.has(source))) continue;
+      const node = active.graph.nodes.find((n) => n.id === source);
+      labels.push(node ? nodeLabel(node) : source);
+    }
+    return [...new Set(labels)];
+  }
+
+  /** 断供跳过传播：某节点的所有上游都永久断供（上游失败/上游已跳过/分支未命中）时，把它标为 skipped。 */
   private async skipBlocked(active: ActiveRun, done: Set<string>, failed: Set<string>, skipped: Set<string>): Promise<void> {
     for (const nodeId of active.order) {
       if (done.has(nodeId) || failed.has(nodeId)) continue;
       const incoming = active.graph.edges.filter((e) => e.target === nodeId && active.nodeIds.has(e.source));
       if (incoming.length === 0) continue;
-      const allBlocked = incoming.every((e) => this.isEdgeBlocked(active, e, skipped));
+      const allBlocked = incoming.every((e) => this.isEdgeBlocked(active, e, failed, skipped));
       if (!allBlocked) continue;
-      const reason = "条件分支未命中，跳过";
+      const failedUpstream = [...new Set(incoming.filter((e) => failed.has(e.source)).map((e) => e.source))];
+      const reason =
+        failedUpstream.length > 0
+          ? `上游失败，跳过：${failedUpstream
+              .map((id) => {
+                const node = active.graph.nodes.find((n) => n.id === id);
+                return node ? nodeLabel(node) : id;
+              })
+              .join("、")}`
+          : "条件分支未命中或上游不可用，跳过";
       await this.updateNode(active, nodeId, "skipped", 0, undefined, undefined, reason);
       this.emit(active, { type: "node.skipped", runId: active.id, nodeId, reason });
       done.add(nodeId);
@@ -493,9 +571,9 @@ export class RunEngine {
     }
   }
 
-  /** 一条边是否永久断供：来源是已跳过的节点，或来源是已执行的条件分支且输出 handle 与命中分支不符。 */
-  private isEdgeBlocked(active: ActiveRun, edge: { source: string; sourceHandle?: string }, skipped: Set<string>): boolean {
-    if (skipped.has(edge.source)) return true;
+  /** 一条边是否永久断供：来源节点已失败/已跳过，或来源是已执行的条件分支且输出 handle 与命中分支不符。 */
+  private isEdgeBlocked(active: ActiveRun, edge: { source: string; sourceHandle?: string }, failed: Set<string>, skipped: Set<string>): boolean {
+    if (failed.has(edge.source) || skipped.has(edge.source)) return true;
     const source = active.graph.nodes.find((n) => n.id === edge.source);
     if (source?.type !== "flow.if") return false;
     const branch = active.branches.get(edge.source);
@@ -744,7 +822,7 @@ export class RunEngine {
           active.outputs.set(nodeId, result.outputs);
           return "done";
         } catch (err) {
-          const message = err instanceof Error ? err.message : "节点执行失败";
+          const message = describeError(err);
           const error = err instanceof Error ? err : new Error(message);
           if (attempts <= maxRetries && isRetryableError(error, active.cancelled)) {
             const wait = backoffMs * attempts;
