@@ -594,7 +594,6 @@ const themeOptions = [
                 <CircleAlert :size="14" />
               </span>
             </el-tooltip>
-            <span v-else class="sf-node-status" />
             <button
               type="button"
               class="sf-node-run-btn nodrag"
@@ -837,8 +836,8 @@ const themeOptions = [
           </div>
         </div>
 
-        <div v-if="hasResult && data.status !== 'error'" class="sf-node-result nodrag" :class="data.status ? `is-${data.status}` : ''">
-          <span v-if="data.status" class="sf-node-result-status" />
+        <div class="sf-node-result nodrag" :class="data.status ? `is-${data.status}` : 'is-idle'">
+          <span class="sf-node-result-status" />
           <span class="sf-node-result-meta tnum">{{ data.summary }}</span>
           <PopoverRoot v-if="canPreview && data.delta" v-model:open="previewOpen">
             <PopoverTrigger as-child>
@@ -977,30 +976,13 @@ const themeOptions = [
   border-color: var(--node-running-border);
 }
 
-.sf-node.is-running .sf-node-status {
-  background: var(--color-brand);
-  animation: sf-pulse var(--dur-3) var(--ease-out) infinite alternate;
-}
-
-.sf-node.is-done .sf-node-status {
-  background: var(--color-success);
-}
-
 .sf-node.is-error {
   border-color: var(--color-error);
-}
-
-.sf-node.is-error .sf-node-status {
-  background: var(--color-error);
 }
 
 .sf-node.is-skipped {
   border-color: var(--color-border);
   opacity: 0.72;
-}
-
-.sf-node.is-skipped .sf-node-status {
-  background: var(--color-text-tertiary);
 }
 
 .sf-node-selection-bar {
@@ -1135,14 +1117,6 @@ const themeOptions = [
   user-select: none;
 }
 
-.sf-node-status {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: var(--color-border-strong);
-  flex-shrink: 0;
-}
-
 .sf-node-error-trigger {
   display: inline-flex;
   align-items: center;
@@ -1220,6 +1194,7 @@ const themeOptions = [
 
 .sf-node-result.is-running .sf-node-result-status {
   background: var(--color-brand);
+  animation: sf-pulse var(--dur-3) var(--ease-out) infinite alternate;
 }
 
 .sf-node-result.is-skipped .sf-node-result-status {
@@ -1229,6 +1204,7 @@ const themeOptions = [
 .sf-node-result-meta {
   flex: 1;
   min-width: 0;
+  min-height: 1.4em;
   font-size: 10.5px;
   line-height: 1.4;
   color: var(--color-text-tertiary);
