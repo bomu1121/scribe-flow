@@ -142,7 +142,7 @@ function titleFor(type: ToastType, title?: string) {
 
 .sf-toast--success .sf-toast-icon {
   background: var(--color-success);
-  color: #fff;
+  color: var(--color-on-success);
 }
 
 .sf-toast--error .sf-toast-icon {
@@ -152,12 +152,12 @@ function titleFor(type: ToastType, title?: string) {
 
 .sf-toast--warning .sf-toast-icon {
   background: var(--color-warning);
-  color: #fff;
+  color: var(--color-on-warning);
 }
 
 .sf-toast--info .sf-toast-icon {
   background: var(--color-text-tertiary);
-  color: #fff;
+  color: var(--color-on-info);
 }
 
 .sf-toast-content {

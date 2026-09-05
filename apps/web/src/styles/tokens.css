@@ -31,9 +31,11 @@
   --color-success: #18a058;
   --color-success-soft: #e7f6ee;
   --color-success-border: #b7e4ca;
+  --color-on-success: #ffffff;
   --color-warning: #d9822b;
   --color-warning-soft: #fcf0e2;
   --color-warning-border: #f0d3ae;
+  --color-on-warning: #ffffff;
   --color-error: #d23f4e;
   --color-error-soft: #fbecee;
   --color-error-border: #f0c3c9;
@@ -41,6 +43,7 @@
   --color-info: #0b88c4;
   --color-info-soft: #e6f5fc;
   --color-info-border: #b8e2f2;
+  --color-on-info: #ffffff;
 
   /* 来源身份（B 站粉等只在徽章里用） */
   --color-accent-pink: #fb7299;
