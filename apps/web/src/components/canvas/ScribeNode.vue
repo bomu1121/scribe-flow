@@ -431,7 +431,7 @@ watch(canPreview, (ok) => {
 function onNodeDoubleClick(event: MouseEvent) {
   if (!canViewOutput.value) return;
   const target = event.target as HTMLElement | null;
-  if (target?.closest("input, textarea, button, select, [contenteditable], .el-upload, .el-select, .sf-model-select, .sf-node-run-btn")) return;
+  if (target?.closest("input, textarea, button, select, [contenteditable], .el-upload, .el-select, .el-input-number, .sf-model-select, .sf-node-run-btn")) return;
   props.data.ctx?.viewOutput();
 }
 
@@ -1162,7 +1162,7 @@ const themeOptions = [
   gap: 8px;
 }
 
-/* 无正文卡片（如 AI 校对且未展开高级设置）：顶部栏与底部结果区直接相连，不留中间空白段 */
+/* 无正文卡片（如 AI 校对）：顶部栏与底部结果区直接相连，不留中间空白段 */
 .sf-node.is-bodyless .sf-node-head {
   margin-bottom: 0;
 }
@@ -1570,26 +1570,20 @@ const themeOptions = [
   text-align: right;
 }
 
+/* 高级（失败重试）：不用整行分割线，收进与 .sf-node-preview/.sf-node-pages 同级的柔和底纹小卡片 */
 .sf-node-advanced {
-  margin-top: 8px;
-  padding-top: 8px;
-  border-top: 1px solid var(--color-border);
+  margin-top: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-muted);
 }
 
 .sf-node-advanced-title {
-  margin-bottom: 6px;
+  margin-bottom: 8px;
   font-size: 11px;
-  color: var(--color-text-tertiary);
-}
-
-.sf-node-advanced-summary {
-  font-size: 11px;
-  color: var(--color-text-tertiary);
-  cursor: pointer;
-  user-select: none;
-}
-
-.sf-node-advanced-summary:hover {
+  font-weight: 600;
+  letter-spacing: 0.02em;
   color: var(--color-text-secondary);
 }
 
