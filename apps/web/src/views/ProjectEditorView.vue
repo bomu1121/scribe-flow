@@ -13,6 +13,7 @@ import BiliAccountButton from "@/components/auth/BiliAccountButton.vue";
 import { api } from "@/lib/api";
 import { renderMarkdown } from "@/lib/markdown";
 import { subscribeRunEvents } from "@/lib/sse";
+import type { NodePreviewOutput } from "@/utils/flow";
 import { useAuthStore } from "@/stores/auth";
 import { useProjectsStore } from "@/stores/projects";
 import { useRunsStore } from "@/stores/runs";
@@ -71,6 +72,23 @@ const runStatusLabels: Record<string, string> = {
   error: "失败",
   cancelled: "已取消",
 };
+
+/**
+ * 节点最近一次输出的解析缓存。
+ * 悬停预览会高频触发，不能每次都在 runs 列表上逐条拉详情；
+ * 每次开始/结束/恢复运行时清空，避免返回旧运行的内容。
+ */
+interface CachedNodeOutputMeta {
+  run: RunMeta;
+  nodeResult: RunNodeResult;
+}
+const nodeOutputMetaCache = new Map<string, CachedNodeOutputMeta | null>();
+const nodeOutputTextCache = new Map<string, string>();
+
+function clearNodeOutputCache() {
+  nodeOutputMetaCache.clear();
+  nodeOutputTextCache.clear();
+}
 
 interface OutputDrawerInputItem extends RunNodeInput {
   label: string;
@@ -333,6 +351,7 @@ async function resumeRun(run: RunMeta) {
   if (activeRun.value?.id === run.id && (stopRunEvents || subscribedRunId === run.id)) return;
   stopRunEvents?.();
   subscribedRunId = null;
+  clearNodeOutputCache();
   activeRun.value = run;
   running.value = true;
   showNotice(`检测到运行 #${run.id.slice(-6)} 正在进行，正在恢复进度…`);
@@ -396,6 +415,7 @@ async function reconcileActiveRun() {
       stopRunEvents?.();
       stopRunEvents = null;
       subscribedRunId = null;
+      clearNodeOutputCache();
       showNotice(`运行结束：${runStatusLabels[detail.status] ?? detail.status}`);
       const snapshot = await mergedNodeResults(detail);
       if (flowCanvasRef.value) flowCanvasRef.value.applyRunSnapshot(snapshot);
@@ -440,6 +460,7 @@ async function mergedNodeResults(detail: RunDetail): Promise<RunNodeResult[]> {
 
 /** 运行结束后主动拉取最终快照并同步到画布，避免 SSE 丢事件导致下游节点停留在旧状态。 */
 async function syncFinalRun(runId: string) {
+  clearNodeOutputCache();
   try {
     const detail = await api.get<RunDetail>(`/api/runs/${runId}`);
     if (disposed) return;
@@ -456,6 +477,7 @@ async function restoreLastRun() {
   const latest = runsStore.runs.find((r) => r.projectId === projectId.value);
   if (!latest || latest.status === "running" || restoredLastRunId === latest.id) return;
   restoredLastRunId = latest.id;
+  clearNodeOutputCache();
   try {
     const detail = await api.get<RunDetail>(`/api/runs/${latest.id}`);
     if (disposed) return;
@@ -535,6 +557,7 @@ async function startRun(scope: "all" | "fromNode" | "node", nodeId?: string) {
     toast.error(err instanceof Error ? err.message : "保存失败，请稍后重试");
     return;
   }
+  clearNodeOutputCache();
   try {
     running.value = true;
     const run = await api.post<RunMeta>(`/api/projects/${projectId.value}/runs`, { scope, nodeId });
@@ -609,27 +632,68 @@ async function forceStopRun() {
   }
 }
 
+/**
+ * 找到包含该节点输出的最近一次运行（与 viewOutput 同源，带缓存供悬停预览复用）。
+ */
+async function findLatestNodeOutput(nodeId: string): Promise<CachedNodeOutputMeta | null> {
+  if (nodeOutputMetaCache.has(nodeId)) return nodeOutputMetaCache.get(nodeId) ?? null;
+  const data = await api.get<{ items: RunMeta[] }>(`/api/runs?projectId=${encodeURIComponent(projectId.value)}&limit=20`);
+  const runs = data.items ?? [];
+  for (const run of runs) {
+    const detail = await api.get<RunDetail>(`/api/runs/${run.id}`);
+    const nodeResult = detail.nodeResults.find((node) => node.nodeId === nodeId);
+    if (nodeResult) {
+      const meta = { run, nodeResult };
+      nodeOutputMetaCache.set(nodeId, meta);
+      return meta;
+    }
+  }
+  nodeOutputMetaCache.set(nodeId, null);
+  return null;
+}
+
+/** 读取节点输出全文：小文本内联直取，大文本走 content 接口；按 (runId, nodeId) 缓存。 */
+async function readNodeOutputText(nodeResult: RunNodeResult, runId: string): Promise<string> {
+  const key = `${runId}::${nodeResult.nodeId}`;
+  const cached = nodeOutputTextCache.get(key);
+  if (cached !== undefined) return cached;
+  let text = "";
+  if (nodeResult.output?.text) {
+    text = nodeResult.output.text;
+  } else if (nodeResult.output?.path) {
+    const result = await api.get<{ text: string }>(`/api/runs/${runId}/outputs/${nodeResult.nodeId}/content`);
+    text = result.text ?? "";
+  }
+  nodeOutputTextCache.set(key, text);
+  return text;
+}
+
+/** 画布悬停预览的数据源：最近一次运行里该节点的完整文本输出。 */
+async function fetchCanvasNodeOutput(nodeId: string): Promise<NodePreviewOutput | null> {
+  const found = await findLatestNodeOutput(nodeId);
+  if (!found || found.nodeResult.status !== "done") return null;
+  const text = await readNodeOutputText(found.nodeResult, found.run.id);
+  return {
+    runId: found.run.id,
+    nodeLabel: found.nodeResult.nodeLabel || found.nodeResult.nodeType,
+    text,
+  };
+}
+
 async function viewOutput(nodeId: string) {
   try {
-    const data = await api.get<{ items: RunMeta[] }>(`/api/runs?projectId=${encodeURIComponent(projectId.value)}&limit=20`);
-    const runs = data.items ?? [];
-    if (runs.length === 0) {
-      toast.warning("还没有运行记录，请先运行工作流");
+    const found = await findLatestNodeOutput(nodeId);
+    if (!found) {
+      toast.warning("没有找到包含该节点输出的运行记录，请先运行该节点");
       return;
     }
-    for (const run of runs) {
-      const detail = await api.get<RunDetail>(`/api/runs/${run.id}`);
-      const nodeResult = detail.nodeResults.find((node) => node.nodeId === nodeId);
-      if (nodeResult) {
-        if (nodeResult.nodeType === "process.mindmap") {
-          router.push({ path: `/project/${projectId.value}/run/${run.id}`, query: { focus: nodeId, tab: "mindmap" } });
-          return;
-        }
-        openOutputDrawer(nodeId, run, nodeResult, detail);
-        return;
-      }
+    const { run, nodeResult } = found;
+    if (nodeResult.nodeType === "process.mindmap") {
+      router.push({ path: `/project/${projectId.value}/run/${run.id}`, query: { focus: nodeId, tab: "mindmap" } });
+      return;
     }
-    toast.warning("没有找到包含该节点输出的运行记录，请先运行该节点");
+    const detail = await api.get<RunDetail>(`/api/runs/${run.id}`);
+    openOutputDrawer(nodeId, run, nodeResult, detail);
   } catch (err) {
     toast.error(err instanceof Error ? err.message : "打开输出失败");
   }
@@ -648,20 +712,13 @@ function openOutputDrawer(nodeId: string, run: RunMeta, nodeResult: RunNodeResul
   outputDrawerSelectedInputKey.value = "";
   outputDrawerInputText.value = "";
   outputDrawerVisible.value = true;
-  void loadNodeOutput(nodeId, run.id, nodeResult);
+  void loadNodeOutput(run.id, nodeResult);
 }
 
-async function loadNodeOutput(nodeId: string, runId: string, nodeResult: RunNodeResult) {
+async function loadNodeOutput(runId: string, nodeResult: RunNodeResult) {
   outputDrawerLoading.value = true;
   try {
-    if (nodeResult.output?.text) {
-      outputDrawerText.value = nodeResult.output.text;
-    } else if (nodeResult.output?.path) {
-      const result = await api.get<{ text: string }>(`/api/runs/${runId}/outputs/${nodeId}/content`);
-      outputDrawerText.value = result.text ?? "";
-    } else {
-      outputDrawerText.value = "";
-    }
+    outputDrawerText.value = await readNodeOutputText(nodeResult, runId);
   } catch (err) {
     outputDrawerText.value = "";
     toast.error(err instanceof Error ? err.message : "节点输出读取失败");
@@ -793,6 +850,7 @@ function downloadNodeOutput() {
           :key="projectId"
           :initial-graph="graph"
           :running="running"
+          :fetch-node-output="fetchCanvasNodeOutput"
           @update:graph="onGraphUpdate"
           @notice="showNotice"
           @history-change="historyState = $event"

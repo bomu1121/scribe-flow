@@ -6,6 +6,15 @@ export const SCRIBE_EDGE_TYPE = "scribe";
 /** 节点只允许在头部区域拖动。 */
 export const NODE_DRAG_HANDLE_SELECTOR = ".sf-node-head";
 
+/** 画布节点悬停预览用的完整输出（与输出抽屉同源，均为最近一次运行）。 */
+export interface NodePreviewOutput {
+  runId: string;
+  /** 节点展示名（优先运行记录里的 nodeLabel）。 */
+  nodeLabel: string;
+  /** 完整文本内容；可能为空字符串（该次运行无文本产物）。 */
+  text: string;
+}
+
 export interface NodeContextActions {
   duplicate: () => void;
   remove: () => void;
@@ -16,6 +25,8 @@ export interface NodeContextActions {
   copyOutput: () => void;
   /** 打开该节点在最近一次运行中的输出结果页。 */
   viewOutput: () => void;
+  /** 拉取该节点最近一次运行的完整文本（画布悬停预览用）；无匹配运行或无输出时返回 null。 */
+  fetchNodeOutput?: () => Promise<NodePreviewOutput | null>;
   /** 卡片内表单更新节点数据。 */
   updateData: (patch: Record<string, unknown>) => void;
   /** 卡片内表单失焦时提交一次撤销历史。 */

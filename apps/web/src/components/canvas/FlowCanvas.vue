@@ -25,12 +25,13 @@ import {
   toBusinessGraph,
   toFlowEdges,
   toFlowNodes,
+  type NodePreviewOutput,
   type ScribeFlowEdge,
   type ScribeFlowNode,
   type ScribeNodeData,
 } from "@/utils/flow";
 
-const props = defineProps<{ initialGraph: WorkflowGraph; running?: boolean }>();
+const props = defineProps<{ initialGraph: WorkflowGraph; running?: boolean; fetchNodeOutput?: (nodeId: string) => Promise<NodePreviewOutput | null> }>();
 const emit = defineEmits<{
   "update:graph": [graph: WorkflowGraph];
   select: [nodeId: string | null];
@@ -92,6 +93,10 @@ function ctxFor(nodeId: string) {
     running: props.running,
     copyOutput: () => emit("notice", "节点输出将在运行后可用"),
     viewOutput: () => emit("view-output", nodeId),
+    fetchNodeOutput: () => {
+      if (!props.fetchNodeOutput) return Promise.resolve(null);
+      return props.fetchNodeOutput(nodeId);
+    },
     updateData: (patch: Record<string, unknown>) => updateNodeData(nodeId, patch),
     commit: () => commitHistory(),
     addSourceVideos: (videos: import("@scribe-flow/shared").SourceVideoItem[]) => addSourceVideos(nodeId, videos),

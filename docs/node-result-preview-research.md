@@ -148,4 +148,9 @@
 - `RunDetailView` 完整结果页新增“对比输出”：在链路输入详情中可把“该输入/多模块合并文本”与当前最终输出做累积 Diff。
 - `DiffViewer` 升级为精确字符级高亮：引入 `diff-match-patch-es`（Apache-2.0，ESM + TypeScript），对成对的替换行使用 Google diff-match-patch 算法，只高亮真正变化的字符，不再整行红/绿。
 - 调研说明：`jsdiff` 虽更常用，但许可证为 BSD-3-Clause，与项目“只复用 MIT / Apache-2.0”的红线冲突，因此采用同算法族且许可证合规的 `diff-match-patch-es`。
+- **方案 D 落地（2026-10 用户方向确认）**：删除“选中且已完成节点在卡片内展开 `.sf-node-result-detail`”的内联预览，卡片高度不再随选中/结果变化。
+- 预览热区是底部**右侧 delta 变化徽标**（“新生成 / 较上游 +N 字”等）：250ms 防抖弹出、移出 180ms 后关闭，点击徽标固定面板、再次点击 / Esc / 点击外部关闭；键盘通过 role=button + Enter/Space 可达。整条摘要栏保持朴素，不做整行 hover 底色，避免“整条被选中”的观感。
+- 预览面板为 Teleport 浮层：基底（surface/描边/圆角/阴影/动效/z-index）与现有下拉菜单一致，并跟随画布 zoom 反缩放；正文为缩小版 Markdown 排版（12px、紧凑标题/行距），内部滚动保证完整内容可达。
+- 覆盖范围扩展到**所有有文本产物的节点**（含 `process.output` 与 `process.mindmap`）：完整输出由 ProjectEditorView 按“最近一次运行”懒加载（复用输出抽屉的 content 接口，按 runId+nodeId 缓存；开始/结束/恢复运行时清缓存），不再局限于服务端下发的 320 字 preview。
+- 该悬停浮层明确**不参与下拉模态守卫**（`dropdown-modal.ts` / `app.css` 对其用 `:not()` 排除），避免面板打开后画布其它节点无法 hover 导致预览“卡住”。
 

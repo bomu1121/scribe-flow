@@ -21,9 +21,9 @@ const POPUP_SELECTORS = [
   ".el-picker__popper",
   ".el-cascader__popper",
   ".el-autocomplete__popper",
-  // Reka UI
+  // Reka UI（悬停预览浮层不算模态下拉，不参与守卫：否则画布上无法移动到下一个节点触发关闭）
   "[data-reka-menu-content]",
-  "[data-reka-popover-content]",
+  "[data-reka-popover-content]:not(.sf-node-result-preview)",
   // 兜底
   ".sf-node-menu",
   ".sf-model-select__menu",

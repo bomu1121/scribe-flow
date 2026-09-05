@@ -5,7 +5,7 @@ import { PhBookOpenText, PhCloud, PhDotsThreeVertical, PhFileArrowDown, PhFileTe
 import { CircleAlert } from "lucide-vue-next";
 import { toast } from "@/lib/toast";
 import { Handle, Position, useVueFlow, type NodeProps } from "@vue-flow/core";
-import { ContextMenuContent, ContextMenuItem, ContextMenuPortal, ContextMenuRoot, ContextMenuSeparator, ContextMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuPortal, DropdownMenuRoot, DropdownMenuSeparator, DropdownMenuTrigger } from "reka-ui";
+import { ContextMenuContent, ContextMenuItem, ContextMenuPortal, ContextMenuRoot, ContextMenuSeparator, ContextMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuPortal, DropdownMenuRoot, DropdownMenuSeparator, DropdownMenuTrigger, PopoverContent, PopoverPortal, PopoverRoot, PopoverTrigger } from "reka-ui";
 import { NODE_PORTS, NODE_TYPE_LABELS, type NodeType, type UploadedFile, type VideoPreview } from "@scribe-flow/shared";
 import ModelSelect from "../ModelSelect.vue";
 import NodeFieldLabel from "./NodeFieldLabel.vue";
@@ -17,7 +17,7 @@ import ObsidianCard from "./node-cards/ObsidianCard.vue";
 import { renderMarkdown } from "@/lib/markdown";
 import { usePromptsStore } from "@/stores/prompts";
 import { api } from "@/lib/api";
-import type { ScribeNodeData } from "@/utils/flow";
+import type { NodePreviewOutput, ScribeNodeData } from "@/utils/flow";
 
 const props = defineProps<NodeProps<ScribeNodeData>>();
 
@@ -150,6 +150,8 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   if (previewTimer) clearTimeout(previewTimer);
+  previewLoadSeq += 1;
+  clearPreviewTimers();
 });
 
 function fmtDuration(sec: number): string {
@@ -198,6 +200,14 @@ function toggleAdvanced() {
   advancedOpen.value = !advancedOpen.value;
 }
 
+/**
+ * 卡片是否需要渲染正文区。
+ * process.refine（AI 校对）节点内无表单，正文区默认为空——不渲染空 body，
+ * 让顶部栏与底部栏直接相连；仅当展开「高级设置」（失败重试）时才需要正文容器。
+ */
+const noInlineFormTypes: NodeType[] = ["process.refine"];
+const hasBodyContent = computed(() => !noInlineFormTypes.includes(nodeType.value) || advancedOpen.value);
+
 const typeIcon = computed(() => {
   switch (nodeType.value) {
     case "source.bili":
@@ -239,9 +249,171 @@ const canViewOutput = computed(() =>
 );
 
 const hasResult = computed(() => Boolean(data.value.summary));
-/** 方案 A+B：画布常态不展示正文；只有选中且已完成的节点才展开结构化摘要，完整内容仍走抽屉。 */
-const canShowResultDetail = computed(() => props.selected && data.value.status === "done" && Boolean(data.value.preview) && canViewOutput.value);
-const renderedResultDetail = computed(() => (data.value.preview ? renderMarkdown(data.value.preview) : ""));
+/** 底部状态条可悬停预览：仅已完成、有摘要、类型可查看输出且数据通路可用（运行/跳过/失败不弹）。 */
+const canPreview = computed(
+  () => props.data.status === "done" && hasResult.value && canViewOutput.value && Boolean(props.data.ctx?.fetchNodeOutput),
+);
+
+// ---------- 底部状态条 → 悬停预览浮层 ----------
+const previewOpen = ref(false);
+const previewPinned = ref(false);
+const outputPreviewLoading = ref(false);
+const outputPreviewError = ref("");
+const previewOutput = ref<NodePreviewOutput | null>(null);
+let previewOpenTimer: ReturnType<typeof setTimeout> | null = null;
+let previewCloseTimer: ReturnType<typeof setTimeout> | null = null;
+let previewLoadSeq = 0;
+
+const previewText = computed(() => previewOutput.value?.text || data.value.preview || "");
+const renderedPreviewText = computed(() => (previewText.value ? renderMarkdown(previewText.value) : ""));
+const previewTitle = computed(() => previewOutput.value?.nodeLabel || label.value);
+const previewRunLabel = computed(() => (previewOutput.value?.runId ? `运行 #${previewOutput.value.runId.slice(-6)}` : ""));
+const previewCharLabel = computed(() => {
+  const text = previewText.value;
+  if (!text) return "";
+  const count = text.replace(/\s/g, "").length;
+  return count >= 1000 ? `${(count / 1000).toFixed(1)}k 字` : `${count} 字`;
+});
+
+function clearPreviewOpenTimer() {
+  if (previewOpenTimer) clearTimeout(previewOpenTimer);
+  previewOpenTimer = null;
+}
+
+function clearPreviewCloseTimer() {
+  if (previewCloseTimer) clearTimeout(previewCloseTimer);
+  previewCloseTimer = null;
+}
+
+function clearPreviewTimers() {
+  clearPreviewOpenTimer();
+  clearPreviewCloseTimer();
+}
+
+/** 离开预览相关的运行态（重跑/状态变化）时清空内容，避免下次悬停展示旧结果。 */
+function resetPreview() {
+  previewLoadSeq += 1;
+  clearPreviewTimers();
+  previewOpen.value = false;
+  previewPinned.value = false;
+  outputPreviewLoading.value = false;
+  outputPreviewError.value = "";
+  previewOutput.value = null;
+}
+
+function schedulePreviewOpen() {
+  if (previewPinned.value) return;
+  clearPreviewCloseTimer();
+  if (previewOpenTimer) return;
+  previewOpenTimer = setTimeout(() => {
+    previewOpenTimer = null;
+    previewOpen.value = true;
+    void ensurePreviewOutput();
+  }, 250);
+}
+
+function schedulePreviewClose() {
+  if (previewPinned.value) return;
+  clearPreviewOpenTimer();
+  if (previewCloseTimer) return;
+  // 留出从触发条移动到浮层的“桥接”时间，避免面板一闪而过。
+  previewCloseTimer = setTimeout(() => {
+    previewCloseTimer = null;
+    previewOpen.value = false;
+  }, 180);
+}
+
+function onPreviewTriggerEnter() {
+  if (previewPinned.value) return;
+  clearPreviewCloseTimer();
+  schedulePreviewOpen();
+}
+
+function onPreviewTriggerLeave() {
+  schedulePreviewClose();
+}
+
+function onPreviewContentEnter() {
+  if (previewPinned.value) return;
+  clearPreviewCloseTimer();
+  if (!previewOpen.value) {
+    previewOpen.value = true;
+    void ensurePreviewOutput();
+  }
+}
+
+function onPreviewContentLeave() {
+  schedulePreviewClose();
+}
+
+/** 点击触发条 = 固定/取消固定（在捕获阶段拦截，避免 Reka 自带的 toggle 覆盖 pin 语义）。 */
+function onPreviewTriggerClickCapture(event: MouseEvent) {
+  event.stopPropagation();
+  activatePreview();
+}
+
+function onPreviewTriggerKeydown(event: KeyboardEvent) {
+  if (event.key !== "Enter" && event.key !== " ") return;
+  event.preventDefault();
+  activatePreview();
+}
+
+function activatePreview() {
+  if (previewPinned.value) {
+    previewPinned.value = false;
+    previewOpen.value = false;
+  } else {
+    previewPinned.value = true;
+    previewOpen.value = true;
+    void ensurePreviewOutput();
+  }
+}
+
+function openFullPreview() {
+  previewPinned.value = false;
+  previewOpen.value = false;
+  props.data.ctx?.viewOutput();
+}
+
+async function ensurePreviewOutput() {
+  const fetchOutput = props.data.ctx?.fetchNodeOutput;
+  if (!fetchOutput || outputPreviewLoading.value || previewOutput.value) return;
+  const seq = ++previewLoadSeq;
+  outputPreviewLoading.value = true;
+  outputPreviewError.value = "";
+  try {
+    const output = await fetchOutput();
+    if (seq !== previewLoadSeq) return;
+    if (output) previewOutput.value = output;
+    else outputPreviewError.value = "未找到该节点的运行输出";
+  } catch (err) {
+    if (seq !== previewLoadSeq) return;
+    outputPreviewError.value = err instanceof Error ? err.message : "完整输出加载失败";
+  } finally {
+    if (seq === previewLoadSeq) outputPreviewLoading.value = false;
+  }
+}
+
+watch(previewOpen, (open) => {
+  if (open) {
+    // 点击固定发生在悬停 250ms 定时器尚未触发之前时，作废该定时器。
+    clearPreviewOpenTimer();
+    return;
+  }
+  previewPinned.value = false;
+  clearPreviewTimers();
+});
+
+watch(
+  () => props.data.status,
+  (status) => {
+    if (status !== "done") resetPreview();
+  },
+);
+
+watch(canPreview, (ok) => {
+  if (!ok) resetPreview();
+});
 
 function onNodeDoubleClick(event: MouseEvent) {
   if (!canViewOutput.value) return;
@@ -358,7 +530,7 @@ const themeOptions = [
 <template>
   <ContextMenuRoot>
     <ContextMenuTrigger as-child>
-      <div class="sf-node" :class="[statusClass, sizeClass, { 'is-selected': props.selected }]" @dblclick="onNodeDoubleClick">
+      <div class="sf-node" :class="[statusClass, sizeClass, { 'is-selected': props.selected, 'is-bodyless': !hasBodyContent }]" @dblclick="onNodeDoubleClick">
         <Handle
           v-for="port in ports.inputs"
           :key="port.id"
@@ -438,7 +610,7 @@ const themeOptions = [
           <p class="sf-node-desc">{{ nodeDescription }}</p>
         </div>
 
-        <div class="sf-node-body nodrag">
+        <div v-if="hasBodyContent" class="sf-node-body nodrag">
           <!-- 来源：B 站链接 / B 站多选收藏。多选时使用“平等列表”卡片，不再强调第一个视频。 -->
           <template v-if="nodeType === 'source.bili'">
             <template v-if="isCollection">
@@ -665,14 +837,59 @@ const themeOptions = [
           </div>
         </div>
 
-        <div v-if="canShowResultDetail" class="sf-node-result-detail nodrag">
-          <div class="sf-node-result-detail-text markdown-body" v-html="renderedResultDetail" />
-          <button type="button" class="sf-node-result-detail-open" @click.stop="props.data.ctx?.viewOutput()">查看完整输出</button>
-        </div>
         <div v-if="hasResult && data.status !== 'error'" class="sf-node-result nodrag" :class="data.status ? `is-${data.status}` : ''">
           <span v-if="data.status" class="sf-node-result-status" />
           <span class="sf-node-result-meta tnum">{{ data.summary }}</span>
-          <span v-if="data.delta" class="sf-node-result-delta tnum" :class="`is-${data.delta.tone}`">{{ data.delta.label }}</span>
+          <PopoverRoot v-if="canPreview && data.delta" v-model:open="previewOpen">
+            <PopoverTrigger as-child>
+              <span
+                class="sf-node-result-delta sf-node-result-delta--trigger tnum"
+                :class="[`is-${data.delta.tone}`, { 'is-preview-open': previewOpen }]"
+                role="button"
+                tabindex="0"
+                :aria-label="`${label} 结果变化：${data.delta.label}。悬停查看完整输出`"
+                @click.capture="onPreviewTriggerClickCapture"
+                @pointerenter="onPreviewTriggerEnter"
+                @pointerleave="onPreviewTriggerLeave"
+                @keydown.enter.prevent="onPreviewTriggerKeydown"
+                @keydown.space.prevent="onPreviewTriggerKeydown"
+                @dblclick.stop
+              >
+                {{ data.delta.label }}
+              </span>
+            </PopoverTrigger>
+            <PopoverPortal>
+              <PopoverContent
+                class="sf-node-result-preview"
+                side="top"
+                align="start"
+                :side-offset="6"
+                :collision-padding="12"
+                :style="flowMenuStyle"
+                @open-auto-focus.prevent
+                @pointerenter="onPreviewContentEnter"
+                @pointerleave="onPreviewContentLeave"
+              >
+                <div class="sf-node-result-preview__head">
+                  <span class="sf-node-result-preview__status" />
+                  <span class="sf-node-result-preview__title">{{ previewTitle }}</span>
+                  <span v-if="previewRunLabel" class="sf-node-result-preview__run tnum">{{ previewRunLabel }}</span>
+                </div>
+                <div class="sf-node-result-preview__body">
+                  <div v-if="!previewText && outputPreviewLoading" class="sf-node-result-preview__hint">正在载入完整输出…</div>
+                  <div v-else-if="!previewText && outputPreviewError" class="sf-node-result-preview__hint sf-node-result-preview__hint--error">{{ outputPreviewError }}</div>
+                  <div v-else-if="previewText" class="sf-node-result-preview__markdown markdown-body" v-html="renderedPreviewText" />
+                  <div v-else class="sf-node-result-preview__hint">该节点暂无文本输出</div>
+                </div>
+                <footer class="sf-node-result-preview__foot">
+                  <span v-if="previewCharLabel" class="sf-node-result-preview__meta tnum">{{ previewCharLabel }}</span>
+                  <span v-else-if="previewRunLabel" class="sf-node-result-preview__meta tnum">{{ previewRunLabel }}</span>
+                  <button type="button" class="sf-node-result-preview__open" @click.stop="openFullPreview">查看完整输出</button>
+                </footer>
+              </PopoverContent>
+            </PopoverPortal>
+          </PopoverRoot>
+          <span v-else-if="data.delta" class="sf-node-result-delta tnum" :class="`is-${data.delta.tone}`">{{ data.delta.label }}</span>
         </div>
 
         <Handle
@@ -954,6 +1171,15 @@ const themeOptions = [
   gap: 8px;
 }
 
+/* 无正文卡片（如 AI 校对且未展开高级设置）：顶部栏与底部结果区直接相连，不留中间空白段 */
+.sf-node.is-bodyless .sf-node-head {
+  margin-bottom: 0;
+}
+
+.sf-node.is-bodyless .sf-node-result {
+  margin-top: 0;
+}
+
 .sf-node-result {
   display: flex;
   align-items: center;
@@ -963,6 +1189,17 @@ const themeOptions = [
   border: 0;
   border-radius: 0 0 calc(var(--node-radius) - 1px) calc(var(--node-radius) - 1px);
   background: var(--color-surface-muted);
+}
+
+/* 预览热区只落在右侧 delta 徽标上：不提供任何 hover/聚焦视觉变化（无描边/阴影/滤镜），唯一反馈是 cursor */
+.sf-node-result-delta--trigger {
+  cursor: pointer;
+  user-select: none;
+}
+
+.sf-node-result-delta--trigger:focus-visible {
+  outline: none;
+  box-shadow: none;
 }
 
 .sf-node-result-status {
@@ -1028,49 +1265,6 @@ const themeOptions = [
 .sf-node-result-delta.is-new {
   background: var(--color-success-soft);
   color: var(--color-success);
-}
-
-.sf-node-result-detail {
-  margin-top: 8px;
-  padding: 8px;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm);
-  background: var(--color-surface-muted);
-}
-
-.sf-node-result-detail-text {
-  font-size: 11px;
-  line-height: 1.6;
-  color: var(--color-text-secondary);
-  max-height: 120px;
-  overflow: hidden;
-  word-break: break-word;
-}
-
-.sf-node-result-detail-text :deep(p) {
-  margin: 0 0 6px;
-}
-
-.sf-node-result-detail-text :deep(p:last-child) {
-  margin-bottom: 0;
-}
-
-.sf-node-result-detail-open {
-  display: inline-flex;
-  align-items: center;
-  margin-top: 8px;
-  padding: 0;
-  border: none;
-  background: transparent;
-  color: var(--color-brand);
-  font-family: inherit;
-  font-size: 11px;
-  font-weight: 500;
-  cursor: pointer;
-}
-
-.sf-node-result-detail-open:hover {
-  text-decoration: underline;
 }
 
 .sf-node-run-btn {
@@ -1484,5 +1678,212 @@ const themeOptions = [
   height: 1px;
   margin: 4px 6px;
   background: var(--color-border);
+}
+
+/* 结果预览浮层（Teleport 到 body）：基底/尺寸口径与 .sf-node-menu、.sf-model-select__menu 一致 */
+.sf-node-result-preview {
+  z-index: var(--z-dropdown-modal);
+  display: flex;
+  flex-direction: column;
+  width: min(360px, calc(100vw - 16px));
+  max-width: calc(100vw - 16px);
+  max-height: min(420px, calc(100vh - 32px));
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background: var(--color-surface);
+  box-shadow: var(--shadow-overlay);
+  transform-origin: var(--reka-popper-transform-origin, top center);
+  animation: sf-dropdown-in var(--dur-2) var(--ease-out);
+}
+
+.sf-node-result-preview[data-state="closed"] {
+  animation: sf-dropdown-out var(--dur-1) var(--ease-out);
+}
+
+.sf-node-result-preview__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 38px;
+  padding: 0 12px;
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-surface-muted);
+  flex-shrink: 0;
+}
+
+.sf-node-result-preview__status {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--color-success);
+  flex-shrink: 0;
+}
+
+.sf-node-result-preview__title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.sf-node-result-preview__run {
+  flex-shrink: 0;
+  font-size: 10.5px;
+  color: var(--color-text-tertiary);
+}
+
+.sf-node-result-preview__body {
+  flex-shrink: 0;
+}
+
+.sf-node-result-preview__markdown {
+  max-height: min(300px, calc(100vh - 210px));
+  padding: 10px 14px 12px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--color-text-secondary);
+  word-break: break-word;
+}
+
+/* “缩小版”排版：标题紧凑、行距收紧，让长文一屏能多看到几段 */
+.sf-node-result-preview__markdown h1,
+.sf-node-result-preview__markdown h2,
+.sf-node-result-preview__markdown h3,
+.sf-node-result-preview__markdown h4 {
+  margin: 8px 0 3px;
+  font-weight: 600;
+  color: var(--color-text);
+  line-height: 1.3;
+}
+
+.sf-node-result-preview__markdown h1 {
+  font-size: 1.3em;
+}
+
+.sf-node-result-preview__markdown h2 {
+  font-size: 1.18em;
+}
+
+.sf-node-result-preview__markdown h3 {
+  font-size: 1.08em;
+}
+
+.sf-node-result-preview__markdown h4 {
+  font-size: 1em;
+}
+
+.sf-node-result-preview__markdown p {
+  margin: 4px 0;
+}
+
+.sf-node-result-preview__markdown ul,
+.sf-node-result-preview__markdown ol {
+  margin: 4px 0;
+  padding-left: 18px;
+}
+
+.sf-node-result-preview__markdown li {
+  margin: 2px 0;
+}
+
+.sf-node-result-preview__markdown blockquote {
+  margin: 6px 0;
+  padding: 2px 10px;
+  border-left: 3px solid var(--color-border-strong);
+  color: var(--color-text-tertiary);
+}
+
+.sf-node-result-preview__markdown pre {
+  margin: 6px 0;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  background: var(--color-ink-soft);
+  overflow-x: auto;
+  font-size: 11px;
+}
+
+.sf-node-result-preview__markdown code {
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+}
+
+.sf-node-result-preview__markdown img {
+  max-width: 100%;
+  height: auto;
+  border-radius: var(--radius-sm);
+}
+
+.sf-node-result-preview__markdown table {
+  font-size: 11px;
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+.sf-node-result-preview__markdown hr {
+  margin: 8px 0;
+  border: none;
+  border-top: 1px solid var(--color-border);
+}
+
+.sf-node-result-preview__hint {
+  padding: 26px 16px;
+  font-size: 12px;
+  color: var(--color-text-tertiary);
+  text-align: center;
+}
+
+.sf-node-result-preview__hint--error {
+  color: var(--color-error);
+}
+
+.sf-node-result-preview__foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 36px;
+  padding: 3px 12px;
+  border-top: 1px solid var(--color-border);
+  background: var(--color-surface-muted);
+  flex-shrink: 0;
+}
+
+.sf-node-result-preview__meta {
+  font-size: 10.5px;
+  color: var(--color-text-tertiary);
+}
+
+.sf-node-result-preview__open {
+  padding: 3px 0;
+  border: none;
+  background: transparent;
+  color: var(--color-brand);
+  font-family: inherit;
+  font-size: 11.5px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: text-decoration-color var(--dur-1) var(--ease-out);
+}
+
+.sf-node-result-preview__open:hover {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+/* 面板内文字按钮：聚焦也不画 outline，用下划线作为唯一聚焦反馈 */
+.sf-node-result-preview__open:focus-visible {
+  outline: none;
+  box-shadow: none;
+  text-decoration: underline;
+  text-underline-offset: 2px;
 }
 </style>
