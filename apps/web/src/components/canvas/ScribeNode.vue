@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, provide, ref, watch } from "vue";
+import { computed, defineAsyncComponent, h, onBeforeUnmount, onMounted, provide, ref, watch } from "vue";
 import { ElInput, ElMessageBox, ElTooltip, ElUpload, type UploadRequestOptions } from "element-plus";
 import { PhBookOpenText, PhCloud, PhDotsThreeVertical, PhFileArrowDown, PhFileText, PhGitBranch, PhGitMerge, PhMagicWand, PhMicrophone, PhPlay, PhShareNetwork, PhSlidersHorizontal, PhSparkle, PhSwap, PhTreeStructure, PhUploadSimple, PhVideo } from "@phosphor-icons/vue";
 import { CircleAlert } from "lucide-vue-next";
@@ -18,6 +18,17 @@ import { renderMarkdown } from "@/lib/markdown";
 import { usePromptsStore } from "@/stores/prompts";
 import { api } from "@/lib/api";
 import type { NodePreviewOutput, ScribeNodeData } from "@/utils/flow";
+
+/**
+ * 思维导图节点的右下角预览渲染器：复用 MindMapViewer（markmap）渲染真实导图。
+ * 按需异步加载，避免 markmap/d3 依赖拖累画布主包；加载与失败时给出内联占位提示。
+ */
+const MindMapPreview = defineAsyncComponent({
+  loader: () => import("../MindMapViewer.vue"),
+  delay: 0,
+  loadingComponent: () => h("div", { class: "sf-node-result-preview__mindmap-hint" }, "正在渲染思维导图…"),
+  errorComponent: () => h("div", { class: "sf-node-result-preview__mindmap-hint sf-node-result-preview__mindmap-hint--error" }, "思维导图渲染器加载失败"),
+});
 
 const props = defineProps<NodeProps<ScribeNodeData>>();
 
@@ -163,6 +174,8 @@ function fmtDuration(sec: number): string {
 }
 
 const nodeType = computed<NodeType>(() => props.data.nodeType);
+/** 思维导图节点的预览走“渲染后的导图”，其余节点维持文字/富文本预览。 */
+const isMindMapNode = computed(() => nodeType.value === "process.mindmap");
 const ports = computed(() => NODE_PORTS[nodeType.value]);
 const defaultLabel = computed(() => NODE_TYPE_LABELS[nodeType.value]);
 const label = computed(() => props.data.label || defaultLabel.value);
@@ -860,6 +873,7 @@ const themeOptions = [
             <PopoverPortal>
               <PopoverContent
                 class="sf-node-result-preview"
+                :class="{ 'is-mindmap': isMindMapNode }"
                 side="top"
                 align="start"
                 :side-offset="6"
@@ -877,6 +891,9 @@ const themeOptions = [
                 <div class="sf-node-result-preview__body">
                   <div v-if="!previewText && outputPreviewLoading" class="sf-node-result-preview__hint">正在载入完整输出…</div>
                   <div v-else-if="!previewText && outputPreviewError" class="sf-node-result-preview__hint sf-node-result-preview__hint--error">{{ outputPreviewError }}</div>
+                  <div v-else-if="previewText && isMindMapNode" class="sf-node-result-preview__mindmap">
+                    <MindMapPreview :markdown="previewText" :animated="false" height="min(250px, calc(100vh - 212px))" />
+                  </div>
                   <div v-else-if="previewText" class="sf-node-result-preview__markdown markdown-body" v-html="renderedPreviewText" />
                   <div v-else class="sf-node-result-preview__hint">该节点暂无文本输出</div>
                 </div>
@@ -1861,5 +1878,34 @@ const themeOptions = [
   box-shadow: none;
   text-decoration: underline;
   text-underline-offset: 2px;
+}
+
+/* 思维导图节点预览：浮层加宽给导图留足横向空间，内嵌渲染器与画布/详情页同源 */
+.sf-node-result-preview.is-mindmap {
+  width: min(440px, calc(100vw - 16px));
+}
+
+.sf-node-result-preview__mindmap {
+  /* 与内嵌渲染器同高：异步装入前后浮层高度一致，避免内容长高导致浮层二次定位（抖动） */
+  min-height: min(250px, calc(100vh - 212px));
+  padding: 10px 12px 12px;
+}
+
+.sf-node-result-preview.is-mindmap .sf-node-result-preview__mindmap-hint {
+  display: grid;
+  place-items: center;
+  min-height: calc(min(250px, calc(100vh - 212px)) - 22px);
+  padding: 12px;
+}
+
+.sf-node-result-preview__mindmap-hint {
+  padding: 26px 16px;
+  font-size: 12px;
+  color: var(--color-text-tertiary);
+  text-align: center;
+}
+
+.sf-node-result-preview__mindmap-hint--error {
+  color: var(--color-error);
 }
 </style>
