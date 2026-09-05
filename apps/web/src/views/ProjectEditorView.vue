@@ -35,10 +35,8 @@ const description = ref("");
 const graph = ref<WorkflowGraph>(emptyGraph());
 const loaded = ref(false);
 const saveState = ref<SaveState>("loading");
-const consoleNotice = ref("就绪");
 const historyState = ref({ canUndo: false, canRedo: false });
 const flowCanvasRef = ref<InstanceType<typeof FlowCanvas> | null>(null);
-const noticeTimer = ref<ReturnType<typeof setTimeout> | null>(null);
 const selectedNodeId = ref<string | null>(null);
 const activeRun = ref<RunMeta | null>(null);
 const lastRun = ref<RunMeta | null>(null);
@@ -195,7 +193,7 @@ onMounted(async () => {
     saveState.value = "saved";
   } catch (err) {
     saveState.value = "error";
-    showNotice(err instanceof Error ? err.message : "加载工程失败");
+    toast.error(err instanceof Error ? err.message : "加载工程失败");
   } finally {
     loaded.value = true;
   }
@@ -216,7 +214,6 @@ onMounted(async () => {
 onBeforeUnmount(() => {
   disposed = true;
   if (saveTimer) clearTimeout(saveTimer);
-  if (noticeTimer.value) clearTimeout(noticeTimer.value);
   stopRunEvents?.();
   stopRunEvents = null;
   subscribedRunId = null;
@@ -234,14 +231,6 @@ watch(
   },
   { immediate: true },
 );
-
-function showNotice(message: string) {
-  consoleNotice.value = message;
-  if (noticeTimer.value) clearTimeout(noticeTimer.value);
-  noticeTimer.value = setTimeout(() => {
-    consoleNotice.value = "";
-  }, 4000);
-}
 
 function onPaletteAdd(type: NodeType | "source.biliCollection") {
   if (type === "source.biliCollection") {
@@ -276,7 +265,7 @@ function scheduleSave() {
       saveState.value = "saved";
     } catch (err) {
       saveState.value = "error";
-      showNotice(err instanceof Error ? err.message : "保存失败");
+      toast.error(err instanceof Error ? err.message : "保存失败");
     }
   }, 500);
 }
@@ -292,7 +281,7 @@ function onRename() {
     .then(() => {
       saveState.value = "saved";
     })
-    .catch((err) => showNotice(err instanceof Error ? err.message : "重命名失败"));
+    .catch((err) => toast.error(err instanceof Error ? err.message : "重命名失败"));
 }
 
 async function duplicateProject() {
@@ -342,10 +331,6 @@ function onMoreCommand(command: string) {
   }
 }
 
-function runTitle(run: RunMeta): string {
-  return `运行 ${run.id.slice(-6)}`;
-}
-
 /** 重新进入工程页时，若服务端仍有 running 运行，恢复画布进度并重新订阅 SSE。 */
 async function resumeRun(run: RunMeta) {
   if (activeRun.value?.id === run.id && (stopRunEvents || subscribedRunId === run.id)) return;
@@ -354,7 +339,6 @@ async function resumeRun(run: RunMeta) {
   clearNodeOutputCache();
   activeRun.value = run;
   running.value = true;
-  showNotice(`检测到运行 #${run.id.slice(-6)} 正在进行，正在恢复进度…`);
   try {
     const detail = await api.get<RunDetail>(`/api/runs/${run.id}`);
     if (disposed) return;
@@ -363,7 +347,6 @@ async function resumeRun(run: RunMeta) {
       activeRun.value = null;
       const snapshot = await mergedNodeResults(detail);
       flowCanvasRef.value?.applyRunSnapshot(snapshot);
-      showNotice(`运行 #${run.id.slice(-6)} 已结束：${runStatusLabels[detail.status] ?? detail.status}`);
       void runsStore.load();
       return;
     }
@@ -373,25 +356,19 @@ async function resumeRun(run: RunMeta) {
       flowCanvasRef.value.applyRunSnapshot(snapshot);
       pendingRunSnapshot = null;
     }
-    showNotice(`已恢复运行中 #${run.id.slice(-6)} 的实时进度`);
   } catch (err) {
-    showNotice(err instanceof Error ? err.message : "恢复运行状态失败");
+    toast.error(err instanceof Error ? err.message : "恢复运行状态失败");
   }
   if (disposed) return;
 
   stopRunEvents = subscribeRunEvents(run.id, (event) => {
     // run.started 在 startRun/resumeRun 中已提前应用过，避免重复清空/打断正在恢复的运行状态。
     if (event.type !== "run.started") flowCanvasRef.value?.applyRunEvent(event);
-    if (event.type === "node.started") showNotice(`${nodeName(event.nodeId)} 开始执行`);
-    else if (event.type === "node.progress") showNotice(event.message);
-    else if (event.type === "node.done") showNotice(`${nodeName(event.nodeId)} 完成`);
-    else if (event.type === "node.error") {
-      showNotice(`${nodeName(event.nodeId)} 失败：${event.error}`);
+    if (event.type === "node.error") {
       toast.error(`${nodeName(event.nodeId)} 失败：${event.error}`);
     } else if (event.type === "run.done") {
       running.value = false;
       activeRun.value = { ...(activeRun.value as RunMeta), status: event.status };
-      showNotice(`运行结束：${event.status}`);
       stopRunEvents?.();
       stopRunEvents = null;
       subscribedRunId = null;
@@ -416,7 +393,6 @@ async function reconcileActiveRun() {
       stopRunEvents = null;
       subscribedRunId = null;
       clearNodeOutputCache();
-      showNotice(`运行结束：${runStatusLabels[detail.status] ?? detail.status}`);
       const snapshot = await mergedNodeResults(detail);
       if (flowCanvasRef.value) flowCanvasRef.value.applyRunSnapshot(snapshot);
       void runsStore.load();
@@ -489,7 +465,6 @@ async function restoreLastRun() {
       flowCanvasRef.value.applyRunSnapshot(snapshot);
       pendingRunSnapshot = null;
     }
-    showNotice(`已载入上次运行 #${latest.id.slice(-6)}：${runStatusLabels[detail.status] ?? detail.status}`);
   } catch {
     restoredLastRunId = null;
   }
@@ -529,7 +504,7 @@ function missingKeyMessage(scope: "all" | "fromNode" | "node", nodeId?: string):
 
 async function startRun(scope: "all" | "fromNode" | "node", nodeId?: string) {
   if (running.value) {
-    showNotice("已有运行正在进行");
+    toast.warning("已有运行正在进行");
     return;
   }
   if (!settingsStore.settings) {
@@ -572,16 +547,11 @@ async function startRun(scope: "all" | "fromNode" | "node", nodeId?: string) {
       stopRunEvents = subscribeRunEvents(run.id, (event) => {
         // 上面已手动应用过 run.started，SSE 的首个 run.started 不再重复清空节点。
         if (event.type !== "run.started") flowCanvasRef.value?.applyRunEvent(event);
-        if (event.type === "node.started") showNotice(`${nodeName(event.nodeId)} 开始执行`);
-        else if (event.type === "node.progress") showNotice(event.message);
-        else if (event.type === "node.done") showNotice(`${nodeName(event.nodeId)} 完成`);
-        else if (event.type === "node.error") {
-          showNotice(`${nodeName(event.nodeId)} 失败：${event.error}`);
+        if (event.type === "node.error") {
           toast.error(`${nodeName(event.nodeId)} 失败：${event.error}`);
         } else if (event.type === "run.done") {
           running.value = false;
           activeRun.value = { ...(activeRun.value as RunMeta), status: event.status };
-          showNotice(`运行结束：${event.status}`);
           stopRunEvents?.();
           stopRunEvents = null;
           subscribedRunId = null;
@@ -607,7 +577,7 @@ async function stopRun() {
   try {
     if (activeRun.value) {
       await api.post<{ ok: boolean }>(`/api/runs/${target.id}/stop`);
-      showNotice("已发送停止指令");
+      toast.success("已发送停止指令");
     } else {
       await api.post<{ ok: boolean }>(`/api/runs/${target.id}/force-stop`);
       toast.success("已强制结束中断的运行");
@@ -852,7 +822,6 @@ function downloadNodeOutput() {
           :running="running"
           :fetch-node-output="fetchCanvasNodeOutput"
           @update:graph="onGraphUpdate"
-          @notice="showNotice"
           @history-change="historyState = $event"
           @select="selectedNodeId = $event"
           @run-request="(req) => startRun(req.scope, req.nodeId)"
@@ -863,13 +832,6 @@ function downloadNodeOutput() {
         </div>
       </div>
     </div>
-
-    <footer class="sf-editor-console" aria-live="polite">
-      <span class="sf-console-dot" :class="{ running }" />
-      <span class="sf-console-text">
-        <template v-if="running && activeRun">{{ runTitle(activeRun) }} · </template>{{ consoleNotice || "就绪" }}
-      </span>
-    </footer>
 
     <el-drawer v-model="outputDrawerVisible" size="520px" :with-header="false" class="sf-output-drawer">
       <template #default>
@@ -1131,49 +1093,6 @@ function downloadNodeOutput() {
   place-items: center;
   color: var(--color-text-secondary);
   font-size: 13px;
-}
-
-.sf-editor-console {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  height: 30px;
-  padding: 0 12px;
-  border-top: 1px solid var(--color-border);
-  background: var(--color-surface);
-  flex-shrink: 0;
-}
-
-.sf-console-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--color-border-strong);
-  flex-shrink: 0;
-}
-
-.sf-console-dot.running {
-  background: var(--color-brand);
-  animation: sf-console-pulse 1.2s var(--ease-out) infinite alternate;
-}
-
-@keyframes sf-console-pulse {
-  from {
-    opacity: 1;
-  }
-  to {
-    opacity: 0.35;
-  }
-}
-
-.sf-console-text {
-  flex: 1;
-  min-width: 0;
-  font-size: 12px;
-  color: var(--color-text-secondary);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 
 .sf-output-drawer-head {
