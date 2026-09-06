@@ -3,6 +3,7 @@ import { cors } from "hono/cors";
 import { serveStatic } from "@hono/node-server/serve-static";
 import { health } from "./routes/health";
 import { projectsApi } from "./routes/projects";
+import { foldersApi } from "./routes/folders";
 import { videosApi } from "./routes/videos";
 import { authApi } from "./routes/auth";
 import { bilibiliApi } from "./routes/bilibili";
@@ -34,7 +35,8 @@ export function createApp(db: AppDatabase, options: AppOptions) {
   );
 
   app.route("/api/health", health);
-  app.route("/api/projects", projectsApi(db));
+  app.route("/api/projects", projectsApi(db, engine));
+  app.route("/api/folders", foldersApi(db));
   app.route("/api/projects/:id/runs", projectRunsApi(db, engine));
   app.route("/api/runs", runsApi(db, engine, options.dataDir));
   app.route("/api/videos", videosApi);

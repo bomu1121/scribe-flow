@@ -1,0 +1,611 @@
+/*
+ * 工程探索器（左侧工作台面板）视觉契约
+ * 由 ExplorerPanel / TreeFolder / ProjectRow 共用：行高、hover、状态点、拖放反馈都收拢在这里。
+ * 只引用设计令牌，不散写颜色。
+ */
+
+.xpl {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-width: 0;
+  background: var(--color-surface);
+}
+
+/* ---- 头部 ---- */
+
+.xpl-head {
+  flex-shrink: 0;
+  padding: 12px 10px 8px;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.xpl-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 26px;
+}
+
+.xpl-title {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 7px;
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--color-text);
+}
+
+.xpl-title-count {
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--color-ink-soft);
+  color: var(--color-text-tertiary);
+  font-size: 10.5px;
+  font-weight: 500;
+}
+
+.xpl-head-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.xpl-hbtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  height: 24px;
+  padding: 0 6px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text-secondary);
+  font-family: inherit;
+  font-size: 11.5px;
+  cursor: pointer;
+  transition:
+    background-color var(--dur-1) var(--ease-out),
+    color var(--dur-1) var(--ease-out);
+}
+
+.xpl-hbtn:hover {
+  background: var(--color-ink-soft);
+  color: var(--color-text);
+}
+
+.xpl-hbtn--primary {
+  border-color: var(--color-brand);
+  background: var(--color-brand);
+  color: var(--color-on-brand);
+  font-weight: 500;
+  padding: 0 9px;
+}
+
+.xpl-hbtn--primary:hover {
+  background: var(--color-brand-hover);
+  color: var(--color-on-brand);
+}
+
+.xpl-search {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 26px;
+  margin-top: 8px;
+  padding: 0 8px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-muted);
+  color: var(--color-text-tertiary);
+  transition:
+    border-color var(--dur-1) var(--ease-out),
+    background-color var(--dur-1) var(--ease-out);
+}
+
+.xpl-search:focus-within {
+  border-color: var(--color-brand);
+  background: var(--color-surface);
+}
+
+.xpl-search-input {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  outline: none;
+  background: transparent;
+  color: var(--color-text);
+  font-family: inherit;
+  font-size: 12px;
+}
+
+.xpl-search-input::placeholder {
+  color: var(--color-text-tertiary);
+}
+
+.xpl-search-clear {
+  display: grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: var(--color-ink-soft);
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.xpl-search-clear:hover {
+  background: var(--color-border-strong);
+  color: var(--color-text);
+}
+
+/* ---- 树 ---- */
+
+.xpl-tree {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 6px 6px 12px;
+}
+
+.xpl-list,
+.xpl-children {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.xpl-children {
+  margin-left: 16px;
+  padding-left: 2px;
+  border-left: 1px solid var(--color-border);
+}
+
+.xpl-item {
+  list-style: none;
+}
+
+.xpl-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  height: 30px;
+  padding-right: 5px;
+  border-radius: var(--radius-sm);
+  color: var(--color-text);
+  transition: background-color var(--dur-1) var(--ease-out);
+}
+
+.xpl-row:hover {
+  background: var(--color-ink-soft);
+}
+
+.xpl-project .xpl-row {
+  cursor: pointer;
+}
+
+.xpl-row.is-active {
+  background: var(--color-brand-soft);
+}
+
+.xpl-row.is-drop-target {
+  background: var(--color-brand-soft);
+  box-shadow: inset 0 0 0 1.5px var(--color-brand);
+}
+
+.xpl-row.is-dragging {
+  opacity: 0.35;
+}
+
+.xpl-twist {
+  display: grid;
+  place-items: center;
+  width: 17px;
+  height: 100%;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--color-text-tertiary);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition:
+    color var(--dur-1) var(--ease-out),
+    background-color var(--dur-1) var(--ease-out);
+}
+
+.xpl-twist:hover {
+  background: var(--color-ink-soft);
+  color: var(--color-text);
+}
+
+.xpl-twist svg {
+  transition: transform var(--dur-2) var(--ease-out);
+}
+
+.xpl-twist.rotated svg {
+  transform: rotate(90deg);
+}
+
+.xpl-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--color-text-tertiary);
+  flex-shrink: 0;
+}
+
+.xpl-icon.muted {
+  color: var(--color-border-strong);
+}
+
+.xpl-project-icon {
+  color: var(--color-text-secondary);
+}
+
+.xpl-row.is-active .xpl-icon {
+  color: var(--color-brand);
+}
+
+.xpl-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12.75px;
+  color: var(--color-text);
+  cursor: default;
+}
+
+.xpl-project .xpl-row.is-active .xpl-label {
+  color: var(--color-brand);
+  font-weight: 500;
+}
+
+.xpl-count {
+  flex-shrink: 0;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--color-ink-soft);
+  color: var(--color-text-tertiary);
+  font-size: 10px;
+}
+
+.xpl-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+  opacity: 0;
+  transition: opacity var(--dur-1) var(--ease-out);
+}
+
+.xpl-row:hover .xpl-actions,
+.xpl-row.is-active .xpl-actions,
+.xpl-row:focus-within .xpl-actions {
+  opacity: 1;
+}
+
+.xpl-act {
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--color-text-tertiary);
+  cursor: pointer;
+}
+
+.xpl-act:hover {
+  background: var(--color-surface);
+  color: var(--color-text);
+}
+
+.xpl-ellipsis {
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+  background: currentColor;
+  box-shadow:
+    -5px 0 0 currentColor,
+    5px 0 0 currentColor;
+}
+
+.xpl-live-dot {
+  width: 7px;
+  height: 7px;
+  margin-left: auto;
+  border-radius: 50%;
+  background: var(--color-brand);
+  flex-shrink: 0;
+  animation: xpl-pulse 1.5s var(--ease-out) infinite;
+}
+
+.xpl-status-dot {
+  width: 7px;
+  height: 7px;
+  margin-left: auto;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.xpl-input {
+  flex: 1;
+  min-width: 0;
+  height: 22px;
+  padding: 0 6px;
+  border: 1px solid var(--color-brand);
+  border-radius: var(--radius-xs);
+  outline: none;
+  background: var(--color-surface);
+  color: var(--color-text);
+  font-family: inherit;
+  font-size: 12.5px;
+}
+
+.xpl-row--create {
+  background: transparent;
+}
+
+.xpl-row--create .xpl-input {
+  background: var(--color-surface);
+  box-shadow: 0 0 0 3px var(--color-brand-soft);
+}
+
+/* ---- 运行记录（工程行子级） ---- */
+
+.xpl-runs {
+  margin-left: 17px;
+}
+
+.xpl-run {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 26px;
+  padding: 0 6px 0 3px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: background-color var(--dur-1) var(--ease-out);
+}
+
+.xpl-run:hover {
+  background: var(--color-ink-soft);
+}
+
+.xpl-run.active {
+  background: var(--color-brand-soft);
+}
+
+.xpl-run-status {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.xpl-run-status.is-running {
+  animation: xpl-pulse 1.5s var(--ease-out) infinite;
+}
+
+.xpl-run-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.xpl-run-id {
+  color: var(--color-text-tertiary);
+  font-size: 10.5px;
+  flex-shrink: 0;
+}
+
+.xpl-run.active .xpl-run-id {
+  color: var(--color-brand);
+}
+
+.xpl-run-meta {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11.5px;
+  color: var(--color-text-secondary);
+}
+
+.xpl-run-time {
+  flex-shrink: 0;
+  font-size: 10px;
+  color: var(--color-text-tertiary);
+}
+
+.xpl-run-del {
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--color-text-tertiary);
+  cursor: pointer;
+  flex-shrink: 0;
+  opacity: 0;
+}
+
+.xpl-run:hover .xpl-run-del {
+  opacity: 1;
+}
+
+.xpl-run-del:hover {
+  background: var(--color-error-soft);
+  color: var(--color-error);
+}
+
+.xpl-run-hint,
+.xpl-run-empty {
+  padding: 6px 8px;
+  color: var(--color-text-tertiary);
+  font-size: 11.5px;
+}
+
+.xpl-run-empty {
+  border: 1px dashed var(--color-border);
+  border-radius: var(--radius-sm);
+  margin: 2px 0;
+  text-align: center;
+}
+
+/* ---- 状态区（加载 / 空态 / 搜索无结果） ---- */
+
+.xpl-state {
+  padding: 26px 10px;
+  color: var(--color-text-tertiary);
+  font-size: 12.5px;
+  text-align: center;
+}
+
+.xpl-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 44px 12px;
+  text-align: center;
+}
+
+.xpl-empty-icon {
+  display: grid;
+  place-items: center;
+  width: 42px;
+  height: 42px;
+  margin-bottom: 4px;
+  border-radius: var(--radius-lg);
+  background: var(--color-ink-soft);
+  color: var(--color-text-tertiary);
+}
+
+.xpl-empty-title {
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.xpl-empty-desc {
+  font-size: 12px;
+  color: var(--color-text-secondary);
+  line-height: 1.6;
+}
+
+.xpl-empty-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+  width: 100%;
+  max-width: 180px;
+  margin-top: 10px;
+}
+
+.xpl-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 28px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  color: var(--color-text-secondary);
+  font-family: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  transition:
+    border-color var(--dur-1) var(--ease-out),
+    color var(--dur-1) var(--ease-out),
+    background-color var(--dur-1) var(--ease-out);
+}
+
+.xpl-btn:hover {
+  border-color: var(--color-brand);
+  color: var(--color-brand);
+  background: var(--color-brand-soft);
+}
+
+/* ---- 根层级拖放提示 ---- */
+
+.xpl-root-drop {
+  margin: 0 8px 2px;
+  padding: 7px 10px;
+  border: 1.5px dashed var(--color-border-strong);
+  border-radius: var(--radius-md);
+  color: var(--color-text-tertiary);
+  font-size: 11.5px;
+  text-align: center;
+  transition:
+    border-color var(--dur-1) var(--ease-out),
+    background-color var(--dur-1) var(--ease-out),
+    color var(--dur-1) var(--ease-out);
+}
+
+.xpl-root-drop.active {
+  border-color: var(--color-brand);
+  background: var(--color-brand-soft);
+  color: var(--color-brand);
+}
+
+/* ---- 底部 ---- */
+
+.xpl-foot {
+  flex-shrink: 0;
+  padding: 7px 12px;
+  border-top: 1px solid var(--color-border);
+  color: var(--color-text-tertiary);
+  font-size: 10.5px;
+  line-height: 1.5;
+}
+
+.xpl-hidden-input {
+  display: none;
+}
+
+@keyframes xpl-pulse {
+  0% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--color-brand) 40%, transparent);
+  }
+  70% {
+    box-shadow: 0 0 0 5px color-mix(in srgb, var(--color-brand) 0%, transparent);
+  }
+  100% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--color-brand) 0%, transparent);
+  }
+}
+
+.xpl-hbtn--close {
+  display: none;
+}
+
+@media (max-width: 860px) {
+  .xpl-hbtn--close {
+    display: inline-flex;
+  }
+}

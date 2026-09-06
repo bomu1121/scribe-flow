@@ -3,18 +3,22 @@ import { desc, eq } from "drizzle-orm";
 import { Hono } from "hono";
 import { z } from "zod";
 import { emptyGraph, parseGraph, WORKFLOW_TEMPLATES, type GraphNode, type WorkflowGraph } from "@scribe-flow/shared";
-import { projects, type ProjectRow } from "../db/schema";
+import { folders, projects, runs, type ProjectRow } from "../db/schema";
 import type { AppDatabase } from "../db/client";
+import type { RunEngine } from "../lib/engine";
 
 const createBodySchema = z.object({
   name: z.string().trim().min(1, "工程名称不能为空").max(80, "工程名称过长").optional(),
   description: z.string().max(200).optional(),
   templateId: z.string().optional(),
+  folderId: z.string().optional(),
 });
 
 const patchBodySchema = z.object({
   name: z.string().trim().min(1, "工程名称不能为空").max(80, "工程名称过长").optional(),
   description: z.string().max(200).optional(),
+  /** 所属工程文件夹：null 表示移到根层级；缺省表示不修改。 */
+  folderId: z.string().nullable().optional(),
 });
 
 const putGraphSchema = z.object({
@@ -24,11 +28,19 @@ const putGraphSchema = z.object({
 const importBodySchema = z.object({
   name: z.string().trim().min(1, "工程名称不能为空").max(80),
   description: z.string().max(200).optional(),
+  folderId: z.string().optional(),
   graph: z.unknown(),
 });
 
 function now() {
   return Date.now();
+}
+
+/** 校验目标文件夹存在；folderId 为空表示根层级。返回错误信息或 null。 */
+function validateFolder(db: AppDatabase, folderId: string | null | undefined): string | null {
+  if (!folderId) return null;
+  const folder = db.select().from(folders).where(eq(folders.id, folderId)).get();
+  return folder ? null : "目标文件夹不存在，请刷新后重试";
 }
 
 /** 去掉工程图里的运行态字段，工程 JSON 只保存定义，不保存 status/summary/preview。 */
@@ -58,6 +70,7 @@ function toListItem(row: ProjectRow) {
     id: row.id,
     name: row.name,
     description: row.description,
+    folderId: row.folderId ?? null,
     nodeCount,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
@@ -69,6 +82,7 @@ function toDetail(row: ProjectRow) {
     id: row.id,
     name: row.name,
     description: row.description,
+    folderId: row.folderId ?? null,
     graph: cleanGraph(JSON.parse(row.graphJson) as WorkflowGraph),
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
@@ -83,7 +97,7 @@ function graphForTemplate(templateId: string | undefined): { graph: WorkflowGrap
   return { graph: emptyGraph(), name: "未命名工程", description: "" };
 }
 
-export function projectsApi(db: AppDatabase) {
+export function projectsApi(db: AppDatabase, engine: RunEngine) {
   const api = new Hono();
 
   api.get("/", (c) => {
@@ -96,7 +110,9 @@ export function projectsApi(db: AppDatabase) {
     if (!parsed.success) {
       return c.json({ error: parsed.error.issues[0]?.message ?? "导入数据不合法" }, 400);
     }
-    const { name, description, graph: rawGraph } = parsed.data;
+    const folderError = validateFolder(db, parsed.data.folderId);
+    if (folderError) return c.json({ error: folderError }, 400);
+    const { name, description, folderId, graph: rawGraph } = parsed.data;
     let graph: WorkflowGraph;
     try {
       graph = parseGraph(rawGraph);
@@ -110,6 +126,7 @@ export function projectsApi(db: AppDatabase) {
         id,
         name,
         description: description ?? "",
+        folderId: folderId ?? null,
         graphJson: JSON.stringify(graph),
         schemaVersion: 1,
         createdAt: ts,
@@ -169,6 +186,8 @@ export function projectsApi(db: AppDatabase) {
     if (!parsed.success) {
       return c.json({ error: parsed.error.issues[0]?.message ?? "请求格式不正确" }, 400);
     }
+    const folderError = validateFolder(db, parsed.data.folderId);
+    if (folderError) return c.json({ error: folderError }, 400);
     const preset = graphForTemplate(parsed.data.templateId);
     const id = `prj_${randomUUID()}`;
     const ts = now();
@@ -178,6 +197,7 @@ export function projectsApi(db: AppDatabase) {
         id,
         name,
         description: parsed.data.description ?? preset.description,
+        folderId: parsed.data.folderId ?? null,
         graphJson: JSON.stringify(preset.graph),
         schemaVersion: 1,
         createdAt: ts,
@@ -203,11 +223,14 @@ export function projectsApi(db: AppDatabase) {
     if (!parsed.success) {
       return c.json({ error: parsed.error.issues[0]?.message ?? "请求格式不正确" }, 400);
     }
+    const folderError = validateFolder(db, parsed.data.folderId);
+    if (folderError) return c.json({ error: folderError }, 400);
 
     db.update(projects)
       .set({
         name: parsed.data.name ?? row.name,
         description: parsed.data.description ?? row.description,
+        folderId: parsed.data.folderId !== undefined ? parsed.data.folderId : row.folderId,
         updatedAt: now(),
       })
       .where(eq(projects.id, id))
@@ -216,12 +239,16 @@ export function projectsApi(db: AppDatabase) {
     return c.json(toDetail(updated!));
   });
 
-  api.delete("/:id", (c) => {
+  api.delete("/:id", async (c) => {
     const id = c.req.param("id");
     const row = db.select().from(projects).where(eq(projects.id, id)).get();
     if (!row) return c.json({ error: "工程不存在" }, 404);
-    db.delete(projects).where(eq(projects.id, id)).run();
-    return c.json({ ok: true });
+    const running = db.select().from(runs).where(eq(runs.projectId, id)).all().find((r) => r.status === "running");
+    if (running) {
+      return c.json({ error: `工程「${row.name}」正在运行，请先停止或等待结束后再删除` }, 400);
+    }
+    const removedRuns = await engine.deleteProject(id);
+    return c.json({ ok: true, removedRuns });
   });
 
   api.post("/:id/duplicate", (c) => {
@@ -236,6 +263,7 @@ export function projectsApi(db: AppDatabase) {
         id: newId,
         name: `${row.name} 副本`,
         description: row.description,
+        folderId: row.folderId,
         graphJson: row.graphJson,
         schemaVersion: row.schemaVersion,
         createdAt: ts,

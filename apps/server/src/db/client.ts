@@ -131,6 +131,14 @@ function ensureSchema(sqlite: Database.Database) {
       position INTEGER NOT NULL DEFAULT 0,
       created_at INTEGER NOT NULL
     );
+
+    CREATE TABLE IF NOT EXISTS folders (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      parent_id TEXT,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
   `);
 
   // 幂等迁移：旧库 runs 表没有 graph_json 时补列。
@@ -141,6 +149,21 @@ function ensureSchema(sqlite: Database.Database) {
   if (!runColumns.some((col) => col.name === "node_id")) {
     sqlite.exec("ALTER TABLE runs ADD COLUMN node_id TEXT");
   }
+
+  // 幂等迁移：M7 工程文件夹 —— projects 增加 folder_id，并建索引。
+  const projectColumns = sqlite.prepare("PRAGMA table_info(projects)").all() as Array<{ name: string }>;
+  if (!projectColumns.some((col) => col.name === "folder_id")) {
+    sqlite.exec("ALTER TABLE projects ADD COLUMN folder_id TEXT");
+  }
+  sqlite.exec("CREATE INDEX IF NOT EXISTS idx_projects_folder ON projects(folder_id)");
+  sqlite.exec("CREATE INDEX IF NOT EXISTS idx_folders_parent ON folders(parent_id)");
+
+  // M8：运行库 —— runs 增加 folder_id（分类文件夹），旧 projects.folder_id 不再使用。
+  const runColumnsM8 = sqlite.prepare("PRAGMA table_info(runs)").all() as Array<{ name: string }>;
+  if (!runColumnsM8.some((col) => col.name === "folder_id")) {
+    sqlite.exec("ALTER TABLE runs ADD COLUMN folder_id TEXT");
+  }
+  sqlite.exec("CREATE INDEX IF NOT EXISTS idx_runs_folder ON runs(folder_id)");
 
   // 幂等迁移：旧库 run_node_inputs 表没有 result_text 时补列。
   const inputColumns = sqlite.prepare("PRAGMA table_info(run_node_inputs)").all() as Array<{ name: string }>;

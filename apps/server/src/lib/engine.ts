@@ -1524,10 +1524,25 @@ ${JSON.stringify(taxonomyTags)}`;
   async deleteRun(runId: string) {
     await this.db.delete(runNodeResults).where(eq(runNodeResults.runId, runId)).run();
     await this.db.delete(runNodeInputs).where(eq(runNodeInputs.runId, runId)).run();
+    await this.db.delete(runNodeLogs).where(eq(runNodeLogs.runId, runId)).run();
     await this.db.delete(runs).where(eq(runs.id, runId)).run();
     await rm(join(this.dataDir, "runs", runId), { recursive: true, force: true }).catch(() => undefined);
     const outputDir = getSettings(this.db).general.outputDir || "outputs";
     await rm(join(this.dataDir, outputDir, runId), { recursive: true, force: true }).catch(() => undefined);
+  }
+
+  /**
+   * 删除工程及其全部运行记录（含节点结果/输入/日志与产物文件）。
+   * 调用方需保证该工程没有 running 状态的运行；返回被清理的运行数。
+   */
+  async deleteProject(projectId: string): Promise<number> {
+    const rows = this.db.select().from(runs).where(eq(runs.projectId, projectId)).all();
+    for (const row of rows) {
+      await this.deleteRun(row.id);
+    }
+    await this.db.delete(runs).where(eq(runs.projectId, projectId)).run();
+    await this.db.delete(projects).where(eq(projects.id, projectId)).run();
+    return rows.length;
   }
 }
 

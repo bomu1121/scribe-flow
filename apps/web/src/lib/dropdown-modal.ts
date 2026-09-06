@@ -27,6 +27,8 @@ const POPUP_SELECTORS = [
   // 兜底
   ".sf-node-menu",
   ".sf-model-select__menu",
+  ".sf-tree-menu",
+  ".wp-menu",
 ].join(",");
 
 let observer: MutationObserver | null = null;

@@ -39,3 +39,8 @@ playwright-report/
 
 # 视觉工具产物
 .dsh-vision-router/
+
+# 会话证据与临时浏览器产物
+.dsh-verify/
+.delivery-evidence-*/
+.tmp-evidence-*/

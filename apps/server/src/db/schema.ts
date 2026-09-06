@@ -7,11 +7,24 @@ export const projects = sqliteTable("projects", {
   /** JSON 字符串，结构为 packages/shared 的 WorkflowGraph。 */
   graphJson: text("graph_json").notNull(),
   schemaVersion: integer("schema_version").notNull().default(1),
+  /** 所属工程文件夹 ID（folders.id）；null 表示根层级。 */
+  folderId: text("folder_id"),
   createdAt: integer("created_at").notNull(),
   updatedAt: integer("updated_at").notNull(),
 });
 
 export type ProjectRow = typeof projects.$inferSelect;
+
+/** 工程文件夹：给工程（项目）分类整理，支持嵌套。 */
+export const folders = sqliteTable("folders", {
+  id: text("id").primaryKey(),
+  name: text("name").notNull(),
+  parentId: text("parent_id"),
+  createdAt: integer("created_at").notNull(),
+  updatedAt: integer("updated_at").notNull(),
+});
+
+export type FolderRow = typeof folders.$inferSelect;
 
 /** 扫码登录会话：二维码密钥只在内存里映射到本表主键，不落库。 */
 export const biliSessions = sqliteTable("bili_sessions", {
@@ -38,6 +51,8 @@ export type BiliCookieRow = typeof biliCookies.$inferSelect;
 export const runs = sqliteTable("runs", {
   id: text("id").primaryKey(),
   projectId: text("project_id").notNull(),
+  /** 历史遗留列（M8 曾试验全局运行库分类；现不再使用，运行记录随工程展示）。 */
+  folderId: text("folder_id"),
   status: text("status", { enum: ["running", "success", "error", "cancelled"] }).notNull(),
   scope: text("scope", { enum: ["all", "fromNode", "node"] }).notNull(),
   /** 当 scope 为 fromNode/node 时，记录本次运行的起点节点；历史行可能为空。 */

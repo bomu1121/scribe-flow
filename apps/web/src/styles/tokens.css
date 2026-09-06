@@ -27,6 +27,10 @@
   --color-ink: #16181d;
   --color-ink-soft: #f0f1f3;
 
+  /* 盖片/角标（图面上深色半透明底 + 白字，如封面时长角标） */
+  --color-scrim: rgba(22, 24, 29, 0.72);
+  --color-on-scrim: #ffffff;
+
   /* 语义 */
   --color-success: #18a058;
   --color-success-soft: #e7f6ee;
@@ -76,6 +80,8 @@
   --radius-lg: 10px;
   --radius-xl: 14px;
   --sidebar-width: 56px;
+  --rail-width: 52px;
+  --explorer-width: 296px;
   --header-height: 52px;
   --content-max: 1080px;
 

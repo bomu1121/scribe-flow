@@ -3,10 +3,9 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue"
 import { useRoute, useRouter } from "vue-router";
 import { ElButton, ElDrawer, ElDropdown, ElDropdownItem, ElDropdownMenu, ElInput } from "element-plus";
 import { toast } from "@/lib/toast";
-import { Activity, ArrowLeft, Check, Copy, Download, ExternalLink, History, LayoutPanelTop, Maximize, MoreHorizontal, Play, Redo2, StopCircle, Trash2, Undo2, X } from "lucide-vue-next";
+import { Activity, Check, Copy, Download, ExternalLink, History, LayoutPanelTop, Maximize, MoreHorizontal, PanelLeftOpen, Play, Redo2, StopCircle, Trash2, Undo2, X } from "lucide-vue-next";
 import { NODE_TYPE_LABELS, emptyGraph, type NodeType, type RunDetail, type RunMeta, type RunNodeInput, type RunNodeResult, type SourceVideoItem, type WorkflowGraph } from "@scribe-flow/shared";
 import FlowCanvas from "@/components/canvas/FlowCanvas.vue";
-import NodePalette from "@/components/canvas/NodePalette.vue";
 import SourcePickerDialog from "@/components/canvas/SourcePickerDialog.vue";
 import DiffViewer from "@/components/DiffViewer.vue";
 import BiliAccountButton from "@/components/auth/BiliAccountButton.vue";
@@ -18,6 +17,7 @@ import { useAuthStore } from "@/stores/auth";
 import { useProjectsStore } from "@/stores/projects";
 import { useRunsStore } from "@/stores/runs";
 import { useSettingsStore } from "@/stores/settings";
+import { useUiStore } from "@/stores/ui";
 
 type SaveState = "loading" | "saved" | "saving" | "error";
 type OutputDrawerInputMode = "result" | "raw" | "diff";
@@ -28,6 +28,7 @@ const store = useProjectsStore();
 const runsStore = useRunsStore();
 const settingsStore = useSettingsStore();
 const authStore = useAuthStore();
+const uiStore = useUiStore();
 
 const projectId = computed(() => String(route.params.id));
 const projectName = ref("");
@@ -232,6 +233,14 @@ watch(
   { immediate: true },
 );
 
+/** 单面板节点库（点击添加）经 ui store 总线转到这里执行。 */
+watch(
+  () => uiStore.nodeAddRequest,
+  (request) => {
+    if (request) onPaletteAdd(request.type as NodeType | "source.biliCollection");
+  },
+);
+
 function onPaletteAdd(type: NodeType | "source.biliCollection") {
   if (type === "source.biliCollection") {
     if (!authStore.loggedIn) {
@@ -239,6 +248,10 @@ function onPaletteAdd(type: NodeType | "source.biliCollection") {
       return;
     }
     biliPickerVisible.value = true;
+    return;
+  }
+  if (!flowCanvasRef.value) {
+    toast.info("画布还在加载，请稍后再添加节点");
     return;
   }
   flowCanvasRef.value?.addNodeAtCenter(type);
@@ -748,8 +761,8 @@ function downloadNodeOutput() {
   <div class="sf-editor">
     <header class="sf-editor-bar">
       <div class="sf-editor-bar-left">
-        <button type="button" class="sf-icon-btn" title="返回工程列表" @click="router.push('/')">
-          <ArrowLeft :size="16" />
+        <button type="button" class="sf-icon-btn" title="工程面板" aria-label="打开或收起左侧工程面板" @click="uiStore.togglePanel('projects')">
+          <PanelLeftOpen :size="16" />
         </button>
         <el-input
           v-model="projectName"
@@ -788,7 +801,6 @@ function downloadNodeOutput() {
 
     <div class="sf-editor-main">
       <div class="sf-mobile-hint">画布编辑器需要桌面端（≥1024px）。当前仅作只读预览，请在电脑上打开以编辑。</div>
-      <NodePalette @add="onPaletteAdd" />
       <div class="sf-canvas-wrap">
         <div v-if="loaded" class="sf-editor-float-actions">
           <button type="button" class="sf-float-btn sf-float-run" :disabled="running" @click="startRun('all')">

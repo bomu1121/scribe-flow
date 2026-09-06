@@ -13,6 +13,7 @@ import {
   type RunNodeLog,
   type RunNodeResult,
   type RunScope,
+  type RunStatus,
   type StartRunRequest,
 } from "@scribe-flow/shared";
 import type { AppDatabase } from "../db/client";
@@ -145,10 +146,21 @@ export function runsApi(db: AppDatabase, engine: RunEngine, dataDir: string) {
 
   api.get("/", (c) => {
     const projectId = c.req.query("projectId");
+    const status = c.req.query("status") as RunStatus | undefined;
     const limit = Math.min(200, Number(c.req.query("limit") ?? 100) || 100);
     let rows: RunRow[];
-    if (projectId) {
+    if (projectId && status) {
+      rows = db
+        .select()
+        .from(runs)
+        .where(and(eq(runs.projectId, projectId), eq(runs.status, status)))
+        .orderBy(desc(runs.createdAt))
+        .limit(limit)
+        .all();
+    } else if (projectId) {
       rows = db.select().from(runs).where(eq(runs.projectId, projectId)).orderBy(desc(runs.createdAt)).limit(limit).all();
+    } else if (status) {
+      rows = db.select().from(runs).where(eq(runs.status, status)).orderBy(desc(runs.createdAt)).limit(limit).all();
     } else {
       rows = db.select().from(runs).orderBy(desc(runs.createdAt)).limit(limit).all();
     }

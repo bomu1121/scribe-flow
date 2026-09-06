@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import { z } from "zod";
-import type { PageRef, VideoPreview } from "@scribe-flow/shared";
+import type { PageRef, UgcSeasonInfo, VideoPreview } from "@scribe-flow/shared";
 
 const USER_AGENT =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36";
@@ -85,6 +85,21 @@ async function fetchVideo(bvid: string): Promise<VideoPreview> {
       pubdate: number;
       owner?: { name?: string; mid?: number };
       pages?: { page: number; cid: number; part: string; duration: number }[];
+      /** UGC 合集：多个独立 BV 稿件聚合（非本稿件的分P）。 */
+      ugc_season?: {
+        id?: number;
+        title?: string;
+        sections?: {
+          title?: string;
+          episodes?: {
+            bvid?: string;
+            cid?: number;
+            title?: string;
+            arc?: { duration?: number; pic?: string };
+            page?: { part?: string; duration?: number };
+          }[];
+        }[];
+      };
     };
   };
 
@@ -98,6 +113,30 @@ async function fetchVideo(bvid: string): Promise<VideoPreview> {
       ? d.pages.map((p) => ({ page: p.page, cid: p.cid, part: p.part, duration: p.duration }))
       : [{ page: 1, cid: d.cid, part: d.title, duration: d.duration }];
 
+  // UGC 合集（如“中美制造业”）：拍平各 section 的单集，每集保留独立 bvid/cid 供批量选择。
+  let ugcSeason: UgcSeasonInfo | undefined;
+  if (d.ugc_season && Array.isArray(d.ugc_season.sections)) {
+    const episodes: UgcSeasonInfo["episodes"] = [];
+    let index = 0;
+    for (const section of d.ugc_season.sections) {
+      for (const ep of section.episodes ?? []) {
+        if (!ep.bvid || !ep.cid) continue;
+        index += 1;
+        episodes.push({
+          bvid: ep.bvid,
+          cid: ep.cid,
+          index,
+          part: ep.title?.trim() || ep.page?.part?.trim() || `第 ${index} 集`,
+          duration: Number(ep.arc?.duration ?? ep.page?.duration ?? 0),
+          cover: ep.arc?.pic ? normalizeCover(ep.arc.pic) : undefined,
+        });
+      }
+    }
+    if (episodes.length > 0) {
+      ugcSeason = { id: Number(d.ugc_season.id ?? 0), title: d.ugc_season.title ?? "", episodes };
+    }
+  }
+
   const data: VideoPreview = {
     bvid: d.bvid,
     aid: d.aid,
@@ -110,6 +149,7 @@ async function fetchVideo(bvid: string): Promise<VideoPreview> {
     uploaderUid: d.owner?.mid ?? 0,
     pubdate: d.pubdate,
     pages,
+    ugcSeason,
   };
 
   cacheSet(bvid, data);

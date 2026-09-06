@@ -10,7 +10,8 @@ import ToastStack from "@/components/ToastStack.vue";
 <template>
   <el-config-provider :locale="zhCn">
     <AppLayout>
-      <RouterView />
+      <!-- 按路径做 key：切换工程 / 进入运行详情都重建主视图，保证数据重载 -->
+      <RouterView :key="$route.path" />
     </AppLayout>
     <SettingsDialog />
     <ToastStack />

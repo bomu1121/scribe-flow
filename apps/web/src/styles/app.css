@@ -2,17 +2,6 @@
 
 /* 应用级补充样式：全部引用设计令牌，不使用散落色值 */
 
-.app-root {
-  height: 100vh;
-  display: grid;
-  grid-template-columns: var(--sidebar-width) minmax(0, 1fr);
-  background: var(--color-bg);
-}
-
-.app-root--immersive {
-  grid-template-columns: minmax(0, 1fr);
-}
-
 html,
 body {
   overflow-x: hidden;
@@ -91,7 +80,9 @@ html.sf-dropdown-modal-open body :is(
   [data-reka-menu-content],
   [data-reka-popover-content]:not(.sf-node-result-preview),
   .sf-node-menu,
-  .sf-model-select__menu
+  .sf-model-select__menu,
+  .sf-tree-menu,
+  .wp-menu
 ),
 html.sf-dropdown-modal-open body :is(
   .el-select__popper,
@@ -102,7 +93,9 @@ html.sf-dropdown-modal-open body :is(
   [data-reka-menu-content],
   [data-reka-popover-content]:not(.sf-node-result-preview),
   .sf-node-menu,
-  .sf-model-select__menu
+  .sf-model-select__menu,
+  .sf-tree-menu,
+  .wp-menu
 ) * {
   pointer-events: auto !important;
 }

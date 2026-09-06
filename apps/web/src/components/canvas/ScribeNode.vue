@@ -41,10 +41,18 @@ const promptsStore = usePromptsStore();
 const data = computed(() => props.data);
 
 const selectedPages = ref<number[]>([]);
+/** UGC 合集（多独立稿件）里勾选的集，用各集 bvid 标识。 */
+const seasonSelected = ref<string[]>([]);
 
 const biliItems = computed(() => (Array.isArray(data.value.items) ? data.value.items : []));
 const distinctBvids = computed(() => new Set(biliItems.value.map((item) => item.bvid)).size);
 const isCollection = computed(() => biliItems.value.length > 1);
+
+/** 合集/多P列表行的标题：同一视频的多P合并行显示“P序号·分P名”，多视频各自保留主标题。 */
+function collectionRowTitle(item: (typeof biliItems.value)[number]): string {
+  if (distinctBvids.value <= 1 && item.part) return `P${item.page} · ${item.part}`;
+  return item.title || item.part || (item.page ? `P${item.page}` : "");
+}
 
 // 文本节点校验
 const textError = computed(() => {
@@ -110,6 +118,12 @@ function schedulePreview(url: string) {
       } else {
         selectedPages.value = [];
       }
+      // UGC 合集：默认勾选当前链接所在的这一集，供用户扩展选择其他集。
+      seasonSelected.value = [];
+      if (result.ugcSeason && result.ugcSeason.episodes.length > 0) {
+        const own = result.ugcSeason.episodes.find((ep) => ep.bvid === result.bvid);
+        if (own) seasonSelected.value = [own.bvid];
+      }
     } catch (err) {
       previewError.value = err instanceof Error ? err.message : "解析失败，请检查链接";
     } finally {
@@ -152,6 +166,82 @@ function confirmPageSelection() {
   });
   props.data.ctx?.commit();
   toast.success(items.length > 1 ? `已选择 ${items.length} 个分P，合并为一张卡片` : `已选择 P${first.page}`);
+}
+
+function toggleSeasonEpisode(bvid: string) {
+  seasonSelected.value = seasonSelected.value.includes(bvid)
+    ? seasonSelected.value.filter((b) => b !== bvid)
+    : [...seasonSelected.value, bvid];
+}
+
+function confirmSeasonSelection() {
+  const current = preview.value;
+  const season = current?.ugcSeason;
+  if (!current || !season) return;
+  const picked = season.episodes.filter((ep) => seasonSelected.value.includes(ep.bvid));
+  if (picked.length === 0) return;
+  const first = picked[0];
+  const single = picked.length === 1;
+  if (single) {
+    // 只选当前集：切换到该集的独立稿件链接（合集各集是不同的 BV）。
+    const next = {
+      ...current,
+      bvid: first.bvid,
+      cid: first.cid,
+      title: first.part,
+      duration: first.duration,
+      cover: first.cover || current.cover,
+      pages: [{ page: 1, cid: first.cid, part: first.part, duration: first.duration }],
+    };
+    preview.value = next;
+    selectedPages.value = [1];
+    seasonSelected.value = [first.bvid];
+    patch({
+      items: [],
+      url: `https://www.bilibili.com/video/${first.bvid}`,
+      bvid: first.bvid,
+      title: first.part,
+      cover: first.cover || current.cover,
+      uploader: current.uploader,
+      duration: first.duration,
+      pageInfo: { cid: first.cid, page: 1, part: first.part, duration: first.duration },
+    });
+  } else {
+    const items = picked.map((ep) => ({
+      bvid: ep.bvid,
+      cid: ep.cid,
+      page: 1,
+      part: ep.part,
+      title: ep.part,
+      cover: ep.cover || current.cover,
+      uploader: current.uploader,
+      duration: ep.duration,
+    }));
+    patch({
+      items,
+      url: String(data.value.url ?? "") || `https://www.bilibili.com/video/${current.bvid}`,
+      bvid: current.bvid,
+      title: current.title,
+      cover: current.cover,
+      uploader: current.uploader,
+      duration: first.duration,
+      pageInfo: { cid: first.cid, page: 1, part: first.part, duration: first.duration },
+    });
+  }
+  props.data.ctx?.commit();
+  toast.success(single ? `已切换到第 ${first.index} 集` : `已选择 ${picked.length} 集，合并为一张卡片`);
+}
+
+/**
+ * 节点内部滚动列表的滚轮守卫：列表还能继续滚动时拦截事件，
+ * 避免滚轮冒泡到画布触发缩放；滚到边界后放行（此时滚轮恢复缩放画布）。
+ */
+function onInnerListWheel(event: WheelEvent) {
+  const el = event.currentTarget as HTMLElement;
+  const atTop = el.scrollTop <= 0;
+  const atBottom = el.scrollTop + el.clientHeight >= el.scrollHeight - 1;
+  const canScroll = event.deltaY < 0 ? !atTop : !atBottom;
+  if (canScroll) event.stopPropagation();
 }
 
 onMounted(() => {
@@ -631,16 +721,21 @@ const themeOptions = [
                   <span class="sf-node-collection-count tnum">{{ biliItems.length }} 项</span>
                   <span class="sf-node-collection-tag">{{ distinctBvids > 1 ? "多视频" : "多P" }}</span>
                 </div>
-                <div class="sf-node-selected-list">
+                <div v-if="distinctBvids === 1 && (data.title || biliItems[0]?.title)" class="sf-node-collection-main" :title="data.title || biliItems[0]?.title">
+                  {{ data.title || biliItems[0]?.title }}
+                </div>
+                <div class="sf-node-selected-list" @wheel="onInnerListWheel">
                   <div v-for="item in biliItems" :key="`${item.bvid}-${item.cid}`" class="sf-node-selected-row">
-                    <img v-if="item.cover" :src="item.cover" class="sf-node-selected-cover" alt="" referrerpolicy="no-referrer" loading="lazy" />
+                    <template v-if="item.cover">
+                      <div class="sf-node-selected-cover-wrap">
+                        <img :src="item.cover" class="sf-node-selected-cover" alt="" referrerpolicy="no-referrer" loading="lazy" />
+                        <span v-if="(item.duration ?? 0) > 0" class="sf-node-selected-cover-duration tnum">{{ fmtDuration(item.duration ?? 0) }}</span>
+                      </div>
+                    </template>
                     <div v-else class="sf-node-selected-cover sf-node-selected-cover--placeholder" />
                     <div class="sf-node-selected-info">
-                      <span class="sf-node-selected-title">{{ item.title || item.part || `P${item.page}` }}</span>
-                      <span class="sf-node-selected-meta tnum">
-                        <template v-if="item.uploader">{{ item.uploader }} · </template>{{ fmtDuration(item.duration ?? 0) }}
-                      </span>
-                      <span v-if="item.part" class="sf-node-selected-part tnum">P{{ item.page }} · {{ item.part }}</span>
+                      <span class="sf-node-selected-title" :title="collectionRowTitle(item)">{{ collectionRowTitle(item) }}</span>
+                      <span v-if="item.uploader" class="sf-node-selected-meta tnum">{{ item.uploader }}</span>
                     </div>
                   </div>
                 </div>
@@ -660,14 +755,14 @@ const themeOptions = [
               </div>
               <div v-if="previewLoading" class="sf-node-preview sf-node-preview--loading tnum">正在解析视频信息…</div>
               <div v-else-if="preview" class="sf-node-preview">
-                <img :src="preview.cover" class="sf-node-cover" alt="视频封面" referrerpolicy="no-referrer" loading="lazy" />
+                <div class="sf-node-cover-wrap">
+                  <img :src="preview.cover" class="sf-node-cover" alt="视频封面" referrerpolicy="no-referrer" loading="lazy" />
+                  <span v-if="preview.duration > 0" class="sf-node-cover-duration tnum">{{ fmtDuration(preview.duration) }}</span>
+                </div>
                 <div class="sf-node-preview-info">
-                  <span class="sf-node-preview-title">{{ preview.title }}</span>
+                  <span class="sf-node-preview-title" :title="data.pageInfo?.part || preview.title">{{ data.pageInfo?.part || preview.title }}</span>
                   <span class="sf-node-preview-meta tnum">
-                    {{ preview.uploader }} · {{ fmtDuration(preview.duration) }} · {{ preview.pages.length }}P
-                  </span>
-                  <span v-if="data.pageInfo" class="sf-node-preview-page tnum">
-                    已选 P{{ data.pageInfo.page }} · {{ data.pageInfo.part }}
+                    {{ preview.uploader }}<template v-if="preview.pages.length > 0"> · {{ preview.pages.length }}P</template>
                   </span>
                 </div>
               </div>
@@ -684,6 +779,24 @@ const themeOptions = [
                   <span class="sf-node-page-name">P{{ page.page }} · {{ page.part || `第 ${page.page} 集` }}</span>
                   <span class="sf-node-page-duration tnum">{{ fmtDuration(page.duration) }}</span>
                 </label>
+              </div>
+              <div v-if="preview && preview.ugcSeason && preview.ugcSeason.episodes.length > 0" class="sf-node-season">
+                <div class="sf-node-season-head">
+                  <span class="sf-node-season-title">属于合集《{{ preview.ugcSeason.title || "未命名合集" }}》· {{ preview.ugcSeason.episodes.length }} 集</span>
+                </div>
+                <div class="sf-node-season-list" @wheel="onInnerListWheel">
+                  <label v-for="ep in preview.ugcSeason.episodes" :key="ep.bvid" class="sf-node-season-row">
+                    <input type="checkbox" :checked="seasonSelected.includes(ep.bvid)" @change="toggleSeasonEpisode(ep.bvid)" />
+                    <span class="sf-node-season-name" :title="ep.part">{{ ep.part }}</span>
+                    <span class="sf-node-season-duration tnum">{{ fmtDuration(ep.duration) }}</span>
+                  </label>
+                </div>
+                <div class="sf-node-season-foot">
+                  <span class="sf-node-season-count tnum">已选 {{ seasonSelected.length }} 集</span>
+                  <button type="button" class="sf-node-season-confirm" :disabled="seasonSelected.length === 0" @click="confirmSeasonSelection">
+                    生成所选集数
+                  </button>
+                </div>
               </div>
             </template>
           </template>
@@ -1293,8 +1406,8 @@ const themeOptions = [
   gap: 9px;
   padding: 8px;
   border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
-  background: var(--color-surface-muted);
+  border-radius: var(--radius-xs);
+  background: var(--color-surface);
 }
 
 .sf-node-preview--loading {
@@ -1308,13 +1421,32 @@ const themeOptions = [
   font-size: 11.5px;
 }
 
+.sf-node-cover-wrap {
+  position: relative;
+  display: flex;
+  flex-shrink: 0;
+}
+
 .sf-node-cover {
   width: 96px;
   aspect-ratio: 16 / 9;
   object-fit: cover;
   border-radius: var(--radius-sm);
-  flex-shrink: 0;
   background: var(--color-ink-soft);
+}
+
+.sf-node-cover-duration,
+.sf-node-selected-cover-duration {
+  position: absolute;
+  right: 4px;
+  bottom: 4px;
+  padding: 0 4px;
+  border-radius: var(--radius-xs);
+  background: var(--color-scrim);
+  color: var(--color-on-scrim);
+  font-size: 10px;
+  line-height: 16px;
+  pointer-events: none;
 }
 
 .sf-node-preview-info {
@@ -1340,11 +1472,6 @@ const themeOptions = [
   color: var(--color-text-secondary);
 }
 
-.sf-node-preview-page {
-  font-size: 10.5px;
-  color: var(--color-brand);
-}
-
 .sf-node-selected-list {
   display: flex;
   flex-direction: column;
@@ -1360,8 +1487,14 @@ const themeOptions = [
   gap: 9px;
   padding: 8px;
   border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
-  background: var(--color-surface-muted);
+  border-radius: var(--radius-xs);
+  background: var(--color-surface);
+}
+
+.sf-node-selected-cover-wrap {
+  position: relative;
+  display: flex;
+  flex-shrink: 0;
 }
 
 .sf-node-selected-cover {
@@ -1385,6 +1518,8 @@ const themeOptions = [
 }
 
 .sf-node-selected-title {
+  /* 固定两行标题高度：无论 1 行还是 2 行标题，首行与下方 UP主 行在所有小卡间保持同一位置 */
+  height: 2.8em;
   font-size: 12px;
   font-weight: 600;
   line-height: 1.4;
@@ -1401,11 +1536,6 @@ const themeOptions = [
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-}
-
-.sf-node-selected-part {
-  font-size: 10.5px;
-  color: var(--color-brand);
 }
 
 .sf-node-collection {
@@ -1434,6 +1564,17 @@ const themeOptions = [
   color: var(--color-brand);
   font-size: 10px;
   line-height: 1.5;
+}
+
+.sf-node-collection-main {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--color-text-secondary);
+  line-height: 1.45;
 }
 
 .sf-node-pages {
@@ -1497,6 +1638,93 @@ const themeOptions = [
 
 .sf-node-page-duration {
   color: var(--color-text-tertiary);
+}
+
+.sf-node-season {
+  padding: 8px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-muted);
+}
+
+.sf-node-season-head {
+  display: flex;
+  align-items: center;
+  margin-bottom: 6px;
+}
+
+.sf-node-season-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  color: var(--color-text-secondary);
+}
+
+.sf-node-season-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 168px;
+  overflow-y: auto;
+  padding: 2px;
+}
+
+.sf-node-season-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 2px;
+  font-size: 11.5px;
+  color: var(--color-text);
+  cursor: pointer;
+}
+
+.sf-node-season-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sf-node-season-duration {
+  color: var(--color-text-tertiary);
+}
+
+.sf-node-season-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.sf-node-season-count {
+  font-size: 11px;
+  color: var(--color-text-secondary);
+}
+
+.sf-node-season-confirm {
+  padding: 2px 8px;
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  color: var(--color-text-secondary);
+  font-family: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.sf-node-season-confirm:hover:not(:disabled) {
+  border-color: var(--color-brand);
+  color: var(--color-brand);
+}
+
+.sf-node-season-confirm:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .sf-node-upload {
