@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
-import { ElButton, ElDrawer, ElDropdown, ElDropdownItem, ElDropdownMenu, ElInput } from "element-plus";
+import { ElButton, ElDrawer, ElDropdown, ElDropdownItem, ElDropdownMenu } from "element-plus";
 import { toast } from "@/lib/toast";
-import { Activity, Check, Copy, Download, ExternalLink, History, LayoutPanelTop, Maximize, MoreHorizontal, PanelLeftOpen, Play, Redo2, StopCircle, Trash2, Undo2, X } from "lucide-vue-next";
+import { Activity, Check, Copy, Download, ExternalLink, History, LayoutPanelTop, Maximize, MoreHorizontal, Play, Redo2, StopCircle, Trash2, Undo2, X } from "lucide-vue-next";
 import { NODE_TYPE_LABELS, emptyGraph, type NodeType, type RunDetail, type RunMeta, type RunNodeInput, type RunNodeResult, type SourceVideoItem, type WorkflowGraph } from "@scribe-flow/shared";
 import FlowCanvas from "@/components/canvas/FlowCanvas.vue";
 import SourcePickerDialog from "@/components/canvas/SourcePickerDialog.vue";
@@ -32,9 +32,9 @@ const uiStore = useUiStore();
 
 const projectId = computed(() => String(route.params.id));
 const projectName = ref("");
-const description = ref("");
 const graph = ref<WorkflowGraph>(emptyGraph());
 const loaded = ref(false);
+const suppressRunWatch = ref(false);
 const saveState = ref<SaveState>("loading");
 const historyState = ref({ canUndo: false, canRedo: false });
 const flowCanvasRef = ref<InstanceType<typeof FlowCanvas> | null>(null);
@@ -172,15 +172,46 @@ let pendingRunSnapshot: RunNodeResult[] | null = null;
 let disposed = false;
 let subscribedRunId: string | null = null;
 let restoredLastRunId: string | null = null;
+let loadProjectToken = 0;
 
-onMounted(async () => {
-  void runsStore.load();
-  void settingsStore.load();
+async function loadProject() {
+  const id = projectId.value;
+  const token = ++loadProjectToken;
+  suppressRunWatch.value = true;
+
+  // 工程间切换：保留现有壳与画布实例，先停掉上一个工程的运行订阅/浮层状态，避免残留闪烁。
+  if (loaded.value) {
+    stopRunEvents?.();
+    stopRunEvents = null;
+    subscribedRunId = null;
+    running.value = false;
+    activeRun.value = null;
+    lastRun.value = null;
+    restoredLastRunId = null;
+    selectedNodeId.value = null;
+    outputDrawerVisible.value = false;
+    outputDrawerLoading.value = false;
+    outputDrawerNodeId.value = "";
+    outputDrawerRunId.value = "";
+    outputDrawerNodeLabel.value = "";
+    outputDrawerRunStatus.value = "";
+    outputDrawerText.value = "";
+    outputDrawerInputs.value = [];
+    outputDrawerNodeResults.value = [];
+    outputDrawerGraph.value = null;
+    outputDrawerView.value = "output";
+    outputDrawerSelectedInputKey.value = "";
+  } else {
+    saveState.value = "loading";
+  }
+
+  const cached = store.list.find((p) => p.id === id);
+  if (cached) projectName.value = cached.name;
+
   try {
-    const project = await store.getProject(projectId.value);
-    projectName.value = project.name;
-    description.value = project.description;
-    graph.value = {
+    const project = await store.getProject(id);
+    if (disposed || token !== loadProjectToken || projectId.value !== id) return;
+    const nextGraph = {
       ...project.graph,
       nodes: project.graph.nodes.map((n) => {
         const data = { ...(n.data as Record<string, unknown>) };
@@ -191,13 +222,20 @@ onMounted(async () => {
         return { ...n, data } as typeof n;
       }),
     };
+    projectName.value = project.name;
+    graph.value = nextGraph;
     saveState.value = "saved";
-  } catch (err) {
-    saveState.value = "error";
-    toast.error(err instanceof Error ? err.message : "加载工程失败");
-  } finally {
     loaded.value = true;
+    await nextTick();
+    if (flowCanvasRef.value) flowCanvasRef.value.loadGraph(nextGraph);
+  } catch (err) {
+    if (disposed || token !== loadProjectToken) return;
+    saveState.value = "error";
+    loaded.value = true;
+    toast.error(err instanceof Error ? err.message : "加载工程失败");
   }
+
+  if (disposed || token !== loadProjectToken) return;
 
   await nextTick();
   if (pendingRunSnapshot) {
@@ -210,6 +248,15 @@ onMounted(async () => {
     await nextTick();
     flowCanvasRef.value?.focusNode(focusNodeId);
   }
+
+  suppressRunWatch.value = false;
+  if (projectRunningRun.value) void resumeRun(projectRunningRun.value);
+}
+
+onMounted(() => {
+  void runsStore.load();
+  void settingsStore.load();
+  void loadProject();
 });
 
 onBeforeUnmount(() => {
@@ -221,8 +268,24 @@ onBeforeUnmount(() => {
 });
 
 watch(
+  () => route.params.id,
+  () => {
+    suppressRunWatch.value = true;
+  },
+  { flush: "sync" },
+);
+
+watch(
+  () => route.params.id,
+  (id, oldId) => {
+    if (id && id !== oldId) void loadProject();
+  },
+);
+
+watch(
   projectRunningRun,
   (run) => {
+    if (suppressRunWatch.value) return;
     if (run) {
       if (activeRun.value?.id !== run.id) void resumeRun(run);
     } else {
@@ -281,20 +344,6 @@ function scheduleSave() {
       toast.error(err instanceof Error ? err.message : "保存失败");
     }
   }, 500);
-}
-
-function onRename() {
-  const name = projectName.value.trim();
-  if (!name) {
-    projectName.value = store.current?.name ?? "";
-    return;
-  }
-  void store
-    .renameProject(projectId.value, name, description.value)
-    .then(() => {
-      saveState.value = "saved";
-    })
-    .catch((err) => toast.error(err instanceof Error ? err.message : "重命名失败"));
 }
 
 async function duplicateProject() {
@@ -761,16 +810,7 @@ function downloadNodeOutput() {
   <div class="sf-editor">
     <header class="sf-editor-bar">
       <div class="sf-editor-bar-left">
-        <button type="button" class="sf-icon-btn" title="工程面板" aria-label="打开或收起左侧工程面板" @click="uiStore.togglePanel('projects')">
-          <PanelLeftOpen :size="16" />
-        </button>
-        <el-input
-          v-model="projectName"
-          class="sf-project-name-input"
-          size="small"
-          aria-label="工程名称"
-          @change="onRename"
-        />
+        <span class="sf-project-name" :title="projectName">{{ projectName }}</span>
         <span class="sf-save-state tnum">
           <Check v-if="saveState === 'saved'" :size="12" />
           {{ saveState === "saving" ? "保存中…" : saveState === "saved" ? "已保存" : saveState === "error" ? "保存失败" : "加载中…" }}
@@ -829,7 +869,6 @@ function downloadNodeOutput() {
         <FlowCanvas
           v-if="loaded"
           ref="flowCanvasRef"
-          :key="projectId"
           :initial-graph="graph"
           :running="running"
           :fetch-node-output="fetchCanvasNodeOutput"
@@ -840,7 +879,16 @@ function downloadNodeOutput() {
           @view-output="viewOutput"
         />
         <div v-else class="sf-editor-loading">
-          <span>{{ saveState === "error" ? "工程加载失败" : "正在加载画布…" }}</span>
+          <div v-if="saveState === 'error'" class="sf-editor-loading__hint">
+            <span>工程加载失败</span>
+          </div>
+          <div v-else class="sf-editor-loading__inner" aria-label="正在加载画布">
+            <div class="sf-editor-loading__bar" aria-hidden="true" />
+            <div class="sf-editor-loading__hint">
+              <span class="sf-editor-loading__spinner" aria-hidden="true" />
+              <span>正在加载画布</span>
+            </div>
+          </div>
         </div>
       </div>
     </div>
@@ -958,8 +1006,14 @@ function downloadNodeOutput() {
   color: var(--color-text);
 }
 
-.sf-project-name-input {
-  width: 240px;
+.sf-project-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--color-text);
 }
 
 .sf-save-state {
@@ -1100,11 +1154,64 @@ function downloadNodeOutput() {
 }
 
 .sf-editor-loading {
+  position: relative;
   flex: 1;
   display: grid;
   place-items: center;
-  color: var(--color-text-secondary);
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.sf-editor-loading__inner {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 100%;
+  height: 100%;
+}
+
+.sf-editor-loading__bar {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 34%;
+  height: 2px;
+  border-radius: 0 999px 999px 0;
+  background: linear-gradient(90deg, transparent, var(--color-brand), transparent);
+  animation: sf-loading-bar 1.2s var(--ease-out) infinite;
+}
+
+.sf-editor-loading__hint {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--color-text-tertiary);
   font-size: 13px;
+}
+
+.sf-editor-loading__spinner {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  border: 2px solid var(--color-border);
+  border-top-color: var(--color-text-secondary);
+  animation: sf-loading-spin 0.8s linear infinite;
+}
+
+@keyframes sf-loading-bar {
+  0% {
+    transform: translateX(-120%);
+  }
+  100% {
+    transform: translateX(420%);
+  }
+}
+
+@keyframes sf-loading-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .sf-output-drawer-head {

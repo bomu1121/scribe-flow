@@ -63,6 +63,34 @@ body {
 }
 
 /*
+ * 统一轻量加载效果（小卡/浮层/内嵌预览共用）：
+ * 小号 spinner + 文字，视觉与画布加载态同源。
+ */
+.sf-loading-spinner {
+  display: inline-block;
+  flex-shrink: 0;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 2px solid var(--color-border);
+  border-top-color: var(--color-text-secondary);
+  animation: sf-loading-rotate 0.8s linear infinite;
+}
+
+.sf-loading-hint {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+@keyframes sf-loading-rotate {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/*
  * 下拉浮层模态守卫：
  * 任意下拉/选择/右键菜单打开时，禁止后台元素响应指针事件，
  * 只保留当前浮层可交互。这样面板打开后其他 hover 效果会统一失效。

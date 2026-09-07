@@ -117,6 +117,11 @@ function initFromGraph(graph: WorkflowGraph) {
   emitHistory();
 }
 
+/** 工程切换时复用当前 FlowCanvas 实例，避免 Controls/MiniMap/画布壳重挂载闪烁。 */
+function loadGraph(graph: WorkflowGraph) {
+  initFromGraph(graph);
+}
+
 onMounted(() => {
   initFromGraph(props.initialGraph);
   window.addEventListener("keydown", onKeydown);
@@ -661,6 +666,7 @@ defineExpose({
   fitView,
   autoLayout,
   focusNode,
+  loadGraph,
   applyRunEvent,
   applyRunSnapshot,
 });

@@ -21,6 +21,7 @@ import NewProjectDialog from "./NewProjectDialog.vue";
 import ProjectFolderNode from "./ProjectFolderNode.vue";
 import ProjectItem from "./ProjectItem.vue";
 import FolderPickerDialog from "./FolderPickerDialog.vue";
+import RowMenu, { type RowMenuItem } from "./RowMenu.vue";
 import {
   collectFolderSubtree,
   effectiveSelection,
@@ -45,6 +46,8 @@ const rootName = ref("");
 const rootInputRef = ref<HTMLInputElement | null>(null);
 const fileInput = ref<HTMLInputElement | null>(null);
 const treeAreaRef = ref<HTMLElement | null>(null);
+const rootMenu = ref<{ x: number; y: number } | null>(null);
+const rootMenuItems = ref<RowMenuItem[]>([]);
 
 const search = ref("");
 const sortMode = ref<ProjectSortMode>("manual");
@@ -189,6 +192,12 @@ function clearSelection() {
   anchorKey.value = null;
 }
 
+/** 右键菜单关闭后恢复打开前的多选状态，避免临时高亮残留。 */
+function restoreSelection(ids: string[]) {
+  selectedIds.value = new Set(ids);
+  anchorKey.value = null;
+}
+
 /** 数据增删后清理已不存在的选中项。 */
 function pruneSelection() {
   const valid = new Set<string>();
@@ -294,6 +303,37 @@ function startCreateRootFolder() {
   void nextTick(() => {
     rootInputRef.value?.focus();
   });
+}
+
+function openRootContextMenu(event: MouseEvent) {
+  const target = event.target as HTMLElement;
+  // 只在根目录的空白区域打开根目录菜单；文件夹内部空白与行内右键仍走各自逻辑。
+  if (target.closest("[data-tree-row], .wp-folder, button, input, textarea, select, .wp-menu")) return;
+  clearSelection();
+  rootMenuItems.value = [
+    { key: "new-project", label: "新建工程", icon: Plus },
+    { key: "new-folder", label: "新建文件夹", icon: FolderPlus },
+    { key: "import", label: "导入工程…", icon: Upload },
+    { key: "refresh", label: "刷新", icon: RefreshCw },
+  ];
+  rootMenu.value = { x: event.clientX, y: event.clientY };
+}
+
+function onRootMenuSelect(key: string) {
+  switch (key) {
+    case "new-project":
+      newOpen.value = true;
+      break;
+    case "new-folder":
+      startCreateRootFolder();
+      break;
+    case "import":
+      fileInput.value?.click();
+      break;
+    case "refresh":
+      void refresh();
+      break;
+  }
 }
 
 async function commitCreateRootFolder() {
@@ -823,6 +863,7 @@ onBeforeUnmount(() => {
       ref="treeAreaRef"
       class="wp-scroll"
       @keydown="onTreeKeydown"
+      @contextmenu.prevent="openRootContextMenu"
       @pointerdown="onPointerDown"
       @pointermove="onPointerMove"
       @pointerup="onPointerUp"
@@ -865,6 +906,7 @@ onBeforeUnmount(() => {
             @select="handleSelect"
             @move-selection="openMoveSelection"
             @delete-selection="deleteSelection"
+            @restore-selection="restoreSelection"
           />
           <ProjectItem
             v-for="project in rootProjects"
@@ -877,6 +919,7 @@ onBeforeUnmount(() => {
             @select="handleSelect"
             @move-selection="openMoveSelection"
             @delete-selection="deleteSelection"
+            @restore-selection="restoreSelection"
           />
         </ul>
         <div v-if="rootFolders.length === 0 && rootProjects.length === 0 && search" class="wp-state">没有匹配的工程或文件夹</div>
@@ -899,6 +942,14 @@ onBeforeUnmount(() => {
       </div>
     </div>
 
+    <RowMenu
+      v-if="rootMenu"
+      :x="rootMenu.x"
+      :y="rootMenu.y"
+      :items="rootMenuItems"
+      @select="onRootMenuSelect"
+      @close="rootMenu = null"
+    />
     <NewProjectDialog v-model:open="newOpen" @created="(project: { id: string }) => onCreated(project)" />
     <FolderPickerDialog
       v-model:open="moveOpen"

@@ -26,7 +26,15 @@ import type { NodePreviewOutput, ScribeNodeData } from "@/utils/flow";
 const MindMapPreview = defineAsyncComponent({
   loader: () => import("../MindMapViewer.vue"),
   delay: 0,
-  loadingComponent: () => h("div", { class: "sf-node-result-preview__mindmap-hint" }, "正在渲染思维导图…"),
+  loadingComponent: () =>
+    h(
+      "div",
+      { class: "sf-node-result-preview__mindmap-hint" },
+      h("span", { class: "sf-loading-hint" }, [
+        h("span", { class: "sf-loading-spinner", "aria-hidden": "true" }),
+        "正在渲染思维导图…",
+      ]),
+    ),
   errorComponent: () => h("div", { class: "sf-node-result-preview__mindmap-hint sf-node-result-preview__mindmap-hint--error" }, "思维导图渲染器加载失败"),
 });
 
@@ -753,7 +761,10 @@ const themeOptions = [
                   @blur="commit"
                 />
               </div>
-              <div v-if="previewLoading" class="sf-node-preview sf-node-preview--loading tnum">正在解析视频信息…</div>
+              <div v-if="previewLoading" class="sf-node-preview sf-node-preview--loading tnum">
+                <span class="sf-loading-spinner" aria-hidden="true" />
+                <span>正在解析视频信息…</span>
+              </div>
               <div v-else-if="preview" class="sf-node-preview">
                 <div class="sf-node-cover-wrap">
                   <img :src="preview.cover" class="sf-node-cover" alt="视频封面" referrerpolicy="no-referrer" loading="lazy" />
@@ -1002,7 +1013,10 @@ const themeOptions = [
                   <span v-if="previewRunLabel" class="sf-node-result-preview__run tnum">{{ previewRunLabel }}</span>
                 </div>
                 <div class="sf-node-result-preview__body">
-                  <div v-if="!previewText && outputPreviewLoading" class="sf-node-result-preview__hint">正在载入完整输出…</div>
+                  <div v-if="!previewText && outputPreviewLoading" class="sf-node-result-preview__hint sf-node-result-preview__hint--loading">
+                    <span class="sf-loading-spinner" aria-hidden="true" />
+                    <span>正在载入完整输出…</span>
+                  </div>
                   <div v-else-if="!previewText && outputPreviewError" class="sf-node-result-preview__hint sf-node-result-preview__hint--error">{{ outputPreviewError }}</div>
                   <div v-else-if="previewText && isMindMapNode" class="sf-node-result-preview__mindmap">
                     <MindMapPreview :markdown="previewText" :animated="false" height="min(250px, calc(100vh - 212px))" />
@@ -2054,6 +2068,13 @@ const themeOptions = [
   font-size: 12px;
   color: var(--color-text-tertiary);
   text-align: center;
+}
+
+.sf-node-result-preview__hint--loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
 }
 
 .sf-node-result-preview__hint--error {

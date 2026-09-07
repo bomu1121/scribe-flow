@@ -3,11 +3,10 @@ import { computed, nextTick, ref } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { ElMessageBox } from "element-plus";
 import { toast } from "@/lib/toast";
-import { Folder as FolderIcon, MoreHorizontal, Pencil, Trash2, Workflow } from "lucide-vue-next";
+import { Folder as FolderIcon, Pencil, Trash2, Workflow } from "lucide-vue-next";
 import type { ProjectFolder, ProjectListItem } from "@scribe-flow/shared";
 import { useProjectsStore } from "@/stores/projects";
 import { useRunsStore } from "@/stores/runs";
-import { formatRelativeTime } from "@/lib/run-meta";
 import RowMenu, { type RowMenuItem } from "./RowMenu.vue";
 import FolderPickerDialog from "./FolderPickerDialog.vue";
 import { consumeSuppressedClick, pointerDrag, type ProjectSortMode } from "./project-tree-utils";
@@ -24,6 +23,7 @@ const emit = defineEmits<{
   select: [payload: { id: string; kind: "project"; event: MouseEvent }];
   "move-selection": [];
   "delete-selection": [];
+  "restore-selection": [ids: string[]];
 }>();
 
 const route = useRoute();
@@ -45,6 +45,7 @@ const renameValue = ref("");
 const nameInputRef = ref<HTMLInputElement | null>(null);
 const menu = ref<{ x: number; y: number } | null>(null);
 const menuItems = ref<RowMenuItem[]>([]);
+const selectionBeforeMenu = ref<string[]>([]);
 const moveOpen = ref(false);
 
 function openProject() {
@@ -128,13 +129,18 @@ function ensureSelected(event: MouseEvent) {
   }
 }
 
-function openMenuAt(event: MouseEvent) {
-  ensureSelected(event);
-  const rect = (event.currentTarget as HTMLElement).getBoundingClientRect();
-  openMenu(rect.left, rect.bottom + 4);
+function beginMenu() {
+  selectionBeforeMenu.value = Array.from(props.selectedIds);
+}
+
+function closeMenu() {
+  menu.value = null;
+  // 菜单关闭后恢复打开前的选中态，避免右键产生的临时高亮残留。
+  emit("restore-selection", selectionBeforeMenu.value);
 }
 
 function openContextMenu(event: MouseEvent) {
+  beginMenu();
   ensureSelected(event);
   openMenu(event.clientX, event.clientY);
 }
@@ -226,7 +232,7 @@ function onKeydown(event: KeyboardEvent) {
     tabindex="0"
     @click="onRowClick"
     @keydown="onKeydown($event)"
-    @contextmenu.prevent="openContextMenu($event)"
+    @contextmenu.stop.prevent="openContextMenu($event)"
   >
     <span class="wp-item-icon"><Workflow :size="14" /></span>
 
@@ -245,14 +251,9 @@ function onKeydown(event: KeyboardEvent) {
       <span class="wp-item-name" :title="`${project.name}\n${project.nodeCount} 个节点 · 更新于 ${new Date(project.updatedAt).toLocaleString('zh-CN')}`">
         {{ project.name }}
       </span>
-      <span class="wp-item-meta">{{ formatRelativeTime(project.updatedAt) }}</span>
     </template>
 
-    <button type="button" class="wp-kebab" title="更多操作" aria-label="更多操作" @click.stop="openMenuAt($event)">
-      <MoreHorizontal :size="14" />
-    </button>
-
-    <RowMenu v-if="menu" :x="menu.x" :y="menu.y" :items="menuItems" @select="onMenuSelect" @close="menu = null" />
+    <RowMenu v-if="menu" :x="menu.x" :y="menu.y" :items="menuItems" @select="onMenuSelect" @close="closeMenu" />
     <FolderPickerDialog
       v-model:open="moveOpen"
       title="移动工程到文件夹"

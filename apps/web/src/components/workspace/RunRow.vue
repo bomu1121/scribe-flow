@@ -3,11 +3,11 @@ import { computed, ref } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { ElMessageBox } from "element-plus";
 import { toast } from "@/lib/toast";
-import { MoreHorizontal, Trash2, Workflow } from "lucide-vue-next";
+import { Trash2, Workflow } from "lucide-vue-next";
 import type { RunMeta } from "@scribe-flow/shared";
 import { useRunsStore } from "@/stores/runs";
 import { useUiStore } from "@/stores/ui";
-import { RUN_STATUS_META, formatRelativeTime, runShortId } from "@/lib/run-meta";
+import { RUN_STATUS_META, runShortId } from "@/lib/run-meta";
 import RowMenu, { type RowMenuItem } from "./RowMenu.vue";
 
 const props = defineProps<{ run: RunMeta }>();
@@ -32,11 +32,6 @@ function openRun() {
 function openProjectCanvas() {
   uiStore.openPanel("projects");
   void router.push(`/project/${props.run.projectId}`);
-}
-
-function openMenuAt(event: MouseEvent) {
-  const rect = (event.currentTarget as HTMLElement).getBoundingClientRect();
-  openMenu(rect.left, rect.bottom + 4);
 }
 
 function openContextMenu(event: MouseEvent) {
@@ -100,10 +95,6 @@ async function removeRun() {
       <span class="wp-run-id tnum">#{{ runShortId(run.id) }}</span>
       <span class="wp-run-meta">{{ run.summary || meta.label }}</span>
     </span>
-    <span class="wp-run-time tnum">{{ formatRelativeTime(run.createdAt) }}</span>
-    <button type="button" class="wp-kebab" title="更多操作" aria-label="运行操作" @click.stop="openMenuAt($event)">
-      <MoreHorizontal :size="13" />
-    </button>
 
     <RowMenu v-if="menu" :x="menu.x" :y="menu.y" :items="menuItems" @select="onMenuSelect" @close="menu = null" />
   </li>

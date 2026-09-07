@@ -171,25 +171,29 @@
   gap: 6px;
   flex: 1;
   min-width: 0;
-  height: 26px;
-  padding: 0 8px;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm);
-  background: var(--color-surface-muted);
-  color: var(--color-text-tertiary);
+  height: var(--control-height-sm);
+  padding: 0 var(--control-padding-x);
+  border: 1px solid var(--control-border);
+  border-radius: var(--control-radius);
+  background: var(--control-bg);
+  color: var(--control-placeholder);
   transition:
     border-color var(--dur-1) var(--ease-out),
     background-color var(--dur-1) var(--ease-out);
 }
 
+.wp-search:hover {
+  border-color: var(--control-border-hover);
+}
+
 .wp-search:focus-within {
-  border-color: var(--color-brand);
-  background: var(--color-surface);
+  border-color: var(--control-border-focus);
+  background: var(--control-bg);
 }
 
 .wp-search-icon {
   flex-shrink: 0;
-  color: var(--color-text-tertiary);
+  color: var(--control-placeholder);
 }
 
 .wp-search-input {
@@ -200,11 +204,23 @@
   background: transparent;
   color: var(--color-text);
   font-family: inherit;
-  font-size: 12px;
+  font-size: var(--control-font-size-sm);
 }
 
 .wp-search-input::placeholder {
-  color: var(--color-text-tertiary);
+  color: var(--control-placeholder);
+}
+
+/* 彻底去掉全局 focus outline 对左侧原生输入/下拉的蓝色外圈；聚焦只靠控件自身的边框色表达 */
+.wp-search-input:focus,
+.wp-search-input:focus-visible,
+.wp-sort:focus,
+.wp-sort:focus-visible,
+.wp-select:focus,
+.wp-select:focus-visible,
+.wp-input:focus,
+.wp-input:focus-visible {
+  outline: none;
 }
 
 .wp-search-clear {
@@ -229,20 +245,27 @@
 
 .wp-sort {
   flex-shrink: 0;
-  height: 26px;
-  padding: 0 6px;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm);
-  background: var(--color-surface-muted);
-  color: var(--color-text-secondary);
+  height: var(--control-height-sm);
+  padding: 0 var(--control-padding-x);
+  border: 1px solid var(--control-border);
+  border-radius: var(--control-radius);
+  background: var(--control-bg);
+  color: var(--color-text);
   font-family: inherit;
-  font-size: 11.5px;
+  font-size: var(--control-font-size-sm);
   outline: none;
   cursor: pointer;
+  transition:
+    border-color var(--dur-1) var(--ease-out),
+    background-color var(--dur-1) var(--ease-out);
 }
 
 .wp-sort:hover {
-  border-color: var(--color-border-strong);
+  border-color: var(--control-border-hover);
+}
+
+.wp-sort:focus-visible {
+  border-color: var(--control-border-focus);
 }
 
 .wp-selectionbar {
@@ -340,7 +363,7 @@
   color: var(--color-text);
   font-family: inherit;
   text-align: left;
-  cursor: grab;
+  cursor: default;
   transition:
     border-color var(--dur-1) var(--ease-out),
     background-color var(--dur-1) var(--ease-out),
@@ -348,9 +371,7 @@
 }
 
 .wp-node-item:hover:not(.disabled) {
-  border-color: var(--color-border-strong);
-  background: var(--color-surface);
-  box-shadow: var(--shadow-xs);
+  background: var(--color-ink-soft);
 }
 
 .wp-node-item.disabled {
@@ -363,14 +384,7 @@
   place-items: center;
   width: 24px;
   height: 24px;
-  border-radius: var(--radius-sm);
-  background: var(--color-ink-soft);
-  color: var(--color-text-secondary);
-}
-
-.wp-node-item:hover:not(.disabled) .wp-node-icon {
-  background: var(--color-ink);
-  color: var(--color-surface);
+  color: var(--color-text);
 }
 
 .wp-node-name {
@@ -503,12 +517,12 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  color: var(--color-text-secondary);
+  color: var(--color-text);
   flex-shrink: 0;
 }
 
 .wp-row.open > .wp-row-icon {
-  color: var(--color-text-secondary);
+  color: var(--color-text);
 }
 
 .wp-row-label {
@@ -537,59 +551,25 @@
   min-width: 0;
   height: 22px;
   padding: 0 6px;
-  border: 1px solid var(--color-border-strong);
-  border-radius: var(--radius-xs);
+  border: 1px solid var(--control-border);
+  border-radius: var(--control-radius);
   outline: none;
-  background: var(--color-surface);
+  background: var(--control-bg);
   color: var(--color-text);
   font-family: inherit;
-  font-size: 12.5px;
+  font-size: var(--control-font-size-sm);
 }
 
 .wp-input:focus {
-  border-color: var(--color-text-secondary);
-  box-shadow: 0 0 0 2px var(--color-ink-soft);
+  border-color: var(--control-border-focus);
+  box-shadow: 0 0 0 1px var(--control-border-focus) inset;
 }
 
-.wp-kebab {
-  display: grid;
-  place-items: center;
-  width: 22px;
-  height: 22px;
-  padding: 0;
-  border: none;
-  border-radius: var(--radius-xs);
-  background: transparent;
-  color: var(--color-text-tertiary);
-  cursor: pointer;
-  flex-shrink: 0;
-  opacity: 0.75;
-  transition:
-    background-color var(--dur-1) var(--ease-out),
-    color var(--dur-1) var(--ease-out),
-    opacity var(--dur-1) var(--ease-out);
-}
-
-.wp-row:hover .wp-kebab,
-.wp-row:focus-within .wp-kebab,
-.wp-item.active .wp-kebab,
-.wp-run.active .wp-kebab {
-  opacity: 1;
-}
-
-.wp-kebab:hover {
-  background: var(--color-surface);
-  color: var(--color-text);
-}
-
-/* 可拖拽行的光标语义：默认抓取，拖拽中抓合 */
-[data-tree-row] {
-  cursor: grab;
-}
-
+/* 可拖拽行统一使用常规光标，按下/拖拽不切换到抓取或小手，避免点击时光标抖动 */
+[data-tree-row],
 [data-tree-row].is-dragging,
 [data-tree-row]:active {
-  cursor: grabbing;
+  cursor: default;
 }
 
 /* 工程行（列表卡片式，非树） */
@@ -605,7 +585,7 @@
   border-radius: var(--radius-sm);
   color: var(--color-text);
   list-style: none;
-  cursor: pointer;
+  cursor: default;
   outline: none;
   transition:
     background-color var(--dur-1) var(--ease-out),
@@ -621,9 +601,7 @@
   place-items: center;
   width: 24px;
   height: 24px;
-  border-radius: var(--radius-sm);
-  background: var(--color-ink-soft);
-  color: var(--color-text-secondary);
+  color: var(--color-text);
   flex-shrink: 0;
 }
 
@@ -646,7 +624,7 @@
 }
 
 .wp-item.selected .wp-item-icon {
-  color: var(--color-text-secondary);
+  color: var(--color-text);
 }
 
 .wp-item.active {
@@ -654,19 +632,12 @@
 }
 
 .wp-item.active .wp-item-icon {
-  background: var(--color-ink);
-  color: var(--color-surface);
+  color: var(--color-text);
 }
 
 .wp-item.active .wp-item-name {
   color: var(--color-text);
-  font-weight: 600;
-}
-
-.wp-item-meta {
-  flex-shrink: 0;
-  font-size: 10px;
-  color: var(--color-text-tertiary);
+  font-weight: 500;
 }
 
 /* 运行行 */
@@ -726,7 +697,6 @@
 
 .wp-run.active .wp-run-id {
   color: var(--color-text-secondary);
-  font-weight: 600;
 }
 
 .wp-run-meta {
@@ -742,12 +712,6 @@
 .wp-run-project {
   margin-left: 4px;
   font-size: 10.5px;
-  color: var(--color-text-tertiary);
-}
-
-.wp-run-time {
-  flex-shrink: 0;
-  font-size: 10px;
   color: var(--color-text-tertiary);
 }
 
@@ -1133,24 +1097,27 @@
 .wp-select {
   flex: 1;
   min-width: 0;
-  height: 26px;
-  padding: 0 8px;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm);
-  background: var(--color-surface-muted);
+  height: var(--control-height-sm);
+  padding: 0 var(--control-padding-x);
+  border: 1px solid var(--control-border);
+  border-radius: var(--control-radius);
+  background: var(--control-bg);
   color: var(--color-text);
   font-family: inherit;
-  font-size: 12px;
+  font-size: var(--control-font-size-sm);
   outline: none;
   cursor: pointer;
+  transition:
+    border-color var(--dur-1) var(--ease-out),
+    background-color var(--dur-1) var(--ease-out);
 }
 
 .wp-select:hover {
-  border-color: var(--color-border-strong);
+  border-color: var(--control-border-hover);
 }
 
 .wp-select:focus-visible {
-  border-color: var(--color-text-tertiary);
+  border-color: var(--control-border-focus);
 }
 
 .wp-runs-head {

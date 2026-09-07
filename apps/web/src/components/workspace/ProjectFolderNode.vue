@@ -3,7 +3,7 @@ import { computed, nextTick, onBeforeUnmount, ref, watch } from "vue";
 import { useRouter } from "vue-router";
 import { ElMessageBox } from "element-plus";
 import { toast } from "@/lib/toast";
-import { ChevronRight, Folder as FolderIcon, FolderOpen, FolderPlus, MoreHorizontal, Pencil, Trash2, Upload } from "lucide-vue-next";
+import { ChevronRight, Folder as FolderIcon, FolderOpen, FolderPlus, Pencil, Trash2, Upload } from "lucide-vue-next";
 import type { ProjectFolder, ProjectListItem } from "@scribe-flow/shared";
 import { useProjectsStore } from "@/stores/projects";
 import RowMenu, { type RowMenuItem } from "./RowMenu.vue";
@@ -39,6 +39,7 @@ const emit = defineEmits<{
   select: [payload: { id: string; kind: "folder" | "project"; event: MouseEvent }];
   "move-selection": [];
   "delete-selection": [];
+  "restore-selection": [ids: string[]];
 }>();
 
 const store = useProjectsStore();
@@ -167,6 +168,7 @@ async function onImportFile(event: Event) {
 
 const menu = ref<{ x: number; y: number } | null>(null);
 const menuItems = ref<RowMenuItem[]>([]);
+const selectionBeforeMenu = ref<string[]>([]);
 const moveOpen = ref(false);
 
 function ensureSelected(event: MouseEvent) {
@@ -175,13 +177,18 @@ function ensureSelected(event: MouseEvent) {
   }
 }
 
-function openMenuAt(event: MouseEvent) {
-  ensureSelected(event);
-  const rect = (event.currentTarget as HTMLElement).getBoundingClientRect();
-  openMenu(rect.left, rect.bottom + 4);
+function beginMenu() {
+  selectionBeforeMenu.value = Array.from(props.selectedIds);
+}
+
+function closeMenu() {
+  menu.value = null;
+  // 菜单关闭后恢复打开前的选中态，避免右键产生的临时高亮残留。
+  emit("restore-selection", selectionBeforeMenu.value);
 }
 
 function openContextMenu(event: MouseEvent) {
+  beginMenu();
   ensureSelected(event);
   openMenu(event.clientX, event.clientY);
 }
@@ -315,7 +322,7 @@ function onKeydown(event: KeyboardEvent) {
       tabindex="0"
       @click="onRowClick"
       @keydown="onKeydown"
-      @contextmenu.prevent="openContextMenu($event)"
+      @contextmenu.stop.prevent="openContextMenu($event)"
     >
       <span class="wp-row-twist"><ChevronRight :size="12" /></span>
       <span class="wp-row-icon">
@@ -335,10 +342,6 @@ function onKeydown(event: KeyboardEvent) {
         @blur="commitRename"
       />
       <span v-else class="wp-row-label" :title="buildFolderPath(folders, folder.id)">{{ folder.name }}</span>
-
-      <button type="button" class="wp-kebab" title="更多操作" aria-label="文件夹操作" @click.stop="openMenuAt($event)">
-        <MoreHorizontal :size="13" />
-      </button>
     </div>
 
     <ul v-if="open" class="wp-children">
@@ -370,6 +373,7 @@ function onKeydown(event: KeyboardEvent) {
         @select="(payload: { id: string; kind: 'folder' | 'project'; event: MouseEvent }) => emit('select', payload)"
         @move-selection="emit('move-selection')"
         @delete-selection="emit('delete-selection')"
+        @restore-selection="(ids: string[]) => emit('restore-selection', ids)"
       />
       <ProjectItem
         v-for="project in childProjects"
@@ -382,12 +386,13 @@ function onKeydown(event: KeyboardEvent) {
         @select="(payload: { id: string; kind: 'project'; event: MouseEvent }) => emit('select', payload)"
         @move-selection="emit('move-selection')"
         @delete-selection="emit('delete-selection')"
+        @restore-selection="(ids: string[]) => emit('restore-selection', ids)"
       />
       <li v-if="childFolders.length === 0 && childProjects.length === 0" class="wp-state wp-state--inline">文件夹为空</li>
     </ul>
 
     <input ref="fileInput" type="file" accept=".json,application/json" class="wp-hidden" @change="onImportFile" />
-    <RowMenu v-if="menu" :x="menu.x" :y="menu.y" :items="menuItems" @select="onMenuSelect" @close="menu = null" />
+    <RowMenu v-if="menu" :x="menu.x" :y="menu.y" :items="menuItems" @select="onMenuSelect" @close="closeMenu" />
     <FolderPickerDialog
       v-model:open="moveOpen"
       title="移动文件夹到…"
