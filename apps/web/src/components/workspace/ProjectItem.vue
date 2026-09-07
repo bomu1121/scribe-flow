@@ -3,18 +3,27 @@ import { computed, nextTick, ref } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { ElMessageBox } from "element-plus";
 import { toast } from "@/lib/toast";
-import { MoreHorizontal, Pencil, Trash2, Workflow } from "lucide-vue-next";
+import { Folder as FolderIcon, MoreHorizontal, Pencil, Trash2, Workflow } from "lucide-vue-next";
 import type { ProjectFolder, ProjectListItem } from "@scribe-flow/shared";
 import { useProjectsStore } from "@/stores/projects";
 import { useRunsStore } from "@/stores/runs";
 import { formatRelativeTime } from "@/lib/run-meta";
 import RowMenu, { type RowMenuItem } from "./RowMenu.vue";
 import FolderPickerDialog from "./FolderPickerDialog.vue";
-import { consumeSuppressedClick, pointerDrag } from "./project-tree-utils";
+import { consumeSuppressedClick, pointerDrag, type ProjectSortMode } from "./project-tree-utils";
 
 const props = defineProps<{
   project: ProjectListItem;
   folders: ProjectFolder[];
+  selectedIds: Set<string>;
+  search?: string;
+  sortMode?: ProjectSortMode;
+}>();
+
+const emit = defineEmits<{
+  select: [payload: { id: string; kind: "project"; event: MouseEvent }];
+  "move-selection": [];
+  "delete-selection": [];
 }>();
 
 const route = useRoute();
@@ -27,6 +36,9 @@ const isActive = computed(
     (route.name === "project-editor" || route.name === "run-detail") &&
     String(route.params.id ?? "") === props.project.id,
 );
+const selected = computed(() => props.selectedIds.has(props.project.id));
+const isReorderBefore = computed(() => pointerDrag.reorderType === "project" && pointerDrag.reorderBeforeId === props.project.id);
+const isReorderAfter = computed(() => pointerDrag.reorderType === "project" && pointerDrag.reorderAfterId === props.project.id);
 
 const renaming = ref(false);
 const renameValue = ref("");
@@ -38,6 +50,14 @@ const moveOpen = ref(false);
 function openProject() {
   if (consumeSuppressedClick()) return;
   void router.push(`/project/${props.project.id}`);
+}
+
+function onRowClick(event: MouseEvent) {
+  if (consumeSuppressedClick()) return;
+  // Ctrl/Shift 多选已在 pointerdown 阶段处理；click 阶段只负责普通点击的选中/打开。
+  if (event.shiftKey || event.ctrlKey || event.metaKey) return;
+  emit("select", { id: props.project.id, kind: "project", event });
+  openProject();
 }
 
 function startRename() {
@@ -102,25 +122,41 @@ function isRunning(): boolean {
   return runsStore.runs.some((r) => r.projectId === props.project.id && r.status === "running");
 }
 
+function ensureSelected(event: MouseEvent) {
+  if (!props.selectedIds.has(props.project.id)) {
+    emit("select", { id: props.project.id, kind: "project", event });
+  }
+}
+
 function openMenuAt(event: MouseEvent) {
+  ensureSelected(event);
   const rect = (event.currentTarget as HTMLElement).getBoundingClientRect();
   openMenu(rect.left, rect.bottom + 4);
 }
 
 function openContextMenu(event: MouseEvent) {
+  ensureSelected(event);
   openMenu(event.clientX, event.clientY);
 }
 
 function openMenu(x: number, y: number) {
   const running = isRunning();
-  menuItems.value = [
-    { key: "open", label: "打开画布", icon: Workflow, hint: "Enter" },
-    { key: "rename", label: "重命名", icon: Pencil, hint: "F2" },
-    { key: "duplicate", label: "复制工程" },
-    { key: "export", label: "导出工程" },
-    { key: "move", label: "移动到文件夹…" },
-    { key: "delete", label: "删除工程", icon: Trash2, danger: true, divided: true, disabled: running, hint: running ? "运行中不可删除" : "Delete" },
-  ];
+  const multi = props.selectedIds.size > 1 && props.selectedIds.has(props.project.id);
+  if (multi) {
+    menuItems.value = [
+      { key: "move-selection", label: `移动选中 ${props.selectedIds.size} 项…`, icon: FolderIcon },
+      { key: "delete-selection", label: `删除选中 ${props.selectedIds.size} 项`, icon: Trash2, danger: true, divided: true },
+    ];
+  } else {
+    menuItems.value = [
+      { key: "open", label: "打开画布", icon: Workflow, hint: "Enter" },
+      { key: "rename", label: "重命名", icon: Pencil, hint: "F2" },
+      { key: "duplicate", label: "复制工程" },
+      { key: "export", label: "导出工程" },
+      { key: "move", label: "移动到文件夹…" },
+      { key: "delete", label: "删除工程", icon: Trash2, danger: true, divided: true, disabled: running, hint: running ? "运行中不可删除" : "Delete" },
+    ];
+  }
   menu.value = { x, y };
 }
 
@@ -144,6 +180,12 @@ function onMenuSelect(key: string) {
     case "delete":
       if (!isRunning()) void removeProject();
       break;
+    case "move-selection":
+      emit("move-selection");
+      break;
+    case "delete-selection":
+      emit("delete-selection");
+      break;
   }
 }
 
@@ -163,7 +205,11 @@ function onKeydown(event: KeyboardEvent) {
     startRename();
   } else if (event.key === "Delete") {
     event.preventDefault();
-    if (!isRunning()) void removeProject();
+    if (props.selectedIds.size > 1 && props.selectedIds.has(props.project.id)) {
+      emit("delete-selection");
+    } else if (!isRunning()) {
+      void removeProject();
+    }
   }
 }
 </script>
@@ -171,13 +217,14 @@ function onKeydown(event: KeyboardEvent) {
 <template>
   <li
     class="wp-item"
-    :class="{ active: isActive, 'is-dragging': pointerDrag.draggingKey === `project:${project.id}` }"
+    :class="{ active: isActive, selected, 'is-drop-before': isReorderBefore, 'is-drop-after': isReorderAfter, 'is-dragging': pointerDrag.draggingKey === `project:${project.id}` }"
     :data-project-id="project.id"
     :data-tree-row="true"
     :data-drag-source="'project'"
     :data-drag-id="project.id"
+    :data-parent-id="project.folderId ?? ''"
     tabindex="0"
-    @click="openProject"
+    @click="onRowClick"
     @keydown="onKeydown($event)"
     @contextmenu.prevent="openContextMenu($event)"
   >

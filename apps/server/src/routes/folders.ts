@@ -22,6 +22,12 @@ const patchBodySchema = z.object({
   parentId: z.string().nullable().optional(),
 });
 
+const orderBodySchema = z.object({
+  parentId: z.string().nullable(),
+  /** 该父级下文件夹的完整顺序；数组下标即新 position。 */
+  ids: z.array(z.string()).min(1),
+});
+
 function now() {
   return Date.now();
 }
@@ -31,9 +37,20 @@ function toFolder(row: FolderRow): ProjectFolder {
     id: row.id,
     name: row.name,
     parentId: row.parentId ?? null,
+    position: row.position ?? 0,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };
+}
+
+/** 计算某父级下新建文件夹应使用的 position（旧数据 position 可能为空，按 0 参与比较）。 */
+function nextFolderPosition(db: AppDatabase, parentId: string | null): number {
+  const siblings = db
+    .select()
+    .from(folders)
+    .where(parentId ? eq(folders.parentId, parentId) : isNull(folders.parentId))
+    .all();
+  return siblings.reduce((max, f) => Math.max(max, f.position ?? 0), 0) + 1;
 }
 
 /** 同层重名检查（同一父级下不允许同名文件夹，避免路径歧义）。 */
@@ -97,10 +114,38 @@ export function foldersApi(db: AppDatabase) {
     const id = `fld_${randomUUID()}`;
     const ts = now();
     db.insert(folders)
-      .values({ id, name, parentId: parentId ?? null, createdAt: ts, updatedAt: ts })
+      .values({ id, name, parentId: parentId ?? null, position: nextFolderPosition(db, parentId ?? null), createdAt: ts, updatedAt: ts })
       .run();
     const row = db.select().from(folders).where(eq(folders.id, id)).get();
     return c.json(toFolder(row!), 201);
+  });
+
+  api.put("/order", async (c) => {
+    const parsed = orderBodySchema.safeParse(await c.req.json());
+    if (!parsed.success) {
+      return c.json({ error: parsed.error.issues[0]?.message ?? "请求格式不正确" }, 400);
+    }
+    const { parentId, ids } = parsed.data;
+    if (parentId) {
+      const parent = db.select().from(folders).where(eq(folders.id, parentId)).get();
+      if (!parent) return c.json({ error: "目标文件夹不存在，请刷新后重试" }, 400);
+    }
+    const siblings = db
+      .select()
+      .from(folders)
+      .where(parentId ? eq(folders.parentId, parentId) : isNull(folders.parentId))
+      .all();
+    const siblingIds = new Set(siblings.map((f) => f.id));
+    if (ids.some((id) => !siblingIds.has(id))) {
+      return c.json({ error: "排序列表包含不属于该父级的文件夹" }, 400);
+    }
+    ids.forEach((id, index) => {
+      db.update(folders)
+        .set({ position: index + 1, updatedAt: now() })
+        .where(eq(folders.id, id))
+        .run();
+    });
+    return c.json({ ok: true });
   });
 
   api.patch("/:id", async (c) => {
@@ -114,6 +159,7 @@ export function foldersApi(db: AppDatabase) {
     }
     const name = parsed.data.name ?? row.name;
     const parentId = parsed.data.parentId !== undefined ? parsed.data.parentId : row.parentId;
+    const moved = (parentId ?? null) !== (row.parentId ?? null);
     if (parentId) {
       if (parentId === id) return c.json({ error: "不能移动到自身内部" }, 400);
       const parent = db.select().from(folders).where(eq(folders.id, parentId)).get();
@@ -126,7 +172,12 @@ export function foldersApi(db: AppDatabase) {
       return c.json({ error: "同一位置已存在同名文件夹" }, 400);
     }
     db.update(folders)
-      .set({ name, parentId: parentId ?? null, updatedAt: now() })
+      .set({
+        name,
+        parentId: parentId ?? null,
+        position: moved ? nextFolderPosition(db, parentId ?? null) : row.position,
+        updatedAt: now(),
+      })
       .where(eq(folders.id, id))
       .run();
     const updated = db.select().from(folders).where(eq(folders.id, id)).get();

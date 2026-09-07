@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { desc, eq } from "drizzle-orm";
+import { desc, eq, isNull } from "drizzle-orm";
 import { Hono } from "hono";
 import { z } from "zod";
 import { emptyGraph, parseGraph, WORKFLOW_TEMPLATES, type GraphNode, type WorkflowGraph } from "@scribe-flow/shared";
@@ -23,6 +23,12 @@ const patchBodySchema = z.object({
 
 const putGraphSchema = z.object({
   graph: z.unknown(),
+});
+
+const orderBodySchema = z.object({
+  folderId: z.string().nullable(),
+  /** 该文件夹下工程的完整顺序；数组下标即新 position。 */
+  ids: z.array(z.string()).min(1),
 });
 
 const importBodySchema = z.object({
@@ -72,6 +78,7 @@ function toListItem(row: ProjectRow) {
     description: row.description,
     folderId: row.folderId ?? null,
     nodeCount,
+    position: row.position ?? 0,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };
@@ -83,10 +90,21 @@ function toDetail(row: ProjectRow) {
     name: row.name,
     description: row.description,
     folderId: row.folderId ?? null,
+    position: row.position ?? 0,
     graph: cleanGraph(JSON.parse(row.graphJson) as WorkflowGraph),
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };
+}
+
+/** 计算某文件夹下新建工程应使用的 position（旧数据 position 可能为空，按 0 参与比较）。 */
+function nextProjectPosition(db: AppDatabase, folderId: string | null): number {
+  const siblings = db
+    .select()
+    .from(projects)
+    .where(folderId ? eq(projects.folderId, folderId) : isNull(projects.folderId))
+    .all();
+  return siblings.reduce((max, p) => Math.max(max, p.position ?? 0), 0) + 1;
 }
 
 function graphForTemplate(templateId: string | undefined): { graph: WorkflowGraph; name: string; description: string } {
@@ -127,6 +145,7 @@ export function projectsApi(db: AppDatabase, engine: RunEngine) {
         name,
         description: description ?? "",
         folderId: folderId ?? null,
+        position: nextProjectPosition(db, folderId ?? null),
         graphJson: JSON.stringify(graph),
         schemaVersion: 1,
         createdAt: ts,
@@ -198,6 +217,7 @@ export function projectsApi(db: AppDatabase, engine: RunEngine) {
         name,
         description: parsed.data.description ?? preset.description,
         folderId: parsed.data.folderId ?? null,
+        position: nextProjectPosition(db, parsed.data.folderId ?? null),
         graphJson: JSON.stringify(preset.graph),
         schemaVersion: 1,
         createdAt: ts,
@@ -214,6 +234,34 @@ export function projectsApi(db: AppDatabase, engine: RunEngine) {
     return c.json(toDetail(row));
   });
 
+  api.put("/order", async (c) => {
+    const parsed = orderBodySchema.safeParse(await c.req.json());
+    if (!parsed.success) {
+      return c.json({ error: parsed.error.issues[0]?.message ?? "请求格式不正确" }, 400);
+    }
+    const { folderId, ids } = parsed.data;
+    if (folderId) {
+      const folder = db.select().from(folders).where(eq(folders.id, folderId)).get();
+      if (!folder) return c.json({ error: "目标文件夹不存在，请刷新后重试" }, 400);
+    }
+    const siblings = db
+      .select()
+      .from(projects)
+      .where(folderId ? eq(projects.folderId, folderId) : isNull(projects.folderId))
+      .all();
+    const siblingIds = new Set(siblings.map((p) => p.id));
+    if (ids.some((id) => !siblingIds.has(id))) {
+      return c.json({ error: "排序列表包含不属于该文件夹的工程" }, 400);
+    }
+    ids.forEach((id, index) => {
+      db.update(projects)
+        .set({ position: index + 1, updatedAt: now() })
+        .where(eq(projects.id, id))
+        .run();
+    });
+    return c.json({ ok: true });
+  });
+
   api.patch("/:id", async (c) => {
     const id = c.req.param("id");
     const row = db.select().from(projects).where(eq(projects.id, id)).get();
@@ -225,12 +273,15 @@ export function projectsApi(db: AppDatabase, engine: RunEngine) {
     }
     const folderError = validateFolder(db, parsed.data.folderId);
     if (folderError) return c.json({ error: folderError }, 400);
+    const nextFolderId = parsed.data.folderId !== undefined ? parsed.data.folderId : row.folderId;
+    const moved = (nextFolderId ?? null) !== (row.folderId ?? null);
 
     db.update(projects)
       .set({
         name: parsed.data.name ?? row.name,
         description: parsed.data.description ?? row.description,
-        folderId: parsed.data.folderId !== undefined ? parsed.data.folderId : row.folderId,
+        folderId: nextFolderId,
+        position: moved ? nextProjectPosition(db, nextFolderId ?? null) : row.position,
         updatedAt: now(),
       })
       .where(eq(projects.id, id))
@@ -264,6 +315,7 @@ export function projectsApi(db: AppDatabase, engine: RunEngine) {
         name: `${row.name} 副本`,
         description: row.description,
         folderId: row.folderId,
+        position: nextProjectPosition(db, row.folderId ?? null),
         graphJson: row.graphJson,
         schemaVersion: row.schemaVersion,
         createdAt: ts,

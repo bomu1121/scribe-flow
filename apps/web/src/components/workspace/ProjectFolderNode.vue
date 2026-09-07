@@ -14,8 +14,10 @@ import {
   buildFolderPath,
   collectFolderSubtree,
   consumeSuppressedClick,
-  folderChildrenOf,
   pointerDrag,
+  type ProjectSortMode,
+  visibleChildFolders,
+  visibleChildProjects,
 } from "./project-tree-utils";
 
 const props = withDefaults(
@@ -24,31 +26,46 @@ const props = withDefaults(
     folders: ProjectFolder[];
     projects: ProjectListItem[];
     depth?: number;
-    forceOpenIds?: string[];
+    openIds: Set<string>;
+    selectedIds: Set<string>;
+    search?: string;
+    sortMode?: ProjectSortMode;
   }>(),
-  { depth: 0, forceOpenIds: () => [] },
+  { depth: 0, search: "", sortMode: "name" },
 );
+
+const emit = defineEmits<{
+  toggle: [id: string];
+  select: [payload: { id: string; kind: "folder" | "project"; event: MouseEvent }];
+  "move-selection": [];
+  "delete-selection": [];
+}>();
 
 const store = useProjectsStore();
 const router = useRouter();
 
-const expanded = ref(false);
-const open = computed(() => expanded.value || props.forceOpenIds.includes(props.folder.id));
-const childFolders = computed(() => folderChildrenOf(props.folders, props.folder.id));
-const childProjects = computed(() =>
-  [...props.projects]
-    .filter((p) => (p.folderId ?? null) === props.folder.id)
-    .sort((a, b) => a.name.localeCompare(b.name, "zh-CN")),
-);
+const open = computed(() => props.openIds.has(props.folder.id));
+const selected = computed(() => props.selectedIds.has(props.folder.id));
+const childFolders = computed(() => visibleChildFolders(props.folders, props.projects, props.folder.id, props.search, props.sortMode));
+const childProjects = computed(() => visibleChildProjects(props.projects, props.folder.id, props.search, props.sortMode));
 
 const isDropTarget = computed(
-  () => pointerDrag.active && pointerDrag.overFolderId === props.folder.id,
+  () => pointerDrag.active && pointerDrag.overFolderId === props.folder.id && !pointerDrag.overChildArea,
 );
+const isReorderBefore = computed(() => pointerDrag.reorderType === "folder" && pointerDrag.reorderBeforeId === props.folder.id);
+const isReorderAfter = computed(() => pointerDrag.reorderType === "folder" && pointerDrag.reorderAfterId === props.folder.id);
 const isDragging = computed(() => pointerDrag.draggingKey === `folder:${props.folder.id}`);
 
 function toggle() {
   if (consumeSuppressedClick()) return;
-  expanded.value = !expanded.value;
+  emit("toggle", props.folder.id);
+}
+
+function onRowClick(event: MouseEvent) {
+  if (consumeSuppressedClick()) return;
+  // Ctrl/Shift 多选已在 pointerdown 阶段处理；普通点击文件夹只负责展开/收起，不进入持久选中。
+  if (event.shiftKey || event.ctrlKey || event.metaKey) return;
+  toggle();
 }
 
 /* 自研拖拽悬停自动展开 */
@@ -68,7 +85,7 @@ watch(
     if (active && overId === props.folder.id && !open.value) {
       expandTimer = setTimeout(() => {
         expandTimer = null;
-        expanded.value = true;
+        emit("toggle", props.folder.id);
       }, 450);
     }
   },
@@ -111,7 +128,7 @@ async function commitRename() {
 }
 
 function startCreateChild() {
-  expanded.value = true;
+  if (!open.value) emit("toggle", props.folder.id);
   creatingChild.value = true;
   createValue.value = "";
   void nextTick(() => {
@@ -139,7 +156,7 @@ async function onImportFile(event: Event) {
   try {
     const project = await store.importProject(file, props.folder.id);
     toast.success(`已导入工程「${project.name}」`);
-    expanded.value = true;
+    if (!open.value) emit("toggle", props.folder.id);
     await router.push(`/project/${project.id}`);
   } catch (err) {
     toast.error(err instanceof Error ? err.message : "导入工程失败");
@@ -152,24 +169,40 @@ const menu = ref<{ x: number; y: number } | null>(null);
 const menuItems = ref<RowMenuItem[]>([]);
 const moveOpen = ref(false);
 
+function ensureSelected(event: MouseEvent) {
+  if (!props.selectedIds.has(props.folder.id)) {
+    emit("select", { id: props.folder.id, kind: "folder", event });
+  }
+}
+
 function openMenuAt(event: MouseEvent) {
+  ensureSelected(event);
   const rect = (event.currentTarget as HTMLElement).getBoundingClientRect();
   openMenu(rect.left, rect.bottom + 4);
 }
 
 function openContextMenu(event: MouseEvent) {
+  ensureSelected(event);
   openMenu(event.clientX, event.clientY);
 }
 
 function openMenu(x: number, y: number) {
-  menuItems.value = [
-    { key: "new-project", label: "新建工程…" },
-    { key: "new-folder", label: "新建子文件夹", icon: FolderPlus },
-    { key: "import", label: "导入工程到此处…", icon: Upload },
-    { key: "rename", label: "重命名", icon: Pencil, hint: "F2" },
-    { key: "move", label: "移动到…", icon: FolderIcon },
-    { key: "delete", label: "删除文件夹", icon: Trash2, danger: true, divided: true },
-  ];
+  const multi = props.selectedIds.size > 1 && props.selectedIds.has(props.folder.id);
+  if (multi) {
+    menuItems.value = [
+      { key: "move-selection", label: `移动选中 ${props.selectedIds.size} 项…`, icon: FolderIcon },
+      { key: "delete-selection", label: `删除选中 ${props.selectedIds.size} 项`, icon: Trash2, danger: true, divided: true },
+    ];
+  } else {
+    menuItems.value = [
+      { key: "new-project", label: "新建工程…" },
+      { key: "new-folder", label: "新建子文件夹", icon: FolderPlus },
+      { key: "import", label: "导入工程到此处…", icon: Upload },
+      { key: "rename", label: "重命名", icon: Pencil, hint: "F2" },
+      { key: "move", label: "移动到…", icon: FolderIcon },
+      { key: "delete", label: "删除文件夹", icon: Trash2, danger: true, divided: true },
+    ];
+  }
   menu.value = { x, y };
 }
 
@@ -192,6 +225,12 @@ function onMenuSelect(key: string) {
       break;
     case "delete":
       void deleteFolder();
+      break;
+    case "move-selection":
+      emit("move-selection");
+      break;
+    case "delete-selection":
+      emit("delete-selection");
       break;
   }
 }
@@ -236,16 +275,20 @@ function onKeydown(event: KeyboardEvent) {
     startRename();
   } else if (event.key === "Delete") {
     event.preventDefault();
-    void deleteFolder();
+    if (props.selectedIds.size > 1 && props.selectedIds.has(props.folder.id)) {
+      emit("delete-selection");
+    } else {
+      void deleteFolder();
+    }
   } else if (event.key === "ArrowRight") {
     if (!open.value) {
       event.preventDefault();
-      expanded.value = true;
+      emit("toggle", props.folder.id);
     }
   } else if (event.key === "ArrowLeft") {
     if (open.value) {
       event.preventDefault();
-      expanded.value = false;
+      emit("toggle", props.folder.id);
     } else {
       const parentRow = (event.currentTarget as HTMLElement).closest("li")?.parentElement?.parentElement?.querySelector<HTMLElement>("[data-tree-row]");
       if (parentRow) {
@@ -258,7 +301,7 @@ function onKeydown(event: KeyboardEvent) {
 </script>
 
 <template>
-  <li class="wp-folder">
+  <li class="wp-folder" :class="{ selected }">
     <div
       class="wp-row"
       :data-tree-row="true"
@@ -266,10 +309,11 @@ function onKeydown(event: KeyboardEvent) {
       :data-drag-id="folder.id"
       :data-drop-folder="folder.id"
       :data-folder-id="folder.id"
-      :class="{ open, 'is-drop': isDropTarget, 'is-dragging': isDragging }"
+      :data-parent-id="folder.parentId ?? ''"
+      :class="{ open, selected, 'is-drop': isDropTarget, 'is-drop-before': isReorderBefore, 'is-drop-after': isReorderAfter, 'is-dragging': isDragging }"
       :style="{ paddingLeft: `${2 + depth * 15}px` }"
       tabindex="0"
-      @click="toggle"
+      @click="onRowClick"
       @keydown="onKeydown"
       @contextmenu.prevent="openContextMenu($event)"
     >
@@ -318,9 +362,27 @@ function onKeydown(event: KeyboardEvent) {
         :folders="folders"
         :projects="projects"
         :depth="depth + 1"
-        :force-open-ids="forceOpenIds"
+        :open-ids="openIds"
+        :selected-ids="selectedIds"
+        :search="search"
+        :sort-mode="sortMode"
+        @toggle="(id: string) => emit('toggle', id)"
+        @select="(payload: { id: string; kind: 'folder' | 'project'; event: MouseEvent }) => emit('select', payload)"
+        @move-selection="emit('move-selection')"
+        @delete-selection="emit('delete-selection')"
       />
-      <ProjectItem v-for="project in childProjects" :key="project.id" :project="project" :folders="folders" />
+      <ProjectItem
+        v-for="project in childProjects"
+        :key="project.id"
+        :project="project"
+        :folders="folders"
+        :selected-ids="selectedIds"
+        :search="search"
+        :sort-mode="sortMode"
+        @select="(payload: { id: string; kind: 'project'; event: MouseEvent }) => emit('select', payload)"
+        @move-selection="emit('move-selection')"
+        @delete-selection="emit('delete-selection')"
+      />
       <li v-if="childFolders.length === 0 && childProjects.length === 0" class="wp-state wp-state--inline">文件夹为空</li>
     </ul>
 

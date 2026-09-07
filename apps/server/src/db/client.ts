@@ -155,8 +155,36 @@ function ensureSchema(sqlite: Database.Database) {
   if (!projectColumns.some((col) => col.name === "folder_id")) {
     sqlite.exec("ALTER TABLE projects ADD COLUMN folder_id TEXT");
   }
+  if (!projectColumns.some((col) => col.name === "position")) {
+    sqlite.exec("ALTER TABLE projects ADD COLUMN position INTEGER");
+  }
   sqlite.exec("CREATE INDEX IF NOT EXISTS idx_projects_folder ON projects(folder_id)");
   sqlite.exec("CREATE INDEX IF NOT EXISTS idx_folders_parent ON folders(parent_id)");
+
+  // 幂等迁移：工程文件夹手动排序字段。
+  const folderColumns = sqlite.prepare("PRAGMA table_info(folders)").all() as Array<{ name: string }>;
+  if (!folderColumns.some((col) => col.name === "position")) {
+    sqlite.exec("ALTER TABLE folders ADD COLUMN position INTEGER");
+  }
+
+  // 旧数据 position 全为 0/NULL 时，按当前名称顺序初始化一次，让“手动排序”立即可用。
+  const initPositions = (table: "projects" | "folders", parentCol: string) => {
+    const nonZero = sqlite
+      .prepare(`SELECT COUNT(*) AS c FROM ${table} WHERE position IS NOT NULL AND position != 0`)
+      .get() as { c: number };
+    if (nonZero.c > 0) return;
+    const parents = sqlite.prepare(`SELECT DISTINCT ${parentCol} AS pid FROM ${table}`).all() as Array<{ pid: string | null }>;
+    const update = sqlite.prepare(`UPDATE ${table} SET position = ? WHERE id = ?`);
+    for (const parent of parents) {
+      const pid = parent.pid;
+      const rows = (pid == null
+        ? sqlite.prepare(`SELECT id FROM ${table} WHERE ${parentCol} IS NULL ORDER BY name COLLATE NOCASE ASC, created_at ASC`).all()
+        : sqlite.prepare(`SELECT id FROM ${table} WHERE ${parentCol} = ? ORDER BY name COLLATE NOCASE ASC, created_at ASC`).all(pid)) as Array<{ id: string }>;
+      rows.forEach((row, index) => update.run(index + 1, row.id));
+    }
+  };
+  initPositions("projects", "folder_id");
+  initPositions("folders", "parent_id");
 
   // M8：运行库 —— runs 增加 folder_id（分类文件夹），旧 projects.folder_id 不再使用。
   const runColumnsM8 = sqlite.prepare("PRAGMA table_info(runs)").all() as Array<{ name: string }>;

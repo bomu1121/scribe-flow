@@ -174,6 +174,50 @@ export const useProjectsStore = defineStore("projects", () => {
     return folder;
   }
 
+  /** 重排某文件夹下的工程（null=根层级），ids 为该层完整顺序。 */
+  async function reorderProjects(folderId: string | null, ids: string[]): Promise<void> {
+    await api.put<{ ok: boolean }>("/api/projects/order", { folderId, ids });
+    await loadList();
+  }
+
+  /** 重排某父级下的文件夹（null=根层级），ids 为该层完整顺序。 */
+  async function reorderFolders(parentId: string | null, ids: string[]): Promise<void> {
+    await api.put<{ ok: boolean }>("/api/folders/order", { parentId, ids });
+    await loadFolders();
+  }
+
+  /** 批量移动工程到同一文件夹（null=根层级），只刷新一次列表。 */
+  async function moveProjects(ids: string[], folderId: string | null): Promise<void> {
+    await Promise.all(ids.map((id) => api.patch<ProjectMeta>(`/api/projects/${id}`, { folderId })));
+    if (current.value && ids.includes(current.value.id)) {
+      current.value = { ...current.value, folderId };
+    }
+    await loadList();
+  }
+
+  /** 批量移动文件夹到同一父级（null=根层级），只刷新一次文件夹列表。 */
+  async function moveFolders(ids: string[], parentId: string | null): Promise<void> {
+    await Promise.all(ids.map((id) => api.patch<ProjectFolder>(`/api/folders/${id}`, { parentId })));
+    await loadFolders();
+  }
+
+  /** 批量删除工程（运行中会由后端拒绝，调用方应提前过滤）。 */
+  async function removeProjects(ids: string[]): Promise<void> {
+    for (const id of ids) {
+      await api.delete<{ ok: boolean }>(`/api/projects/${id}`);
+      if (current.value?.id === id) current.value = null;
+      if (lastProjectId.value === id) rememberLastProject("");
+    }
+    await loadList();
+  }
+
+  /** 批量删除文件夹（每个文件夹内的工程移回根层级），只刷新一次。 */
+  async function removeFolders(ids: string[]): Promise<FolderDeleteResult[]> {
+    const results = await Promise.all(ids.map((id) => api.delete<FolderDeleteResult>(`/api/folders/${id}`)));
+    await Promise.all([loadFolders(), loadList()]);
+    return results;
+  }
+
   async function removeFolder(id: string): Promise<FolderDeleteResult> {
     const result = await api.delete<FolderDeleteResult>(`/api/folders/${id}`);
     await Promise.all([loadFolders(), loadList()]);
@@ -196,6 +240,9 @@ export const useProjectsStore = defineStore("projects", () => {
     renameProject,
     moveProject,
     removeProject,
+    moveProjects,
+    removeProjects,
+    reorderProjects,
     duplicateProject,
     saveGraph,
     exportProject,
@@ -203,6 +250,9 @@ export const useProjectsStore = defineStore("projects", () => {
     createFolder,
     renameFolder,
     moveFolder,
+    moveFolders,
     removeFolder,
+    removeFolders,
+    reorderFolders,
   };
 });

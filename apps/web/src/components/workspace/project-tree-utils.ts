@@ -1,5 +1,5 @@
 import { reactive } from "vue";
-import type { ProjectFolder } from "@scribe-flow/shared";
+import type { ProjectFolder, ProjectListItem } from "@scribe-flow/shared";
 
 /** 工程树（文件夹组织工程）拖拽 MIME（保留兼容，实际使用自研指针拖拽）。 */
 export const PROJECT_TREE_DND_MIME = "application/scribe-flow-project-tree";
@@ -22,18 +22,30 @@ export interface PointerDragState {
   payload: ProjectTreeDragPayload | null;
   /** 当前悬停的目标文件夹 id；null 且 overRoot=false 表示不在任何落点上。 */
   overFolderId: string | null;
-  /** 悬停在“根层级”落点条上。 */
+  /** 悬停在该文件夹的展开子区域（而非文件夹行本身）。 */
+  overChildArea: boolean;
+  /** 悬停在根层级区域上。 */
   overRoot: boolean;
   /** 正在拖拽的行（用于置灰源行）。 */
   draggingKey: string | null;
+  /** 正在进行的同层重排：目标父级与类型；beforeId/afterId 表示插到哪一行前后。 */
+  reorderParentId: string | null;
+  reorderType: "folder" | "project" | null;
+  reorderBeforeId: string | null;
+  reorderAfterId: string | null;
 }
 
 export const pointerDrag = reactive<PointerDragState>({
   active: false,
   payload: null,
   overFolderId: null,
+  overChildArea: false,
   overRoot: false,
   draggingKey: null,
+  reorderParentId: null,
+  reorderType: null,
+  reorderBeforeId: null,
+  reorderAfterId: null,
 });
 
 /* 拖拽完成后抑制紧随其后的 click（避免误打开工程/误折叠文件夹） */
@@ -61,8 +73,13 @@ export function resetPointerDrag() {
   pointerDrag.active = false;
   pointerDrag.payload = null;
   pointerDrag.overFolderId = null;
+  pointerDrag.overChildArea = false;
   pointerDrag.overRoot = false;
   pointerDrag.draggingKey = null;
+  pointerDrag.reorderParentId = null;
+  pointerDrag.reorderType = null;
+  pointerDrag.reorderBeforeId = null;
+  pointerDrag.reorderAfterId = null;
 }
 
 export function readProjectTreeDrag(event: DragEvent): ProjectTreeDragPayload | null {
@@ -106,4 +123,138 @@ export function buildFolderPath(folders: ProjectFolder[], folderId: string | nul
     cursor = cursor.parentId ? (byId.get(cursor.parentId) ?? null) : null;
   }
   return chain.join(" / ");
+}
+
+/* ---------- 搜索 / 排序 / 多选辅助 ---------- */
+
+export type ProjectSortMode = "manual" | "name" | "updated";
+
+function normalizeQuery(query: string): string {
+  return query.trim().toLocaleLowerCase();
+}
+
+function nameMatches(name: string, query: string): boolean {
+  return name.toLocaleLowerCase().includes(query);
+}
+
+/** 文件夹自身或其子孙工程/文件夹是否命中搜索词。 */
+export function folderMatchesQuery(
+  folders: ProjectFolder[],
+  projects: ProjectListItem[],
+  folderId: string,
+  query: string,
+): boolean {
+  const q = normalizeQuery(query);
+  if (!q) return true;
+  const byId = new Map(folders.map((f) => [f.id, f]));
+  const folder = byId.get(folderId);
+  if (!folder) return false;
+  if (nameMatches(folder.name, q)) return true;
+  for (const child of folderChildrenOf(folders, folderId)) {
+    if (folderMatchesQuery(folders, projects, child.id, query)) return true;
+  }
+  return projects.some((p) => (p.folderId ?? null) === folderId && nameMatches(p.name, q));
+}
+
+/** 当前父级下应该显示的文件夹（搜索时只保留自身或后代命中者）。 */
+export function visibleChildFolders(
+  folders: ProjectFolder[],
+  projects: ProjectListItem[],
+  parentId: string | null,
+  query: string,
+  mode: ProjectSortMode = "manual",
+): ProjectFolder[] {
+  let all = folderChildrenOf(folders, parentId);
+  const q = normalizeQuery(query);
+  if (q) all = all.filter((folder) => folderMatchesQuery(folders, projects, folder.id, query));
+  if (mode === "manual") {
+    return all.sort((a, b) => (a.position ?? 0) - (b.position ?? 0) || a.name.localeCompare(b.name, "zh-CN"));
+  }
+  return sortFoldersByName(all);
+}
+
+export function sortProjects(list: ProjectListItem[], mode: ProjectSortMode): ProjectListItem[] {
+  const sorted = [...list];
+  if (mode === "updated") {
+    sorted.sort((a, b) => b.updatedAt - a.updatedAt);
+  } else if (mode === "name") {
+    sorted.sort((a, b) => a.name.localeCompare(b.name, "zh-CN"));
+  } else {
+    sorted.sort((a, b) => (a.position ?? 0) - (b.position ?? 0) || a.name.localeCompare(b.name, "zh-CN"));
+  }
+  return sorted;
+}
+
+/** 当前父级下应该显示的工程（搜索时按名称过滤，再按排序模式排序）。 */
+export function visibleChildProjects(
+  projects: ProjectListItem[],
+  parentId: string | null,
+  query: string,
+  mode: ProjectSortMode,
+): ProjectListItem[] {
+  const q = normalizeQuery(query);
+  const inParent = projects.filter((p) => (p.folderId ?? null) === parentId);
+  const filtered = q ? inParent.filter((p) => nameMatches(p.name, q)) : inParent;
+  return sortProjects(filtered, mode);
+}
+
+/** 从一批选中的文件夹里去掉“已有选中祖先”的文件夹，得到需要实际操作的顶层文件夹。 */
+export function selectedFolderRoots(
+  folders: ProjectFolder[],
+  selectedFolderIds: Iterable<string>,
+): string[] {
+  const selected = new Set(selectedFolderIds);
+  const byId = new Map(folders.map((f) => [f.id, f]));
+  const roots = new Set(selected);
+  for (const id of selected) {
+    let cursor = byId.get(id)?.parentId ?? null;
+    while (cursor) {
+      if (selected.has(cursor)) {
+        roots.delete(id);
+        break;
+      }
+      cursor = byId.get(cursor)?.parentId ?? null;
+    }
+  }
+  return [...roots];
+}
+
+/** 工程是否位于给定文件夹集合的子树内。 */
+export function projectInsideFolders(
+  folders: ProjectFolder[],
+  projectFolderId: string | null | undefined,
+  folderIds: Iterable<string>,
+): boolean {
+  const target = new Set(folderIds);
+  if (!projectFolderId) return false;
+  const byId = new Map(folders.map((f) => [f.id, f]));
+  let cursor: string | null = projectFolderId ?? null;
+  const seen = new Set<string>();
+  while (cursor && !seen.has(cursor)) {
+    if (target.has(cursor)) return true;
+    seen.add(cursor);
+    cursor = byId.get(cursor)?.parentId ?? null;
+  }
+  return false;
+}
+
+/**
+ * 计算一次批量移动/删除的有效载荷：
+ * - 选中的文件夹只保留顶层者；
+ * - 位于这些文件夹子树内的选中工程不再单独处理（会随文件夹一起移动/被文件夹删除逻辑处理）。
+ */
+export function effectiveSelection(
+  folders: ProjectFolder[],
+  projects: ProjectListItem[],
+  selectedProjectIds: Iterable<string>,
+  selectedFolderIds: Iterable<string>,
+): { projectIds: string[]; folderIds: string[] } {
+  const folderIds = selectedFolderRoots(folders, selectedFolderIds);
+  const projectIdSet = new Set(selectedProjectIds);
+  const projectIds = [...projectIdSet].filter((pid) => {
+    const project = projects.find((p) => p.id === pid);
+    if (!project) return false;
+    return !projectInsideFolders(folders, project.folderId, folderIds);
+  });
+  return { projectIds, folderIds };
 }

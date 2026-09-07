@@ -9,6 +9,8 @@ export const projects = sqliteTable("projects", {
   schemaVersion: integer("schema_version").notNull().default(1),
   /** 所属工程文件夹 ID（folders.id）；null 表示根层级。 */
   folderId: text("folder_id"),
+  /** 同父级内手动排序位置；null 兼容旧数据，读取时按 0 处理。 */
+  position: integer("position"),
   createdAt: integer("created_at").notNull(),
   updatedAt: integer("updated_at").notNull(),
 });
@@ -20,6 +22,8 @@ export const folders = sqliteTable("folders", {
   id: text("id").primaryKey(),
   name: text("name").notNull(),
   parentId: text("parent_id"),
+  /** 同父级内手动排序位置；null 兼容旧数据，读取时按 0 处理。 */
+  position: integer("position"),
   createdAt: integer("created_at").notNull(),
   updatedAt: integer("updated_at").notNull(),
 });

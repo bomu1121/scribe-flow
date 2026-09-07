@@ -18,6 +18,8 @@ export interface ProjectListItem {
   /** 所属工程文件夹 ID；null/缺省表示根层级。 */
   folderId?: string | null;
   nodeCount: number;
+  /** 同父级内手动排序位置；数值越小越靠前。 */
+  position?: number;
   createdAt: number;
   updatedAt: number;
 }
@@ -28,6 +30,8 @@ export interface ProjectFolder {
   name: string;
   /** 父文件夹 ID；null 表示根层级。 */
   parentId: string | null;
+  /** 同父级内手动排序位置；数值越小越靠前。 */
+  position?: number;
   createdAt: number;
   updatedAt: number;
 }
