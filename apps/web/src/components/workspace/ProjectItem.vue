@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, ref } from "vue";
+import { computed, nextTick, onBeforeUnmount, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { ElMessageBox } from "element-plus";
 import { toast } from "@/lib/toast";
@@ -9,7 +9,7 @@ import { useProjectsStore } from "@/stores/projects";
 import { useRunsStore } from "@/stores/runs";
 import RowMenu, { type RowMenuItem } from "./RowMenu.vue";
 import FolderPickerDialog from "./FolderPickerDialog.vue";
-import { consumeSuppressedClick, pointerDrag, type ProjectSortMode } from "./project-tree-utils";
+import { bindInlineEditBlur, consumeSuppressedClick, pointerDrag, type ProjectSortMode } from "./project-tree-utils";
 
 const props = defineProps<{
   project: ProjectListItem;
@@ -47,6 +47,18 @@ const menu = ref<{ x: number; y: number } | null>(null);
 const menuItems = ref<RowMenuItem[]>([]);
 const selectionBeforeMenu = ref<string[]>([]);
 const moveOpen = ref(false);
+
+/* 行内重命名：点击输入框以外任何位置都主动失焦（树区 pointerdown preventDefault 会吞默认焦点转移）。 */
+let disposeEditBlur: (() => void) | null = null;
+
+watch(renaming, (editing) => {
+  disposeEditBlur?.();
+  disposeEditBlur = editing ? bindInlineEditBlur(() => nameInputRef.value) : null;
+});
+
+onBeforeUnmount(() => {
+  disposeEditBlur?.();
+});
 
 function openProject() {
   if (consumeSuppressedClick()) return;

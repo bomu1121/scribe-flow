@@ -11,6 +11,7 @@ import FolderPickerDialog from "./FolderPickerDialog.vue";
 import NewProjectDialog from "./NewProjectDialog.vue";
 import ProjectItem from "./ProjectItem.vue";
 import {
+  bindInlineEditBlur,
   buildFolderPath,
   collectFolderSubtree,
   consumeSuppressedClick,
@@ -94,6 +95,7 @@ watch(
 
 onBeforeUnmount(() => {
   clearExpandTimer();
+  disposeEditBlur?.();
 });
 
 /* ---------- 新建 / 重命名 ---------- */
@@ -106,6 +108,21 @@ const createValue = ref("");
 const createInputRef = ref<HTMLInputElement | null>(null);
 const newProjectOpen = ref(false);
 const fileInput = ref<HTMLInputElement | null>(null);
+
+/* 行内编辑（重命名/新建子文件夹）：点击输入框以外任何位置都主动失焦，
+   否则树区 pointerdown 的 preventDefault 会吞掉默认焦点转移，点别处无法结束编辑。 */
+let disposeEditBlur: (() => void) | null = null;
+
+watch(
+  [renaming, creatingChild],
+  () => {
+    disposeEditBlur?.();
+    disposeEditBlur =
+      renaming.value || creatingChild.value
+        ? bindInlineEditBlur(() => (renaming.value ? nameInputRef.value : createInputRef.value))
+        : null;
+  },
+);
 
 function startRename() {
   renaming.value = true;
@@ -388,7 +405,6 @@ function onKeydown(event: KeyboardEvent) {
         @delete-selection="emit('delete-selection')"
         @restore-selection="(ids: string[]) => emit('restore-selection', ids)"
       />
-      <li v-if="childFolders.length === 0 && childProjects.length === 0" class="wp-state wp-state--inline">文件夹为空</li>
     </ul>
 
     <input ref="fileInput" type="file" accept=".json,application/json" class="wp-hidden" @change="onImportFile" />

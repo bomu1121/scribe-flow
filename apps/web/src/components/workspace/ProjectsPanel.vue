@@ -23,6 +23,7 @@ import ProjectItem from "./ProjectItem.vue";
 import FolderPickerDialog from "./FolderPickerDialog.vue";
 import RowMenu, { type RowMenuItem } from "./RowMenu.vue";
 import {
+  bindInlineEditBlur,
   collectFolderSubtree,
   effectiveSelection,
   pointerDrag,
@@ -354,6 +355,14 @@ async function commitCreateRootFolder() {
     toast.error(err instanceof Error ? err.message : "创建文件夹失败");
   }
 }
+
+/* 行内新建根文件夹：点击输入框以外任何位置都主动失焦（树区 pointerdown preventDefault 会吞默认焦点转移）。 */
+let disposeRootEditBlur: (() => void) | null = null;
+
+watch(creatingRoot, (editing) => {
+  disposeRootEditBlur?.();
+  disposeRootEditBlur = editing ? bindInlineEditBlur(() => rootInputRef.value) : null;
+});
 
 function onImportFile(event: Event) {
   const input = event.target as HTMLInputElement;
@@ -882,6 +891,7 @@ function onPointerCancel() {
 }
 
 onBeforeUnmount(() => {
+  disposeRootEditBlur?.();
   stopAutoScroll();
   dragGhost.value.visible = false;
   if (pointerDrag.active) resetPointerDrag();

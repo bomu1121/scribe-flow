@@ -258,3 +258,31 @@ export function effectiveSelection(
   });
   return { projectIds, folderIds };
 }
+
+/* ---------- 行内编辑失焦辅助 ---------- */
+
+/**
+ * 行内编辑（重命名 / 内联新建）的失焦辅助。
+ *
+ * 工程树容器为了支持自研拖拽与框选，会在 pointerdown 上统一 preventDefault，
+ * 这会让浏览器默认的“按下别处 → 当前输入框失焦”不生效，导致点击其他行/空白/画布
+ * 都无法结束行内编辑（输入框上的 @blur 提交/取消不会触发）。
+ *
+ * 编辑激活期间调用本函数：挂一个 window 捕获期 pointerdown 监听，当按下点落在
+ * 输入框之外时主动 blur 输入框，让组件既有的 @blur 逻辑照常执行。
+ * 返回的卸载函数用于编辑结束 / 组件卸载时移除监听。
+ */
+export function bindInlineEditBlur(getInput: () => HTMLInputElement | null): () => void {
+  const onPointerDown = (event: PointerEvent) => {
+    const input = getInput();
+    // 输入框可能已被移除（编辑刚结束）：此时无需处理，监听随后会被 watcher 卸载。
+    if (!input || !input.isConnected) return;
+    const target = event.target;
+    if (target instanceof Node && input.contains(target)) return;
+    input.blur();
+  };
+  window.addEventListener("pointerdown", onPointerDown, true);
+  return () => {
+    window.removeEventListener("pointerdown", onPointerDown, true);
+  };
+}
