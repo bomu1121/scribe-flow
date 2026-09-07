@@ -1,8 +1,10 @@
 <script setup lang="ts">
-import { computed, ref, watch } from "vue";
-import { ElButton, ElDialog } from "element-plus";
-import { Folder, FolderOpen, Inbox } from "lucide-vue-next";
+import { computed, nextTick, ref, watch } from "vue";
+import { ElButton, ElDialog, ElInput } from "element-plus";
+import { Folder, FolderOpen, FolderPlus, Inbox } from "lucide-vue-next";
 import type { ProjectFolder } from "@scribe-flow/shared";
+import { toast } from "@/lib/toast";
+import { useProjectsStore } from "@/stores/projects";
 import { buildFolderPath, folderChildrenOf } from "./project-tree-utils";
 
 const props = defineProps<{
@@ -23,6 +25,11 @@ const emit = defineEmits<{
 }>();
 
 const selected = ref<string | null>(null);
+const creating = ref(false);
+const newName = ref("");
+const newNameInputRef = ref<InstanceType<typeof ElInput> | null>(null);
+
+const store = useProjectsStore();
 
 const dialogVisible = computed({
   get: () => props.open,
@@ -32,7 +39,11 @@ const dialogVisible = computed({
 watch(
   () => props.open,
   (open) => {
-    if (open) selected.value = props.currentId ?? null;
+    if (open) {
+      selected.value = props.currentId ?? null;
+      creating.value = false;
+      newName.value = "";
+    }
   },
 );
 
@@ -56,6 +67,33 @@ const rows = computed(() => {
   return list;
 });
 
+const canCreateHere = computed(() => {
+  if (!selected.value) return true;
+  return selected.value !== props.currentId && !isBlocked(selected.value);
+});
+
+async function startCreate() {
+  if (!canCreateHere.value) return;
+  creating.value = true;
+  newName.value = "";
+  await nextTick();
+  newNameInputRef.value?.focus?.();
+}
+
+async function submitCreate() {
+  const name = newName.value.trim();
+  if (!name || !canCreateHere.value) return;
+  const parentId = selected.value && canCreateHere.value ? selected.value : null;
+  try {
+    const folder = await store.createFolder(name, parentId);
+    selected.value = folder.id;
+    creating.value = false;
+    newName.value = "";
+  } catch (err) {
+    toast.error(err instanceof Error ? err.message : "创建文件夹失败");
+  }
+}
+
 function confirm() {
   emit("confirm", selected.value);
   close();
@@ -63,8 +101,25 @@ function confirm() {
 </script>
 
 <template>
-  <ElDialog v-model="dialogVisible" :title="title" width="420px" align-center @closed="selected = null">
+  <ElDialog v-model="dialogVisible" :title="title" width="440px" align-center @closed="selected = null; creating = false; newName = ''">
     <p class="fp-hint">选择目标文件夹；放在根层级表示「{{ rootLabel || "根层级" }}」。</p>
+    <div class="fp-create-row">
+      <el-button size="small" plain :disabled="creating || !canCreateHere" @click="startCreate">
+        <FolderPlus :size="13" />
+        新建文件夹
+      </el-button>
+    </div>
+    <div v-if="creating" class="fp-create-form">
+      <el-input
+        ref="newNameInputRef"
+        v-model="newName"
+        size="small"
+        placeholder="新文件夹名称"
+        @keyup.enter="submitCreate"
+      />
+      <el-button size="small" type="primary" :disabled="!newName.trim()" @click="submitCreate">创建</el-button>
+      <el-button size="small" text @click="creating = false">取消</el-button>
+    </div>
     <div class="fp-list" role="listbox" aria-label="目标文件夹">
       <button
         v-for="row in rows"

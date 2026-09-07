@@ -789,6 +789,18 @@
   color: var(--color-text);
 }
 
+/* 空白处划过选择的框选矩形 */
+
+.wp-marquee {
+  position: fixed;
+  z-index: calc(var(--z-dropdown) - 1);
+  border: 1px solid var(--color-brand);
+  border-radius: var(--radius-xs);
+  background: color-mix(in srgb, var(--color-brand-soft) 72%, transparent);
+  pointer-events: none;
+  user-select: none;
+}
+
 /* 拖拽跟随 ghost（模拟文件管理器拖拽预览） */
 
 .wp-drag-ghost {
@@ -947,6 +959,23 @@
   font-size: 12px;
   color: var(--color-text-secondary);
   line-height: 1.5;
+}
+
+.fp-create-row {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 8px;
+}
+
+.fp-create-form {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.fp-create-form .el-input {
+  flex: 1;
 }
 
 .fp-list {

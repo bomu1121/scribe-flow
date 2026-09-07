@@ -48,6 +48,14 @@ const fileInput = ref<HTMLInputElement | null>(null);
 const treeAreaRef = ref<HTMLElement | null>(null);
 const rootMenu = ref<{ x: number; y: number } | null>(null);
 const rootMenuItems = ref<RowMenuItem[]>([]);
+const marquee = ref<{
+  pointerId: number;
+  startX: number;
+  startY: number;
+  x: number;
+  y: number;
+  visible: boolean;
+} | null>(null);
 
 const search = ref("");
 const sortMode = ref<ProjectSortMode>("manual");
@@ -595,13 +603,59 @@ function refreshPointerDrop(x: number, y: number) {
   }
 }
 
+function intersects(a: { left: number; top: number; right: number; bottom: number }, b: { left: number; top: number; right: number; bottom: number }): boolean {
+  return a.left <= b.right && a.right >= b.left && a.top <= b.bottom && a.bottom >= b.top;
+}
+
+function updateMarqueeSelection() {
+  const mq = marquee.value;
+  const area = treeAreaRef.value;
+  if (!mq || !area) return;
+  const left = Math.min(mq.startX, mq.x);
+  const top = Math.min(mq.startY, mq.y);
+  const right = Math.max(mq.startX, mq.x);
+  const bottom = Math.max(mq.startY, mq.y);
+  const selectionRect = { left, top, right, bottom };
+  const next = new Set<string>();
+  for (const row of area.querySelectorAll<HTMLElement>("[data-tree-row]")) {
+    const rect = row.getBoundingClientRect();
+    if (rect.width === 0 || rect.height === 0) continue;
+    const kind = row.dataset.dragSource;
+    const id = row.dataset.dragId;
+    if (kind && id && intersects(selectionRect, { left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom })) {
+      next.add(id);
+    }
+  }
+  selectedIds.value = next;
+  anchorKey.value = null;
+}
+
 function onPointerDown(event: PointerEvent) {
   if (event.button !== 0 || pointerPending.value || pointerDrag.active) return;
   const origin = event.target as HTMLElement;
   if (origin.closest("button, input, textarea, select, [data-no-drag]")) return;
   const source = origin.closest<HTMLElement>("[data-drag-source]");
   const kind = source?.dataset.dragSource;
-  if (!source || (kind !== "project" && kind !== "folder")) return;
+  if (!source || (kind !== "project" && kind !== "folder")) {
+    // 在空白处按下：开始“划过选择”（marquee），并清空旧的单选/多选。
+    selectedIds.value = new Set();
+    anchorKey.value = null;
+    marquee.value = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      x: event.clientX,
+      y: event.clientY,
+      visible: false,
+    };
+    try {
+      treeAreaRef.value?.setPointerCapture(event.pointerId);
+    } catch {
+      // 忽略
+    }
+    event.preventDefault();
+    return;
+  }
   const id = source.dataset.dragId ?? "";
   const isModifier = event.ctrlKey || event.metaKey || event.shiftKey;
 
@@ -639,6 +693,19 @@ function onPointerDown(event: PointerEvent) {
 }
 
 function onPointerMove(event: PointerEvent) {
+  const mq = marquee.value;
+  if (mq) {
+    const dx = event.clientX - mq.startX;
+    const dy = event.clientY - mq.startY;
+    if (!mq.visible && Math.hypot(dx, dy) > 4) mq.visible = true;
+    if (mq.visible) {
+      mq.x = event.clientX;
+      mq.y = event.clientY;
+      updateMarqueeSelection();
+    }
+    return;
+  }
+
   const pending = pointerPending.value;
   if (!pending) {
     if (pointerDrag.active) {
@@ -730,6 +797,16 @@ async function performReorder(
 }
 
 async function onPointerUp(event: PointerEvent) {
+  if (marquee.value) {
+    try {
+      treeAreaRef.value?.releasePointerCapture(event.pointerId);
+    } catch {
+      // 忽略
+    }
+    marquee.value = null;
+    return;
+  }
+
   const pending = pointerPending.value;
   const wasDrag = pointerDrag.active;
   const payload = pointerDrag.payload;
@@ -797,6 +874,7 @@ async function onPointerUp(event: PointerEvent) {
 }
 
 function onPointerCancel() {
+  marquee.value = null;
   pointerPending.value = null;
   stopAutoScroll();
   dragGhost.value.visible = false;
@@ -941,6 +1019,17 @@ onBeforeUnmount(() => {
         </div>
       </div>
     </div>
+
+    <div
+      v-if="marquee?.visible"
+      class="wp-marquee"
+      :style="{
+        left: `${Math.min(marquee.startX, marquee.x)}px`,
+        top: `${Math.min(marquee.startY, marquee.y)}px`,
+        width: `${Math.abs(marquee.x - marquee.startX)}px`,
+        height: `${Math.abs(marquee.y - marquee.startY)}px`,
+      }"
+    />
 
     <RowMenu
       v-if="rootMenu"
