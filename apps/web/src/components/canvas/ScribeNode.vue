@@ -313,10 +313,10 @@ function toggleAdvanced() {
 
 /**
  * 卡片是否需要渲染正文区。
- * process.refine（AI 校对）节点内无表单，正文区默认为空——不渲染空 body，
- * 让顶部栏与底部栏直接相连；仅当展开「高级设置」（失败重试）时才需要正文容器。
+ * process.refine（AI 校对）、process.mindmap（思维导图）节点默认无内联表单，
+ * 不渲染空 body，让顶部栏与底部栏直接相连；仅当展开「高级设置」时才需要正文容器。
  */
-const noInlineFormTypes: NodeType[] = ["process.refine"];
+const noInlineFormTypes: NodeType[] = ["process.refine", "process.mindmap"];
 const hasBodyContent = computed(() => !noInlineFormTypes.includes(nodeType.value) || advancedOpen.value);
 
 const typeIcon = computed(() => {
@@ -894,47 +894,6 @@ const themeOptions = [
             <ChapterCard :granularity="data.granularity" :max-chapters="data.maxChapters" @update="patchChapter" />
           </template>
 
-          <template v-else-if="nodeType === 'process.mindmap'">
-            <label class="sf-node-field">
-              <NodeFieldLabel label="导图标题（可选）" hint="留空时由 AI 自动提炼标题" />
-              <el-input
-                class="sf-node-control"
-                size="small"
-                :model-value="data.title ?? ''"
-                placeholder="输入内容…"
-                @update:model-value="(v: string | number) => patch({ title: String(v) })"
-                @blur="commit"
-              />
-            </label>
-            <div class="sf-node-field">
-              <span class="sf-node-field-label">分支数量</span>
-              <ModelSelect
-                :model-value="data.branchSize ?? 'auto'"
-                :options="branchSizeOptions"
-                size="small"
-                @update:model-value="(v: string) => patchMindMap({ branchSize: v as 'auto' | 'few' | 'many' })"
-              />
-            </div>
-            <div class="sf-node-field">
-              <span class="sf-node-field-label">层级上限</span>
-              <ModelSelect
-                :model-value="String(data.maxDepth ?? 4)"
-                :options="depthOptions"
-                size="small"
-                @update:model-value="(v: string) => patchMindMap({ maxDepth: Number(v) })"
-              />
-            </div>
-            <div class="sf-node-field">
-              <span class="sf-node-field-label">主题</span>
-              <ModelSelect
-                :model-value="data.theme ?? 'paper'"
-                :options="themeOptions"
-                size="small"
-                @update:model-value="(v: string) => patchMindMap({ theme: v as 'paper' | 'presentation' | 'academic' })"
-              />
-            </div>
-          </template>
-
           <template v-else-if="nodeType === 'process.obsidian'">
             <ObsidianCard :folder="data.folder" @update="patchObsidian" />
           </template>
@@ -968,7 +927,48 @@ const themeOptions = [
           </template>
 
           <div v-if="hasAdvanced && advancedOpen" class="sf-node-advanced">
-            <div class="sf-node-advanced-title">高级（失败重试）</div>
+            <div class="sf-node-advanced-title">{{ nodeType === 'process.mindmap' ? '高级设置' : '高级（失败重试）' }}</div>
+            <template v-if="nodeType === 'process.mindmap'">
+              <label class="sf-node-field">
+                <NodeFieldLabel label="导图标题（可选）" hint="留空时由 AI 自动提炼标题" />
+                <el-input
+                  class="sf-node-control"
+                  size="small"
+                  :model-value="data.title ?? ''"
+                  placeholder="输入内容…"
+                  @update:model-value="(v: string | number) => patch({ title: String(v) })"
+                  @blur="commit"
+                />
+              </label>
+              <div class="sf-node-field">
+                <span class="sf-node-field-label">分支数量</span>
+                <ModelSelect
+                  :model-value="data.branchSize ?? 'auto'"
+                  :options="branchSizeOptions"
+                  size="small"
+                  @update:model-value="(v: string) => patchMindMap({ branchSize: v as 'auto' | 'few' | 'many' })"
+                />
+              </div>
+              <div class="sf-node-field">
+                <span class="sf-node-field-label">层级上限</span>
+                <ModelSelect
+                  :model-value="String(data.maxDepth ?? 4)"
+                  :options="depthOptions"
+                  size="small"
+                  @update:model-value="(v: string) => patchMindMap({ maxDepth: Number(v) })"
+                />
+              </div>
+              <div class="sf-node-field">
+                <span class="sf-node-field-label">主题</span>
+                <ModelSelect
+                  :model-value="data.theme ?? 'paper'"
+                  :options="themeOptions"
+                  size="small"
+                  @update:model-value="(v: string) => patchMindMap({ theme: v as 'paper' | 'presentation' | 'academic' })"
+                />
+              </div>
+              <div class="sf-node-advanced-subtitle">失败重试</div>
+            </template>
             <RetryFields :retry="data.retry" @update="patchRetry" />
           </div>
         </div>
@@ -1812,7 +1812,7 @@ const themeOptions = [
   text-align: right;
 }
 
-/* 高级（失败重试）：不用整行分割线，收进与 .sf-node-preview/.sf-node-pages 同级的柔和底纹小卡片 */
+/* 高级设置：不用整行分割线，收进与 .sf-node-preview/.sf-node-pages 同级的柔和底纹小卡片 */
 .sf-node-advanced {
   margin-top: 10px;
   padding: 10px 12px;
@@ -1827,6 +1827,15 @@ const themeOptions = [
   font-weight: 600;
   letter-spacing: 0.02em;
   color: var(--color-text-secondary);
+}
+
+.sf-node-advanced-subtitle {
+  margin-top: 12px;
+  margin-bottom: 8px;
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--color-text-tertiary);
 }
 
 .sf-node-select {
