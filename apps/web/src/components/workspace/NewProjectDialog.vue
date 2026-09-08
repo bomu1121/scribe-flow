@@ -62,7 +62,7 @@ async function pick(templateId?: string) {
 </script>
 
 <template>
-  <ElDialog v-model="dialogVisible" title="新建工程" width="520px" :close-on-click-modal="false" align-center @closed="name = ''">
+  <ElDialog v-model="dialogVisible" title="新建工程" width="520px" :close-on-click-modal="false" align-center append-to-body @closed="name = ''">
     <p v-if="folderLabel" class="np-location">创建位置：{{ folderLabel }}</p>
     <el-input v-model="name" class="np-name" placeholder="工程名称（留空使用模板默认名）" maxlength="80" @keyup.enter.prevent="pick()" />
     <div class="np-tpl-grid">

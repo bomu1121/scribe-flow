@@ -98,7 +98,7 @@ onBeforeUnmount(clearTimers);
 </script>
 
 <template>
-  <el-dialog v-model="dialogVisible" title="登录 B 站" width="400px" :close-on-click-modal="false" align-center>
+  <el-dialog v-model="dialogVisible" title="登录 B 站" width="400px" :close-on-click-modal="false" align-center append-to-body>
     <div class="sf-qr-box">
       <template v-if="phase === 'loading'">
         <div class="sf-qr-loading">正在生成二维码…</div>

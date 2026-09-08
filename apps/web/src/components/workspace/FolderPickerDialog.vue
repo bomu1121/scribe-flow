@@ -101,7 +101,7 @@ function confirm() {
 </script>
 
 <template>
-  <ElDialog v-model="dialogVisible" :title="title" width="440px" align-center @closed="selected = null; creating = false; newName = ''">
+  <ElDialog v-model="dialogVisible" :title="title" width="440px" align-center append-to-body @closed="selected = null; creating = false; newName = ''">
     <p class="fp-hint">选择目标文件夹；放在根层级表示「{{ rootLabel || "根层级" }}」。</p>
     <div class="fp-create-row">
       <el-button size="small" plain :disabled="creating || !canCreateHere" @click="startCreate">

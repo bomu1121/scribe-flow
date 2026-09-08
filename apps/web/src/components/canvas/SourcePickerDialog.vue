@@ -257,7 +257,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <el-dialog v-model="dialogVisible" title="从我的 B 站选择视频" width="560px" :close-on-click-modal="false" align-center>
+  <el-dialog v-model="dialogVisible" title="从我的 B 站选择视频" width="560px" :close-on-click-modal="false" align-center append-to-body>
     <el-tabs v-model="activeTab" class="sf-picker-tabs">
       <el-tab-pane v-for="tab in tabs" :key="tab.key" :name="tab.key">
         <template #label>

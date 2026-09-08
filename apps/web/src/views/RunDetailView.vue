@@ -1033,7 +1033,7 @@ async function forceStopRun() {
       </div>
     </template>
 
-    <el-dialog v-model="logsVisible" title="运行日志" width="640px" align-center>
+    <el-dialog v-model="logsVisible" title="运行日志" width="640px" align-center append-to-body>
       <el-select v-model="logsNodeId" class="rv-log-filter" size="small" placeholder="全部节点" clearable @change="(v) => openLogs(String(v ?? ''))">
         <el-option v-for="node in run?.nodeResults ?? []" :key="node.nodeId" :label="node.nodeLabel || node.nodeType" :value="node.nodeId" />
       </el-select>
