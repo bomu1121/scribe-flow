@@ -180,7 +180,6 @@ onBeforeUnmount(() => {
 .ws-rail-btn.active {
   background: var(--color-ink-soft);
   color: var(--color-text);
-  box-shadow: inset 0 0 0 1px var(--color-border-strong);
 }
 
 .ws-version {
