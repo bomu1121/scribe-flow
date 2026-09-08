@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from "vue";
-import { ElButton, ElInput, ElInputNumber, ElMessageBox, ElOption, ElSelect, ElSwitch, ElTag } from "element-plus";
+import { ElInput, ElInputNumber, ElMessageBox, ElOption, ElSelect, ElSwitch } from "element-plus";
 import { Cloud, Mic, PlugZap, Save, Trash2 } from "lucide-vue-next";
 import { toast } from "@/lib/toast";
 import ModelSelect from "../components/ModelSelect.vue";
@@ -402,14 +402,14 @@ async function testAsr() {
           <label class="sf-field">
             <span class="sf-field-label">
               API Key
-              <el-tag v-if="store.settings?.ai.hasKey" type="success" size="small">已保存</el-tag>
-              <el-tag v-else type="warning" size="small">未配置</el-tag>
+              <span v-if="store.settings?.ai.hasKey" class="sf-chip sf-chip--success">已保存</span>
+              <span v-else class="sf-chip sf-chip--warning">未配置</span>
             </span>
             <el-input v-model="form.aiKey" type="password" show-password class="sf-field-control" :placeholder="store.settings?.ai.hasKey ? '已保存，留空则不修改' : 'sk-…'" />
           </label>
           <div class="sf-settings-actions">
-            <el-button class="sf-btn" plain :loading="aiTesting" @click="testAi"><PlugZap :size="14" /><span>测试连接</span></el-button>
-            <el-button class="sf-btn" type="primary" @click="saveAll"><span>保存设置</span></el-button>
+            <button type="button" class="sf-btn" :disabled="aiTesting" @click="testAi"><PlugZap :size="14" /><span>{{ aiTesting ? "测试中…" : "测试连接" }}</span></button>
+            <button type="button" class="sf-btn sf-btn--primary" @click="saveAll"><span>保存设置</span></button>
           </div>
         </div>
       </template>
@@ -439,14 +439,14 @@ async function testAsr() {
           <label class="sf-field">
             <span class="sf-field-label">
               API Key
-              <el-tag v-if="store.settings?.asr.hasKey" type="success" size="small">已保存</el-tag>
-              <el-tag v-else type="warning" size="small">未配置</el-tag>
+              <span v-if="store.settings?.asr.hasKey" class="sf-chip sf-chip--success">已保存</span>
+              <span v-else class="sf-chip sf-chip--warning">未配置</span>
             </span>
             <el-input v-model="form.asrKey" type="password" show-password class="sf-field-control" :placeholder="store.settings?.asr.hasKey ? '已保存，留空则不修改' : 'API Key'" />
           </label>
           <div class="sf-settings-actions">
-            <el-button class="sf-btn" plain :loading="asrTesting" @click="testAsr"><PlugZap :size="14" /><span>测试连接</span></el-button>
-            <el-button class="sf-btn" type="primary" @click="saveAll"><span>保存设置</span></el-button>
+            <button type="button" class="sf-btn" :disabled="asrTesting" @click="testAsr"><PlugZap :size="14" /><span>{{ asrTesting ? "测试中…" : "测试连接" }}</span></button>
+            <button type="button" class="sf-btn sf-btn--primary" @click="saveAll"><span>保存设置</span></button>
           </div>
         </div>
       </template>
@@ -464,7 +464,7 @@ async function testAsr() {
             <el-input v-model="form.outputDir" class="sf-field-control" placeholder="outputs" />
           </label>
           <div class="sf-settings-actions">
-            <el-button class="sf-btn" type="primary" @click="saveAll"><span>保存设置</span></el-button>
+            <button type="button" class="sf-btn sf-btn--primary" @click="saveAll"><span>保存设置</span></button>
           </div>
         </div>
       </template>
@@ -482,7 +482,7 @@ async function testAsr() {
             <el-input v-model="form.obsidianFolder" class="sf-field-control" placeholder="00-Inbox" />
           </label>
           <div class="sf-settings-actions">
-            <el-button class="sf-btn" plain @click="store.loadObsidianFolders()"><span>读取目录</span></el-button>
+            <button type="button" class="sf-btn" @click="store.loadObsidianFolders()"><span>读取目录</span></button>
           </div>
           <p class="sf-settings-desc">当前已读取目录：{{ store.obsidianFolders.length }} 个</p>
 
@@ -503,7 +503,7 @@ async function testAsr() {
           </label>
 
           <div class="sf-settings-actions">
-            <el-button class="sf-btn" type="primary" @click="saveAll"><span>保存设置</span></el-button>
+            <button type="button" class="sf-btn sf-btn--primary" @click="saveAll"><span>保存设置</span></button>
           </div>
         </div>
       </template>
@@ -531,13 +531,13 @@ async function testAsr() {
           <article v-for="block in filteredBlocks" :key="block.id" class="sf-block-card">
             <header class="sf-block-head">
               <span class="sf-block-name">{{ block.name }}</span>
-              <el-tag v-if="block.builtin" size="small" type="info">内置</el-tag>
-              <el-tag v-if="block.version" size="small" type="warning">{{ block.version }}</el-tag>
-              <el-tag v-if="block.recommended" size="small" type="success">推荐</el-tag>
+              <span v-if="block.builtin" class="sf-chip sf-chip--info">内置</span>
+              <span v-if="block.version" class="sf-chip sf-chip--warning">{{ block.version }}</span>
+              <span v-if="block.recommended" class="sf-chip sf-chip--success">推荐</span>
               <span class="sf-block-actions">
                 <template v-if="!block.builtin">
-                  <el-button size="small" text @click="editBlock(block)">编辑</el-button>
-                  <el-button size="small" text class="sf-danger-text" @click="removeBlock(block)"><Trash2 :size="13" /></el-button>
+                  <button type="button" class="sf-text-btn" @click="editBlock(block)">编辑</button>
+                  <button type="button" class="sf-text-btn sf-text-btn--danger" aria-label="删除提示词块" @click="removeBlock(block)"><Trash2 :size="13" /></button>
                 </template>
               </span>
             </header>
@@ -557,8 +557,8 @@ async function testAsr() {
             <el-input v-model="blockForm.prompt" type="textarea" :rows="6" class="sf-field-control" placeholder="输入系统提示词…" />
           </label>
           <div class="sf-settings-actions">
-            <el-button class="sf-btn" type="primary" :disabled="!blockForm.name.trim() || !blockForm.prompt.trim()" @click="saveBlock"><Save :size="14" /><span>保存提示词块</span></el-button>
-            <el-button v-if="blockForm.id" class="sf-btn" plain @click="resetBlockForm"><span>取消编辑</span></el-button>
+            <button type="button" class="sf-btn sf-btn--primary" :disabled="!blockForm.name.trim() || !blockForm.prompt.trim()" @click="saveBlock"><Save :size="14" /><span>保存提示词块</span></button>
+            <button v-if="blockForm.id" type="button" class="sf-btn" @click="resetBlockForm"><span>取消编辑</span></button>
           </div>
         </div>
       </template>
@@ -573,8 +573,8 @@ async function testAsr() {
             <div class="sf-data-cell"><span class="sf-data-label">输出文件</span><span class="sf-data-value tnum">{{ dataInfo?.outputFiles ?? "—" }} 个</span></div>
           </div>
           <div class="sf-settings-actions">
-            <el-button class="sf-btn" plain @click="loadDataInfo"><span>刷新</span></el-button>
-            <el-button class="sf-btn" type="danger" plain @click="clearFinishedRuns"><span>清理已结束运行</span></el-button>
+            <button type="button" class="sf-btn" @click="loadDataInfo"><span>刷新</span></button>
+            <button type="button" class="sf-btn sf-btn--danger" @click="clearFinishedRuns"><span>清理已结束运行</span></button>
           </div>
         </div>
       </template>
@@ -627,8 +627,9 @@ async function testAsr() {
 }
 
 .sf-settings-nav-item.active {
-  background: var(--color-ink);
-  color: var(--color-surface);
+  background: var(--color-ink-soft);
+  color: var(--color-text);
+  font-weight: 500;
 }
 
 .sf-settings-body {
@@ -707,7 +708,121 @@ async function testAsr() {
 }
 
 .sf-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   gap: 6px;
+  height: 30px;
+  padding: 0 12px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text-secondary);
+  font-family: inherit;
+  font-size: 12.5px;
+  font-weight: 500;
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    border-color var(--dur-1) var(--ease-out),
+    background-color var(--dur-1) var(--ease-out),
+    color var(--dur-1) var(--ease-out),
+    opacity var(--dur-1) var(--ease-out);
+}
+
+.sf-btn:hover:not(:disabled) {
+  background: var(--color-ink-soft);
+  color: var(--color-text);
+}
+
+.sf-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.sf-btn--primary {
+  border-color: var(--color-ink);
+  background: var(--color-ink);
+  color: var(--color-surface);
+}
+
+.sf-btn--primary:hover:not(:disabled) {
+  border-color: var(--color-text);
+  background: var(--color-text);
+  color: var(--color-surface);
+}
+
+.sf-btn--danger {
+  color: var(--color-error);
+}
+
+.sf-btn--danger:hover:not(:disabled) {
+  background: var(--color-error-soft);
+  color: var(--color-error);
+}
+
+.sf-chip {
+  display: inline-flex;
+  align-items: center;
+  height: 18px;
+  padding: 0 7px;
+  border-radius: 999px;
+  background: var(--color-ink-soft);
+  color: var(--color-text-secondary);
+  font-size: 10px;
+  font-weight: 500;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.sf-chip--success {
+  background: var(--color-success-soft);
+  color: var(--color-success);
+}
+
+.sf-chip--warning {
+  background: var(--color-warning-soft);
+  color: var(--color-warning);
+}
+
+.sf-chip--info {
+  background: var(--color-ink-soft);
+  color: var(--color-text-secondary);
+}
+
+.sf-text-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  height: 24px;
+  padding: 0 7px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text-secondary);
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition:
+    background-color var(--dur-1) var(--ease-out),
+    color var(--dur-1) var(--ease-out);
+}
+
+.sf-text-btn:hover {
+  background: var(--color-ink-soft);
+  color: var(--color-text);
+}
+
+.sf-text-btn--danger {
+  color: var(--color-error);
+}
+
+.sf-text-btn--danger:hover {
+  background: var(--color-error-soft);
+  color: var(--color-error);
 }
 
 .sf-settings-placeholder {

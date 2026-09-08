@@ -81,7 +81,6 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown));
   height: 52px;
   padding: 0 12px 0 20px;
   background: var(--color-surface);
-  border-bottom: 1px solid var(--color-border);
 }
 
 .sf-settings-panel-title {
@@ -159,9 +158,9 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown));
 }
 
 .sf-settings-panel-body .sf-settings-nav-item.active {
-  background: var(--color-brand-soft) !important;
-  color: var(--color-brand) !important;
-  font-weight: 600 !important;
+  background: var(--color-ink-soft) !important;
+  color: var(--color-text) !important;
+  font-weight: 500 !important;
 }
 
 .sf-settings-panel-body .sf-settings-body {
