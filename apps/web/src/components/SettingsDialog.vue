@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { defineAsyncComponent, onBeforeUnmount, watch } from "vue";
-import { Settings, X } from "lucide-vue-next";
+import { X } from "lucide-vue-next";
 import { useUiStore } from "@/stores/ui";
 
 const SettingsView = defineAsyncComponent(() => import("@/views/SettingsView.vue"));
@@ -28,21 +28,12 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown));
     <Transition name="sf-settings-fade">
       <div v-if="ui.settingsOpen" class="sf-settings-overlay" @click.self="ui.closeSettings()">
         <section class="sf-settings-panel" role="dialog" aria-modal="true" aria-label="设置">
-          <header class="sf-settings-panel-head">
-            <div class="sf-settings-panel-title">
-              <span class="sf-settings-panel-title-icon">
-                <Settings :size="15" />
-              </span>
-              <span>设置</span>
-            </div>
-            <button type="button" class="sf-settings-panel-close" aria-label="关闭设置" @click="ui.closeSettings()">
-              <X :size="16" />
-            </button>
-          </header>
-
           <div class="sf-settings-panel-body">
             <SettingsView v-if="ui.settingsOpen" />
           </div>
+          <button type="button" class="sf-settings-panel-close" aria-label="关闭设置" @click="ui.closeSettings()">
+            <X :size="16" />
+          </button>
         </section>
       </div>
     </Transition>
@@ -63,6 +54,7 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown));
 }
 
 .sf-settings-panel {
+  position: relative;
   display: flex;
   flex-direction: column;
   width: min(920px, calc(100vw - 32px));
@@ -73,36 +65,11 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown));
   overflow: hidden;
 }
 
-.sf-settings-panel-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  flex-shrink: 0;
-  height: 52px;
-  padding: 0 12px 0 20px;
-  background: var(--color-surface);
-}
-
-.sf-settings-panel-title {
-  display: inline-flex;
-  align-items: center;
-  gap: 10px;
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--color-text);
-}
-
-.sf-settings-panel-title-icon {
-  display: grid;
-  place-items: center;
-  width: 26px;
-  height: 26px;
-  border-radius: var(--radius-sm);
-  background: var(--color-ink-soft);
-  color: var(--color-text-secondary);
-}
-
 .sf-settings-panel-close {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  z-index: var(--z-dropdown-modal);
   display: grid;
   place-items: center;
   width: 30px;
@@ -164,7 +131,7 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown));
 }
 
 .sf-settings-panel-body .sf-settings-body {
-  padding: 22px 26px 32px !important;
+  padding: 22px 48px 32px 26px !important;
   max-width: none !important;
   background: var(--color-surface) !important;
 }
