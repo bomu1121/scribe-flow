@@ -136,6 +136,7 @@
   color: var(--color-on-brand);
 }
 
+
 .wp-ibtn {
   display: grid;
   place-items: center;
@@ -419,6 +420,13 @@
   border-left: 1px solid var(--color-border);
 }
 
+/* 文件夹内子项贴近左侧竖线，去掉左上/左下圆角让视觉更融合；根层级的项仍保留完整圆角。 */
+.wp-children .wp-row,
+.wp-children .wp-item {
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+}
+
 .wp-row {
   position: relative;
   display: flex;
@@ -549,19 +557,20 @@
 .wp-input {
   flex: 1;
   min-width: 0;
-  height: 22px;
-  padding: 0 6px;
-  border: 1px solid var(--control-border);
+  height: 26px;
+  padding: 0 8px;
+  border: none;
   border-radius: var(--control-radius);
   outline: none;
   background: var(--control-bg);
   color: var(--color-text);
   font-family: inherit;
   font-size: var(--control-font-size-sm);
+  box-shadow: 0 0 0 1px var(--control-border) inset;
+  transition: box-shadow var(--dur-1) var(--ease-out);
 }
 
 .wp-input:focus {
-  border-color: var(--control-border-focus);
   box-shadow: 0 0 0 1px var(--control-border-focus) inset;
 }
 

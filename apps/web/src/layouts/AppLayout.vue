@@ -5,7 +5,6 @@ import { useRunsStore } from "@/stores/runs";
 import { usePromptsStore } from "@/stores/prompts";
 import { useUiStore, type RailTab } from "@/stores/ui";
 import WorkspacePanel from "@/components/workspace/WorkspacePanel.vue";
-import BiliAccountButton from "@/components/auth/BiliAccountButton.vue";
 
 const runsStore = useRunsStore();
 const promptsStore = usePromptsStore();
@@ -59,7 +58,6 @@ onBeforeUnmount(() => {
       </div>
 
       <div class="ws-rail-bottom">
-        <BiliAccountButton compact />
         <button type="button" class="ws-rail-btn" title="设置" aria-label="设置" @click="uiStore.openSettings()">
           <Settings :size="17" />
         </button>

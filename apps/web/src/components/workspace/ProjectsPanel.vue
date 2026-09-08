@@ -24,6 +24,7 @@ import FolderPickerDialog from "./FolderPickerDialog.vue";
 import RowMenu, { type RowMenuItem } from "./RowMenu.vue";
 import {
   bindInlineEditBlur,
+  buildFolderPath,
   collectFolderSubtree,
   effectiveSelection,
   pointerDrag,
@@ -43,6 +44,7 @@ const runsStore = useRunsStore();
 
 const newOpen = ref(false);
 const creatingRoot = ref(false);
+const rootCreateBusy = ref(false);
 const rootName = ref("");
 const rootInputRef = ref<HTMLInputElement | null>(null);
 const fileInput = ref<HTMLInputElement | null>(null);
@@ -103,6 +105,17 @@ const activeProjectId = computed(() => {
   return name === "project-editor" || name === "run-detail" ? String(route.params.id ?? "") : "";
 });
 
+/** 当前打开的工程同步为左侧唯一选中项，避免“活动态 + 旧选中态”同时高亮。 */
+watch(
+  activeProjectId,
+  (id) => {
+    if (!id) return;
+    selectedIds.value = new Set([id]);
+    anchorKey.value = keyOf("project", id);
+  },
+  { immediate: true },
+);
+
 /** 活动工程所在文件夹的祖先链（含该文件夹），需要保持展开。 */
 const forceOpenFolderIds = computed<string[]>(() => {
   if (!activeProjectId.value) return [];
@@ -119,6 +132,61 @@ const forceOpenFolderIds = computed<string[]>(() => {
   }
   return chain;
 });
+
+/** 当前打开工程所在的文件夹（null=根层级）。 */
+const activeProjectFolderId = computed(() => {
+  if (!activeProjectId.value) return null;
+  return store.list.find((p) => p.id === activeProjectId.value)?.folderId ?? null;
+});
+
+const activeProjectFolderLabel = computed(() => {
+  const id = activeProjectFolderId.value;
+  return id ? buildFolderPath(store.folders, id) : "";
+});
+
+interface CreateChildSignal {
+  folderId: string;
+  token: number;
+}
+
+const createChildSignal = ref<CreateChildSignal | null>(null);
+
+/** 展开某文件夹及其祖先，确保新建入口所在节点可见。 */
+function expandFolderChain(folderId: string) {
+  const byId = new Map(store.folders.map((f) => [f.id, f]));
+  const chain: string[] = [];
+  let cursor = byId.get(folderId) ?? null;
+  const seen = new Set<string>();
+  while (cursor && !seen.has(cursor.id)) {
+    seen.add(cursor.id);
+    chain.push(cursor.id);
+    cursor = cursor.parentId ? (byId.get(cursor.parentId) ?? null) : null;
+  }
+  if (chain.length === 0) return;
+  const nextExpanded = new Set(expandedIds.value);
+  const nextCollapsed = new Set(collapsedIds.value);
+  for (const id of chain) {
+    nextExpanded.add(id);
+    nextCollapsed.delete(id);
+  }
+  expandedIds.value = nextExpanded;
+  collapsedIds.value = nextCollapsed;
+}
+
+/** 工具栏新建文件夹：优先在“当前打开工程所在文件夹”内新建；没有则回退根层级。 */
+async function startCreateFolderAtContext() {
+  const folderId = activeProjectFolderId.value;
+  if (!folderId) {
+    startCreateRootFolder();
+    return;
+  }
+  expandFolderChain(folderId);
+  // 等文件夹展开渲染后发出信号，避免目标节点尚未挂载时丢失。
+  await nextTick();
+  createChildSignal.value = { folderId, token: Date.now() };
+  await nextTick();
+  createChildSignal.value = null;
+}
 
 /** 实际参与渲染的展开集合：用户展开 + 活动工程祖先 + 搜索时全展开，再减去用户手动收起的覆盖。 */
 const openIds = computed(() => {
@@ -232,6 +300,11 @@ function isRunningProject(id: string): boolean {
   return runsStore.runs.some((r) => r.projectId === id && r.status === "running");
 }
 
+/** 文件夹是否为空（没有直接子文件夹/工程）。 */
+function isEmptyFolder(folderId: string): boolean {
+  return !store.folders.some((f) => (f.parentId ?? null) === folderId) && !store.list.some((p) => (p.folderId ?? null) === folderId);
+}
+
 /* ---------- 批量操作 ---------- */
 
 const moveOpen = ref(false);
@@ -252,7 +325,7 @@ async function onMoveSelectionConfirm(folderId: string | null) {
   if (!movedAny) return;
   if (folderIdsToMove.length > 0) await store.moveFolders(folderIdsToMove, folderId);
   if (projectIdsToMove.length > 0) await store.moveProjects(projectIdsToMove, folderId);
-  toast.success(projectIdsToMove.length + folderIdsToMove.length > 1 ? `已移动 ${projectIdsToMove.length + folderIdsToMove.length} 项` : "已移动");
+
   clearSelection();
 }
 
@@ -270,6 +343,19 @@ async function deleteSelection() {
   const projectIdsToDelete = projectIds.filter((id) => !isRunningProject(id));
   if (folderIds.length === 0 && projectIdsToDelete.length === 0) {
     toast.info("选中的工程正在运行，无法删除");
+    return;
+  }
+
+  // 只删除空文件夹时不弹确认，直接删除。
+  const allEmptyFolders = folderIds.length > 0 && projectIdsToDelete.length === 0 && folderIds.every(isEmptyFolder);
+  if (allEmptyFolders) {
+    try {
+      await store.removeFolders(folderIds);
+      toast.success("已删除选中项");
+      clearSelection();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "删除失败");
+    }
     return;
   }
   const parts: string[] = [];
@@ -307,11 +393,17 @@ async function refresh() {
 }
 
 function startCreateRootFolder() {
+  rootCreateBusy.value = false;
   creatingRoot.value = true;
   rootName.value = "";
   void nextTick(() => {
     rootInputRef.value?.focus();
   });
+}
+
+function cancelCreateRootFolder() {
+  if (rootCreateBusy.value) return;
+  creatingRoot.value = false;
 }
 
 function openRootContextMenu(event: MouseEvent) {
@@ -346,13 +438,20 @@ function onRootMenuSelect(key: string) {
 }
 
 async function commitCreateRootFolder() {
+  if (!creatingRoot.value || rootCreateBusy.value) return;
   const name = rootName.value.trim();
-  creatingRoot.value = false;
-  if (!name) return;
+  if (!name) {
+    creatingRoot.value = false;
+    return;
+  }
+  rootCreateBusy.value = true;
   try {
     await store.createFolder(name, null);
   } catch (err) {
     toast.error(err instanceof Error ? err.message : "创建文件夹失败");
+  } finally {
+    rootCreateBusy.value = false;
+    creatingRoot.value = false;
   }
 }
 
@@ -419,6 +518,8 @@ interface PointerPending {
   kind: "project" | "folder";
   id: string;
   moved: boolean;
+  /** 拖拽前选中的行；拖拽未产生实际移动时用于还原，避免“按一下拖一下”留下残留选中。 */
+  selectionBefore: string[];
 }
 
 interface DragGhostState {
@@ -677,6 +778,8 @@ function onPointerDown(event: PointerEvent) {
 
   event.preventDefault();
 
+  // 记录拖拽前选区，拖拽无实际动作时还原，避免“按一下拖一下”残留选中。
+  const selectionBefore = Array.from(selectedIds.value);
   // 普通按住工程时先把它变成唯一选中项；文件夹普通点击只展开/收起，不进入持久选中。
   if (kind === "project" && !selectedIds.value.has(id)) {
     selectedIds.value = new Set([id]);
@@ -691,6 +794,7 @@ function onPointerDown(event: PointerEvent) {
     kind,
     id,
     moved: false,
+    selectionBefore,
   };
   try {
     // 捕获到“源行”而不是滚动容器：这样普通点击的 pointerup/click 仍落在行上，
@@ -826,6 +930,7 @@ async function onPointerUp(event: PointerEvent) {
   const reorderBeforeId = pointerDrag.reorderBeforeId;
   const reorderAfterId = pointerDrag.reorderAfterId;
   const moved = Boolean(pending?.moved);
+  const selectionBefore = pending?.selectionBefore ?? [];
 
   if (pending) {
     try {
@@ -847,7 +952,7 @@ async function onPointerUp(event: PointerEvent) {
       if (reorderType && payload) {
         await performReorder(reorderType, reorderParentId, payload.id, reorderBeforeId, reorderAfterId);
         movedAny = true;
-        toast.success("已调整顺序");
+
       } else if (targetFolder) {
         const { projectIds, folderIds } = effectiveSelection(store.folders, store.list, projectIdsOfSelection(), folderIdsOfSelection());
         const projectIdsToMove = projectIds.filter((pid) => !sameTarget("project", pid, targetFolder));
@@ -855,9 +960,6 @@ async function onPointerUp(event: PointerEvent) {
         movedAny = projectIdsToMove.length > 0 || folderIdsToMove.length > 0;
         if (folderIdsToMove.length > 0) await store.moveFolders(folderIdsToMove, targetFolder);
         if (projectIdsToMove.length > 0) await store.moveProjects(projectIdsToMove, targetFolder);
-        if (movedAny) {
-          toast.success(projectIdsToMove.length + folderIdsToMove.length > 1 ? "已移动到文件夹" : "已移动");
-        }
       } else if (toRoot) {
         const { projectIds, folderIds } = effectiveSelection(store.folders, store.list, projectIdsOfSelection(), folderIdsOfSelection());
         const projectIdsToRoot = projectIds.filter((pid) => !atRoot("project", pid));
@@ -865,14 +967,13 @@ async function onPointerUp(event: PointerEvent) {
         movedAny = projectIdsToRoot.length > 0 || folderIdsToRoot.length > 0;
         if (folderIdsToRoot.length > 0) await store.moveFolders(folderIdsToRoot, null);
         if (projectIdsToRoot.length > 0) await store.moveProjects(projectIdsToRoot, null);
-        if (movedAny) {
-          toast.success(projectIdsToRoot.length + folderIdsToRoot.length > 1 ? "已移动到根层级" : "已移动");
-        }
       }
-      if (movedAny) clearSelection();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "移动失败");
     }
+    // 拖拽没有产生实际动作时，把选中态还原成拖拽前，避免残留高亮。
+    if (movedAny) clearSelection();
+    else if (moved) restoreSelection(selectionBefore);
     return;
   }
 
@@ -883,6 +984,8 @@ async function onPointerUp(event: PointerEvent) {
 }
 
 function onPointerCancel() {
+  const pending = pointerPending.value;
+  if (pending) restoreSelection(pending.selectionBefore);
   marquee.value = null;
   pointerPending.value = null;
   stopAutoScroll();
@@ -901,8 +1004,8 @@ onBeforeUnmount(() => {
 <template>
   <div class="wp-view wp-projects">
     <div class="wp-toolbar">
-      <button type="button" class="wp-btn wp-btn--primary" @click="newOpen = true"><Plus :size="13" /><span>新建工程</span></button>
-      <button type="button" class="wp-btn" title="新建文件夹" @click="startCreateRootFolder"><FolderPlus :size="13" /><span>文件夹</span></button>
+      <button type="button" class="wp-ibtn" title="新建工程" aria-label="新建工程" @click="newOpen = true"><Plus :size="15" /></button>
+      <button type="button" class="wp-ibtn" title="新建文件夹" aria-label="新建文件夹" @click="startCreateFolderAtContext"><FolderPlus :size="14" /></button>
       <button type="button" class="wp-ibtn" title="导入工程" aria-label="导入工程" @click="fileInput?.click()"><Upload :size="15" /></button>
       <button type="button" class="wp-ibtn" title="刷新" aria-label="刷新" @click="refresh"><RefreshCw :size="14" /></button>
     </div>
@@ -964,19 +1067,6 @@ onBeforeUnmount(() => {
       <div v-if="store.loading && store.list.length === 0" class="wp-state">正在加载工程…</div>
 
       <div v-else-if="store.list.length > 0 || store.folders.length > 0">
-        <div v-if="creatingRoot" class="wp-row wp-row--create wp-create-root">
-          <span class="wp-row-icon"><FolderPlus :size="14" /></span>
-          <input
-            ref="rootInputRef"
-            v-model="rootName"
-            class="wp-input"
-            placeholder="文件夹名称"
-            maxlength="80"
-            @keydown.enter.prevent="commitCreateRootFolder"
-            @keydown.esc.prevent="creatingRoot = false"
-            @blur="commitCreateRootFolder"
-          />
-        </div>
 
         <ul class="wp-list">
           <ProjectFolderNode
@@ -990,12 +1080,27 @@ onBeforeUnmount(() => {
             :selected-ids="selectedIds"
             :search="search"
             :sort-mode="sortMode"
+            :create-child-signal="createChildSignal"
             @toggle="toggleFolder"
             @select="handleSelect"
             @move-selection="openMoveSelection"
             @delete-selection="deleteSelection"
             @restore-selection="restoreSelection"
           />
+          <li v-if="creatingRoot" class="wp-row wp-row--create wp-create-root">
+            <span class="wp-row-icon"><FolderPlus :size="14" /></span>
+            <input
+              ref="rootInputRef"
+              v-model="rootName"
+              class="wp-input"
+              placeholder="文件夹名称"
+              maxlength="80"
+              :disabled="rootCreateBusy"
+              @keydown.enter.prevent="commitCreateRootFolder"
+              @keydown.esc.prevent="cancelCreateRootFolder"
+              @blur="commitCreateRootFolder"
+            />
+          </li>
           <ProjectItem
             v-for="project in rootProjects"
             :key="project.id"
@@ -1049,7 +1154,12 @@ onBeforeUnmount(() => {
       @select="onRootMenuSelect"
       @close="rootMenu = null"
     />
-    <NewProjectDialog v-model:open="newOpen" @created="(project: { id: string }) => onCreated(project)" />
+    <NewProjectDialog
+      v-model:open="newOpen"
+      :default-folder-id="activeProjectFolderId"
+      :folder-label="activeProjectFolderLabel || undefined"
+      @created="(project: { id: string }) => onCreated(project)"
+    />
     <FolderPickerDialog
       v-model:open="moveOpen"
       title="移动选中项到…"

@@ -14,6 +14,7 @@ import {
   bindInlineEditBlur,
   buildFolderPath,
   collectFolderSubtree,
+  folderChildrenOf,
   consumeSuppressedClick,
   pointerDrag,
   type ProjectSortMode,
@@ -31,8 +32,10 @@ const props = withDefaults(
     selectedIds: Set<string>;
     search?: string;
     sortMode?: ProjectSortMode;
+    /** 来自工具栏的“在此文件夹内新建子文件夹”信号。 */
+    createChildSignal?: { folderId: string; token: number } | null;
   }>(),
-  { depth: 0, search: "", sortMode: "name" },
+  { depth: 0, search: "", sortMode: "name", createChildSignal: null },
 );
 
 const emit = defineEmits<{
@@ -104,6 +107,7 @@ const renaming = ref(false);
 const renameValue = ref("");
 const nameInputRef = ref<HTMLInputElement | null>(null);
 const creatingChild = ref(false);
+const createChildBusy = ref(false);
 const createValue = ref("");
 const createInputRef = ref<HTMLInputElement | null>(null);
 const newProjectOpen = ref(false);
@@ -147,6 +151,7 @@ async function commitRename() {
 
 function startCreateChild() {
   if (!open.value) emit("toggle", props.folder.id);
+  createChildBusy.value = false;
   creatingChild.value = true;
   createValue.value = "";
   void nextTick(() => {
@@ -154,15 +159,33 @@ function startCreateChild() {
   });
 }
 
-async function commitCreateChild() {
-  if (!creatingChild.value) return;
-  const name = createValue.value.trim();
+function cancelCreateChild() {
+  if (createChildBusy.value) return;
   creatingChild.value = false;
-  if (!name) return;
+}
+
+watch(
+  () => props.createChildSignal,
+  (signal) => {
+    if (signal?.folderId === props.folder.id) startCreateChild();
+  },
+);
+
+async function commitCreateChild() {
+  if (!creatingChild.value || createChildBusy.value) return;
+  const name = createValue.value.trim();
+  if (!name) {
+    creatingChild.value = false;
+    return;
+  }
+  createChildBusy.value = true;
   try {
     await store.createFolder(name, props.folder.id);
   } catch (err) {
     toast.error(err instanceof Error ? err.message : "创建文件夹失败");
+  } finally {
+    createChildBusy.value = false;
+    creatingChild.value = false;
   }
 }
 
@@ -260,6 +283,20 @@ function onMenuSelect(key: string) {
 }
 
 async function deleteFolder() {
+  const childFolders = folderChildrenOf(props.folders, props.folder.id);
+  const childProjects = props.projects.filter((p) => (p.folderId ?? null) === props.folder.id);
+  const isEmpty = childFolders.length === 0 && childProjects.length === 0;
+
+  if (isEmpty) {
+    try {
+      const result = await store.removeFolder(props.folder.id);
+      toast.success(result.detachedProjects > 0 ? `已删除文件夹，${result.detachedProjects} 个工程移回根层级` : "已删除文件夹");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "删除文件夹失败");
+    }
+    return;
+  }
+
   const subCount = collectFolderSubtree(props.folders, props.folder.id).length - 1;
   const detail =
     subCount > 0
@@ -362,19 +399,6 @@ function onKeydown(event: KeyboardEvent) {
     </div>
 
     <ul v-if="open" class="wp-children">
-      <li v-if="creatingChild" class="wp-row wp-row--create" :style="{ paddingLeft: `${2 + (depth + 1) * 15}px` }">
-        <span class="wp-row-icon"><FolderPlus :size="14" /></span>
-        <input
-          ref="createInputRef"
-          v-model="createValue"
-          class="wp-input"
-          placeholder="子文件夹名称"
-          maxlength="80"
-          @keydown.enter.prevent="commitCreateChild"
-          @keydown.esc.prevent="creatingChild = false"
-          @blur="commitCreateChild"
-        />
-      </li>
       <ProjectFolderNode
         v-for="child in childFolders"
         :key="child.id"
@@ -386,12 +410,27 @@ function onKeydown(event: KeyboardEvent) {
         :selected-ids="selectedIds"
         :search="search"
         :sort-mode="sortMode"
+        :create-child-signal="createChildSignal"
         @toggle="(id: string) => emit('toggle', id)"
         @select="(payload: { id: string; kind: 'folder' | 'project'; event: MouseEvent }) => emit('select', payload)"
         @move-selection="emit('move-selection')"
         @delete-selection="emit('delete-selection')"
         @restore-selection="(ids: string[]) => emit('restore-selection', ids)"
       />
+      <li v-if="creatingChild" class="wp-row wp-row--create" :style="{ paddingLeft: `${2 + (depth + 1) * 15}px` }">
+        <span class="wp-row-icon"><FolderPlus :size="14" /></span>
+        <input
+          ref="createInputRef"
+          v-model="createValue"
+          class="wp-input"
+          placeholder="子文件夹名称"
+          maxlength="80"
+          :disabled="createChildBusy"
+          @keydown.enter.prevent="commitCreateChild"
+          @keydown.esc.prevent="cancelCreateChild"
+          @blur="commitCreateChild"
+        />
+      </li>
       <ProjectItem
         v-for="project in childProjects"
         :key="project.id"
