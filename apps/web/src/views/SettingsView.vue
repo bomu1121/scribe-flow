@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from "vue";
 import { ElInput, ElInputNumber, ElMessageBox, ElOption, ElSelect, ElSwitch } from "element-plus";
-import { Cloud, Download, FolderOpen, Mic, PlugZap, RefreshCw, Save, Trash2, Upload } from "lucide-vue-next";
+import { Cloud, Download, FolderOpen, Mic, PlugZap, RefreshCw, RotateCcw, Save, Trash2, Upload } from "lucide-vue-next";
 import { toast } from "@/lib/toast";
 import ModelSelect from "../components/ModelSelect.vue";
 import type { AiProvider, AsrEngine, PromptBlock } from "@scribe-flow/shared";
@@ -94,6 +94,7 @@ const nutstoreRemoteFiles = ref<Array<{ path: string; name: string; type: "folde
 const nutstoreReading = ref(false);
 const nutstoreSyncing = ref(false);
 const nutstoreBackingUp = ref(false);
+const nutstoreRestoring = ref(false);
 const nutstoreBackups = ref<Array<{ path: string; name: string; lastModified?: number }>>([]);
 const nutstoreBackupFiles = ref<Array<{ path: string; name: string; type: "folder" | "file"; size?: number }>>([]);
 const remotePreview = ref<{ path: string; content: string } | null>(null);
@@ -553,6 +554,38 @@ async function loadNutstoreBackupFiles(backupPath: string) {
     nutstoreReading.value = false;
   }
 }
+
+async function restoreNutstoreBackup(backup: { path: string; name: string }) {
+  try {
+    await ElMessageBox.confirm(
+      `用备份「${backup.name}」覆盖本机全部数据（项目/文件夹/运行记录/设置/提示词块）？恢复前会自动把当前数据再备份一份到坚果云；此操作不可撤销。`,
+      "从坚果云恢复",
+      {
+        confirmButtonText: "恢复",
+        cancelButtonText: "取消",
+        type: "warning",
+        confirmButtonClass: "el-button--danger",
+      },
+    );
+  } catch {
+    return; // 用户取消
+  }
+  nutstoreRestoring.value = true;
+  try {
+    const result = await store.restoreNutstore(backup.path);
+    nutstoreResult.value = {
+      action: "从坚果云恢复",
+      detail: `已恢复备份 ${backup.name}（${result.tables.length} 张表）；恢复前自动备份：${result.autoBackupPath}`,
+      items: result.tables,
+    };
+    toast.success("恢复成功，页面即将刷新");
+    setTimeout(() => window.location.reload(), 1200);
+  } catch (err) {
+    nutstoreResult.value = { action: "从坚果云恢复", errors: [{ path: backup.path, message: err instanceof Error ? err.message : "恢复失败" }] };
+    toast.error(err instanceof Error ? err.message : "恢复失败");
+    nutstoreRestoring.value = false;
+  }
+}
 </script>
 
 <template>
@@ -789,9 +822,19 @@ async function loadNutstoreBackupFiles(backupPath: string) {
           <div v-if="nutstoreBackups.length > 0" class="sf-nutstore-backup-list">
             <div v-for="backup in nutstoreBackups.slice(0, 10)" :key="backup.path" class="sf-nutstore-backup-row">
               <span class="sf-nutstore-tag">{{ backup.name }}</span>
-              <button type="button" class="sf-text-btn" :disabled="nutstoreReading" @click="loadNutstoreBackupFiles(backup.path)">查看内容</button>
+              <button type="button" class="sf-text-btn" :disabled="nutstoreReading || nutstoreRestoring" @click="loadNutstoreBackupFiles(backup.path)">查看内容</button>
+              <button
+                type="button"
+                class="sf-text-btn sf-text-btn--danger"
+                :disabled="nutstoreReading || nutstoreRestoring || nutstoreBackingUp"
+                @click="restoreNutstoreBackup(backup)"
+              >
+                <RotateCcw :size="13" />
+                <span>{{ nutstoreRestoring ? "恢复中…" : "恢复" }}</span>
+              </button>
             </div>
             <span v-if="nutstoreBackups.length > 10" class="sf-settings-desc">…… 还有 {{ nutstoreBackups.length - 10 }} 个备份未展示</span>
+            <p class="sf-settings-desc">「恢复」会用所选备份整库覆盖本机数据：恢复前自动备份当前库；有运行中流程时需先停止；成功后页面自动刷新。</p>
           </div>
           <div v-if="nutstoreBackupFiles.length > 0" class="sf-nutstore-backup-files">
             <button

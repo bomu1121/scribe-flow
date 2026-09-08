@@ -79,3 +79,14 @@ export interface NutstoreBackupResult {
   files: string[];
   uploadedAt: number;
 }
+
+export interface NutstoreRestoreResult {
+  ok: true;
+  /** 恢复前自动备份当前库时生成的云端目录（后悔药）。 */
+  autoBackupPath: string;
+  /** 被恢复的云端备份目录。 */
+  remotePath: string;
+  restoredAt: number;
+  /** 参与整库热替换的数据表。 */
+  tables: string[];
+}

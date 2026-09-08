@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -5,8 +6,10 @@ import { Hono } from "hono";
 import { z } from "zod";
 import type { NutstoreBackupItem, NutstoreSyncDirection, NutstoreSyncResult } from "@scribe-flow/shared";
 import type { AppDatabase } from "../db/client";
-import { listRemoteDirectory, listRemoteDirectories, listRemoteMarkdown, readRemoteFile, testNutstoreConnection, writeRemoteBuffer, writeRemoteFile } from "../lib/nutstore";
+import { listRemoteDirectory, listRemoteDirectories, listRemoteMarkdown, readRemoteBuffer, readRemoteFile, testNutstoreConnection, writeRemoteBuffer, writeRemoteFile } from "../lib/nutstore";
 import type { NutstoreConfig } from "../lib/nutstore";
+import { liveSqlite, prepareRestoreDatabase, swapDatabaseLive } from "../lib/restore";
+import type { RunEngine } from "../lib/engine";
 import { getNutstoreConfig, getSettings } from "../lib/settings";
 
 interface LocalMarkdownFile {
@@ -171,7 +174,30 @@ async function backupSqlite(db: AppDatabase, dest: string): Promise<void> {
   await sqlite.backup(dest);
 }
 
-export function nutstoreApi(db: AppDatabase, dataDir: string) {
+/** 把当前 SQLite 库在线备份并上传到坚果云 backups/ 下（POST /backup 与恢复前自动备份共用）。 */
+async function uploadCurrentBackup(db: AppDatabase, config: NutstoreConfig, dataDir: string, remoteRoot: string): Promise<{ remotePath: string; files: string[] }> {
+  const stamp = `${new Date().toISOString().replace(/[-:T]/g, "").slice(0, 14)}-${randomUUID().slice(0, 8)}`;
+  const remoteDir = normalizeRemote(`${remoteRoot || "/我的坚果云/ScribeFlow"}/backups/scribe-flow-${stamp}`);
+  const tmp = await mkdtemp(join(tmpdir(), "scribe-nutstore-backup-"));
+  try {
+    const dbFile = join(tmp, "scribe-flow.sqlite");
+    await backupSqlite(db, dbFile);
+    const files = ["scribe-flow.sqlite"];
+    await writeRemoteBuffer(config, joinRemote(remoteDir, "scribe-flow.sqlite"), await readFile(dbFile));
+    const meta = JSON.stringify({ app: "scribe-flow", createdAt: new Date().toISOString(), dataDir, files }, null, 2);
+    await writeRemoteFile(config, joinRemote(remoteDir, "backup.json"), meta);
+    files.push("backup.json");
+    return { remotePath: remoteDir, files };
+  } finally {
+    await rm(tmp, { recursive: true, force: true }).catch(() => undefined);
+  }
+}
+
+const restoreSchema = z.object({
+  path: z.string().trim().min(1).max(1000),
+});
+
+export function nutstoreApi(db: AppDatabase, engine: RunEngine, dataDir: string) {
   const api = new Hono();
 
   api.get("/status", (c) => {
@@ -290,23 +316,47 @@ export function nutstoreApi(db: AppDatabase, dataDir: string) {
 
   api.post("/backup", async (c) => {
     const settings = getSettings(db);
-    const config = getNutstoreConfig(db);
-    const stamp = new Date().toISOString().replace(/[-:T]/g, "").slice(0, 14);
-    const remoteDir = normalizeRemote(`${settings.nutstore.remoteRoot || "/我的坚果云/ScribeFlow"}/backups/scribe-flow-${stamp}`);
-    const tmp = await mkdtemp(join(tmpdir(), "scribe-nutstore-backup-"));
     try {
-      const dbFile = join(tmp, "scribe-flow.sqlite");
-      await backupSqlite(db, dbFile);
-      const files = ["scribe-flow.sqlite"];
-      await writeRemoteBuffer(config, joinRemote(remoteDir, "scribe-flow.sqlite"), await readFile(dbFile));
-      const meta = JSON.stringify({ app: "scribe-flow", createdAt: new Date().toISOString(), dataDir, files }, null, 2);
-      await writeRemoteFile(config, joinRemote(remoteDir, "backup.json"), meta);
-      files.push("backup.json");
-      return c.json({ remotePath: remoteDir, files, uploadedAt: Date.now() });
+      const result = await uploadCurrentBackup(db, getNutstoreConfig(db), dataDir, settings.nutstore.remoteRoot || "/我的坚果云/ScribeFlow");
+      return c.json({ ...result, uploadedAt: Date.now() });
     } catch (err) {
       return c.json({ error: err instanceof Error ? err.message : "备份到坚果云失败" }, 400);
+    }
+  });
+
+  api.post("/restore", async (c) => {
+    const raw = await c.req.json().catch(() => ({}));
+    const parsed = restoreSchema.safeParse(raw ?? {});
+    if (!parsed.success) return c.json({ error: parsed.error.issues[0]?.message ?? "请求格式不正确" }, 400);
+    const settings = getSettings(db);
+    const config = getNutstoreConfig(db);
+    if (!config.account || !config.password) return c.json({ error: "未配置坚果云账号或应用密码，请到设置页填写" }, 400);
+    const refuse = (runIds: string[]) =>
+      c.json({ error: `有 ${runIds.length} 个流程正在运行，请先停止后再恢复`, runIds }, 409);
+    const firstActive = engine.activeRunIds;
+    if (firstActive.length > 0) return refuse(firstActive);
+    const remoteDir = normalizeRemote(parsed.data.path);
+    const work = await mkdtemp(join(tmpdir(), "scribe-nutstore-restore-"));
+    try {
+      const listing = await listRemoteDirectory(config, remoteDir);
+      const hasDb = listing.items.some((item) => item.type === "file" && item.name === "scribe-flow.sqlite");
+      if (!hasDb) return c.json({ error: `该目录不是有效备份（缺少 scribe-flow.sqlite）：${remoteDir}` }, 400);
+      // 后悔药：恢复前先把当前库自动备份到坚果云；失败即中止，绝不裸覆盖。
+      const autoBackup = await uploadCurrentBackup(db, config, dataDir, settings.nutstore.remoteRoot || "/我的坚果云/ScribeFlow");
+      const download = await readRemoteBuffer(config, joinRemote(remoteDir, "scribe-flow.sqlite"));
+      const sourcePath = join(work, "scribe-flow.sqlite");
+      const migratedPath = join(work, "scribe-flow.migrated.sqlite");
+      await writeFile(sourcePath, download.data);
+      await prepareRestoreDatabase(sourcePath, migratedPath);
+      // 下载/校验期间可能又有新运行开始：紧贴热替换再做一次原子性复查（检查与替换之间无 await，不可能再插入新运行）。
+      const secondActive = engine.activeRunIds;
+      if (secondActive.length > 0) return refuse(secondActive);
+      const tables = swapDatabaseLive(liveSqlite(db), migratedPath);
+      return c.json({ ok: true, remotePath: remoteDir, autoBackupPath: autoBackup.remotePath, restoredAt: Date.now(), tables });
+    } catch (err) {
+      return c.json({ error: err instanceof Error ? err.message : "从坚果云恢复失败" }, 400);
     } finally {
-      await rm(tmp, { recursive: true, force: true }).catch(() => undefined);
+      await rm(work, { recursive: true, force: true }).catch(() => undefined);
     }
   });
 

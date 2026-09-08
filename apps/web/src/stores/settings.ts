@@ -7,6 +7,7 @@ import type {
   NutstoreBackupItem,
   NutstoreListResult,
   NutstoreReadResult,
+  NutstoreRestoreResult,
   NutstoreSyncResult,
   UpdateSettingsRequest,
 } from "@scribe-flow/shared";
@@ -137,10 +138,14 @@ export const useSettingsStore = defineStore("settings", () => {
     return api.post<{ remotePath: string; files: string[]; uploadedAt: number }>("/api/nutstore/backup");
   }
 
+  async function restoreNutstore(backupPath: string): Promise<NutstoreRestoreResult> {
+    return api.post<NutstoreRestoreResult>("/api/nutstore/restore", { path: backupPath });
+  }
+
   async function listNutstoreBackups(): Promise<NutstoreBackupItem[]> {
     const result = await api.get<{ items: NutstoreBackupItem[] }>("/api/nutstore/backups");
     return result.items ?? [];
   }
 
-  return { settings, loading, obsidianFolders, aiKeyDraft, asrKeyDraft, load, save, loadObsidianFolders, testAi, testAsr, fetchAiModels, testNutstore, listNutstore, listNutstoreFolders, readNutstore, pushNutstore, pullNutstore, backupNutstore, listNutstoreBackups };
+  return { settings, loading, obsidianFolders, aiKeyDraft, asrKeyDraft, load, save, loadObsidianFolders, testAi, testAsr, fetchAiModels, testNutstore, listNutstore, listNutstoreFolders, readNutstore, pushNutstore, pullNutstore, backupNutstore, restoreNutstore, listNutstoreBackups };
 });

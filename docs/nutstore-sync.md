@@ -5,7 +5,8 @@ ScribeFlow 在设置页新增「坚果云」分组，基于坚果云 WebDAV 提�
 1. **读取云端**：测试连接、递归读取远程目录、读取远程 Markdown 文件内容；
 2. **Obsidian 云端模式**：`process.obsidian` 节点可直接把笔记写入坚果云，并在写入前远程扫描已有笔记做自动关联；
 3. **本地 ↔ 坚果云同步**：把本地 Obsidian 库中的 `.md` 推送到坚果云，或从坚果云拉取到本地（按修改时间防覆盖）；
-4. **应用数据备份**：把 SQLite 数据库备份为 `remoteRoot/backups/scribe-flow-<时间戳>/scribe-flow.sqlite`。
+4. **应用数据备份**：把 SQLite 数据库备份为 `remoteRoot/backups/scribe-flow-<时间戳>/scribe-flow.sqlite`；
+5. **一键热恢复**：设置页从任一云端备份整库恢复，服务进程不重启（见下文「热恢复」）。
 
 ## WebDAV 配置
 
@@ -54,11 +55,24 @@ ScribeFlow 在设置页新增「坚果云」分组，基于坚果云 WebDAV 提�
 | POST | `/api/nutstore/sync/pull` | 坚果云 → 本地 |
 | GET | `/api/nutstore/backups` | 读取云端备份列表 |
 | POST | `/api/nutstore/backup` | 备份 SQLite 到坚果云 |
+| POST | `/api/nutstore/restore` | 用指定云端备份整库热恢复（先自动备份当前库；运行中流程拒绝） |
+
+## 热恢复（一键）
+
+- 入口：设置 → 坚果云 →「应用数据备份」列表，每个备份行有「恢复」按钮，二次确认后执行；
+- **恢复前后悔药**：先把**当前**库在线备份到 `backups/scribe-flow-<时间戳>/`；该自动备份失败则中止，绝不裸覆盖；
+- **校验与升级**：下载所选 `scribe-flow.sqlite` 后先 `integrity_check`，再复用 `ensureSchema` 把旧版本备份幂等补齐到当前结构，并把备份内残留的 running 收尾为 cancelled；
+- **热替换**：在同一 better-sqlite3 连接内开启事务，逐业务表清空并按列拷入后提交——不替换磁盘文件、不更换连接、不重启进程；失败自动回滚，主库保持恢复前状态；
+- **运行中拒绝**：`RunEngine.activeRunIds` 非空时返回 409 并要求先手动停止；下载/校验完成后紧贴替换前会再复查一次；
+- **生效方式**：提交即生效；前端 toast 后自动刷新页面，项目/运行/设置均读取恢复后数据；
+- **覆盖语义**：整库替换（项目/文件夹/运行记录/设置/提示词块等全部业务表）；备份不含上传附件与运行产物；Obsidian `.md` 恢复仍走「拉取坚果云到本地」；
+- 备份来自**更早版本**时自动升级后再恢复；来自**未来版本**（含当前未知的新列/新表）时按列交集恢复，新列不会被保留，请用同版本或更早版本生成的备份。
 
 ## 代码位置
 
 - 共享类型：`packages/shared/src/nutstore.ts`、`packages/shared/src/run.ts`
 - 服务端 WebDAV 客户端：`apps/server/src/lib/nutstore.ts`
+- 服务端恢复（迁移/校验/热替换）：`apps/server/src/lib/restore.ts`
 - 服务端路由：`apps/server/src/routes/nutstore.ts`
 - 设置持久化：`apps/server/src/lib/settings.ts`
 - Obsidian 云端模式引擎分支：`apps/server/src/lib/engine.ts`
@@ -69,4 +83,4 @@ ScribeFlow 在设置页新增「坚果云」分组，基于坚果云 WebDAV 提�
 
 - 坚果云 WebDAV 分页协议未公开，目前对“单目录 ≥750 条”采取显式报错而不是猜测下一页；后续若拿到官方分页头/参数可无缝替换。
 - 推送/拉取为单向“同步按钮”，不做删除传播，避免误删；删除同步需要同步状态表，可在下一迭代加入。
-- 数据备份当前为“上传 SQLite 备份 + 读取列表”，未做运行中的一键热恢复（涉及数据库替换/重启）。
+- 数据备份当前为“上传 SQLite 备份 + 读取列表 + 一键热恢复”；恢复是整库替换而非合并，恢复失败会自动回滚。

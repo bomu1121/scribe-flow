@@ -224,8 +224,8 @@ export async function listRemoteDirectory(config: NutstoreConfig, remotePath: st
   return { path, items, truncated: items.length >= NUTSTORE_PROPFIND_LIMIT };
 }
 
-/** 读取远程文本文件（UTF-8）。 */
-export async function readRemoteFile(config: NutstoreConfig, remotePath: string): Promise<NutstoreReadResult> {
+/** 读取远程文件原始字节（含元信息），文本与二进制读取共用。 */
+async function downloadRemote(config: NutstoreConfig, remotePath: string): Promise<{ path: string; name: string; data: Buffer; size: number; etag?: string; lastModified?: number }> {
   assertConfigured(config);
   const path = normalizeRemotePath(remotePath);
   const res = await davFetch(config, { method: "GET", remotePath: path });
@@ -238,16 +238,27 @@ export async function readRemoteFile(config: NutstoreConfig, remotePath: string)
     await throwDavError(res, "读取文件", path);
   }
   if (!res.ok) await throwDavError(res, "读取文件", path);
-  const buf = Buffer.from(await res.arrayBuffer());
+  const data = Buffer.from(await res.arrayBuffer());
   const name = path.split("/").filter(Boolean).pop() ?? path;
   return {
     path,
     name,
-    content: buf.toString("utf8"),
-    size: buf.byteLength,
+    data,
+    size: data.byteLength,
     etag: res.headers.get("etag") ?? undefined,
     lastModified: res.headers.get("last-modified") ? parseHttpDate(res.headers.get("last-modified") ?? undefined) : undefined,
   };
+}
+
+/** 读取远程文本文件（UTF-8）。 */
+export async function readRemoteFile(config: NutstoreConfig, remotePath: string): Promise<NutstoreReadResult> {
+  const { path, name, data, size, etag, lastModified } = await downloadRemote(config, remotePath);
+  return { path, name, content: data.toString("utf8"), size, etag, lastModified };
+}
+
+/** 读取远程二进制文件（例如 SQLite 备份）。 */
+export async function readRemoteBuffer(config: NutstoreConfig, remotePath: string): Promise<{ path: string; name: string; data: Buffer; size: number; etag?: string; lastModified?: number }> {
+  return downloadRemote(config, remotePath);
 }
 
 export async function ensureRemoteDirectory(config: NutstoreConfig, remotePath: string): Promise<void> {

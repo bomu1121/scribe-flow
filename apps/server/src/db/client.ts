@@ -35,7 +35,7 @@ export function recoverInterruptedRuns(db: AppDatabase) {
  * M0/M1 无迁移工具，先以幂等 SQL 建表。
  * M5 前换成 drizzle-kit 迁移并保留本函数兼容。
  */
-function ensureSchema(sqlite: Database.Database) {
+export function ensureSchema(sqlite: Database.Database) {
   sqlite.exec(`
     CREATE TABLE IF NOT EXISTS projects (
       id TEXT PRIMARY KEY,
