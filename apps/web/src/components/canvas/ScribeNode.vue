@@ -534,6 +534,7 @@ const promptOptions = computed(() =>
   promptsStore.allBlocks.map((block) => {
     const parts = [block.name];
     if (block.version) parts.push(block.version);
+    if (block.recipe) parts.push("配方");
     if (block.builtin) parts.push("内置");
     return { label: parts.join(" · "), value: block.id };
   }),

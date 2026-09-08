@@ -46,6 +46,7 @@ const sideCollapsed = ref(false);
 const logs = ref<RunNodeLog[]>([]);
 const logsVisible = ref(false);
 const logsNodeId = ref("");
+const logsStep = ref("");
 const selectedOutputIndex = ref(0);
 const selectedInputKey = ref("");
 const tocValue = ref("");
@@ -671,13 +672,38 @@ async function copyMarkdown() {
 async function openLogs(nodeId = "") {
   logsVisible.value = true;
   logsNodeId.value = nodeId;
+  logsStep.value = "";
+  await fetchLogs();
+}
+
+/** 日志加载：节点 + 配方步骤（M8-1）双筛选。 */
+async function fetchLogs() {
+  const params = new URLSearchParams();
+  if (logsNodeId.value) params.set("nodeId", logsNodeId.value);
+  if (logsStep.value) params.set("step", logsStep.value);
+  const qs = params.toString();
   try {
-    const data = await api.get<{ items: RunNodeLog[] }>(`/api/runs/${runId}/logs${nodeId ? `?nodeId=${encodeURIComponent(nodeId)}` : ""}`);
+    const data = await api.get<{ items: RunNodeLog[] }>(`/api/runs/${runId}/logs${qs ? `?${qs}` : ""}`);
     logs.value = data.items ?? [];
   } catch (err) {
     logs.value = [];
     toast.error(err instanceof Error ? err.message : "日志加载失败");
   }
+}
+
+/** 从已加载日志推导步骤筛选选项（步骤 id + 日志里的步骤名）。 */
+const stepOptions = computed(() => {
+  const map = new Map<string, string>();
+  for (const log of logs.value) {
+    if (!log.step || map.has(log.step)) continue;
+    const match = /^\[([A-Za-z0-9_]+)\]\s*([^\n]{1,24})/.exec(log.content);
+    map.set(log.step, match ? `${match[1]} · ${match[2]}` : log.step);
+  }
+  return Array.from(map, ([value, label]) => ({ value, label }));
+});
+
+function onChangeLogStep() {
+  void fetchLogs();
 }
 
 async function retryNode(node: RunNodeResult) {
@@ -1034,13 +1060,18 @@ async function forceStopRun() {
     </template>
 
     <el-dialog v-model="logsVisible" title="运行日志" width="640px" align-center append-to-body>
-      <el-select v-model="logsNodeId" class="rv-log-filter" size="small" placeholder="全部节点" clearable @change="(v) => openLogs(String(v ?? ''))">
-        <el-option v-for="node in run?.nodeResults ?? []" :key="node.nodeId" :label="node.nodeLabel || node.nodeType" :value="node.nodeId" />
-      </el-select>
+      <div class="rv-log-filters">
+        <el-select v-model="logsNodeId" class="rv-log-filter" size="small" placeholder="全部节点" clearable @change="(v) => openLogs(String(v ?? ''))">
+          <el-option v-for="node in run?.nodeResults ?? []" :key="node.nodeId" :label="node.nodeLabel || node.nodeType" :value="node.nodeId" />
+        </el-select>
+        <el-select v-model="logsStep" class="rv-log-filter rv-log-filter--step" size="small" placeholder="全部步骤" clearable @change="onChangeLogStep">
+          <el-option v-for="opt in stepOptions" :key="opt.value" :label="opt.label" :value="opt.value" />
+        </el-select>
+      </div>
       <div class="rv-log-list">
         <article v-for="log in logs" :key="log.id" class="rv-log-item">
           <header class="rv-log-head">
-            <span class="rv-log-node">{{ log.nodeLabel || log.nodeId }}</span>
+            <span class="rv-log-node">{{ log.nodeLabel || log.nodeId }}{{ log.step ? ` · ${log.step}` : "" }}</span>
             <span class="rv-log-kind">{{ logKindLabels[log.kind] }}</span>
             <span class="rv-log-time tnum">{{ new Date(log.createdAt).toLocaleTimeString("zh-CN") }}</span>
           </header>
@@ -1859,9 +1890,19 @@ async function forceStopRun() {
   color: var(--color-text);
 }
 
+.rv-log-filters {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
 .rv-log-filter {
   width: 220px;
-  margin-bottom: 10px;
+  margin-bottom: 0;
+}
+
+.rv-log-filter--step {
+  width: 200px;
 }
 
 .rv-log-list {

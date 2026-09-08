@@ -85,6 +85,8 @@ export interface RunNodeLog {
   nodeLabel?: string;
   kind: RunNodeLogKind;
   content: string;
+  /** M8-1：配方步骤 id（无配方/非配方节点的日志为空）。 */
+  step?: string;
   createdAt: number;
 }
 
@@ -93,7 +95,7 @@ export interface ResultDelta {
   tone: "same" | "up" | "down" | "changed" | "new";
 }
 
-/** SSE 事件（M3 运行引擎）。 */
+/** SSE 事件（M3 运行引擎；M8-1 增加配方步骤收尾事件）。 */
 export type RunEvent =
   | { type: "run.started"; run: RunMeta }
   | { type: "node.started"; runId: string; nodeId: string }
@@ -102,6 +104,8 @@ export type RunEvent =
   | { type: "node.skipped"; runId: string; nodeId: string; reason: string }
   | { type: "node.done"; runId: string; nodeId: string; summary: string; preview?: string; delta?: ResultDelta }
   | { type: "node.error"; runId: string; nodeId: string; error: string }
+  | { type: "node.step.done"; runId: string; nodeId: string; stepId: string; index: number; total: number; summary?: string }
+  | { type: "node.step.error"; runId: string; nodeId: string; stepId: string; index: number; total: number; error: string }
   | { type: "run.done"; runId: string; status: RunStatus };
 
 /** AI 提供商预设。 */

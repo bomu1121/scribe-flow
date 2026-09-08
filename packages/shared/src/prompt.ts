@@ -1,3 +1,5 @@
+import type { Recipe } from "./recipe";
+
 export interface PromptBlock {
   id: string;
   name: string;
@@ -10,6 +12,8 @@ export interface PromptBlock {
   version?: string;
   /** 是否为该系列当前推荐使用的版本。 */
   recommended?: boolean;
+  /** M8-1：节点内多步链配方（可选）。无 recipe 的块走原有单次调用路径。 */
+  recipe?: Recipe;
 }
 
 const PROMPT_GUANDIAN_V1 = [
@@ -381,6 +385,76 @@ const PROMPT_HISTORY = [
   "- 如果用户发来的不是历史/人文类文稿，回复：「请发一段历史/人文类视频文稿，我来帮你整理成轻量笔记。」",
 ].join("\n");
 
+/**
+ * 观点提炼 v3（多步配方试点，M8-1 阶段 A）。
+ * 步骤语义：
+ * - scan    用户消息 = 原文 → 输出拆解清单 JSON（quotes 必须逐字摘自原文）；
+ * - draft   用户消息 = 上一步清单，系统含 {{input}} 原文 → 按固定格式起草；
+ * - audit   用户消息 = 草稿，系统含 {{input}} 原文 → 输出核对表 JSON；
+ * - finalize 用户消息 = 核对表，系统经 {{all}} 拿到清单/草稿/核对表、经 {{input}} 拿到原文 → 修正成稿。
+ * 断言门失败会以节点错误呈现（非自动重试）；网络类失败走节点级重试。
+ */
+const RECIPE_INSIGHT_V3: Recipe = {
+  schema: 1,
+  steps: [
+    {
+      id: "scan",
+      label: "通读拆解",
+      system: [
+        "你是深度内容编辑。通读用户消息中的全文，先不写正文，只输出拆解清单 JSON。",
+        '格式：{"blocks":[{"title":"观点标题","quotes":["摘自原文的关键句"]}]}',
+        "要求：",
+        "1. blocks 覆盖全文所有核心观点与关键信息，通常 3-8 个；",
+        "2. quotes 逐字摘自原文，每条不超过 60 字，用于后续起草与回原文核对；",
+        "3. 只输出 JSON，不要解释，不要 Markdown 围栏。",
+      ].join("\n"),
+      expects: {
+        kind: "json",
+        asserts: [
+          { op: "jsonRootKeys", value: ["blocks"] },
+          { op: "citationsInOriginal", field: "blocks[].quotes[]", maxMiss: 0 },
+        ],
+      },
+    },
+    {
+      id: "draft",
+      label: "分块起草",
+      system: [
+        "你是深度内容编辑。上一条用户消息是「拆解清单」，系统消息末尾附有原文全文（{{input}}）。",
+        "按固定格式起草 Markdown 笔记：",
+        "# 观点提炼：〈主题〉",
+        "## 总体概要",
+        "（3-6 句话概括主题、态度与结论）",
+        "## 核心观点与支撑",
+        "（每个观点一个小节：观点主张 → 现象/背景 → 事实/数据/案例 → 关键表述（保留原话）→ 作者的判断）",
+        "要求：观点块数量与拆解清单一致；原文中的事实、数据、人物、时间必须保留，信息不缩水；只输出笔记正文。",
+      ].join("\n"),
+      expects: { kind: "text", asserts: [{ op: "contains", value: "#" }] },
+    },
+    {
+      id: "audit",
+      label: "回文核对",
+      system: [
+        "你是文字校对审计员。上一条用户消息是草稿，系统消息末尾附有原文全文（{{input}}）。",
+        "逐条核对草稿中的事实、数据、专名与关键表述是否忠于原文，只输出 JSON 核对表。",
+        '格式：{"items":[{"quote":"草稿原句","inOriginal":true,"note":"修正建议"}]}',
+        "要求：quote 逐字抄自草稿；inOriginal=false 的条目必须给出可执行的 note；不要输出其他内容。",
+      ].join("\n"),
+      expects: { kind: "json", asserts: [{ op: "jsonRootKeys", value: ["items"] }] },
+    },
+    {
+      id: "finalize",
+      label: "修正成稿",
+      system: [
+        "你是深度内容编辑。系统消息中的 {{all}} 依次包含「拆解清单、草稿、核对表」（每段有标记），系统消息末尾是原文（{{input}}）。",
+        "依据核对表修正草稿：inOriginal=false 的内容能依据原文修正则修正，无法修正则删除或标注存疑；",
+        "保持 Markdown 结构完整与信息完整；只输出最终笔记正文，不要解释，不要代码围栏。",
+      ].join("\n"),
+      expects: { kind: "text", asserts: [{ op: "notContains", value: "```" }] },
+    },
+  ],
+};
+
 export const BUILTIN_PROMPT_BLOCKS: PromptBlock[] = [
   {
     id: "builtin.insight",
@@ -391,6 +465,16 @@ export const BUILTIN_PROMPT_BLOCKS: PromptBlock[] = [
     version: "v2",
     recommended: true,
     description: "把口语化文稿提炼为含总体概要、观点块、事实数据、论证脉络、金句与启发的 Markdown 观点笔记。",
+  },
+  {
+    id: "builtin.insight.v3",
+    name: "观点提炼（配方试点）",
+    prompt: PROMPT_GUANDIAN,
+    builtin: true,
+    series: "观点提炼",
+    version: "v3",
+    description: "多步配方试点：通读拆解 → 分块起草 → 回文核对 → 修正成稿。约 4 次调用且每步携带原文，成本显著高于单次；不设推荐，先试用对比。",
+    recipe: RECIPE_INSIGHT_V3,
   },
   {
     id: "builtin.insight.v1",

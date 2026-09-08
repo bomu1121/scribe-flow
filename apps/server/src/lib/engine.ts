@@ -7,6 +7,7 @@ import {
   NODE_TYPE_LABELS,
   type GraphNode,
   type NodeOutput,
+  type Recipe,
   type ResultDelta,
   type RunEvent,
   type RunMeta,
@@ -18,11 +19,12 @@ import {
 } from "@scribe-flow/shared";
 import type { AppDatabase } from "../db/client";
 import { biliCookies, projects, runNodeInputs, runNodeLogs, runNodeResults, runs } from "../db/schema";
-import { chatCompletion, transcribeAudio } from "./ai";
+import { chatCompletion, transcribeAudio, type AiConfig } from "./ai";
 import { fetchBiliVideoDetail } from "./bilibili";
 import { countMindMapNodes, mindMapToMarkdown, parseMindMapJson } from "./mindmap";
 import { downloadBiliAudio, toAsrWav } from "./media";
 import { ensureRemoteDirectory, scanRemoteMarkdown, writeRemoteFile, type NutstoreConfig } from "./nutstore";
+import { appendAllOutput, assertStepOutput, renderStepSystem } from "./recipe";
 import { getAiConfig, getAsrConfig, getNutstoreConfig, getSettings } from "./settings";
 
 const MAX_INLINE_TEXT = 200_000;
@@ -34,7 +36,7 @@ export const RETRYABLE_NODE_TYPES = new Set(["source.bili", "process.transcribe"
 export function isRetryableError(error: Error, cancelled: boolean): boolean {
   if (cancelled) return false;
   const message = error.message;
-  if (/运行已取消|未配置.*密钥|没有可.*输入|文稿为空|链接为空|缺少 BV|缺少 cid|文件为空|正则表达式无效|文稿过短|B 站登录已失效|没有可下载的音轨/.test(message)) return false;
+  if (/运行已取消|未配置.*密钥|没有可.*输入|文稿为空|链接为空|缺少 BV|缺少 cid|文件为空|正则表达式无效|文稿过短|B 站登录已失效|没有可下载的音轨|断言未通过|不是合法 JSON/.test(message)) return false;
   return true;
 }
 
@@ -960,6 +962,36 @@ export class RunEngine {
         const blockId = String(data.promptBlockId ?? "");
         const override = String(data.promptOverride ?? "");
         const builtin = BUILTIN_PROMPT_BLOCKS.find((b) => b.id === blockId);
+
+        // M8-1 配方分支：仅 process.prompt、块带 recipe、且无自定义提示词覆盖时执行多步链。
+        const recipe = node.type === "process.prompt" && !override.trim() ? builtin?.recipe : undefined;
+        if (recipe) {
+          const parts: string[] = [];
+          const totalFlat = recipe.steps.length * textItems.length;
+          for (let i = 0; i < textItems.length; i += 1) {
+            const item = textItems[i];
+            const inputText = item.output.text?.trim() ?? "";
+            await this.progress(active, node.id, 8, `输入 ${i + 1}/${textItems.length}：运行配方 ${recipe.steps.length} 步`);
+            const finalText = await this.executeRecipeOnInput(
+              active,
+              node,
+              inputText,
+              recipe,
+              aiConfig,
+              signal,
+              i * recipe.steps.length,
+              totalFlat,
+            );
+            await this.updateInputResult(active, node.id, item.sourceNodeId, item.position, finalText);
+            parts.push(finalText);
+          }
+          const outputs = parts.map((text) => ({ kind: "noteBlock" as const, text, size: text.length }));
+          const total = parts.reduce((sum, text) => sum + text.length, 0);
+          return { outputs, summary: `配方 ${recipe.steps.length} 步 · ${textItems.length} 输入 · ${totalFlat} 次调用 · ${total} 字` };
+        }
+        if (override.trim() && builtin?.recipe) {
+          await this.log(active, node.id, "info", "自定义提示词覆盖配方，按单步执行");
+        }
         const system =
           override.trim() ||
           builtin?.prompt ||
@@ -1398,12 +1430,83 @@ ${JSON.stringify(taxonomyTags)}`;
       .run();
   }
 
-  private async log(active: ActiveRun, nodeId: string, kind: "input" | "ai-request" | "ai-response" | "info" | "error", content: string) {
+  private async log(
+    active: ActiveRun,
+    nodeId: string,
+    kind: "input" | "ai-request" | "ai-response" | "info" | "error",
+    content: string,
+    step?: string,
+  ) {
     if (!content) return;
     await this.db
       .insert(runNodeLogs)
-      .values({ id: randomUUID(), runId: active.id, nodeId, kind, content: content.slice(0, 8000), createdAt: Date.now() })
+      .values({
+        id: randomUUID(),
+        runId: active.id,
+        nodeId,
+        kind,
+        content: content.slice(0, 8000),
+        step: step ?? undefined,
+        createdAt: Date.now(),
+      })
       .run();
+  }
+
+  /**
+   * M8-1：对单个输入执行一条配方（顺序步骤 + 确定性断言门）。
+   * 步骤 0 的 user 消息为原文；后续步骤的 user 消息为上一步输出；
+   * system 模板变量 {{input}}/{{prev}}/{{all}} 由执行器展开。
+   * 断言失败/JSON 非法抛出的错误不可自动重试（isRetryableError 词表）；网络类错误保留 cause，走节点级重试。
+   */
+  private async executeRecipeOnInput(
+    active: ActiveRun,
+    node: GraphNode,
+    inputText: string,
+    recipe: Recipe,
+    aiConfig: AiConfig,
+    signal: AbortSignal | undefined,
+    flatBase: number,
+    totalFlat: number,
+  ): Promise<string> {
+    await this.log(active, node.id, "input", inputText);
+    let prev = "";
+    let all = "";
+    for (let j = 0; j < recipe.steps.length; j += 1) {
+      const step = recipe.steps[j];
+      const flatIndex = flatBase + j;
+      const system = renderStepSystem(step.system, { input: inputText, prev, all });
+      const user = j === 0 ? inputText : prev;
+      const model = step.model ?? aiConfig.model;
+      const progress = Math.round(10 + ((flatIndex + 1) / totalFlat) * 86);
+      await this.progress(active, node.id, progress, `步骤 ${flatIndex + 1}/${totalFlat} ${step.label}`);
+      await this.log(active, node.id, "ai-request", `[${step.id}] ${step.label}\n\n${model}\n\n${system}`, step.id);
+      let result: string;
+      try {
+        result = await chatCompletion({ ...aiConfig, model }, system, user, signal);
+      } catch (error) {
+        const message = describeError(error);
+        this.emit(active, { type: "node.step.error", runId: active.id, nodeId: node.id, stepId: step.id, index: flatIndex + 1, total: totalFlat, error: message });
+        throw new Error(`步骤「${step.label}」调用失败：${message}`, { cause: error });
+      }
+      const trimmed = result.trim();
+      if (!trimmed) {
+        const message = `步骤「${step.label}」返回空内容`;
+        this.emit(active, { type: "node.step.error", runId: active.id, nodeId: node.id, stepId: step.id, index: flatIndex + 1, total: totalFlat, error: message });
+        throw new Error(message);
+      }
+      await this.log(active, node.id, "ai-response", `[${step.label}] 输出 ${trimmed.length} 字\n\n${trimmed}`, step.id);
+      try {
+        assertStepOutput(step, trimmed, { input: inputText, prev, all });
+      } catch (error) {
+        const message = describeError(error);
+        this.emit(active, { type: "node.step.error", runId: active.id, nodeId: node.id, stepId: step.id, index: flatIndex + 1, total: totalFlat, error: message });
+        throw error instanceof Error ? error : new Error(message);
+      }
+      this.emit(active, { type: "node.step.done", runId: active.id, nodeId: node.id, stepId: step.id, index: flatIndex + 1, total: totalFlat, summary: `${step.label} 完成` });
+      prev = trimmed;
+      all = appendAllOutput(all, step, trimmed);
+    }
+    return prev;
   }
 
   private async updateNode(

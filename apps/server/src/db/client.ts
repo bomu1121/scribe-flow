@@ -204,4 +204,14 @@ export function ensureSchema(sqlite: Database.Database) {
   if (!resultColumns.some((col) => col.name === "attempts")) {
     sqlite.exec("ALTER TABLE run_node_results ADD COLUMN attempts INTEGER NOT NULL DEFAULT 1");
   }
+
+  // M8-1：prompt_blocks.recipe（配方 JSON）+ run_node_logs.step（配方步骤 id）。
+  const blockColumns = sqlite.prepare("PRAGMA table_info(prompt_blocks)").all() as Array<{ name: string }>;
+  if (!blockColumns.some((col) => col.name === "recipe")) {
+    sqlite.exec("ALTER TABLE prompt_blocks ADD COLUMN recipe TEXT");
+  }
+  const logColumns = sqlite.prepare("PRAGMA table_info(run_node_logs)").all() as Array<{ name: string }>;
+  if (!logColumns.some((col) => col.name === "step")) {
+    sqlite.exec("ALTER TABLE run_node_logs ADD COLUMN step TEXT");
+  }
 }

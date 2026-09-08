@@ -261,9 +261,11 @@ export function runsApi(db: AppDatabase, engine: RunEngine, dataDir: string) {
   api.get("/:id/logs", (c) => {
     const runId = c.req.param("id");
     const nodeId = c.req.query("nodeId");
+    const step = c.req.query("step");
     if (!db.select().from(runs).where(eq(runs.id, runId)).get()) return c.json({ error: "运行不存在" }, 404);
     let rows = db.select().from(runNodeLogs).where(eq(runNodeLogs.runId, runId)).orderBy(runNodeLogs.createdAt).all();
     if (nodeId) rows = rows.filter((r) => r.nodeId === nodeId);
+    if (step) rows = rows.filter((r) => r.step === step);
     const labels = new Map(db.select().from(runNodeResults).where(eq(runNodeResults.runId, runId)).all().map((r) => [r.nodeId, r.nodeLabel ?? r.nodeType]));
     const items: RunNodeLog[] = rows.map((row) => ({
       id: row.id,
@@ -272,6 +274,7 @@ export function runsApi(db: AppDatabase, engine: RunEngine, dataDir: string) {
       nodeLabel: labels.get(row.nodeId),
       kind: row.kind,
       content: row.content,
+      step: row.step ?? undefined,
       createdAt: row.createdAt,
     }));
     return c.json({ items });

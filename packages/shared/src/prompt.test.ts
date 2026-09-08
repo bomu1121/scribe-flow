@@ -9,8 +9,17 @@ describe("builtin prompt blocks", () => {
 
   it("保留旧版与新版观点提炼并标注版本", () => {
     const insightBlocks = BUILTIN_PROMPT_BLOCKS.filter((block) => block.series === "观点提炼");
-    expect(insightBlocks.map((block) => block.version).sort()).toEqual(["v1", "v2"]);
+    expect(insightBlocks.map((block) => block.version).sort()).toEqual(["v1", "v2", "v3"]);
     expect(insightBlocks.find((block) => block.id === "builtin.insight")?.recommended).toBe(true);
+  });
+
+  it("观点提炼 v3 为配方试点：带 recipe、不设 recommended", () => {
+    const v3 = BUILTIN_PROMPT_BLOCKS.find((block) => block.id === "builtin.insight.v3");
+    expect(v3).toBeDefined();
+    expect(v3?.recipe).toBeDefined();
+    expect(v3?.recipe?.steps.map((step) => step.id)).toEqual(["scan", "draft", "audit", "finalize"]);
+    expect(v3?.recommended).toBeUndefined();
+    expect(v3?.recipe?.steps.every((step) => step.system.length > 0)).toBe(true);
   });
 
   it("新增知识科普提炼内置块", () => {

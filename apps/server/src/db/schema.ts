@@ -124,6 +124,8 @@ export const promptBlocks = sqliteTable("prompt_blocks", {
   name: text("name").notNull(),
   prompt: text("prompt").notNull(),
   builtin: integer("builtin").notNull().default(0),
+  /** M8-1：配方 JSON（阶段 C 提供编辑 UI 前恒为 NULL）。 */
+  recipe: text("recipe"),
   createdAt: integer("created_at").notNull(),
   updatedAt: integer("updated_at").notNull(),
 });
@@ -137,6 +139,8 @@ export const runNodeLogs = sqliteTable("run_node_logs", {
   nodeId: text("node_id").notNull(),
   kind: text("kind", { enum: ["input", "ai-request", "ai-response", "info", "error"] }).notNull(),
   content: text("content").notNull(),
+  /** M8-1：配方步骤 id；非配方节点日志为空。 */
+  step: text("step"),
   createdAt: integer("created_at").notNull(),
 });
 
