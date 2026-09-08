@@ -158,6 +158,11 @@
   color: var(--color-text);
 }
 
+.wp-ibtn.is-active {
+  background: var(--color-ink-soft);
+  color: var(--color-text);
+}
+
 .wp-filter {
   display: flex;
   align-items: center;
@@ -215,8 +220,6 @@
 /* 彻底去掉全局 focus outline 对左侧原生输入/下拉的蓝色外圈；聚焦只靠控件自身的边框色表达 */
 .wp-search-input:focus,
 .wp-search-input:focus-visible,
-.wp-sort:focus,
-.wp-sort:focus-visible,
 .wp-select:focus,
 .wp-select:focus-visible,
 .wp-input:focus,
@@ -242,31 +245,6 @@
 .wp-search-clear:hover {
   background: var(--color-border-strong);
   color: var(--color-text);
-}
-
-.wp-sort {
-  flex-shrink: 0;
-  height: var(--control-height-sm);
-  padding: 0 var(--control-padding-x);
-  border: 1px solid var(--control-border);
-  border-radius: var(--control-radius);
-  background: var(--control-bg);
-  color: var(--color-text);
-  font-family: inherit;
-  font-size: var(--control-font-size-sm);
-  outline: none;
-  cursor: pointer;
-  transition:
-    border-color var(--dur-1) var(--ease-out),
-    background-color var(--dur-1) var(--ease-out);
-}
-
-.wp-sort:hover {
-  border-color: var(--control-border-hover);
-}
-
-.wp-sort:focus-visible {
-  border-color: var(--control-border-focus);
 }
 
 .wp-selectionbar {
@@ -944,6 +922,14 @@
   flex-shrink: 0;
   font-size: 10.5px;
   color: var(--color-text-tertiary);
+}
+
+.wp-menu-check {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  margin-left: 8px;
+  color: var(--color-text-secondary);
 }
 
 .wp-menu-divider {

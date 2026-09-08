@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { Check } from "lucide-vue-next";
 
 export interface RowMenuItem {
   key: string;
@@ -9,6 +10,7 @@ export interface RowMenuItem {
   disabled?: boolean;
   hint?: string;
   divided?: boolean;
+  checked?: boolean;
 }
 
 const props = defineProps<{
@@ -130,6 +132,7 @@ watch(
           </span>
           <span class="wp-menu-label">{{ item.label }}</span>
           <span v-if="item.hint" class="wp-menu-hint">{{ item.hint }}</span>
+          <span v-if="item.checked" class="wp-menu-check"><Check :size="13" /></span>
         </button>
       </template>
     </div>

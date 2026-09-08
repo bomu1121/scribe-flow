@@ -4,6 +4,7 @@ import { useRoute, useRouter } from "vue-router";
 import { ElMessageBox } from "element-plus";
 import { toast } from "@/lib/toast";
 import {
+  ArrowUpDown,
   Folder as FolderIcon,
   FolderPlus,
   Plus,
@@ -62,6 +63,7 @@ const marquee = ref<{
 
 const search = ref("");
 const sortMode = ref<ProjectSortMode>("manual");
+const sortMenu = ref<{ x: number; y: number } | null>(null);
 const selectedIds = ref<Set<string>>(new Set());
 const anchorKey = ref<string | null>(null);
 
@@ -201,6 +203,26 @@ const openIds = computed(() => {
 
 const rootFolders = computed(() => visibleChildFolders(store.folders, store.list, null, search.value, sortMode.value));
 const rootProjects = computed<ProjectListItem[]>(() => visibleChildProjects(store.list, null, search.value, sortMode.value));
+
+const sortMenuItems = computed<RowMenuItem[]>(() => [
+  { key: "manual", label: "手动排序", checked: sortMode.value === "manual" },
+  { key: "name", label: "按名称排序", checked: sortMode.value === "name" },
+  { key: "updated", label: "按最近更新排序", checked: sortMode.value === "updated" },
+]);
+
+function openSortMenu(event: MouseEvent) {
+  if (sortMenu.value) {
+    sortMenu.value = null;
+    return;
+  }
+  const rect = (event.currentTarget as HTMLElement).getBoundingClientRect();
+  sortMenu.value = { x: rect.left, y: rect.bottom + 4 };
+}
+
+function selectSortMode(mode: string) {
+  if (mode === "manual" || mode === "name" || mode === "updated") sortMode.value = mode;
+  sortMenu.value = null;
+}
 
 function toggleFolder(id: string) {
   const isOpen = openIds.value.has(id);
@@ -1008,6 +1030,16 @@ onBeforeUnmount(() => {
       <button type="button" class="wp-ibtn" title="新建文件夹" aria-label="新建文件夹" @click="startCreateFolderAtContext"><FolderPlus :size="14" /></button>
       <button type="button" class="wp-ibtn" title="导入工程" aria-label="导入工程" @click="fileInput?.click()"><Upload :size="15" /></button>
       <button type="button" class="wp-ibtn" title="刷新" aria-label="刷新" @click="refresh"><RefreshCw :size="14" /></button>
+      <button
+        type="button"
+        class="wp-ibtn"
+        :class="{ 'is-active': sortMode !== 'manual' }"
+        :title="sortMode === 'manual' ? '排序方式' : `排序方式：${sortMode === 'name' ? '按名称' : '按最近更新'}`"
+        aria-label="排序方式"
+        @click="openSortMenu"
+      >
+        <ArrowUpDown :size="14" />
+      </button>
     </div>
 
     <div class="wp-filter">
@@ -1018,11 +1050,6 @@ onBeforeUnmount(() => {
           <X :size="12" />
         </button>
       </div>
-      <select v-model="sortMode" class="wp-sort" aria-label="排序方式" title="排序方式">
-        <option value="manual">手动</option>
-        <option value="name">名称</option>
-        <option value="updated">最近更新</option>
-      </select>
     </div>
 
     <div v-if="selectedIds.size > 1" class="wp-selectionbar">
@@ -1153,6 +1180,14 @@ onBeforeUnmount(() => {
       :items="rootMenuItems"
       @select="onRootMenuSelect"
       @close="rootMenu = null"
+    />
+    <RowMenu
+      v-if="sortMenu"
+      :x="sortMenu.x"
+      :y="sortMenu.y"
+      :items="sortMenuItems"
+      @select="selectSortMode"
+      @close="sortMenu = null"
     />
     <NewProjectDialog
       v-model:open="newOpen"
