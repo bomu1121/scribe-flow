@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { History, LayoutGrid, PenLine, Settings, Shapes } from "lucide-vue-next";
 import { useRunsStore } from "@/stores/runs";
 import { usePromptsStore } from "@/stores/prompts";
@@ -11,6 +11,12 @@ const promptsStore = usePromptsStore();
 const uiStore = useUiStore();
 
 const panelOpen = computed(() => uiStore.panelOpen);
+
+/** 面板内容首次打开后常驻，保证收起/展开动画期间内容不闪没，也避免冷启动无谓加载。 */
+const panelMounted = ref(uiStore.panelOpen);
+watch(panelOpen, (open) => {
+  if (open) panelMounted.value = true;
+});
 
 const railButtons: { tab: RailTab; label: string; icon: unknown }[] = [
   { tab: "projects", label: "工程", icon: LayoutGrid },
@@ -65,23 +71,25 @@ onBeforeUnmount(() => {
       </div>
     </nav>
 
-    <aside v-if="panelOpen" class="ws-panel">
-      <WorkspacePanel />
+    <aside class="ws-panel" :class="{ open: panelOpen }" :inert="!panelOpen" :aria-hidden="!panelOpen">
+      <WorkspacePanel v-if="panelMounted" />
     </aside>
 
-    <div v-if="panelOpen" class="ws-scrim" @click="uiStore.closePanel()" />
+    <div class="ws-scrim" :class="{ open: panelOpen }" @click="uiStore.closePanel()" />
 
     <main class="ws-main">
-      <button
-        v-if="!panelOpen"
-        type="button"
-        class="ws-mobile-panel-btn"
-        title="打开工程面板"
-        aria-label="打开工程面板"
-        @click="uiStore.openPanel('projects')"
-      >
-        <LayoutGrid :size="17" />
-      </button>
+      <Transition name="mobile-btn">
+        <button
+          v-if="!panelOpen"
+          type="button"
+          class="ws-mobile-panel-btn"
+          title="打开工程面板"
+          aria-label="打开工程面板"
+          @click="uiStore.openPanel('projects')"
+        >
+          <LayoutGrid :size="17" />
+        </button>
+      </Transition>
       <slot />
     </main>
   </div>
@@ -89,17 +97,17 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .ws-root {
+  position: relative;
   height: 100vh;
-  display: grid;
-  grid-template-columns: var(--rail-width) minmax(0, 1fr);
+  overflow: hidden;
   background: var(--color-bg);
 }
 
-.ws-root.has-panel {
-  grid-template-columns: var(--rail-width) var(--explorer-width) minmax(0, 1fr);
-}
-
 .ws-rail {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: var(--rail-width);
+  z-index: 3;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -180,19 +188,48 @@ onBeforeUnmount(() => {
 }
 
 .ws-panel {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: var(--rail-width);
+  z-index: 2;
+  width: var(--explorer-width);
   min-width: 0;
   min-height: 0;
   border-right: 1px solid var(--color-border);
   background: var(--color-surface);
   overflow: hidden;
+  transform: translateX(-100%);
+  visibility: hidden;
+  transition:
+    transform var(--dur-3) var(--ease-out),
+    visibility 0s linear var(--dur-3);
+  will-change: transform;
+}
+
+.ws-panel.open {
+  transform: translateX(0);
+  visibility: visible;
+  transition:
+    transform var(--dur-3) var(--ease-out),
+    visibility 0s linear 0s;
 }
 
 .ws-main {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: var(--rail-width);
   min-width: 0;
   min-height: 0;
   overflow: hidden;
-  position: relative;
   background: var(--color-canvas);
+  transition: left var(--dur-3) var(--ease-out);
+}
+
+.ws-root.has-panel .ws-main {
+  left: calc(var(--rail-width) + var(--explorer-width));
 }
 
 .ws-scrim {
@@ -203,14 +240,27 @@ onBeforeUnmount(() => {
   display: none;
 }
 
-@media (max-width: 860px) {
-  .ws-root,
-  .ws-root.has-panel {
-    grid-template-columns: minmax(0, 1fr);
-  }
+/* 收起后面板完全离场，再淡入移动端“打开面板”按钮，避免它浮在抽屉上。 */
+.mobile-btn-enter-active {
+  transition: opacity var(--dur-2) var(--ease-out) var(--dur-3);
+  pointer-events: none;
+}
 
+.mobile-btn-enter-from {
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* 面板抽屉：只动 transform + 主区 left，避免逐帧挤压侧栏内容导致抖动。 */
+@media (max-width: 860px) {
   .ws-rail {
     display: none;
+  }
+
+  .ws-main,
+  .ws-root.has-panel .ws-main {
+    left: 0;
+    transition: none;
   }
 
   .ws-scrim {
@@ -219,12 +269,22 @@ onBeforeUnmount(() => {
     inset: 0;
     z-index: calc(var(--z-overlay) - 10);
     background: var(--color-ink);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity var(--dur-3) var(--ease-out);
+  }
+
+  .ws-scrim.open {
+    display: block;
     opacity: 0.18;
+    pointer-events: auto;
   }
 
   .ws-panel {
     position: fixed;
-    inset: 0 auto 0 0;
+    top: 0;
+    bottom: 0;
+    left: 0;
     width: min(80vw, 320px);
     z-index: var(--z-overlay);
     box-shadow: var(--shadow-overlay);
@@ -249,6 +309,16 @@ onBeforeUnmount(() => {
 
   .ws-mobile-panel-btn:hover {
     color: var(--color-brand);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ws-panel,
+  .ws-panel.open,
+  .ws-scrim,
+  .ws-scrim.open,
+  .mobile-btn-enter-active {
+    transition-delay: 0s !important;
   }
 }
 </style>
