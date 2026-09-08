@@ -107,7 +107,7 @@ onBeforeUnmount(() => {
   position: absolute;
   inset: 0 auto 0 0;
   width: var(--rail-width);
-  z-index: 3;
+  z-index: var(--z-rail);
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -191,7 +191,7 @@ onBeforeUnmount(() => {
   top: 0;
   bottom: 0;
   left: var(--rail-width);
-  z-index: 2;
+  z-index: var(--z-panel);
   width: var(--explorer-width);
   min-width: 0;
   min-height: 0;

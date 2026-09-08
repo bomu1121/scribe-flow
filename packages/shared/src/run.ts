@@ -1,4 +1,5 @@
 import type { AsrEngine, WorkflowGraph } from "./graph";
+import type { NutstoreSettings } from "./nutstore";
 
 export type RunStatus = "running" | "success" | "error" | "cancelled";
 export type NodeResultStatus = "queued" | "running" | "done" | "error" | "cancelled" | "skipped";
@@ -148,6 +149,7 @@ export interface AppSettings {
     /** 是否双向回链旧笔记。 */
     autoLinkBidirectional: boolean;
   };
+  nutstore: NutstoreSettings;
 }
 
 export interface UpdateSettingsRequest {
@@ -178,5 +180,14 @@ export interface UpdateSettingsRequest {
     autoLinkEnabled?: boolean;
     autoLinkMax?: number;
     autoLinkBidirectional?: boolean;
+  };
+  nutstore?: {
+    serverUrl?: string;
+    account?: string;
+    /** 只写密钥；留空表示不修改。 */
+    password?: string;
+    remoteRoot?: string;
+    obsidianRemotePath?: string;
+    obsidianMode?: boolean;
   };
 }

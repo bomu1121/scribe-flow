@@ -3,6 +3,7 @@ import type { AiSettings, AppSettings, AsrSettings, UpdateSettingsRequest } from
 import type { AppDatabase } from "../db/client";
 import { appSettings } from "../db/schema";
 import type { AiConfig, AsrConfig } from "./ai";
+import type { NutstoreConfig } from "./nutstore";
 
 const AI_DEFAULTS: Record<string, string> = {
   "ai.provider": "deepseek",
@@ -32,6 +33,14 @@ const OBSIDIAN_DEFAULTS: Record<string, string> = {
   "obsidian.autoLinkBidirectional": "false",
 };
 
+const NUTSTORE_DEFAULTS: Record<string, string> = {
+  "nutstore.serverUrl": "https://dav.jianguoyun.com/dav/",
+  "nutstore.account": "",
+  "nutstore.remoteRoot": "/我的坚果云/ScribeFlow",
+  "nutstore.obsidianRemotePath": "/我的坚果云/ScribeFlow/Obsidian",
+  "nutstore.obsidianMode": "false",
+};
+
 const DEFAULT_TAG_TAXONOMY: Record<string, string[]> = {
   来源: ["B站", "文稿", "本地视频", "网页", "播客"],
   类型: ["视频笔记", "学习笔记", "思维导图", "会议纪要"],
@@ -53,6 +62,15 @@ function rawJson<T>(db: AppDatabase, key: string, fallback: T): T {
   } catch {
     return fallback;
   }
+}
+
+/** 把旧版默认路径 /ScribeFlow 迁移到坚果云本地同步文件夹内，避免备份“传到同步文件夹外”。 */
+function migrateNutstorePath(value: string, fallback: string): string {
+  if (!value) return fallback;
+  const normalized = value.trim().replace(/^\/+|\/+$/g, "");
+  if (normalized === "ScribeFlow") return fallback;
+  if (normalized === "ScribeFlow/Obsidian") return fallback;
+  return value;
 }
 
 export function getSettings(db: AppDatabase): AppSettings {
@@ -84,6 +102,14 @@ export function getSettings(db: AppDatabase): AppSettings {
       autoLinkMax: Number(raw(db, "obsidian.autoLinkMax", OBSIDIAN_DEFAULTS["obsidian.autoLinkMax"]) ?? 5) || 5,
       autoLinkBidirectional: raw(db, "obsidian.autoLinkBidirectional", OBSIDIAN_DEFAULTS["obsidian.autoLinkBidirectional"]) === "true",
     },
+    nutstore: {
+      serverUrl: raw(db, "nutstore.serverUrl", NUTSTORE_DEFAULTS["nutstore.serverUrl"]) ?? "https://dav.jianguoyun.com/dav/",
+      account: raw(db, "nutstore.account", NUTSTORE_DEFAULTS["nutstore.account"]) ?? "",
+      hasPassword: Boolean(raw(db, "nutstore.password", "")),
+      remoteRoot: migrateNutstorePath(raw(db, "nutstore.remoteRoot", NUTSTORE_DEFAULTS["nutstore.remoteRoot"]) ?? "/我的坚果云/ScribeFlow", "/我的坚果云/ScribeFlow"),
+      obsidianRemotePath: migrateNutstorePath(raw(db, "nutstore.obsidianRemotePath", NUTSTORE_DEFAULTS["nutstore.obsidianRemotePath"]) ?? "/我的坚果云/ScribeFlow/Obsidian", "/我的坚果云/ScribeFlow/Obsidian"),
+      obsidianMode: raw(db, "nutstore.obsidianMode", NUTSTORE_DEFAULTS["nutstore.obsidianMode"]) === "true",
+    },
   };
 }
 
@@ -104,6 +130,15 @@ export function getAsrConfig(db: AppDatabase): AsrConfig {
     baseUrl: settings.asr.baseUrl,
     model: settings.asr.model,
     apiKey: raw(db, "asr.apiKey", ""),
+  };
+}
+
+export function getNutstoreConfig(db: AppDatabase): NutstoreConfig {
+  const settings = getSettings(db);
+  return {
+    serverUrl: settings.nutstore.serverUrl.trim().replace(/\/+$/, "") + "/",
+    account: settings.nutstore.account.trim(),
+    password: raw(db, "nutstore.password", ""),
   };
 }
 
@@ -139,5 +174,22 @@ export function updateSettings(db: AppDatabase, patch: UpdateSettingsRequest) {
     if (patch.obsidian.autoLinkEnabled !== undefined) set(db, "obsidian.autoLinkEnabled", patch.obsidian.autoLinkEnabled ? "true" : "false");
     if (patch.obsidian.autoLinkMax !== undefined) set(db, "obsidian.autoLinkMax", String(Math.max(0, Math.min(20, patch.obsidian.autoLinkMax))));
     if (patch.obsidian.autoLinkBidirectional !== undefined) set(db, "obsidian.autoLinkBidirectional", patch.obsidian.autoLinkBidirectional ? "true" : "false");
+  }
+  if (patch.nutstore) {
+    if (patch.nutstore.serverUrl !== undefined) {
+      const value = patch.nutstore.serverUrl.trim().replace(/\/+$/, "") || "https://dav.jianguoyun.com/dav";
+      set(db, "nutstore.serverUrl", `${value}/`);
+    }
+    if (patch.nutstore.account !== undefined) set(db, "nutstore.account", patch.nutstore.account.trim());
+    if (patch.nutstore.password !== undefined && patch.nutstore.password.trim()) set(db, "nutstore.password", patch.nutstore.password.trim());
+    if (patch.nutstore.remoteRoot !== undefined) {
+      const value = patch.nutstore.remoteRoot.trim().replace(/\/+$/, "");
+      set(db, "nutstore.remoteRoot", value ? (value.startsWith("/") ? value : `/${value}`) : "/我的坚果云/ScribeFlow");
+    }
+    if (patch.nutstore.obsidianRemotePath !== undefined) {
+      const value = patch.nutstore.obsidianRemotePath.trim().replace(/\/+$/, "");
+      set(db, "nutstore.obsidianRemotePath", value ? (value.startsWith("/") ? value : `/${value}`) : "/我的坚果云/ScribeFlow/Obsidian");
+    }
+    if (patch.nutstore.obsidianMode !== undefined) set(db, "nutstore.obsidianMode", patch.nutstore.obsidianMode ? "true" : "false");
   }
 }

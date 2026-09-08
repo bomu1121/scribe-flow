@@ -1,6 +1,15 @@
 import { defineStore } from "pinia";
 import { ref, watch } from "vue";
-import type { AiProvider, AppSettings, AsrEngine, UpdateSettingsRequest } from "@scribe-flow/shared";
+import type {
+  AiProvider,
+  AppSettings,
+  AsrEngine,
+  NutstoreBackupItem,
+  NutstoreListResult,
+  NutstoreReadResult,
+  NutstoreSyncResult,
+  UpdateSettingsRequest,
+} from "@scribe-flow/shared";
 import { api } from "@/lib/api";
 
 const AI_KEY_DRAFT_STORAGE = "scribe-flow.aiKeyDraft";
@@ -70,8 +79,13 @@ export const useSettingsStore = defineStore("settings", () => {
   }
 
   async function loadObsidianFolders() {
-    const data = await api.get<{ items: string[] }>("/api/settings/obsidian/folders");
-    obsidianFolders.value = data.items ?? [];
+    try {
+      const data = await api.get<{ items: string[] }>("/api/settings/obsidian/folders");
+      obsidianFolders.value = data.items ?? [];
+    } catch {
+      // 读取目录失败不应阻塞设置页/节点；由用户在设置页手动重试并看到明确错误。
+      obsidianFolders.value = [];
+    }
   }
 
   async function testAi(payload?: AiTestPayload): Promise<AiTestResult> {
@@ -89,5 +103,44 @@ export const useSettingsStore = defineStore("settings", () => {
     return result.content ?? "连接正常";
   }
 
-  return { settings, loading, obsidianFolders, aiKeyDraft, asrKeyDraft, load, save, loadObsidianFolders, testAi, testAsr, fetchAiModels };
+  async function testNutstore(payload?: { serverUrl?: string; account?: string; password?: string; remotePath?: string }) {
+    const result = await api.post<{ ok: boolean; webdav: string }>("/api/nutstore/test", payload);
+    return result.webdav;
+  }
+
+  async function listNutstore(path?: string): Promise<NutstoreListResult> {
+    const query = path ? `?path=${encodeURIComponent(path)}` : "";
+    return api.get<NutstoreListResult>(`/api/nutstore/list${query}`);
+  }
+
+  async function listNutstoreFolders(path?: string, maxDepth = 3): Promise<string[]> {
+    const query = new URLSearchParams();
+    if (path) query.set("path", path);
+    query.set("maxDepth", String(maxDepth));
+    const result = await api.get<{ items: string[] }>(`/api/nutstore/folders?${query.toString()}`);
+    return result.items ?? [];
+  }
+
+  async function readNutstore(path: string): Promise<NutstoreReadResult> {
+    return api.get<NutstoreReadResult>(`/api/nutstore/read?path=${encodeURIComponent(path)}`);
+  }
+
+  async function pushNutstore(localPath?: string, remotePath?: string): Promise<NutstoreSyncResult> {
+    return api.post<NutstoreSyncResult>("/api/nutstore/sync/push", { localPath, remotePath });
+  }
+
+  async function pullNutstore(localPath?: string, remotePath?: string): Promise<NutstoreSyncResult> {
+    return api.post<NutstoreSyncResult>("/api/nutstore/sync/pull", { localPath, remotePath });
+  }
+
+  async function backupNutstore(): Promise<{ remotePath: string; files: string[]; uploadedAt: number }> {
+    return api.post<{ remotePath: string; files: string[]; uploadedAt: number }>("/api/nutstore/backup");
+  }
+
+  async function listNutstoreBackups(): Promise<NutstoreBackupItem[]> {
+    const result = await api.get<{ items: NutstoreBackupItem[] }>("/api/nutstore/backups");
+    return result.items ?? [];
+  }
+
+  return { settings, loading, obsidianFolders, aiKeyDraft, asrKeyDraft, load, save, loadObsidianFolders, testAi, testAsr, fetchAiModels, testNutstore, listNutstore, listNutstoreFolders, readNutstore, pushNutstore, pullNutstore, backupNutstore, listNutstoreBackups };
 });

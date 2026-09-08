@@ -9,6 +9,7 @@ import { authApi } from "./routes/auth";
 import { bilibiliApi } from "./routes/bilibili";
 import { filesApi } from "./routes/files";
 import { settingsApi } from "./routes/settings";
+import { nutstoreApi } from "./routes/nutstore";
 import { promptsApi } from "./routes/prompts";
 import { projectRunsApi, runsApi } from "./routes/runs";
 import { RunEngine } from "./lib/engine";
@@ -44,6 +45,7 @@ export function createApp(db: AppDatabase, options: AppOptions) {
   app.route("/api/bilibili", bilibiliApi(db));
   app.route("/api/files", filesApi(options.uploadsDir, options.maxUploadMb));
   app.route("/api/settings", settingsApi(db, engine, options.dataDir));
+  app.route("/api/nutstore", nutstoreApi(db, options.dataDir));
   app.route("/api/prompts", promptsApi(db));
 
   app.notFound((c) => c.json({ error: "接口不存在" }, 404));

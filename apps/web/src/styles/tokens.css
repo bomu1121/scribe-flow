@@ -101,6 +101,8 @@
   --control-placeholder: var(--color-text-tertiary);
 
   /* 浮层层级（Teleport 组件必须统一从这里取值，禁止散写 z-index） */
+  --z-rail: 3;
+  --z-panel: 2;
   --z-overlay: 1000;
   --z-dialog: 1010;
   --z-select: 1120;

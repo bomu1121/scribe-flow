@@ -22,7 +22,8 @@ import { chatCompletion, transcribeAudio } from "./ai";
 import { fetchBiliVideoDetail } from "./bilibili";
 import { countMindMapNodes, mindMapToMarkdown, parseMindMapJson } from "./mindmap";
 import { downloadBiliAudio, toAsrWav } from "./media";
-import { getAiConfig, getAsrConfig, getSettings } from "./settings";
+import { ensureRemoteDirectory, scanRemoteMarkdown, writeRemoteFile, type NutstoreConfig } from "./nutstore";
+import { getAiConfig, getAsrConfig, getNutstoreConfig, getSettings } from "./settings";
 
 const MAX_INLINE_TEXT = 200_000;
 
@@ -1120,13 +1121,30 @@ export class RunEngine {
       case "process.obsidian": {
         if (!inputs.text) throw new Error("没有可写入 Obsidian 的文稿");
         const settings = getSettings(this.db);
-        const vaultPath = settings.obsidian.vaultPath.trim();
-        if (!vaultPath) throw new Error("未配置 Obsidian 库路径，请到设置页填写");
+        const nutstoreMode = settings.nutstore.obsidianMode;
+        if (nutstoreMode && !settings.nutstore.hasPassword) {
+          throw new Error("已开启坚果云 Obsidian 模式，但尚未配置坚果云账号/应用密码，请到设置页填写");
+        }
+        let config: NutstoreConfig | undefined;
+        let vaultPath = "";
+        let dir = "";
+        let remoteObsidianRoot = "";
+        let remoteDir = "";
         const folder = (String(data.folder ?? "").trim() || settings.obsidian.folder || "00-Inbox").replace(/^[\\/]+|[\\/]+$/g, "");
         const segments = folder.split(/[\\/]+/).filter(Boolean);
         if (segments.some((segment) => segment === "..")) throw new Error("Obsidian 保存目录不能包含 ..");
-        const dir = join(vaultPath, ...segments);
-        await mkdir(dir, { recursive: true });
+        if (nutstoreMode) {
+          config = getNutstoreConfig(this.db);
+          if (!config.account || !config.password) throw new Error("坚果云账号或应用密码为空，请到设置页填写");
+          remoteObsidianRoot = (settings.nutstore.obsidianRemotePath || "/我的坚果云/ScribeFlow/Obsidian").replace(/\/+$/, "");
+          remoteDir = segments.length ? `${remoteObsidianRoot}/${segments.join("/")}` : remoteObsidianRoot;
+          await ensureRemoteDirectory(config, remoteDir);
+        } else {
+          vaultPath = settings.obsidian.vaultPath.trim();
+          if (!vaultPath) throw new Error("未配置 Obsidian 库路径，请到设置页填写");
+          dir = join(vaultPath, ...segments);
+          await mkdir(dir, { recursive: true });
+        }
         const text = inputs.text.trim();
         const meta = this.upstreamSourceMeta(active, node.id);
         const source = String(data.source ?? "").trim() || meta.source || "";
@@ -1164,12 +1182,17 @@ export class RunEngine {
         const body = text.startsWith("# ") ? text : `# ${title}\n\n${text}`;
         let markdown = `${frontmatterLines.join("\n")}\n\n${body}\n`;
         const fileName = `${escapePathName(title)}.md`;
-        const outPath = join(dir, fileName);
+        const outPath = nutstoreMode ? `${remoteDir}/${fileName}` : join(dir, fileName);
 
         // 自动关联：只按人物/事件/时期判断相关性，找到后写入 [[链接]]。
         let relatedNames: string[] = [];
         if (settings.obsidian.autoLinkEnabled && settings.obsidian.autoLinkMax > 0) {
-          const existingNotes = await this.scanObsidianNotes(vaultPath, outPath);
+          let existingNotes: Array<{ absPath: string; name: string; persons: string[]; events: string[]; periods: string[]; content: string }>;
+          if (nutstoreMode && config) {
+            existingNotes = await this.scanRemoteObsidianNotes(config, remoteObsidianRoot);
+          } else {
+            existingNotes = await this.scanObsidianNotes(vaultPath, outPath);
+          }
           relatedNames = this.findRelatedNoteNames(
             { persons: entities.persons, events: entities.events, periods: entities.periods, title },
             existingNotes,
@@ -1180,12 +1203,17 @@ export class RunEngine {
           }
         }
 
-        await writeFile(outPath, markdown, "utf8");
-        await this.log(active, node.id, "info", `已写入 Obsidian：${outPath}`);
+        if (nutstoreMode && config) {
+          await writeRemoteFile(config, outPath, markdown);
+          await this.log(active, node.id, "info", `已写入坚果云 Obsidian：${outPath}`);
+        } else {
+          await writeFile(outPath, markdown, "utf8");
+          await this.log(active, node.id, "info", `已写入 Obsidian：${outPath}`);
+        }
         const linkText = relatedNames.length > 0 ? ` · 关联 ${relatedNames.length} 篇` : "";
         return {
           outputs: [{ kind: "noteDoc", text: markdown, size: markdown.length, path: outPath }],
-          summary: `已保存到 Obsidian：${folder}/${fileName}${linkText}`,
+          summary: `已保存到 ${nutstoreMode ? "坚果云 Obsidian" : "Obsidian"}：${folder}/${fileName}${linkText}`,
         };
       }
 
@@ -1306,6 +1334,22 @@ ${JSON.stringify(taxonomyTags)}`;
     };
     await walk(vaultPath, "");
     return results;
+  }
+
+  /** 扫描坚果云远程 Obsidian 库内已有笔记（内容只用于相关性判断）。 */
+  private async scanRemoteObsidianNotes(
+    config: NutstoreConfig,
+    remoteRoot: string,
+  ): Promise<Array<{ absPath: string; name: string; persons: string[]; events: string[]; periods: string[]; content: string }>> {
+    const notes = await scanRemoteMarkdown(config, remoteRoot, { maxFiles: 2000, maxFileBytes: 1024 * 1024 });
+    return notes.map((note) => ({
+      absPath: note.path,
+      name: note.name.replace(/\.md$/, ""),
+      persons: parseYamlFieldList(note.content, "人物"),
+      events: parseYamlFieldList(note.content, "事件"),
+      periods: parseYamlFieldList(note.content, "时期"),
+      content: note.content,
+    }));
   }
 
   /** 根据当前笔记的人物/事件/时期，找出库内相关笔记名。 */

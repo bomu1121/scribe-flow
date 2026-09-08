@@ -6,6 +6,7 @@ import {
   VueFlow,
   type Connection,
   type EdgeChange,
+  type EdgeMouseEvent,
   type NodeChange,
   type NodeMouseEvent,
   type ViewportTransform,
@@ -44,6 +45,7 @@ const emit = defineEmits<{
 const nodesRef = ref<ScribeFlowNode[]>([]);
 const edgesRef = ref<ScribeFlowEdge[]>([]);
 const viewportRef = ref<ViewportTransform>({ x: 0, y: 0, zoom: 1 });
+const edgeMenu = ref<{ x: number; y: number; edgeId: string } | null>(null);
 
 const history = ref<WorkflowGraph[]>([]);
 const historyIndex = ref(-1);
@@ -125,10 +127,12 @@ function loadGraph(graph: WorkflowGraph) {
 onMounted(() => {
   initFromGraph(props.initialGraph);
   window.addEventListener("keydown", onKeydown);
+  window.addEventListener("pointerdown", onWindowPointerDown);
 });
 
 onBeforeUnmount(() => {
   window.removeEventListener("keydown", onKeydown);
+  window.removeEventListener("pointerdown", onWindowPointerDown);
 });
 
 // ---------- Vue Flow 事件 ----------
@@ -224,6 +228,40 @@ function onNodeDragStop() {
 
 function onViewportChange(viewport: ViewportTransform) {
   viewportRef.value = { x: viewport.x, y: viewport.y, zoom: viewport.zoom };
+  emitGraph();
+}
+
+// ---------- 连线右键菜单 ----------
+
+function onWindowPointerDown(event: PointerEvent) {
+  if (!edgeMenu.value) return;
+  const target = event.target;
+  if (target instanceof Element && target.closest(".sf-edge-menu")) return;
+  closeEdgeMenu();
+}
+
+function closeEdgeMenu() {
+  edgeMenu.value = null;
+}
+
+function openEdgeContextMenu({ event, edge }: EdgeMouseEvent) {
+  event.preventDefault();
+  const mouseEvent = event as MouseEvent;
+  const menuWidth = 196;
+  const menuHeight = 88;
+  edgeMenu.value = {
+    x: Math.max(8, Math.min(mouseEvent.clientX, window.innerWidth - menuWidth - 8)),
+    y: Math.max(8, Math.min(mouseEvent.clientY, window.innerHeight - menuHeight - 8)),
+    edgeId: edge.id,
+  };
+}
+
+function removeEdgeFromMenu() {
+  const edgeId = edgeMenu.value?.edgeId;
+  if (!edgeId) return;
+  closeEdgeMenu();
+  edgesRef.value = edgesRef.value.filter((edge) => edge.id !== edgeId);
+  pushHistory();
   emitGraph();
 }
 
@@ -449,6 +487,11 @@ function applyHistory() {
 function onKeydown(event: KeyboardEvent) {
   const target = event.target as HTMLElement | null;
   if (target && (target.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName))) return;
+
+  if (event.key === "Escape" && edgeMenu.value) {
+    closeEdgeMenu();
+    return;
+  }
 
   const mod = event.ctrlKey || event.metaKey;
   const key = event.key.toLowerCase();
@@ -690,6 +733,7 @@ defineExpose({
       :fit-view-on-init="true"
       @nodes-change="onNodesChange"
       @edges-change="onEdgesChange"
+      @edge-context-menu="openEdgeContextMenu"
       @connect="onConnect"
       @node-click="onNodeClick"
       @pane-click="onPaneClick"
@@ -700,6 +744,20 @@ defineExpose({
       <Controls position="bottom-left" />
       <MiniMap position="bottom-right" :pannable="true" :zoomable="true" />
     </VueFlow>
+
+    <Teleport to="body">
+      <div
+        v-if="edgeMenu"
+        class="sf-node-menu sf-edge-menu"
+        role="menu"
+        :style="{ left: `${edgeMenu.x}px`, top: `${edgeMenu.y}px` }"
+        @contextmenu.prevent
+      >
+        <button type="button" class="sf-node-menu-item sf-node-menu-item--danger" role="menuitem" @click="removeEdgeFromMenu">
+          删除连线
+        </button>
+      </div>
+    </Teleport>
   </div>
 </template>
 
@@ -710,5 +768,29 @@ defineExpose({
   min-width: 0;
   height: 100%;
   background: var(--color-canvas);
+}
+</style>
+
+<style>
+.sf-edge-menu {
+  position: fixed;
+  z-index: var(--z-dropdown-modal);
+}
+
+.sf-edge-menu .sf-node-menu-item {
+  display: block;
+  width: 100%;
+  border: none;
+  background: transparent;
+  font-family: inherit;
+  text-align: left;
+}
+
+.sf-edge-menu .sf-node-menu-item:hover {
+  background: var(--color-ink-soft);
+}
+
+.sf-edge-menu .sf-node-menu-item--danger:hover {
+  background: var(--color-error-soft);
 }
 </style>

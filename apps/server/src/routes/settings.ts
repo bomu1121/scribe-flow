@@ -8,7 +8,8 @@ import { z } from "zod";
 import type { AppDatabase } from "../db/client";
 import { runs } from "../db/schema";
 import { chatCompletion, listAiModels, transcribeAudio } from "../lib/ai";
-import { getAiConfig, getAsrConfig, getSettings, updateSettings } from "../lib/settings";
+import { getAiConfig, getAsrConfig, getNutstoreConfig, getSettings, updateSettings } from "../lib/settings";
+import { listRemoteDirectories } from "../lib/nutstore";
 import type { RunEngine } from "../lib/engine";
 
 const updateSchema = z.object({
@@ -45,6 +46,16 @@ const updateSchema = z.object({
       autoLinkEnabled: z.boolean().optional(),
       autoLinkMax: z.number().int().min(0).max(20).optional(),
       autoLinkBidirectional: z.boolean().optional(),
+    })
+    .optional(),
+  nutstore: z
+    .object({
+      serverUrl: z.string().trim().max(500).optional(),
+      account: z.string().trim().max(300).optional(),
+      password: z.string().max(500).optional(),
+      remoteRoot: z.string().trim().max(500).optional(),
+      obsidianRemotePath: z.string().trim().max(500).optional(),
+      obsidianMode: z.boolean().optional(),
     })
     .optional(),
 });
@@ -166,7 +177,24 @@ export function settingsApi(db: AppDatabase, engine: RunEngine, dataDir: string)
   });
 
   api.get("/obsidian/folders", async (c) => {
-    const vaultPath = getSettings(db).obsidian.vaultPath.trim();
+    const settings = getSettings(db);
+    // 云端模式：读取坚果云远程目录树；否则读取本地 Obsidian 库目录树。
+    if (settings.nutstore.obsidianMode && settings.nutstore.hasPassword) {
+      try {
+        const config = getNutstoreConfig(db);
+        const remotePath = settings.nutstore.obsidianRemotePath || "/我的坚果云/ScribeFlow/Obsidian";
+        const remoteDirs = await listRemoteDirectories(config, remotePath, 3);
+        const rootRel = remotePath.replace(/^\/+|\/+$/g, "");
+        const items = remoteDirs.map((dir) => {
+          const rel = dir.replace(/^\/+/, "").replace(new RegExp(`^${rootRel.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}/?`), "");
+          return rel || "";
+        }).filter(Boolean);
+        return c.json({ items });
+      } catch (err) {
+        return c.json({ error: err instanceof Error ? err.message : "读取坚果云目录失败" }, 400);
+      }
+    }
+    const vaultPath = settings.obsidian.vaultPath.trim();
     if (!vaultPath) return c.json({ items: [] });
     const items: string[] = [];
     const walk = async (dir: string, rel: string, depth: number) => {

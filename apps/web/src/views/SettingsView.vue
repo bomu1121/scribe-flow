@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from "vue";
 import { ElInput, ElInputNumber, ElMessageBox, ElOption, ElSelect, ElSwitch } from "element-plus";
-import { Cloud, Mic, PlugZap, Save, Trash2 } from "lucide-vue-next";
+import { Cloud, Download, FolderOpen, Mic, PlugZap, RefreshCw, Save, Trash2, Upload } from "lucide-vue-next";
 import { toast } from "@/lib/toast";
 import ModelSelect from "../components/ModelSelect.vue";
 import type { AiProvider, AsrEngine, PromptBlock } from "@scribe-flow/shared";
@@ -19,6 +19,7 @@ const groups = [
   { key: "asr", label: "语音识别" },
   { key: "general", label: "常规" },
   { key: "obsidian", label: "Obsidian" },
+  { key: "nutstore", label: "坚果云" },
   { key: "prompts", label: "提示词块库" },
   { key: "bili", label: "B 站账号" },
   { key: "data", label: "数据与工程" },
@@ -47,6 +48,12 @@ const form = reactive({
   obsidianAutoLinkEnabled: true,
   obsidianAutoLinkMax: 5,
   obsidianAutoLinkBidirectional: false,
+  nutstoreServerUrl: "https://dav.jianguoyun.com/dav/",
+  nutstoreAccount: "",
+  nutstorePassword: "",
+  nutstoreRemoteRoot: "/我的坚果云/ScribeFlow",
+  nutstoreObsidianRemotePath: "/我的坚果云/ScribeFlow/Obsidian",
+  nutstoreObsidianMode: false,
 });
 
 const DEEPSEEK_DEFAULT_MODELS = ["deepseek-chat", "deepseek-reasoner"] as const;
@@ -54,6 +61,7 @@ const aiModelOptions = ref<string[]>([...DEEPSEEK_DEFAULT_MODELS]);
 const aiModelLoading = ref(false);
 const aiTesting = ref(false);
 const asrTesting = ref(false);
+const nutstoreTesting = ref(false);
 
 watch(
   () => form.aiKey,
@@ -81,6 +89,23 @@ const asrOptions = [
 
 const blockForm = reactive({ id: "", name: "", prompt: "" });
 const dataInfo = ref<{ dataDir: string; runCount: number; finishedRunCount: number; outputFiles: number; outputBytes: number } | null>(null);
+const nutstoreRemoteFolders = ref<string[]>([]);
+const nutstoreRemoteFiles = ref<Array<{ path: string; name: string; type: "folder" | "file"; size?: number; lastModified?: number }>>([]);
+const nutstoreReading = ref(false);
+const nutstoreSyncing = ref(false);
+const nutstoreBackingUp = ref(false);
+const nutstoreBackups = ref<Array<{ path: string; name: string; lastModified?: number }>>([]);
+const nutstoreBackupFiles = ref<Array<{ path: string; name: string; type: "folder" | "file"; size?: number }>>([]);
+const remotePreview = ref<{ path: string; content: string } | null>(null);
+const nutstoreResult = ref<{
+  action: string;
+  detail?: string;
+  transferred?: number;
+  skipped?: number;
+  skippedItems?: Array<{ path: string; reason: string }>;
+  errors?: Array<{ path: string; message: string }>;
+  items?: string[];
+} | null>(null);
 
 const seriesFilter = ref("all");
 const versionFilter = ref("all");
@@ -232,6 +257,11 @@ function fillForm() {
   form.obsidianAutoLinkEnabled = store.settings.obsidian.autoLinkEnabled;
   form.obsidianAutoLinkMax = store.settings.obsidian.autoLinkMax;
   form.obsidianAutoLinkBidirectional = store.settings.obsidian.autoLinkBidirectional;
+  form.nutstoreServerUrl = store.settings.nutstore.serverUrl;
+  form.nutstoreAccount = store.settings.nutstore.account;
+  form.nutstoreRemoteRoot = store.settings.nutstore.remoteRoot;
+  form.nutstoreObsidianRemotePath = store.settings.nutstore.obsidianRemotePath;
+  form.nutstoreObsidianMode = store.settings.nutstore.obsidianMode;
   form.aiKey = store.aiKeyDraft || "";
   form.asrKey = store.asrKeyDraft || "";
   if (form.aiProvider === "deepseek") {
@@ -303,6 +333,14 @@ async function saveAll() {
         autoLinkMax: form.obsidianAutoLinkMax,
         autoLinkBidirectional: form.obsidianAutoLinkBidirectional,
       },
+      nutstore: {
+        serverUrl: form.nutstoreServerUrl,
+        account: form.nutstoreAccount,
+        password: form.nutstorePassword || undefined,
+        remoteRoot: form.nutstoreRemoteRoot,
+        obsidianRemotePath: form.nutstoreObsidianRemotePath,
+        obsidianMode: form.nutstoreObsidianMode,
+      },
     });
     toast.success("设置已保存");
     await store.load();
@@ -351,6 +389,168 @@ async function testAsr() {
     toast.error(err instanceof Error ? err.message : "ASR 连接失败");
   } finally {
     asrTesting.value = false;
+  }
+}
+
+async function testNutstore() {
+  nutstoreTesting.value = true;
+  try {
+    const webdav = await store.testNutstore({
+      serverUrl: form.nutstoreServerUrl,
+      account: form.nutstoreAccount,
+      password: form.nutstorePassword || undefined,
+      remotePath: "/",
+    });
+    toast.success(`坚果云连接正常：${webdav}`);
+  } catch (err) {
+    toast.error(err instanceof Error ? err.message : "坚果云连接失败");
+  } finally {
+    nutstoreTesting.value = false;
+  }
+}
+
+async function loadNutstoreFolders() {
+  nutstoreReading.value = true;
+  try {
+    const dirs = await store.listNutstoreFolders(form.nutstoreObsidianRemotePath, 3);
+    nutstoreRemoteFolders.value = dirs;
+    nutstoreResult.value = {
+      action: "读取云端目录",
+      detail: `读取完成，共发现 ${dirs.length} 个子目录（根：${form.nutstoreObsidianRemotePath || "/我的坚果云/ScribeFlow/Obsidian"}）`,
+      items: dirs,
+    };
+    toast.success(`已读取坚果云 Obsidian 目录：${dirs.length} 个`);
+  } catch (err) {
+    nutstoreResult.value = { action: "读取云端目录", errors: [{ path: form.nutstoreObsidianRemotePath || "", message: err instanceof Error ? err.message : "读取坚果云目录失败" }] };
+    toast.error(err instanceof Error ? err.message : "读取坚果云目录失败");
+  } finally {
+    nutstoreReading.value = false;
+  }
+}
+
+async function loadNutstoreFiles() {
+  nutstoreReading.value = true;
+  try {
+    const result = await store.listNutstore(form.nutstoreObsidianRemotePath);
+    nutstoreRemoteFiles.value = result.items;
+    const markdownFiles = result.items.filter((item) => item.type === "file" && item.name.endsWith(".md"));
+    nutstoreResult.value = {
+      action: "读取云端文件",
+      detail: `读取完成：目录项 ${result.items.length} 个，其中 Markdown ${markdownFiles.length} 个（根：${form.nutstoreObsidianRemotePath || "/我的坚果云/ScribeFlow/Obsidian"}）${result.truncated ? "；注意：结果可能不完整" : ""}`,
+      items: markdownFiles.map((item) => item.name),
+    };
+    if (result.truncated) toast.warning("目录项较多，坚果云单次列表可能不完整，建议按子目录逐层读取");
+    else toast.success(`已读取坚果云文件：${result.items.length} 个`);
+  } catch (err) {
+    nutstoreResult.value = { action: "读取云端文件", errors: [{ path: form.nutstoreObsidianRemotePath || "", message: err instanceof Error ? err.message : "读取坚果云文件失败" }] };
+    toast.error(err instanceof Error ? err.message : "读取坚果云文件失败");
+  } finally {
+    nutstoreReading.value = false;
+  }
+}
+
+async function previewRemoteFile(path: string) {
+  try {
+    const result = await store.readNutstore(path);
+    remotePreview.value = { path: result.path, content: result.content.slice(0, 5000) };
+    nutstoreResult.value = { action: "读取远程笔记", detail: `已读取 ${result.path}（${result.size} 字节）` };
+  } catch (err) {
+    nutstoreResult.value = { action: "读取远程笔记", errors: [{ path, message: err instanceof Error ? err.message : "读取坚果云笔记失败" }] };
+    toast.error(err instanceof Error ? err.message : "读取坚果云笔记失败");
+  }
+}
+
+async function pushObsidian() {
+  nutstoreSyncing.value = true;
+  try {
+    const result = await store.pushNutstore(undefined, form.nutstoreObsidianRemotePath);
+    nutstoreResult.value = {
+      action: "推送本地到坚果云",
+      detail: `完成：推送 ${result.transferred} 篇，跳过/冲突 ${result.skipped} 篇，失败 ${result.errors.length} 篇`,
+      transferred: result.transferred,
+      skipped: result.skipped,
+      skippedItems: result.skippedItems,
+      errors: result.errors,
+    };
+    const skipped = result.skipped > 0 ? `，跳过 ${result.skipped} 个（云端较新/冲突）` : "";
+    const errors = result.errors.length > 0 ? `，${result.errors.length} 个失败` : "";
+    toast.success(`已推送 ${result.transferred} 篇笔记到坚果云${skipped}${errors}`);
+  } catch (err) {
+    nutstoreResult.value = { action: "推送本地到坚果云", errors: [{ path: "", message: err instanceof Error ? err.message : "推送失败" }] };
+    toast.error(err instanceof Error ? err.message : "推送失败");
+  } finally {
+    nutstoreSyncing.value = false;
+  }
+}
+
+async function pullObsidian() {
+  nutstoreSyncing.value = true;
+  try {
+    const result = await store.pullNutstore(undefined, form.nutstoreObsidianRemotePath);
+    nutstoreResult.value = {
+      action: "拉取坚果云到本地",
+      detail: `完成：拉取 ${result.transferred} 篇，跳过/冲突 ${result.skipped} 篇，失败 ${result.errors.length} 篇`,
+      transferred: result.transferred,
+      skipped: result.skipped,
+      skippedItems: result.skippedItems,
+      errors: result.errors,
+    };
+    const skipped = result.skipped > 0 ? `，跳过 ${result.skipped} 个（本地较新/冲突）` : "";
+    const errors = result.errors.length > 0 ? `，${result.errors.length} 个失败` : "";
+    toast.success(`已从坚果云拉取 ${result.transferred} 篇笔记${skipped}${errors}`);
+  } catch (err) {
+    nutstoreResult.value = { action: "拉取坚果云到本地", errors: [{ path: "", message: err instanceof Error ? err.message : "拉取失败" }] };
+    toast.error(err instanceof Error ? err.message : "拉取失败");
+  } finally {
+    nutstoreSyncing.value = false;
+  }
+}
+
+async function backupToNutstore() {
+  nutstoreBackingUp.value = true;
+  try {
+    const result = await store.backupNutstore();
+    nutstoreBackups.value = await store.listNutstoreBackups();
+    nutstoreResult.value = { action: "备份到坚果云", detail: `备份完成：${result.remotePath}`, items: result.files };
+    toast.success(`已备份到坚果云：${result.remotePath}`);
+  } catch (err) {
+    nutstoreResult.value = { action: "备份到坚果云", errors: [{ path: "", message: err instanceof Error ? err.message : "备份失败" }] };
+    toast.error(err instanceof Error ? err.message : "备份失败");
+  } finally {
+    nutstoreBackingUp.value = false;
+  }
+}
+
+async function loadNutstoreBackups() {
+  nutstoreBackingUp.value = true;
+  try {
+    nutstoreBackups.value = await store.listNutstoreBackups();
+    nutstoreBackupFiles.value = [];
+    nutstoreResult.value = { action: "读取备份列表", detail: `读取到 ${nutstoreBackups.value.length} 个云端备份` };
+  } catch (err) {
+    nutstoreResult.value = { action: "读取备份列表", errors: [{ path: "", message: err instanceof Error ? err.message : "读取备份列表失败" }] };
+    toast.error(err instanceof Error ? err.message : "读取备份列表失败");
+  } finally {
+    nutstoreBackingUp.value = false;
+  }
+}
+
+async function loadNutstoreBackupFiles(backupPath: string) {
+  nutstoreReading.value = true;
+  try {
+    const result = await store.listNutstore(backupPath);
+    nutstoreBackupFiles.value = result.items.filter((item) => item.type === "file").map((item) => ({ path: item.path, name: item.name, type: item.type, size: item.size }));
+    nutstoreResult.value = {
+      action: "读取备份内容",
+      detail: `读取备份目录：${backupPath}，共 ${nutstoreBackupFiles.value.length} 个文件`,
+      items: nutstoreBackupFiles.value.map((file) => file.name),
+    };
+    remotePreview.value = null;
+  } catch (err) {
+    nutstoreResult.value = { action: "读取备份内容", errors: [{ path: backupPath, message: err instanceof Error ? err.message : "读取备份内容失败" }] };
+    toast.error(err instanceof Error ? err.message : "读取备份内容失败");
+  } finally {
+    nutstoreReading.value = false;
   }
 }
 </script>
@@ -504,6 +704,137 @@ async function testAsr() {
 
           <div class="sf-settings-actions">
             <button type="button" class="sf-btn sf-btn--primary" @click="saveAll"><span>保存设置</span></button>
+          </div>
+        </div>
+      </template>
+
+      <template v-else-if="active === 'nutstore'">
+        <h2 class="sf-settings-title">坚果云</h2>
+        <p class="sf-settings-desc">通过 WebDAV 使用坚果云：读取云端 Obsidian 笔记、本地 ↔ 云端推送/拉取、应用数据备份。应用密码只保存在服务端。</p>
+        <div class="sf-settings-form">
+          <label class="sf-field">
+            <span class="sf-field-label">WebDAV 服务器</span>
+            <el-input v-model="form.nutstoreServerUrl" class="sf-field-control" placeholder="https://dav.jianguoyun.com/dav/" />
+          </label>
+          <label class="sf-field">
+            <span class="sf-field-label">账号（邮箱）</span>
+            <el-input v-model="form.nutstoreAccount" class="sf-field-control" placeholder="you@example.com" />
+          </label>
+          <label class="sf-field">
+            <span class="sf-field-label">
+              应用密码
+              <span v-if="store.settings?.nutstore.hasPassword" class="sf-chip sf-chip--success">已保存</span>
+              <span v-else class="sf-chip sf-chip--warning">未配置</span>
+            </span>
+            <el-input v-model="form.nutstorePassword" type="password" show-password class="sf-field-control" :placeholder="store.settings?.nutstore.hasPassword ? '已保存，留空则不修改' : '粘贴坚果云生成的应用密码'" />
+            <p class="sf-field-hint">
+              坚果云应用密码在<strong>网页版</strong>生成：右上角头像 → 账户信息 → 安全选项 → 第三方应用管理 → 添加应用密码。
+              <a href="https://help.jianguoyun.com/?p=2064" target="_blank" rel="noreferrer">查看官方说明</a>
+            </p>
+          </label>
+          <label class="sf-field">
+            <span class="sf-field-label">数据根目录</span>
+            <el-input v-model="form.nutstoreRemoteRoot" class="sf-field-control" placeholder="/我的坚果云/ScribeFlow" />
+          </label>
+          <label class="sf-field">
+            <span class="sf-field-label">Obsidian 云端目录</span>
+            <el-input v-model="form.nutstoreObsidianRemotePath" class="sf-field-control" placeholder="/我的坚果云/ScribeFlow/Obsidian" />
+            <p class="sf-field-hint">想让文件出现在本地坚果云客户端，请把路径放在你的同步文件夹下，例如 <strong>/我的坚果云/ScribeFlow</strong>；不要直接填 <strong>/ScribeFlow</strong>。</p>
+          </label>
+          <label class="sf-field sf-field-row">
+            <span class="sf-field-label">Obsidian 笔记节点直接读写坚果云</span>
+            <el-switch v-model="form.nutstoreObsidianMode" />
+          </label>
+          <p class="sf-settings-desc">开启后，Obsidian 节点写入与自动关联扫描都会走坚果云远程目录；目录下拉也会读取云端目录。</p>
+          <div class="sf-settings-actions">
+            <button type="button" class="sf-btn" :disabled="nutstoreTesting" @click="testNutstore"><PlugZap :size="14" /><span>{{ nutstoreTesting ? "测试中…" : "测试连接" }}</span></button>
+            <button type="button" class="sf-btn sf-btn--primary" @click="saveAll"><span>保存设置</span></button>
+          </div>
+
+          <div class="sf-settings-divider">读取云端</div>
+          <div class="sf-settings-actions">
+            <button type="button" class="sf-btn" :disabled="nutstoreReading" @click="loadNutstoreFolders"><FolderOpen :size="14" /><span>{{ nutstoreReading ? "读取中…" : "读取云端目录" }}</span></button>
+            <button type="button" class="sf-btn" :disabled="nutstoreReading" @click="loadNutstoreFiles"><RefreshCw :size="14" /><span>{{ nutstoreReading ? "读取中…" : "读取云端文件" }}</span></button>
+          </div>
+          <p class="sf-settings-desc">已读取目录：{{ nutstoreRemoteFolders.length }} 个；目录按“{{ form.nutstoreObsidianRemotePath || '/我的坚果云/ScribeFlow/Obsidian' }}”为根递归最多 3 层。</p>
+          <div v-if="nutstoreRemoteFolders.length > 0" class="sf-nutstore-list">
+            <span v-for="dir in nutstoreRemoteFolders.slice(0, 30)" :key="dir" class="sf-nutstore-tag">{{ dir }}</span>
+            <span v-if="nutstoreRemoteFolders.length > 30" class="sf-nutstore-tag sf-nutstore-more">+{{ nutstoreRemoteFolders.length - 30 }}</span>
+          </div>
+          <div v-if="nutstoreRemoteFiles.length > 0" class="sf-nutstore-list">
+            <button
+              v-for="file in nutstoreRemoteFiles.filter((f) => f.type === 'file' && f.name.endsWith('.md')).slice(0, 20)"
+              :key="file.path"
+              type="button"
+              class="sf-text-btn"
+              @click="previewRemoteFile(file.path)"
+            >
+              <Cloud :size="13" /><span>{{ file.name }}</span>
+            </button>
+          </div>
+          <p v-if="remotePreview" class="sf-nutstore-preview">{{ remotePreview.content.slice(0, 800) }}{{ remotePreview.content.length > 800 ? "…" : "" }}</p>
+
+          <div class="sf-settings-divider">本地 Obsidian ↔ 坚果云</div>
+          <p class="sf-settings-desc">以 Obsidian 设置页里的“Obsidian 库路径”为本地端；只同步 .md 笔记。遇到不一致时会跳过并显示在下方「最近操作结果」中，不会自动覆盖对端较新的文件。</p>
+          <div class="sf-settings-actions">
+            <button type="button" class="sf-btn" :disabled="nutstoreSyncing" @click="pushObsidian"><Upload :size="14" /><span>{{ nutstoreSyncing ? "同步中…" : "推送本地到坚果云" }}</span></button>
+            <button type="button" class="sf-btn" :disabled="nutstoreSyncing" @click="pullObsidian"><Download :size="14" /><span>{{ nutstoreSyncing ? "同步中…" : "拉取坚果云到本地" }}</span></button>
+          </div>
+
+          <div class="sf-settings-divider">应用数据备份</div>
+          <div class="sf-settings-actions">
+            <button type="button" class="sf-btn" :disabled="nutstoreBackingUp" @click="backupToNutstore"><Save :size="14" /><span>{{ nutstoreBackingUp ? "备份中…" : "备份数据到坚果云" }}</span></button>
+            <button type="button" class="sf-btn" :disabled="nutstoreBackingUp" @click="loadNutstoreBackups"><RefreshCw :size="14" /><span>读取备份列表</span></button>
+          </div>
+          <div v-if="nutstoreBackups.length > 0" class="sf-nutstore-backup-list">
+            <div v-for="backup in nutstoreBackups.slice(0, 10)" :key="backup.path" class="sf-nutstore-backup-row">
+              <span class="sf-nutstore-tag">{{ backup.name }}</span>
+              <button type="button" class="sf-text-btn" :disabled="nutstoreReading" @click="loadNutstoreBackupFiles(backup.path)">查看内容</button>
+            </div>
+            <span v-if="nutstoreBackups.length > 10" class="sf-settings-desc">…… 还有 {{ nutstoreBackups.length - 10 }} 个备份未展示</span>
+          </div>
+          <div v-if="nutstoreBackupFiles.length > 0" class="sf-nutstore-backup-files">
+            <button
+              v-for="file in nutstoreBackupFiles"
+              :key="file.path"
+              type="button"
+              class="sf-text-btn"
+              :disabled="file.name !== 'backup.json'"
+              @click="previewRemoteFile(file.path)"
+            >
+              <Cloud :size="13" /><span>{{ file.name }}{{ file.size != null ? `（${file.size} B）` : "" }}</span>
+            </button>
+            <p class="sf-settings-desc">提示：backup.json 可点击预览；scribe-flow.sqlite 是 SQLite 数据库文件，请用本地坚果云客户端或数据库工具打开。</p>
+          </div>
+
+          <div v-if="nutstoreResult" class="sf-nutstore-result">
+            <h3 class="sf-nutstore-result-title">最近操作结果：{{ nutstoreResult.action }}</h3>
+            <p v-if="nutstoreResult.detail" class="sf-nutstore-result-detail">{{ nutstoreResult.detail }}</p>
+            <div v-if="nutstoreResult.transferred !== undefined || nutstoreResult.skipped !== undefined" class="sf-nutstore-result-stats">
+              <span v-if="nutstoreResult.transferred !== undefined">已传输 <strong>{{ nutstoreResult.transferred }}</strong></span>
+              <span v-if="nutstoreResult.skipped !== undefined">跳过/冲突 <strong>{{ nutstoreResult.skipped }}</strong></span>
+              <span v-if="nutstoreResult.errors?.length">失败 <strong>{{ nutstoreResult.errors.length }}</strong></span>
+            </div>
+            <ul v-if="nutstoreResult.skippedItems && nutstoreResult.skippedItems.length > 0" class="sf-nutstore-result-list">
+              <li v-for="item in nutstoreResult.skippedItems.slice(0, 20)" :key="item.path">
+                <span class="sf-nutstore-result-path">{{ item.path }}</span>
+                <span class="sf-nutstore-result-reason">{{ item.reason }}</span>
+              </li>
+              <li v-if="nutstoreResult.skippedItems.length > 20" class="sf-nutstore-result-more">…… 还有 {{ nutstoreResult.skippedItems.length - 20 }} 条未展示</li>
+            </ul>
+            <ul v-if="nutstoreResult.errors && nutstoreResult.errors.length > 0" class="sf-nutstore-result-list sf-nutstore-result-list--error">
+              <li v-for="(item, index) in nutstoreResult.errors.slice(0, 20)" :key="`${item.path}-${index}`">
+                <span class="sf-nutstore-result-path">{{ item.path || "操作" }}</span>
+                <span class="sf-nutstore-result-reason">{{ item.message }}</span>
+              </li>
+              <li v-if="nutstoreResult.errors.length > 20" class="sf-nutstore-result-more">…… 还有 {{ nutstoreResult.errors.length - 20 }} 条未展示</li>
+            </ul>
+            <ul v-if="nutstoreResult.items && nutstoreResult.items.length > 0" class="sf-nutstore-result-list">
+              <li v-for="(item, index) in nutstoreResult.items.slice(0, 20)" :key="`${item}-${index}`">
+                <span class="sf-nutstore-result-path">{{ item }}</span>
+              </li>
+              <li v-if="nutstoreResult.items.length > 20" class="sf-nutstore-result-more">…… 还有 {{ nutstoreResult.items.length - 20 }} 条未展示</li>
+            </ul>
           </div>
         </div>
       </template>
@@ -690,6 +1021,18 @@ async function testAsr() {
 .sf-field-mono :deep(.el-textarea__inner) {
   font-family: var(--font-mono);
   font-size: 12px;
+}
+
+.sf-field-hint {
+  margin: 2px 0 0;
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--color-text-tertiary);
+}
+
+.sf-field-hint a {
+  color: var(--color-text-secondary);
+  text-decoration: underline;
 }
 
 .sf-settings-actions {
@@ -935,6 +1278,135 @@ async function testAsr() {
   font-size: 12px;
   color: var(--color-text);
   word-break: break-all;
+}
+
+.sf-nutstore-result {
+  margin-top: 8px;
+  padding: 12px 14px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+}
+
+.sf-nutstore-result-title {
+  margin: 0 0 6px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.sf-nutstore-result-detail {
+  margin: 0 0 6px;
+  font-size: 12px;
+  color: var(--color-text-secondary);
+  line-height: 1.6;
+}
+
+.sf-nutstore-result-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-bottom: 6px;
+  font-size: 12px;
+  color: var(--color-text-secondary);
+}
+
+.sf-nutstore-result-list {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin: 4px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.sf-nutstore-result-list li {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 4px 6px;
+  border-radius: var(--radius-sm);
+  background: var(--color-ink-soft);
+  font-size: 11px;
+}
+
+.sf-nutstore-result-list--error li {
+  background: var(--color-error-soft);
+}
+
+.sf-nutstore-result-path {
+  color: var(--color-text);
+  font-weight: 500;
+  word-break: break-all;
+}
+
+.sf-nutstore-result-reason {
+  color: var(--color-text-secondary);
+  line-height: 1.5;
+}
+
+.sf-nutstore-result-more {
+  color: var(--color-text-tertiary);
+}
+
+.sf-nutstore-backup-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 2px 0 6px;
+}
+
+.sf-nutstore-backup-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.sf-nutstore-backup-files {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 2px 0 4px;
+}
+
+.sf-nutstore-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 2px 0 4px;
+}
+
+.sf-nutstore-tag {
+  display: inline-flex;
+  align-items: center;
+  height: 22px;
+  padding: 0 8px;
+  border-radius: 999px;
+  background: var(--color-ink-soft);
+  color: var(--color-text-secondary);
+  font-size: 11px;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.sf-nutstore-more {
+  background: transparent;
+  border: 1px solid var(--color-border);
+}
+
+.sf-nutstore-preview {
+  margin: 4px 0 0;
+  padding: 10px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  line-height: 1.7;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 220px;
+  overflow-y: auto;
 }
 
 .sf-danger-text {
