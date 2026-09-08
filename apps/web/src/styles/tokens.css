@@ -107,6 +107,8 @@
   --z-popover: 1130;
   --z-dropdown: 1150;
   --z-context: 1300;
+  /* 自定义模态遮罩：高于普通应用浮层/菜单，但低于 Teleport 弹层（EP popper 约 2000+ / 自研 3000） */
+  --z-modal: 1500;
   /* Teleport 浮层若出现在 Element Plus overlay（z 2000+）内，必须高于 EP overlay */
   --z-dropdown-modal: 3000;
 
