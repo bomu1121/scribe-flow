@@ -1,16 +1,14 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
-import { ElButton, ElDrawer, ElDropdown, ElDropdownItem, ElDropdownMenu } from "element-plus";
+import { ElDropdown, ElDropdownItem, ElDropdownMenu } from "element-plus";
 import { toast } from "@/lib/toast";
-import { Activity, Check, Copy, Download, ExternalLink, History, LayoutPanelTop, Maximize, MoreHorizontal, Play, Redo2, StopCircle, Trash2, Undo2, X } from "lucide-vue-next";
-import { NODE_TYPE_LABELS, emptyGraph, type NodeType, type RunDetail, type RunMeta, type RunNodeInput, type RunNodeResult, type SourceVideoItem, type WorkflowGraph } from "@scribe-flow/shared";
+import { Activity, Check, Copy, Download, History, LayoutPanelTop, Maximize, MoreHorizontal, Play, Redo2, StopCircle, Trash2, Undo2 } from "lucide-vue-next";
+import { emptyGraph, type NodeType, type RunDetail, type RunMeta, type RunNodeResult, type SourceVideoItem, type WorkflowGraph } from "@scribe-flow/shared";
 import FlowCanvas from "@/components/canvas/FlowCanvas.vue";
 import SourcePickerDialog from "@/components/canvas/SourcePickerDialog.vue";
-import DiffViewer from "@/components/DiffViewer.vue";
 import BiliAccountButton from "@/components/auth/BiliAccountButton.vue";
 import { api } from "@/lib/api";
-import { renderMarkdown } from "@/lib/markdown";
 import { subscribeRunEvents } from "@/lib/sse";
 import type { NodePreviewOutput } from "@/utils/flow";
 import { useAuthStore } from "@/stores/auth";
@@ -20,7 +18,6 @@ import { useSettingsStore } from "@/stores/settings";
 import { useUiStore } from "@/stores/ui";
 
 type SaveState = "loading" | "saved" | "saving" | "error";
-type OutputDrawerInputMode = "result" | "raw" | "diff";
 
 const route = useRoute();
 const router = useRouter();
@@ -47,30 +44,7 @@ const activeTaskCount = computed(() => {
   const localActive = running.value && activeRun.value && !runsStore.runs.some((r) => r.id === activeRun.value?.id && r.status === "running") ? 1 : 0;
   return runsStore.runningCount + localActive;
 });
-const outputDrawerVisible = ref(false);
-const outputDrawerNodeId = ref("");
-const outputDrawerRunId = ref("");
-const outputDrawerNodeLabel = ref("");
-const outputDrawerRunStatus = ref("");
-const outputDrawerText = ref("");
-const outputDrawerLoading = ref(false);
-const outputDrawerInputs = ref<RunNodeInput[]>([]);
-const outputDrawerNodeResults = ref<RunNodeResult[]>([]);
-const outputDrawerGraph = ref<WorkflowGraph | null>(null);
-const outputDrawerView = ref<"output" | "input">("output");
-const outputDrawerSelectedInputKey = ref("");
-const outputDrawerInputMode = ref<OutputDrawerInputMode>("result");
-const outputDrawerInputText = ref("");
 const biliPickerVisible = ref(false);
-const renderedOutput = computed(() => renderMarkdown(outputDrawerText.value));
-const renderedOutputInput = computed(() => renderMarkdown(outputDrawerInputText.value));
-const outputDrawerActiveText = computed(() => (outputDrawerView.value === "input" ? outputDrawerInputText.value : outputDrawerText.value));
-const runStatusLabels: Record<string, string> = {
-  running: "运行中",
-  success: "成功",
-  error: "失败",
-  cancelled: "已取消",
-};
 
 /**
  * 节点最近一次输出的解析缓存。
@@ -88,83 +62,6 @@ function clearNodeOutputCache() {
   nodeOutputMetaCache.clear();
   nodeOutputTextCache.clear();
 }
-
-interface OutputDrawerInputItem extends RunNodeInput {
-  label: string;
-  key: string;
-}
-
-function upstreamNodeIds(graph: WorkflowGraph, nodeId: string): Set<string> {
-  const result = new Set<string>();
-  const visit = (id: string) => {
-    for (const edge of graph.edges) {
-      if (edge.target === id && !result.has(edge.source)) {
-        result.add(edge.source);
-        visit(edge.source);
-      }
-    }
-  };
-  visit(nodeId);
-  return result;
-}
-
-const outputDrawerInputItems = computed<OutputDrawerInputItem[]>(() => {
-  const graph = outputDrawerGraph.value;
-  if (!graph || !outputDrawerNodeId.value) return [];
-  const upstream = upstreamNodeIds(graph, outputDrawerNodeId.value);
-  const resultMap = new Map(outputDrawerNodeResults.value.map((n) => [n.nodeId, n]));
-  const order = new Map(outputDrawerNodeResults.value.map((n, idx) => [n.nodeId, idx]));
-  const items = outputDrawerInputs.value
-    .filter((input) => upstream.has(input.sourceNodeId))
-    .map((input) => {
-      const node = resultMap.get(input.sourceNodeId);
-      const graphNode = graph.nodes.find((n) => n.id === input.sourceNodeId);
-      const data = (graphNode?.data ?? {}) as Record<string, unknown>;
-      let label = node?.nodeLabel || NODE_TYPE_LABELS[node?.nodeType as keyof typeof NODE_TYPE_LABELS] || node?.nodeType || input.sourceNodeId;
-      if (graphNode?.type === "source.bili") {
-        const items = Array.isArray(data.items) ? (data.items as { title?: string }[]) : [];
-        if (items.length > 1) label = String(data.label ?? NODE_TYPE_LABELS[graphNode.type] ?? "B站多选");
-        else if (typeof data.title === "string" && data.title) label = data.title;
-      } else if (graphNode?.type === "source.file" && typeof data.fileName === "string" && data.fileName) label = data.fileName;
-      return { ...input, label, key: input.id };
-    });
-  const counts = new Map<string, number>();
-  for (const item of items) counts.set(item.sourceNodeId, (counts.get(item.sourceNodeId) ?? 0) + 1);
-  const seen = new Map<string, number>();
-  return items
-    .map((item) => {
-      if ((counts.get(item.sourceNodeId) ?? 0) > 1) {
-        const index = (seen.get(item.sourceNodeId) ?? 0) + 1;
-        seen.set(item.sourceNodeId, index);
-        const graphNode = graph.nodes.find((n) => n.id === item.sourceNodeId);
-        const data = (graphNode?.data ?? {}) as Record<string, unknown>;
-        const biliItems = Array.isArray(data.items) ? (data.items as { title?: string; part?: string; page?: number }[]) : [];
-        let itemLabel = item.label;
-        if (graphNode?.type === "source.bili" && biliItems.length >= index) {
-          const entry = biliItems[index - 1];
-          if (entry) {
-            itemLabel = entry.title || (typeof data.title === "string" ? data.title : "") || item.label;
-            if (entry.part) itemLabel = `${itemLabel} · P${entry.page} ${entry.part}`;
-          }
-        }
-        return { ...item, label: `${itemLabel} #${index}` };
-      }
-      return item;
-    })
-    .sort((a, b) => (order.get(a.sourceNodeId) ?? Number.MAX_SAFE_INTEGER) - (order.get(b.sourceNodeId) ?? Number.MAX_SAFE_INTEGER));
-});
-
-const selectedOutputDrawerInput = computed(() => outputDrawerInputItems.value.find((i) => i.key === outputDrawerSelectedInputKey.value) ?? null);
-
-/** 可用的“变更对比”：优先对比该输入的原始文本与 AI 处理结果；没有独立 resultText 时，若只有一个上游输入，则对比原始输入与当前节点输出。 */
-const outputDrawerDiff = computed<{ before: string; after: string } | null>(() => {
-  const item = selectedOutputDrawerInput.value;
-  if (!item) return null;
-  const before = item.text ?? "";
-  const after = item.resultText ?? (outputDrawerInputItems.value.length === 1 ? outputDrawerText.value : "");
-  if (!before.trim() || !after.trim()) return null;
-  return { before, after };
-});
 
 let saveTimer: ReturnType<typeof setTimeout> | null = null;
 let stopRunEvents: (() => void) | null = null;
@@ -189,18 +86,6 @@ async function loadProject() {
     lastRun.value = null;
     restoredLastRunId = null;
     selectedNodeId.value = null;
-    outputDrawerVisible.value = false;
-    outputDrawerLoading.value = false;
-    outputDrawerNodeId.value = "";
-    outputDrawerRunId.value = "";
-    outputDrawerNodeLabel.value = "";
-    outputDrawerRunStatus.value = "";
-    outputDrawerText.value = "";
-    outputDrawerInputs.value = [];
-    outputDrawerNodeResults.value = [];
-    outputDrawerGraph.value = null;
-    outputDrawerView.value = "output";
-    outputDrawerSelectedInputKey.value = "";
   } else {
     saveState.value = "loading";
   }
@@ -720,89 +605,12 @@ async function viewOutput(nodeId: string) {
       return;
     }
     const { run, nodeResult } = found;
-    if (nodeResult.nodeType === "process.mindmap") {
-      router.push({ path: `/project/${projectId.value}/run/${run.id}`, query: { focus: nodeId, tab: "mindmap" } });
-      return;
-    }
-    const detail = await api.get<RunDetail>(`/api/runs/${run.id}`);
-    openOutputDrawer(nodeId, run, nodeResult, detail);
+    const query: Record<string, string> = { focus: nodeId };
+    if (nodeResult.nodeType === "process.mindmap") query.tab = "mindmap";
+    void router.push({ path: `/project/${projectId.value}/run/${run.id}`, query });
   } catch (err) {
-    toast.error(err instanceof Error ? err.message : "打开输出失败");
+    toast.error(err instanceof Error ? err.message : "打开结果页失败");
   }
-}
-
-function openOutputDrawer(nodeId: string, run: RunMeta, nodeResult: RunNodeResult, detail: RunDetail) {
-  outputDrawerNodeId.value = nodeId;
-  outputDrawerRunId.value = run.id;
-  outputDrawerRunStatus.value = run.status;
-  outputDrawerNodeLabel.value = nodeResult.nodeLabel || nodeResult.nodeType;
-  outputDrawerText.value = "";
-  outputDrawerInputs.value = detail.inputs ?? [];
-  outputDrawerNodeResults.value = detail.nodeResults;
-  outputDrawerGraph.value = detail.graph ?? graph.value;
-  outputDrawerView.value = "output";
-  outputDrawerSelectedInputKey.value = "";
-  outputDrawerInputText.value = "";
-  outputDrawerVisible.value = true;
-  void loadNodeOutput(run.id, nodeResult);
-}
-
-async function loadNodeOutput(runId: string, nodeResult: RunNodeResult) {
-  outputDrawerLoading.value = true;
-  try {
-    outputDrawerText.value = await readNodeOutputText(nodeResult, runId);
-  } catch (err) {
-    outputDrawerText.value = "";
-    toast.error(err instanceof Error ? err.message : "节点输出读取失败");
-  } finally {
-    outputDrawerLoading.value = false;
-  }
-}
-
-function selectOutputDrawerOutput() {
-  outputDrawerView.value = "output";
-  outputDrawerSelectedInputKey.value = "";
-  outputDrawerInputText.value = "";
-}
-
-function selectOutputDrawerInput(item: OutputDrawerInputItem) {
-  outputDrawerView.value = "input";
-  outputDrawerSelectedInputKey.value = item.key;
-  outputDrawerInputMode.value = item.resultText ? "result" : "raw";
-  outputDrawerInputText.value = item.resultText ?? item.text ?? "";
-}
-
-function selectOutputDrawerInputMode(mode: OutputDrawerInputMode) {
-  const item = selectedOutputDrawerInput.value;
-  if (!item) return;
-  outputDrawerInputMode.value = mode;
-  outputDrawerInputText.value = mode === "raw" ? item.text ?? "" : item.resultText ?? item.text ?? "";
-}
-
-function openFullResult() {
-  if (!outputDrawerRunId.value) return;
-  void router.push({ path: `/project/${projectId.value}/run/${outputDrawerRunId.value}`, query: { focus: outputDrawerNodeId.value } });
-}
-
-async function copyNodeOutput() {
-  if (!outputDrawerActiveText.value) return;
-  try {
-    await navigator.clipboard.writeText(outputDrawerActiveText.value);
-    toast.success("已复制节点内容");
-  } catch {
-    toast.error("复制失败，请手动选择文本");
-  }
-}
-
-function downloadNodeOutput() {
-  if (!outputDrawerActiveText.value) return;
-  const blob = new Blob([outputDrawerActiveText.value], { type: "text/markdown; charset=utf-8" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = `${outputDrawerNodeLabel.value || "node"}-${outputDrawerRunId.value.slice(-6)}.md`;
-  a.click();
-  URL.revokeObjectURL(url);
 }
 </script>
 
@@ -863,7 +671,8 @@ function downloadNodeOutput() {
             aria-label="停止运行"
             @click="stopRun"
           >
-            <X :size="14" stroke-width="3" />
+            <StopCircle :size="13" />
+            <span>停止</span>
           </button>
         </div>
         <FlowCanvas
@@ -892,61 +701,6 @@ function downloadNodeOutput() {
         </div>
       </div>
     </div>
-
-    <el-drawer v-model="outputDrawerVisible" size="520px" :with-header="false" class="sf-output-drawer">
-      <template #default>
-        <div class="sf-output-drawer-head">
-          <div class="sf-output-drawer-head-main">
-            <div class="sf-output-drawer-title">{{ outputDrawerNodeLabel || "节点输出" }}</div>
-            <div class="sf-output-drawer-meta tnum">
-              <template v-if="outputDrawerRunId">运行 #{{ outputDrawerRunId.slice(-6) }} · {{ runStatusLabels[outputDrawerRunStatus] ?? outputDrawerRunStatus }}</template>
-              <template v-else>尚未选择运行</template>
-            </div>
-          </div>
-          <el-button size="small" type="primary" plain :disabled="!outputDrawerRunId" @click="openFullResult">
-            <ExternalLink :size="13" />
-            <span>完整结果页</span>
-          </el-button>
-        </div>
-
-        <div v-if="outputDrawerInputItems.length > 0" class="sf-output-drawer-tabs">
-          <button type="button" :class="{ active: outputDrawerView === 'output' }" @click="selectOutputDrawerOutput">输出</button>
-          <button
-            v-for="item in outputDrawerInputItems"
-            :key="item.key"
-            type="button"
-            :class="{ active: outputDrawerView === 'input' && outputDrawerSelectedInputKey === item.key }"
-            @click="selectOutputDrawerInput(item)"
-          >
-            {{ item.label }}
-          </button>
-        </div>
-
-        <div v-loading="outputDrawerLoading" class="sf-output-drawer-body">
-          <div v-if="outputDrawerView === 'input' && outputDrawerDiff" class="sf-output-drawer-input-modes">
-            <button type="button" :class="{ active: outputDrawerInputMode === 'result' }" @click="selectOutputDrawerInputMode('result')">处理结果</button>
-            <button type="button" :class="{ active: outputDrawerInputMode === 'raw' }" @click="selectOutputDrawerInputMode('raw')">原始输入</button>
-            <button type="button" :class="{ active: outputDrawerInputMode === 'diff' }" @click="selectOutputDrawerInputMode('diff')">变更对比</button>
-          </div>
-          <DiffViewer v-if="outputDrawerView === 'input' && outputDrawerInputMode === 'diff' && outputDrawerDiff" :before="outputDrawerDiff.before" :after="outputDrawerDiff.after" />
-          <div v-else-if="outputDrawerView === 'input' && outputDrawerInputText" class="sf-output-drawer-preview markdown-body" v-html="renderedOutputInput" />
-          <div v-else-if="outputDrawerView === 'input' && !outputDrawerLoading" class="sf-output-drawer-empty">该输入暂无独立文本（可能是音视频或旧记录）。</div>
-          <div v-else-if="outputDrawerView === 'output' && outputDrawerText" class="sf-output-drawer-preview markdown-body" v-html="renderedOutput" />
-          <div v-else-if="!outputDrawerLoading" class="sf-output-drawer-empty">该节点本次运行没有文本输出。</div>
-        </div>
-
-        <div class="sf-output-drawer-actions">
-          <el-button size="small" plain :disabled="!outputDrawerActiveText" @click="copyNodeOutput">
-            <Copy :size="13" />
-            <span>复制</span>
-          </el-button>
-          <el-button size="small" plain :disabled="!outputDrawerActiveText" @click="downloadNodeOutput">
-            <Download :size="13" />
-            <span>下载</span>
-          </el-button>
-        </div>
-      </template>
-    </el-drawer>
 
     <SourcePickerDialog v-model:open="biliPickerVisible" @confirm="onBiliPickerConfirm" />
   </div>
@@ -1081,16 +835,14 @@ function downloadNodeOutput() {
 }
 
 .sf-float-run {
-  background: var(--color-brand);
-  color: var(--color-on-brand);
+  background: transparent;
+  color: var(--color-text);
 }
 
-.sf-float-run:hover:not(:disabled) {
-  background: var(--color-brand-hover);
-}
-
+.sf-float-run:hover:not(:disabled),
 .sf-float-run:active:not(:disabled) {
-  background: var(--color-brand-pressed);
+  background: var(--color-ink-soft);
+  color: var(--color-text);
 }
 
 .sf-float-ghost {
@@ -1116,15 +868,13 @@ function downloadNodeOutput() {
 }
 
 .sf-float-stop {
-  width: 24px;
-  padding: 0;
-  background: var(--color-error);
-  color: var(--color-on-error);
+  background: transparent;
+  color: var(--color-text-secondary);
 }
 
 .sf-float-stop:hover:not(:disabled) {
-  background: var(--color-error);
-  opacity: 0.9;
+  background: var(--color-ink-soft);
+  color: var(--color-text);
 }
 
 .sf-mobile-hint {
@@ -1213,132 +963,11 @@ function downloadNodeOutput() {
     transform: rotate(360deg);
   }
 }
-
-.sf-output-drawer-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 16px 20px 12px;
-  border-bottom: 1px solid var(--color-border);
-}
-
-.sf-output-drawer-head-main {
-  min-width: 0;
-}
-
-.sf-output-drawer-title {
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--color-text);
-}
-
-.sf-output-drawer-meta {
-  margin-top: 3px;
-  font-size: 11px;
-  color: var(--color-text-tertiary);
-}
-
-.sf-output-drawer-tabs {
-  display: flex;
-  gap: 4px;
-  padding: 8px 20px 0;
-  overflow-x: auto;
-  border-bottom: 1px solid var(--color-border);
-  flex-shrink: 0;
-}
-
-.sf-output-drawer-tabs button {
-  flex-shrink: 0;
-  height: 28px;
-  padding: 0 10px;
-  border: 1px solid transparent;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--color-text-secondary);
-  font-size: 12px;
-  cursor: pointer;
-  white-space: nowrap;
-}
-
-.sf-output-drawer-tabs button:hover {
-  background: var(--color-ink-soft);
-  color: var(--color-text);
-}
-
-.sf-output-drawer-tabs button.active {
-  border-color: var(--color-brand);
-  background: var(--color-brand-soft);
-  color: var(--color-brand);
-}
-
-.sf-output-drawer-input-modes {
-  display: flex;
-  gap: 4px;
-  margin-bottom: 10px;
-}
-
-.sf-output-drawer-input-modes button {
-  height: 24px;
-  padding: 0 10px;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm);
-  background: var(--color-surface-muted);
-  color: var(--color-text-secondary);
-  font-family: inherit;
-  font-size: 11.5px;
-  cursor: pointer;
-}
-
-.sf-output-drawer-input-modes button.active {
-  border-color: var(--color-brand);
-  background: var(--color-brand-soft);
-  color: var(--color-brand);
-}
-
-.sf-output-drawer-body {
-  flex: 1;
-  min-height: 0;
-  overflow-y: auto;
-  padding: 16px 20px;
-}
-
-.sf-output-drawer-preview {
-  font-size: 14px;
-  line-height: 1.8;
-  color: var(--color-text);
-  word-break: break-word;
-}
-
-.sf-output-drawer-empty {
-  padding: 32px 16px;
-  border: 1px dashed var(--color-border);
-  border-radius: var(--radius-md);
-  color: var(--color-text-tertiary);
-  font-size: 12.5px;
-  text-align: center;
-}
-
-.sf-output-drawer-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 8px;
-  padding: 12px 20px 16px;
-  border-top: 1px solid var(--color-border);
-}
 </style>
 
 <style>
 /* 下拉菜单 Teleport 到 body，样式必须全局 */
 .sf-dropdown-danger {
   color: var(--color-error);
-}
-
-/* 节点输出抽屉：Element Plus Drawer 内容挂到 body，内部布局需要全局样式 */
-.sf-output-drawer .el-drawer__body {
-  display: flex;
-  flex-direction: column;
-  padding: 0;
-  overflow: hidden;
 }
 </style>

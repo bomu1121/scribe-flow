@@ -21,7 +21,6 @@
   flex-shrink: 0;
   height: 44px;
   padding: 0 8px;
-  border-bottom: 1px solid var(--color-border);
 }
 
 .wp-seg {
@@ -625,6 +624,30 @@
 .wp-item.active .wp-item-name {
   color: var(--color-text);
   font-weight: 500;
+}
+
+.wp-item-running {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+  height: 18px;
+  padding: 0 7px;
+  border-radius: 999px;
+  background: var(--color-brand-soft);
+  color: var(--color-brand);
+  font-size: 10px;
+  font-weight: 500;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.wp-item-running-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: currentColor;
+  animation: wp-pulse 1.5s var(--ease-out) infinite;
 }
 
 /* 运行行 */

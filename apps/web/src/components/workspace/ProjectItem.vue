@@ -263,6 +263,10 @@ function onKeydown(event: KeyboardEvent) {
       <span class="wp-item-name" :title="`${project.name}\n${project.nodeCount} 个节点 · 更新于 ${new Date(project.updatedAt).toLocaleString('zh-CN')}`">
         {{ project.name }}
       </span>
+      <span v-if="isRunning()" class="wp-item-running" title="该工程正在运行">
+        <span class="wp-item-running-dot" aria-hidden="true" />
+        <span>运行中</span>
+      </span>
     </template>
 
     <RowMenu v-if="menu" :x="menu.x" :y="menu.y" :items="menuItems" @select="onMenuSelect" @close="closeMenu" />

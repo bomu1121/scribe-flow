@@ -827,7 +827,7 @@ export class RunEngine {
           if (attempts <= maxRetries && isRetryableError(error, active.cancelled)) {
             const wait = backoffMs * attempts;
             this.emit(active, { type: "node.retry", runId: active.id, nodeId, attempt: attempts, maxRetries, error: message });
-            await this.updateNode(active, nodeId, "running", 0, undefined, undefined, undefined, attempts + 1);
+            await this.updateNode(active, nodeId, "running", 0, `重试 ${attempts}/${maxRetries}…`, undefined, undefined, attempts + 1);
             await sleep(wait);
             continue;
           }
@@ -1346,6 +1346,12 @@ ${JSON.stringify(taxonomyTags)}`;
   private async progress(active: ActiveRun, nodeId: string, progress: number, message: string) {
     if (active.cancelled) throw new Error("运行已取消");
     this.emit(active, { type: "node.progress", runId: active.id, nodeId, progress, message });
+    // 进度同时落库：离开工作流再回来时，卡片底部仍能恢复当前进行中的摘要/进度信息。
+    await this.db
+      .update(runNodeResults)
+      .set({ status: "running", summary: `${message} ${progress}%`, updatedAt: Date.now() })
+      .where(and(eq(runNodeResults.runId, active.id), eq(runNodeResults.nodeId, nodeId)))
+      .run();
   }
 
   private async log(active: ActiveRun, nodeId: string, kind: "input" | "ai-request" | "ai-response" | "info" | "error", content: string) {

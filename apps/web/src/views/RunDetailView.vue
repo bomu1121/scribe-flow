@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import { useRoute, useRouter } from "vue-router";
-import { ElButton, ElDialog, ElOption, ElSelect, ElTable, ElTableColumn, ElTag } from "element-plus";
+import { ElDialog, ElOption, ElSelect, ElTable, ElTableColumn } from "element-plus";
 import { toast } from "@/lib/toast";
 import {
   ArrowLeft,
@@ -48,6 +48,7 @@ const logsVisible = ref(false);
 const logsNodeId = ref("");
 const selectedOutputIndex = ref(0);
 const selectedInputKey = ref("");
+const tocValue = ref("");
 const inputText = ref("");
 const comparingDiff = ref(false);
 const resultRootRef = ref<HTMLElement | null>(null);
@@ -61,13 +62,13 @@ let reloadTimer: ReturnType<typeof setTimeout> | null = null;
 
 const isRunning = computed(() => run.value?.status === "running");
 
-const statusMeta: Record<string, { label: string; type: "primary" | "success" | "danger" | "info" }> = {
-  running: { label: "运行中", type: "primary" },
-  success: { label: "成功", type: "success" },
-  done: { label: "完成", type: "success" },
-  error: { label: "失败", type: "danger" },
-  cancelled: { label: "已取消", type: "info" },
-  skipped: { label: "跳过", type: "info" },
+const statusMeta: Record<string, { label: string }> = {
+  running: { label: "运行中" },
+  success: { label: "成功" },
+  done: { label: "完成" },
+  error: { label: "失败" },
+  cancelled: { label: "已取消" },
+  skipped: { label: "跳过" },
 };
 
 const logKindLabels: Record<RunNodeLog["kind"], string> = {
@@ -131,6 +132,27 @@ function fmtSize(size?: number): string {
   if (size < 1024) return `${size} B`;
   if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
   return `${(size / 1024 / 1024).toFixed(1)} MB`;
+}
+
+function textCharCount(text?: string): number {
+  return (text ?? "").replace(/\s/g, "").length;
+}
+
+/** 单 P 视频的副标题：仅在分 P 名与主标题不同时展示，避免卡片里出现两遍标题。 */
+function biliPageMeta(input: InputItem): string {
+  const part = input.pageInfo?.part?.trim();
+  const page = input.pageInfo?.page;
+  if (!part) return "";
+  if (input.title && part === input.title) return "";
+  return page && page > 1 ? `P${page} · ${part}` : part;
+}
+
+/** 非 B 站链路的卡片摘要：优先节点摘要；没有摘要时显示字数，不再把整段正文铺在小卡里。 */
+function sourceCardSummary(input: InputItem): string {
+  if (input.modules && input.modules.length > 1) return `${input.modules.length} 个独立输入`;
+  if (input.summary) return input.summary;
+  const chars = textCharCount(input.text);
+  return chars > 0 ? `${chars} 字` : input.nodeType === "source.text" ? "空文稿" : "无文本";
 }
 
 function slugify(text: string): string {
@@ -601,6 +623,7 @@ async function toggleFullscreen() {
 }
 
 function scrollToHeading(id: string) {
+  tocValue.value = id;
   const container = docScrollRef.value;
   const el = container?.querySelector<HTMLElement>(`#${id}`);
   if (!container || !el) return;
@@ -609,7 +632,7 @@ function scrollToHeading(id: string) {
 }
 
 function goBack() {
-  const focus = currentOutput.value?.node.nodeId;
+  const focus = activeTab.value === "mindmap" ? currentMindMap.value?.node.nodeId : currentOutput.value?.node.nodeId;
   router.push({ path: `/project/${projectId}`, query: focus ? { focus } : {} });
 }
 
@@ -662,6 +685,7 @@ async function retryNode(node: RunNodeResult) {
     const created = await api.post<{ id: string }>(`/api/runs/${runId}/nodes/${node.nodeId}/retry`);
     toast.clear();
     toast.success(`已启动重跑：#${created.id.slice(-6)}`);
+    void router.push({ path: `/project/${projectId}/run/${created.id}`, query: { focus: node.nodeId } });
   } catch (err) {
     toast.error(err instanceof Error ? err.message : "重跑失败");
   }
@@ -692,11 +716,14 @@ async function forceStopRun() {
   <div ref="resultRootRef" class="rv-root">
     <header class="rv-header">
       <div class="rv-header-left">
-        <el-button size="small" text @click="goBack"><ArrowLeft :size="14" /><span>返回工作流</span></el-button>
+        <button type="button" class="rv-btn rv-btn--text" @click="goBack"><ArrowLeft :size="14" /><span>返回工作流</span></button>
         <div class="rv-title-block">
           <h2 class="rv-title">
             运行结果 <span class="tnum">#{{ runId.slice(-6) }}</span>
-            <el-tag v-if="run" :type="statusMeta[run.status]?.type" size="small">{{ statusMeta[run.status]?.label }}</el-tag>
+            <span v-if="run" class="rv-status" :class="`is-${run.status}`">
+              <span class="rv-status-dot" aria-hidden="true" />
+              {{ statusMeta[run.status]?.label }}
+            </span>
           </h2>
           <p class="rv-sub">
             {{ run ? `${run.projectName ?? ""} · 耗时 ${fmt(run.elapsedMs)} · ${new Date(run.createdAt).toLocaleString("zh-CN")}` : "加载中…" }}
@@ -705,12 +732,12 @@ async function forceStopRun() {
       </div>
       <div class="rv-actions">
         <template v-if="run?.status === 'running'">
-          <el-button size="small" plain @click="stopRun"><StopCircle :size="14" /><span>停止</span></el-button>
-          <el-button size="small" plain type="danger" @click="forceStopRun"><StopCircle :size="14" /><span>强制结束</span></el-button>
+          <button type="button" class="rv-btn rv-btn--text" @click="stopRun"><StopCircle :size="14" /><span>停止</span></button>
+          <button type="button" class="rv-btn rv-btn--danger-text" @click="forceStopRun"><StopCircle :size="14" /><span>强制结束</span></button>
         </template>
-        <el-button size="small" plain @click="openLogs('')"><ScrollText :size="14" /><span>查看日志</span></el-button>
-        <el-button size="small" plain :disabled="!activeMarkdown" @click="copyMarkdown"><Copy :size="14" /><span>复制</span></el-button>
-        <el-button size="small" type="primary" :disabled="!activeMarkdown" @click="downloadMarkdown"><FileText :size="14" /><span>下载 Markdown</span></el-button>
+        <button type="button" class="rv-btn rv-btn--text" @click="openLogs('')"><ScrollText :size="14" /><span>查看日志</span></button>
+        <button type="button" class="rv-btn rv-btn--text" :disabled="!activeMarkdown" @click="copyMarkdown"><Copy :size="14" /><span>复制</span></button>
+        <button type="button" class="rv-btn rv-btn--text" :disabled="!activeMarkdown" @click="downloadMarkdown"><FileText :size="14" /><span>下载 Markdown</span></button>
       </div>
     </header>
 
@@ -730,9 +757,12 @@ async function forceStopRun() {
           <el-table-column label="节点" min-width="160">
             <template #default="{ row }">{{ asNode(row).nodeLabel || asNode(row).nodeType }}</template>
           </el-table-column>
-          <el-table-column label="状态" width="90">
+          <el-table-column label="状态" width="100">
             <template #default="{ row }">
-              <el-tag :type="statusMeta[asNode(row).status]?.type ?? 'info'" size="small">{{ statusMeta[asNode(row).status]?.label ?? asNode(row).status }}</el-tag>
+              <span class="rv-status" :class="`is-${asNode(row).status || 'idle'}`">
+                <span class="rv-status-dot" aria-hidden="true" />
+                {{ statusMeta[asNode(row).status]?.label ?? asNode(row).status }}
+              </span>
             </template>
           </el-table-column>
           <el-table-column label="耗时" width="90">
@@ -749,18 +779,17 @@ async function forceStopRun() {
           </el-table-column>
           <el-table-column label="操作" width="110" align="right">
             <template #default="{ row }">
-              <el-button size="small" text @click="openLogs(asNode(row).nodeId)">日志</el-button>
-              <el-button
+              <button type="button" class="rv-btn rv-btn--table" @click="openLogs(asNode(row).nodeId)">日志</button>
+              <button
                 v-if="asNode(row).status === 'error'"
-                size="small"
-                text
-                type="primary"
+                type="button"
+                class="rv-btn rv-btn--table"
                 :disabled="isRunning"
                 :title="isRunning ? '运行中不可重跑，请先等待或停止当前运行' : '重跑该节点'"
                 @click="retryNode(asNode(row))"
               >
                 <RefreshCw :size="13" /><span>重跑</span>
-              </el-button>
+              </button>
             </template>
           </el-table-column>
         </el-table>
@@ -793,10 +822,6 @@ async function forceStopRun() {
         <aside class="rv-side" :class="{ collapsed: sideCollapsed }">
           <div class="rv-side-head">
             <span class="rv-side-title">链路输入</span>
-            <button type="button" class="rv-side-toggle" :title="sideCollapsed ? '展开侧栏' : '折叠侧栏'" @click="sideCollapsed = !sideCollapsed">
-              <PanelLeftClose v-if="!sideCollapsed" :size="14" />
-              <PanelLeftOpen v-else :size="14" />
-            </button>
           </div>
 
           <div v-if="!sideCollapsed" class="rv-side-content">
@@ -809,36 +834,42 @@ async function forceStopRun() {
                 :class="{ active: selectedInputKey === input.key }"
                 @click="selectInput(input.key)"
               >
-                <div class="rv-source-index tnum">{{ index + 1 }}</div>
-                <div class="rv-source-main">
-                  <div class="rv-source-label">{{ input.label }}</div>
+                <span class="rv-source-index tnum">{{ index + 1 }}</span>
+                <span class="rv-source-main">
+                  <span class="rv-source-top">
+                    <span class="rv-source-label">{{ input.label }}</span>
+                    <span
+                      v-if="input.status"
+                      class="rv-source-dot"
+                      :class="`is-${input.status}`"
+                      :title="statusMeta[input.status]?.label ?? input.status"
+                    />
+                  </span>
+
                   <template v-if="input.nodeType === 'source.bili'">
-                    <img v-if="input.cover" :src="input.cover" class="rv-source-cover" alt="" referrerpolicy="no-referrer" loading="lazy" />
-                    <div v-if="input.items && input.items.length > 1" class="rv-source-title">{{ input.label || "B站多选" }}</div>
-                    <div v-else-if="input.title" class="rv-source-title">{{ input.title }}</div>
-                    <div v-else-if="input.url" class="rv-source-url">{{ input.url }}</div>
-                    <div class="rv-source-meta tnum">
-                      <span v-if="input.uploader">{{ input.uploader }} · </span>
-                      <span>{{ fmtDuration(input.duration) }}</span>
-                      <span v-if="input.items && input.items.length > 1"> · {{ input.items.length }} 项</span>
-                      <span v-else-if="input.pageInfo?.part"> · {{ input.pageInfo.part }}</span>
-                    </div>
+                    <span class="rv-source-media">
+                      <img v-if="input.cover" :src="input.cover" class="rv-source-thumb" alt="" referrerpolicy="no-referrer" loading="lazy" />
+                      <span class="rv-source-media-body">
+                        <span v-if="input.items && input.items.length > 1" class="rv-source-title">{{ input.label || "B站多选" }}（{{ input.items.length }} 项）</span>
+                        <span v-else-if="input.title" class="rv-source-title">{{ input.title }}</span>
+                        <span v-else-if="input.url" class="rv-source-url">{{ input.url }}</span>
+                        <span class="rv-source-meta tnum">
+                          {{ [input.uploader, fmtDuration(input.duration), biliPageMeta(input)].filter(Boolean).join(" · ") || "B站视频" }}
+                        </span>
+                      </span>
+                    </span>
                   </template>
+
                   <template v-else-if="input.nodeType === 'source.file'">
-                    <div class="rv-source-title">{{ input.fileName || "本地音视频" }}</div>
-                    <div class="rv-source-meta tnum">{{ fmtSize(input.size) }}</div>
+                    <span class="rv-source-title">{{ input.fileName || "本地音视频" }}</span>
+                    <span class="rv-source-meta tnum">{{ fmtSize(input.size) || sourceCardSummary(input) }}</span>
                   </template>
-                  <template v-else-if="input.nodeType === 'source.text'">
-                    <div class="rv-source-text">{{ input.textPreview || input.text?.slice(0, 80) || "空文稿" }}</div>
+
+                  <template v-else>
+                    <span class="rv-source-summary" :title="sourceCardSummary(input)">{{ sourceCardSummary(input) }}</span>
+                    <span v-if="input.text" class="rv-source-hint">点击查看</span>
                   </template>
-                  <template v-else-if="input.text">
-                    <div class="rv-source-text">{{ input.text.slice(0, 80) }}</div>
-                  </template>
-                  <span v-if="input.text" class="rv-source-hint">点击查看单独内容</span>
-                  <el-tag v-if="input.status" :type="statusMeta[input.status]?.type ?? 'info'" size="small" class="rv-source-status">
-                    {{ statusMeta[input.status]?.label ?? input.status }}
-                  </el-tag>
-                </div>
+                </span>
               </button>
             </div>
             <div v-else class="rv-side-empty">本次结果没有可追溯的输入素材</div>
@@ -864,6 +895,16 @@ async function forceStopRun() {
         <section class="rv-main">
           <div class="rv-toolbar">
             <div class="rv-tool-group">
+              <button
+                type="button"
+                class="rv-tool-btn"
+                :title="sideCollapsed ? '展开链路面板' : '收起链路面板'"
+                @click="sideCollapsed = !sideCollapsed"
+              >
+                <PanelLeftOpen v-if="sideCollapsed" :size="14" />
+                <PanelLeftClose v-else :size="14" />
+              </button>
+              <span class="rv-tool-divider" />
               <button type="button" class="rv-tool-btn" title="缩小" @click="setZoom(-10)"><ZoomOut :size="14" /></button>
               <span class="rv-zoom tnum">{{ zoom }}%</span>
               <button type="button" class="rv-tool-btn" title="放大" @click="setZoom(10)"><ZoomIn :size="14" /></button>
@@ -902,12 +943,16 @@ async function forceStopRun() {
             </div>
             <div v-if="toc.length > 0" class="rv-toc">
               <ListTree :size="14" />
-              <select class="rv-toc-select" aria-label="文档目录" @change="scrollToHeading(($event.target as HTMLSelectElement).value)">
-                <option value="" disabled selected>目录</option>
-                <option v-for="item in toc" :key="item.id" :value="item.id">
-                  {{ "　".repeat(Math.max(0, item.level - 1)) }}{{ item.text }}
-                </option>
-              </select>
+              <el-select
+                v-model="tocValue"
+                class="rv-toc-select"
+                size="small"
+                placeholder="文档目录"
+                aria-label="文档目录"
+                @change="(v: string | number | boolean | undefined) => scrollToHeading(String(v ?? ''))"
+              >
+                <el-option v-for="item in toc" :key="item.id" :label="`${'　'.repeat(Math.max(0, item.level - 1))}${item.text}`" :value="item.id" />
+              </el-select>
             </div>
           </div>
 
@@ -972,9 +1017,9 @@ async function forceStopRun() {
                 <div v-else class="rv-preview markdown-body" v-html="renderedMarkdown" />
 
                 <div v-if="editing" class="rv-edit-actions">
-                  <el-button size="small" plain :disabled="draft === markdown" @click="resetDraft">恢复原始</el-button>
-                  <el-button size="small" plain @click="toggleEdit">退出编辑</el-button>
-                  <el-button size="small" type="primary" :disabled="!draft" @click="copyMarkdown">复制编辑结果</el-button>
+                  <button type="button" class="rv-btn rv-btn--text" :disabled="draft === markdown" @click="resetDraft">恢复原始</button>
+                  <button type="button" class="rv-btn rv-btn--text" @click="toggleEdit">退出编辑</button>
+                  <button type="button" class="rv-btn rv-btn--text" :disabled="!draft" @click="copyMarkdown">复制编辑结果</button>
                 </div>
               </article>
 
@@ -1021,8 +1066,8 @@ async function forceStopRun() {
   align-items: center;
   justify-content: space-between;
   gap: 16px;
-  height: 56px;
-  padding: 0 16px;
+  height: 48px;
+  padding: 0 12px;
   border-bottom: 1px solid var(--color-border);
   background: var(--color-surface);
   flex-shrink: 0;
@@ -1065,6 +1110,116 @@ async function forceStopRun() {
   flex-shrink: 0;
 }
 
+.rv-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 10px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text-secondary);
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    border-color var(--dur-1) var(--ease-out),
+    background-color var(--dur-1) var(--ease-out),
+    color var(--dur-1) var(--ease-out),
+    opacity var(--dur-1) var(--ease-out);
+}
+
+.rv-btn:hover:not(:disabled) {
+  background: var(--color-ink-soft);
+  color: var(--color-text);
+}
+
+.rv-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.rv-btn--text {
+  padding: 0 6px;
+  color: var(--color-text);
+}
+
+.rv-btn--text:hover:not(:disabled) {
+  background: var(--color-ink-soft);
+  color: var(--color-text);
+}
+
+.rv-btn--danger-text {
+  padding: 0 6px;
+  color: var(--color-error);
+}
+
+.rv-btn--danger-text:hover:not(:disabled) {
+  background: var(--color-error-soft);
+  color: var(--color-error);
+}
+
+.rv-btn--table {
+  height: 24px;
+  padding: 0 7px;
+  color: var(--color-text-secondary);
+}
+
+.rv-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--color-ink-soft);
+  color: var(--color-text-secondary);
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.6;
+  white-space: nowrap;
+}
+
+.rv-status-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  flex-shrink: 0;
+}
+
+.rv-status.is-running {
+  background: var(--color-ink-soft);
+  color: var(--color-text);
+}
+
+.rv-status.is-running .rv-status-dot {
+  background: currentColor;
+  animation: wp-pulse 1.5s var(--ease-out) infinite;
+}
+
+.rv-status.is-success,
+.rv-status.is-done {
+  background: var(--color-success-soft);
+  color: var(--color-success);
+}
+
+.rv-status.is-error {
+  background: var(--color-error-soft);
+  color: var(--color-error);
+}
+
+.rv-status.is-cancelled,
+.rv-status.is-skipped,
+.rv-status.is-idle {
+  background: var(--color-ink-soft);
+  color: var(--color-text-secondary);
+}
+
 .rv-tabs {
   display: flex;
   gap: 2px;
@@ -1090,8 +1245,8 @@ async function forceStopRun() {
 }
 
 .rv-tabs button.active {
-  color: var(--color-brand);
-  border-bottom-color: var(--color-brand);
+  color: var(--color-text);
+  border-bottom-color: var(--color-text);
 }
 
 .rv-loading {
@@ -1135,9 +1290,9 @@ async function forceStopRun() {
 }
 
 .rv-mindmap-tabs button.active {
-  border-color: var(--color-brand);
-  background: var(--color-brand-soft);
-  color: var(--color-brand);
+  border-color: var(--color-border-strong);
+  background: var(--color-ink-soft);
+  color: var(--color-text);
 }
 
 .rv-mindmap-main {
@@ -1148,6 +1303,26 @@ async function forceStopRun() {
 
 .rv-nodes-table {
   width: 100%;
+  --el-table-border-color: var(--color-border);
+  --el-table-header-bg-color: var(--color-surface-muted);
+  --el-table-row-hover-bg-color: var(--color-ink-soft);
+}
+
+.rv-nodes-table :deep(th.el-table__cell) {
+  background: var(--color-surface-muted);
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  font-weight: 600;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.rv-nodes-table :deep(td.el-table__cell) {
+  background: var(--color-surface);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.rv-nodes-table :deep(.el-table__inner-wrapper::before) {
+  display: none;
 }
 
 .rv-node-error {
@@ -1176,8 +1351,14 @@ async function forceStopRun() {
 }
 
 .rv-side.collapsed {
-  width: 44px;
-  min-width: 44px;
+  width: 0;
+  min-width: 0;
+  overflow: hidden;
+  border-right: none;
+}
+
+.rv-side.collapsed .rv-side-head {
+  display: none;
 }
 
 .rv-side-head {
@@ -1186,7 +1367,6 @@ async function forceStopRun() {
   justify-content: space-between;
   height: 38px;
   padding: 0 10px;
-  border-bottom: 1px solid var(--color-border);
   flex-shrink: 0;
 }
 
@@ -1194,23 +1374,18 @@ async function forceStopRun() {
   font-size: 12px;
   font-weight: 600;
   color: var(--color-text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
-.rv-side-toggle {
-  display: grid;
-  place-items: center;
-  width: 26px;
-  height: 26px;
-  border: 1px solid transparent;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--color-text-secondary);
-  cursor: pointer;
+.rv-side.collapsed .rv-side-title {
+  display: none;
 }
 
-.rv-side-toggle:hover {
-  background: var(--color-ink-soft);
-  color: var(--color-text);
+.rv-side.collapsed .rv-side-head {
+  justify-content: center;
+  padding: 0;
 }
 
 .rv-side-content {
@@ -1228,8 +1403,10 @@ async function forceStopRun() {
 
 .rv-source-card {
   display: flex;
+  align-items: flex-start;
   gap: 8px;
   width: 100%;
+  min-width: 0;
   padding: 8px;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
@@ -1248,19 +1425,20 @@ async function forceStopRun() {
 }
 
 .rv-source-card.active {
-  border-color: var(--color-brand);
-  background: var(--color-brand-soft);
+  border-color: var(--color-text-secondary);
+  background: var(--color-ink-soft);
 }
 
 .rv-source-index {
   display: grid;
   place-items: center;
-  width: 20px;
-  height: 20px;
+  width: 18px;
+  height: 18px;
   border-radius: var(--radius-xs);
   background: var(--color-ink);
   color: var(--color-surface);
-  font-size: 10.5px;
+  font-size: 10px;
+  line-height: 1;
   flex-shrink: 0;
 }
 
@@ -1269,63 +1447,126 @@ async function forceStopRun() {
   flex: 1;
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 5px;
+}
+
+.rv-source-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  min-width: 0;
 }
 
 .rv-source-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-size: 11px;
   font-weight: 600;
   color: var(--color-text);
 }
 
-.rv-source-cover {
-  width: 100%;
-  max-width: 220px;
-  aspect-ratio: 16 / 9;
+.rv-source-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--color-text-tertiary);
+  flex-shrink: 0;
+}
+
+.rv-source-dot.is-running {
+  background: var(--color-text);
+  animation: wp-pulse 1.5s var(--ease-out) infinite;
+}
+
+.rv-source-dot.is-success,
+.rv-source-dot.is-done {
+  background: var(--color-success);
+}
+
+.rv-source-dot.is-error {
+  background: var(--color-error);
+}
+
+.rv-source-dot.is-cancelled,
+.rv-source-dot.is-skipped,
+.rv-source-dot.is-idle {
+  background: var(--color-text-tertiary);
+}
+
+.rv-source-media {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  min-width: 0;
+}
+
+.rv-source-thumb {
+  width: 72px;
+  height: 45px;
   object-fit: cover;
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-xs);
   background: var(--color-ink-soft);
+  flex-shrink: 0;
+}
+
+.rv-source-media-body {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
 }
 
 .rv-source-title {
   font-size: 12px;
   font-weight: 500;
   color: var(--color-text);
-  line-height: 1.45;
+  line-height: 1.4;
   display: -webkit-box;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
+  word-break: break-word;
 }
 
 .rv-source-url {
   font-size: 11px;
   color: var(--color-text-tertiary);
   word-break: break-all;
+  line-height: 1.4;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 
 .rv-source-meta {
   font-size: 10.5px;
   color: var(--color-text-tertiary);
+  line-height: 1.4;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.rv-source-text {
+.rv-source-summary {
   font-size: 11.5px;
   color: var(--color-text-secondary);
-  line-height: 1.5;
+  line-height: 1.4;
   display: -webkit-box;
-  -webkit-line-clamp: 3;
+  -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
+  word-break: break-word;
 }
 
 .rv-source-hint {
-  font-size: 10.5px;
+  font-size: 10px;
   color: var(--color-text-tertiary);
-}
-
-.rv-source-status {
-  align-self: flex-start;
 }
 
 .rv-side-section-title {
@@ -1347,6 +1588,7 @@ async function forceStopRun() {
   align-items: flex-start;
   gap: 3px;
   width: 100%;
+  min-width: 0;
   padding: 8px 10px;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
@@ -1361,8 +1603,17 @@ async function forceStopRun() {
 }
 
 .rv-output-item.active {
-  border-color: var(--color-brand);
-  background: var(--color-brand-soft);
+  border-color: var(--color-text-secondary);
+  background: var(--color-ink-soft);
+}
+
+.rv-output-name,
+.rv-output-meta {
+  width: 100%;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .rv-output-name {
@@ -1437,8 +1688,8 @@ async function forceStopRun() {
 }
 
 .rv-tool-btn.active {
-  background: var(--color-brand-soft);
-  color: var(--color-brand);
+  background: var(--color-ink-soft);
+  color: var(--color-text);
 }
 
 .rv-zoom {
@@ -1458,7 +1709,7 @@ async function forceStopRun() {
 .rv-tool-text {
   margin-left: 4px;
   font-size: 11px;
-  color: var(--color-brand);
+  color: var(--color-text);
 }
 
 .rv-toc {
@@ -1469,13 +1720,12 @@ async function forceStopRun() {
 }
 
 .rv-toc-select {
-  max-width: 220px;
-  height: 26px;
+  width: 220px;
+}
+
+.rv-toc-select :deep(.el-select__wrapper) {
+  min-height: 26px;
   padding: 0 8px;
-  border: 1px solid var(--color-border-strong);
-  border-radius: var(--radius-sm);
-  background: var(--color-surface);
-  color: var(--color-text);
   font-size: 12px;
 }
 
@@ -1483,37 +1733,34 @@ async function forceStopRun() {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  padding: 24px;
+  background: var(--color-surface);
 }
 
 .rv-paper {
   width: 100%;
-  max-width: 900px;
+  max-width: 780px;
+  min-height: 100%;
   margin: 0 auto;
-  padding: 48px 56px;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-xl);
-  background: var(--color-surface);
-  box-shadow: var(--shadow-card);
+  padding: 40px 32px 96px;
+  background: transparent;
   font-size: calc(16px * var(--doc-scale, 1));
 }
 
 .rv-paper-head {
-  padding-bottom: 16px;
-  margin-bottom: 20px;
-  border-bottom: 1px solid var(--color-border);
+  margin-bottom: 32px;
 }
 
 .rv-paper-title {
   margin: 0;
-  font-size: 1.6em;
+  font-size: 1.8em;
   font-weight: 700;
-  letter-spacing: -0.01em;
+  letter-spacing: -0.02em;
+  line-height: 1.35;
   color: var(--color-text);
 }
 
 .rv-paper-meta {
-  margin: 6px 0 0;
+  margin: 8px 0 0;
   font-size: 0.8em;
   color: var(--color-text-tertiary);
 }
@@ -1647,7 +1894,7 @@ async function forceStopRun() {
 
 .rv-log-kind {
   font-size: 11px;
-  color: var(--color-brand);
+  color: var(--color-text-secondary);
 }
 
 .rv-log-time {
@@ -1721,8 +1968,7 @@ async function forceStopRun() {
   }
 
   .rv-side.collapsed {
-    width: 100%;
-    min-width: 0;
+    display: none;
   }
 
   .rv-paper {

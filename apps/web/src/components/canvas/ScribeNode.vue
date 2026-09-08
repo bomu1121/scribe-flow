@@ -62,14 +62,6 @@ function collectionRowTitle(item: (typeof biliItems.value)[number]): string {
   return item.title || item.part || (item.page ? `P${item.page}` : "");
 }
 
-// 文本节点校验
-const textError = computed(() => {
-  const text = String(data.value.text ?? "");
-  if (text.trim().length === 0) return "文稿不能为空";
-  if (text.length > 50000) return "文稿过长（最多 50000 字）";
-  return "";
-});
-
 async function uploadFile(options: UploadRequestOptions) {
   const form = new FormData();
   form.append("file", options.file);
@@ -773,7 +765,7 @@ const themeOptions = [
                 <div class="sf-node-preview-info">
                   <span class="sf-node-preview-title" :title="data.pageInfo?.part || preview.title">{{ data.pageInfo?.part || preview.title }}</span>
                   <span class="sf-node-preview-meta tnum">
-                    {{ preview.uploader }}<template v-if="preview.pages.length > 0"> · {{ preview.pages.length }}P</template>
+                    {{ preview.uploader }}<template v-if="preview.pages.length > 1"> · {{ preview.pages.length }}P</template>
                   </span>
                 </div>
               </div>
@@ -844,8 +836,7 @@ const themeOptions = [
                 @blur="commit"
               />
             </div>
-            <span v-if="textError" class="sf-node-text-error">{{ textError }}</span>
-            <span v-else class="sf-node-text-count tnum">{{ String(data.text ?? '').length }} / 50000</span>
+            <span class="sf-node-text-count tnum">{{ String(data.text ?? '').length }} / 50000</span>
           </template>
 
           <template v-else-if="nodeType === 'process.transcribe'">
@@ -1799,11 +1790,6 @@ const themeOptions = [
   font-family: var(--font-mono);
   font-size: 12px;
   line-height: 1.6;
-}
-
-.sf-node-text-error {
-  font-size: 11px;
-  color: var(--color-error);
 }
 
 .sf-node-text-count {
