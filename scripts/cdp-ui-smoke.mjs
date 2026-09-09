@@ -8,7 +8,7 @@
  *   - .ws-rail / .ws-rail-btn / .wp-projects / .wp-item / .np-tpl / .el-dialog / .sf-account 等
  *   - 节点添加从画布侧栏 palette 改为工作台「节点」面板（NodesPanel .wp-node-item）
  *   - 运行按钮为画布浮动按钮 .sf-float-run；运行结果状态类 .sf-node.is-done
- *   - 运行详情与日志为 RunDetailView 的 .rv-preview / .rv-log-item
+ *   - 运行详情与日志为 RunDetailView 的 .rv-preview / RunLogDialog 的 .rl-log-item
  * 用法：先启动 pnpm dev，再执行 node scripts/cdp-ui-smoke.mjs
  */
 import { spawn } from "node:child_process";
@@ -470,7 +470,7 @@ async function run() {
     m3RunId = m3RunList?.items?.[0]?.id ?? "";
 
     // -------------------------------------------------------------
-    // 6. M4：运行详情日志弹窗（RunDetailView .rv-preview / .rv-log-item）
+    // 6. M4：运行详情日志查看器（RunDetailView .rv-preview / RunLogDialog .rl-log-item）
     // -------------------------------------------------------------
     if (m3RunId) {
       await navigate(`${APP_URL}project/${m3Id}/run/${m3RunId}`);
@@ -478,10 +478,10 @@ async function run() {
       const docText = await evalJs("document.querySelector('.rv-main .rv-preview')?.textContent ?? ''");
       check("运行详情渲染输出文档", docOk && docText.includes("M3 UI 验收文稿"), docText.slice(0, 80));
       await evalJs("[...document.querySelectorAll('.rv-actions .rv-btn')].find((b) => b.textContent.includes('查看日志'))?.click(); true");
-      const logItems = await waitFor("document.querySelectorAll('.rv-log-item').length >= 2", 8000);
-      check("日志弹窗展示节点日志（≥2 条）", logItems, `${await evalJs("document.querySelectorAll('.rv-log-item').length")} 条`);
+      const logItems = await waitFor("document.querySelectorAll('.rl-log-item').length >= 2", 8000);
+      check("日志查看器展示节点日志（≥2 条）", logItems, `${await evalJs("document.querySelectorAll('.rl-log-item').length")} 条`);
       await pressEscape();
-      await waitFor(`(() => { const i = ${VISIBLE_DIALOG_JS}; return i === null; })()`, 3000);
+      await waitFor("!document.querySelector('.rl-overlay')", 3000);
     }
 
     // 设置页（独立路由 /settings，仍为 .sf-settings-* 结构）
