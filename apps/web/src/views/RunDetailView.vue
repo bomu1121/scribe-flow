@@ -5,6 +5,7 @@ import { ElTable, ElTableColumn } from "element-plus";
 import { toast } from "@/lib/toast";
 import {
   ArrowLeft,
+  ChevronDown,
   Copy,
   Eye,
   FileText,
@@ -49,6 +50,8 @@ const logDialogNodeId = ref("");
 const selectedOutputIndex = ref(0);
 const selectedInputKey = ref("");
 const tocValue = ref("");
+const tocPanelOpen = ref(false);
+const tocRootRef = ref<HTMLElement | null>(null);
 const inputText = ref("");
 const comparingDiff = ref(false);
 const resultRootRef = ref<HTMLElement | null>(null);
@@ -59,6 +62,7 @@ const projectId = String(route.params.id);
 
 let stopRunEvents: (() => void) | null = null;
 let reloadTimer: ReturnType<typeof setTimeout> | null = null;
+let tocCloseTimer: ReturnType<typeof setTimeout> | null = null;
 
 const isRunning = computed(() => run.value?.status === "running");
 
@@ -384,6 +388,8 @@ const toc = computed(() => {
   return items;
 });
 
+const currentTocLabel = computed(() => toc.value.find((item) => item.id === tocValue.value)?.text ?? "文档目录");
+
 const wordCount = computed(() => activeMarkdown.value.replace(/\s/g, "").length);
 const readingTime = computed(() => Math.max(1, Math.round(wordCount.value / 400)));
 const sourceSummary = computed(() => {
@@ -401,12 +407,15 @@ const sourceSummary = computed(() => {
 onMounted(() => {
   void loadRun();
   document.addEventListener("fullscreenchange", onFullscreenChange);
+  window.addEventListener("pointerdown", onTocOutsidePointerDown, true);
 });
 
 onBeforeUnmount(() => {
   stopRunEvents?.();
   if (reloadTimer) clearTimeout(reloadTimer);
+  if (tocCloseTimer) clearTimeout(tocCloseTimer);
   document.removeEventListener("fullscreenchange", onFullscreenChange);
+  window.removeEventListener("pointerdown", onTocOutsidePointerDown, true);
 });
 
 async function loadRun(showLoading = true) {
@@ -612,6 +621,42 @@ async function toggleFullscreen() {
   } catch {
     toast.error("全屏切换失败，请检查浏览器权限");
   }
+}
+
+function openTocPanel() {
+  if (tocCloseTimer) clearTimeout(tocCloseTimer);
+  tocCloseTimer = null;
+  tocPanelOpen.value = true;
+}
+
+function closeTocPanel() {
+  if (tocCloseTimer) clearTimeout(tocCloseTimer);
+  tocCloseTimer = null;
+  tocPanelOpen.value = false;
+}
+
+function scheduleCloseTocPanel() {
+  if (tocCloseTimer) clearTimeout(tocCloseTimer);
+  tocCloseTimer = setTimeout(() => {
+    tocPanelOpen.value = false;
+    tocCloseTimer = null;
+  }, 220);
+}
+
+function cancelCloseTocPanel() {
+  if (tocCloseTimer) clearTimeout(tocCloseTimer);
+  tocCloseTimer = null;
+}
+
+function onTocOutsidePointerDown(event: PointerEvent) {
+  if (!tocPanelOpen.value) return;
+  const target = event.target as Node | null;
+  if (tocRootRef.value && target && !tocRootRef.value.contains(target)) closeTocPanel();
+}
+
+function selectTocItem(id: string) {
+  // 选中后不立即关闭，方便连续跳转多个章节；光标移开后由 hover 逻辑收起。
+  scrollToHeading(id);
 }
 
 function scrollToHeading(id: string) {
@@ -926,18 +971,54 @@ async function forceStopRun() {
               </button>
               <span v-if="editing && !viewingInput" class="rv-tool-text">编辑中</span>
             </div>
-            <div v-if="toc.length > 0" class="rv-toc">
+            <div
+              v-if="toc.length > 0"
+              ref="tocRootRef"
+              class="rv-toc"
+              @mouseenter="openTocPanel"
+              @mouseleave="scheduleCloseTocPanel"
+            >
               <ListTree :size="14" />
-              <el-select
-                v-model="tocValue"
-                class="rv-toc-select"
-                size="small"
-                placeholder="文档目录"
+              <button
+                type="button"
+                class="rv-toc-trigger"
+                :class="{ 'is-open': tocPanelOpen }"
+                :aria-expanded="tocPanelOpen"
                 aria-label="文档目录"
-                @change="(v: string | number | boolean | undefined) => scrollToHeading(String(v ?? ''))"
+                @click="openTocPanel"
               >
-                <el-option v-for="item in toc" :key="item.id" :label="`${'　'.repeat(Math.max(0, item.level - 1))}${item.text}`" :value="item.id" />
-              </el-select>
+                <span class="rv-toc-trigger-label">{{ currentTocLabel }}</span>
+                <ChevronDown :size="12" class="rv-toc-trigger-arrow" />
+              </button>
+
+              <Transition name="toc-pop">
+                <div
+                  v-if="tocPanelOpen"
+                  class="rv-toc-panel"
+                  role="listbox"
+                  aria-label="文档目录"
+                  @mouseenter="cancelCloseTocPanel"
+                  @mouseleave="scheduleCloseTocPanel"
+                >
+                  <div class="rv-toc-panel-title">文档目录</div>
+                  <div class="rv-toc-panel-list">
+                    <button
+                      v-for="item in toc"
+                      :key="item.id"
+                      type="button"
+                      role="option"
+                      class="rv-toc-item"
+                      :class="{ 'is-active': item.id === tocValue }"
+                      :aria-selected="item.id === tocValue"
+                      :style="{ paddingLeft: `${10 + (item.level - 1) * 16}px` }"
+                      @click="selectTocItem(item.id)"
+                    >
+                      <span class="rv-toc-item-marker" />
+                      <span class="rv-toc-item-text">{{ item.text }}</span>
+                    </button>
+                  </div>
+                </div>
+              </Transition>
             </div>
           </div>
 
@@ -1688,20 +1769,155 @@ async function forceStopRun() {
 }
 
 .rv-toc {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 6px;
   color: var(--color-text-secondary);
 }
 
-.rv-toc-select {
-  width: 220px;
+.rv-toc-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 240px;
+  height: 26px;
+  padding: 0 8px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  color: var(--color-text-secondary);
+  font-family: inherit;
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+  transition:
+    border-color var(--dur-1) var(--ease-out),
+    background-color var(--dur-1) var(--ease-out),
+    color var(--dur-1) var(--ease-out);
 }
 
-.rv-toc-select :deep(.el-select__wrapper) {
-  min-height: 26px;
-  padding: 0 8px;
+.rv-toc-trigger:hover,
+.rv-toc-trigger.is-open {
+  border-color: var(--color-border-strong);
+  background: var(--color-ink-soft);
+  color: var(--color-text);
+}
+
+.rv-toc-trigger-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rv-toc-trigger-arrow {
+  flex-shrink: 0;
+  transition: transform var(--dur-2) var(--ease-out);
+}
+
+.rv-toc-trigger.is-open .rv-toc-trigger-arrow {
+  transform: rotate(180deg);
+}
+
+.rv-toc-panel {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: var(--z-dropdown);
+  display: flex;
+  flex-direction: column;
+  width: 300px;
+  max-width: min(360px, calc(100vw - 24px));
+  max-height: min(480px, 65vh);
+  overflow: hidden;
+  border: 1px solid var(--color-border-glass);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-glass);
+  box-shadow: var(--shadow-overlay);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+}
+
+.rv-toc-panel-title {
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--color-border);
+  color: var(--color-text-tertiary);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  flex-shrink: 0;
+}
+
+.rv-toc-panel-list {
+  overflow-y: auto;
+  padding: 4px;
+}
+
+.rv-toc-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  width: 100%;
+  padding: 6px 10px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text-secondary);
+  font-family: inherit;
   font-size: 12px;
+  line-height: 1.45;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    background-color var(--dur-1) var(--ease-out),
+    color var(--dur-1) var(--ease-out);
+}
+
+.rv-toc-item:hover {
+  background: var(--color-ink-soft-glass);
+  color: var(--color-text);
+}
+
+.rv-toc-item.is-active {
+  background: var(--color-brand-soft-glass);
+  color: var(--color-text);
+}
+
+.rv-toc-item-marker {
+  width: 5px;
+  height: 5px;
+  margin-top: 6px;
+  border-radius: 50%;
+  background: transparent;
+  flex-shrink: 0;
+}
+
+.rv-toc-item.is-active .rv-toc-item-marker {
+  background: var(--color-brand);
+}
+
+.rv-toc-item-text {
+  min-width: 0;
+  flex: 1;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  word-break: break-word;
+}
+
+.toc-pop-enter-active,
+.toc-pop-leave-active {
+  transition:
+    opacity var(--dur-2) var(--ease-out),
+    transform var(--dur-2) var(--ease-out);
+  transform-origin: top right;
+}
+
+.toc-pop-enter-from,
+.toc-pop-leave-to {
+  opacity: 0;
+  transform: translateY(-4px) scale(0.98);
 }
 
 .rv-doc-scroll {

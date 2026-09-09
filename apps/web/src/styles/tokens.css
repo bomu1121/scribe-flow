@@ -9,8 +9,10 @@
   --color-canvas: #f8f9fa;
   --color-surface: #ffffff;
   --color-surface-muted: #f7f8f9;
+  --color-surface-glass: rgba(255, 255, 255, 0.82);
   --color-border: #e4e7eb;
   --color-border-strong: #cdd3da;
+  --color-border-glass: rgba(22, 24, 29, 0.12);
   --color-text: #16181d;
   --color-text-secondary: #545b66;
   --color-text-tertiary: #8a929e;
@@ -20,12 +22,14 @@
   --color-brand-hover: #0d9bcf;
   --color-brand-pressed: #0b88c4;
   --color-brand-soft: #e6f7fe;
+  --color-brand-soft-glass: rgba(0, 174, 236, 0.1);
   --color-brand-border: #b8e8fb;
   --color-on-brand: #ffffff;
 
   /* 墨色（导航/强标题） */
   --color-ink: #16181d;
   --color-ink-soft: #f0f1f3;
+  --color-ink-soft-glass: rgba(22, 24, 29, 0.06);
 
   /* 盖片/角标（图面上深色半透明底 + 白字，如封面时长角标） */
   --color-scrim: rgba(22, 24, 29, 0.72);
