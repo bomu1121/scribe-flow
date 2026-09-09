@@ -14,12 +14,26 @@ const defaultTitles: Record<ToastType, string> = {
 function titleFor(type: ToastType, title?: string) {
   return title || defaultTitles[type];
 }
+
+/** 离场前把当前 toast 按视口坐标钉在原位并脱离文档流，让剩余 toast 在离场同时平滑补位。 */
+function beforeLeave(el: Element) {
+  const toast = el as HTMLElement;
+  const rect = toast.getBoundingClientRect();
+
+  toast.style.position = "fixed";
+  toast.style.marginTop = "0px";
+  toast.style.top = `${rect.top}px`;
+  toast.style.left = `${rect.left}px`;
+  toast.style.right = "auto";
+  toast.style.width = `${rect.width}px`;
+  toast.style.maxWidth = "100%";
+}
 </script>
 
 <template>
   <Teleport to="body">
     <div class="sf-toast-stack" aria-live="polite" aria-label="通知">
-      <TransitionGroup name="sf-toast" tag="div" class="sf-toast-list">
+      <TransitionGroup name="sf-toast" tag="div" class="sf-toast-list" @before-leave="beforeLeave">
         <div v-for="item in state.items" :key="item.id" class="sf-toast" :class="`sf-toast--${item.type}`">
           <span class="sf-toast-icon">
             <svg
@@ -106,9 +120,12 @@ function titleFor(type: ToastType, title?: string) {
   display: flex;
   flex-direction: column;
   align-items: flex-end;
-  gap: 8px;
   width: 100%;
   pointer-events: auto;
+}
+
+.sf-toast + .sf-toast {
+  margin-top: 8px;
 }
 
 .sf-toast {
@@ -205,21 +222,31 @@ function titleFor(type: ToastType, title?: string) {
   color: var(--color-text);
 }
 
-/* 滑入/滑出：从右侧滑出，列表项移动时平滑让位 */
-.sf-toast-enter-active,
-.sf-toast-leave-active {
+/* 入场从右侧滑入；离场只淡出，不再横向滑出。
+   离场项在 beforeLeave 中钉住原位置并脱离文档流，剩余 toast 的 move 过渡与淡出同时进行，
+   避免“先滑走、再整体跳一下”造成的生硬与抖动。 */
+.sf-toast-enter-active {
   transition:
-    opacity var(--dur-2) var(--ease-out),
-    transform var(--dur-2) var(--ease-out);
+    opacity 0.3s ease,
+    transform 0.3s ease;
 }
 
-.sf-toast-enter-from,
-.sf-toast-leave-to {
+.sf-toast-leave-active {
+  will-change: opacity;
+  transition: opacity 0.3s ease;
+}
+
+.sf-toast-enter-from {
   opacity: 0;
   transform: translateX(120%);
 }
 
+.sf-toast-leave-to {
+  opacity: 0;
+}
+
 .sf-toast-move {
-  transition: transform var(--dur-2) var(--ease-out);
+  will-change: transform;
+  transition: transform 0.3s ease;
 }
 </style>
