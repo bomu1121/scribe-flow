@@ -5,13 +5,13 @@
  */
 :root {
   /* 品牌主色（含 Element Plus 需要的明暗梯度） */
-  --el-color-primary: var(--color-brand);
-  --el-color-primary-light-3: color-mix(in srgb, var(--color-brand) 70%, #ffffff);
-  --el-color-primary-light-5: color-mix(in srgb, var(--color-brand) 50%, #ffffff);
-  --el-color-primary-light-7: color-mix(in srgb, var(--color-brand) 30%, #ffffff);
-  --el-color-primary-light-8: color-mix(in srgb, var(--color-brand) 20%, #ffffff);
-  --el-color-primary-light-9: color-mix(in srgb, var(--color-brand) 10%, #ffffff);
-  --el-color-primary-dark-2: color-mix(in srgb, var(--color-brand) 80%, #000000);
+  --el-color-primary: var(--color-ink);
+  --el-color-primary-light-3: color-mix(in srgb, var(--color-ink) 70%, #ffffff);
+  --el-color-primary-light-5: color-mix(in srgb, var(--color-ink) 50%, #ffffff);
+  --el-color-primary-light-7: color-mix(in srgb, var(--color-ink) 30%, #ffffff);
+  --el-color-primary-light-8: color-mix(in srgb, var(--color-ink) 20%, #ffffff);
+  --el-color-primary-light-9: color-mix(in srgb, var(--color-ink) 10%, #ffffff);
+  --el-color-primary-dark-2: color-mix(in srgb, var(--color-ink) 80%, #000000);
 
   /* 语义色 */
   --el-color-success: var(--color-success);

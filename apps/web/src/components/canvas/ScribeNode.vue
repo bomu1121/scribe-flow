@@ -1654,8 +1654,8 @@ const themeOptions = [
 }
 
 .sf-node-pages-confirm:hover:not(:disabled) {
-  border-color: var(--color-brand);
-  color: var(--color-brand);
+  border-color: var(--color-text);
+  color: var(--color-text);
 }
 
 .sf-node-pages-confirm:disabled {
@@ -1763,8 +1763,8 @@ const themeOptions = [
 }
 
 .sf-node-season-confirm:hover:not(:disabled) {
-  border-color: var(--color-brand);
-  color: var(--color-brand);
+  border-color: var(--color-text);
+  color: var(--color-text);
 }
 
 .sf-node-season-confirm:disabled {
@@ -1806,9 +1806,9 @@ const themeOptions = [
 
 .sf-node-drop.has-file {
   border-style: solid;
-  border-color: var(--color-brand-border);
-  background: var(--color-brand-soft);
-  color: var(--color-brand);
+  border-color: var(--color-border-strong);
+  background: var(--color-ink-soft);
+  color: var(--color-text);
 }
 
 .sf-node-file-name {
@@ -2137,7 +2137,7 @@ const themeOptions = [
   padding: 3px 0;
   border: none;
   background: transparent;
-  color: var(--color-brand);
+  color: var(--color-text);
   font-family: inherit;
   font-size: 11.5px;
   font-weight: 600;

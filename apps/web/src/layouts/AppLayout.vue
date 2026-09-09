@@ -307,7 +307,7 @@ onBeforeUnmount(() => {
   }
 
   .ws-mobile-panel-btn:hover {
-    color: var(--color-brand);
+    color: var(--color-text);
   }
 }
 

@@ -23,7 +23,7 @@ body {
  * Element Plus 组件自带完整的 focus-visible 样式，必须排除，避免叠加出双层边框。
  */
 :focus-visible:not([class*="el-"]) {
-  outline: 2px solid var(--color-brand);
+  outline: 2px solid var(--color-text);
   outline-offset: 1px;
 }
 

@@ -124,15 +124,15 @@
 }
 
 .wp-btn--primary {
-  border-color: var(--color-brand);
-  background: var(--color-brand);
-  color: var(--color-on-brand);
+  border-color: var(--color-ink);
+  background: var(--color-ink);
+  color: var(--color-surface);
 }
 
 .wp-btn--primary:hover {
-  border-color: var(--color-brand-hover);
-  background: var(--color-brand-hover);
-  color: var(--color-on-brand);
+  border-color: var(--color-text);
+  background: var(--color-text);
+  color: var(--color-surface);
 }
 
 
@@ -306,81 +306,114 @@
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  padding: 10px 8px 16px;
+  padding: 4px 6px 16px;
 }
 
 .wp-group {
-  margin-bottom: 14px;
+  margin: 14px 0 2px;
+}
+
+.wp-group:first-child {
+  margin-top: 6px;
 }
 
 .wp-group-title {
-  margin: 0 2px 6px;
+  margin: 0 6px 4px;
   font-size: 11px;
   font-weight: 600;
-  letter-spacing: 0.04em;
+  letter-spacing: 0.05em;
   color: var(--color-text-tertiary);
 }
 
 .wp-group-items {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
 }
 
 .wp-node-item {
   position: relative;
   display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 3px;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
   min-width: 0;
-  padding: 7px 8px;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
-  background: var(--color-surface-muted);
+  min-height: 34px;
+  padding: 4px 6px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
   color: var(--color-text);
   font-family: inherit;
+  font-size: 12.5px;
   text-align: left;
-  cursor: default;
+  cursor: grab;
   transition:
-    border-color var(--dur-1) var(--ease-out),
     background-color var(--dur-1) var(--ease-out),
-    box-shadow var(--dur-1) var(--ease-out);
+    border-color var(--dur-1) var(--ease-out),
+    color var(--dur-1) var(--ease-out);
 }
 
 .wp-node-item:hover:not(.disabled) {
   background: var(--color-ink-soft);
 }
 
+.wp-node-item:active:not(.disabled) {
+  cursor: grabbing;
+}
+
 .wp-node-item.disabled {
-  opacity: 0.55;
+  opacity: 0.45;
   cursor: not-allowed;
 }
 
 .wp-node-icon {
-  display: grid;
-  place-items: center;
-  width: 24px;
-  height: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  flex-shrink: 0;
+  border-radius: var(--radius-sm);
+  background: var(--color-ink-soft);
   color: var(--color-text);
+  transition:
+    background-color var(--dur-1) var(--ease-out),
+    color var(--dur-1) var(--ease-out);
+}
+
+.wp-node-item:hover:not(.disabled) .wp-node-icon {
+  background: var(--color-surface);
 }
 
 .wp-node-name {
-  font-size: 11.5px;
-  font-weight: 500;
-  line-height: 1.3;
+  flex: 1;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  width: 100%;
+  font-size: 12.5px;
+  font-weight: 500;
+  line-height: 1.4;
+  color: var(--color-text);
 }
 
 .wp-node-action {
-  position: absolute;
-  right: 7px;
-  top: 7px;
-  font-size: 12px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  flex-shrink: 0;
+  border-radius: var(--radius-xs);
   color: var(--color-text-tertiary);
+  font-size: 13px;
+  line-height: 1;
+}
+
+.wp-node-item:hover:not(.disabled) .wp-node-action,
+.wp-node-item:focus-visible .wp-node-action {
+  color: var(--color-text-secondary);
 }
 
 /* ============ 树与行 ============ */
@@ -795,9 +828,9 @@
 .wp-marquee {
   position: fixed;
   z-index: calc(var(--z-dropdown) - 1);
-  border: 1px solid var(--color-brand);
+  border: 1px solid var(--color-text);
   border-radius: var(--radius-xs);
-  background: color-mix(in srgb, var(--color-brand-soft) 72%, transparent);
+  background: color-mix(in srgb, var(--color-ink-soft) 72%, transparent);
   pointer-events: none;
   user-select: none;
 }
@@ -851,8 +884,8 @@
   height: 18px;
   padding: 0 5px;
   border-radius: 999px;
-  background: var(--color-brand);
-  color: var(--color-on-brand);
+  background: var(--color-ink);
+  color: var(--color-surface);
   font-size: 10.5px;
   font-weight: 700;
   line-height: 18px;
@@ -1083,8 +1116,8 @@
 }
 
 .np-tpl:hover:not(:disabled) {
-  border-color: var(--color-brand);
-  background: var(--color-brand-soft);
+  border-color: var(--color-text);
+  background: var(--color-ink-soft);
 }
 
 .np-tpl:disabled {

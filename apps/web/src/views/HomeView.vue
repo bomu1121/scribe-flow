@@ -142,8 +142,8 @@ function showPanel() {
   height: 30px;
   margin-bottom: 2px;
   border-radius: var(--radius-sm);
-  background: var(--color-brand-soft);
-  color: var(--color-brand);
+  background: var(--color-ink-soft);
+  color: var(--color-text);
 }
 
 .sf-home-card-title {
@@ -177,8 +177,8 @@ function showPanel() {
 }
 
 .sf-home-card-btn:hover {
-  border-color: var(--color-brand);
-  color: var(--color-brand);
-  background: var(--color-brand-soft);
+  border-color: var(--color-text);
+  color: var(--color-text);
+  background: var(--color-ink-soft);
 }
 </style>

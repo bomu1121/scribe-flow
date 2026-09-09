@@ -40,7 +40,7 @@ const router = useRouter();
 }
 
 .sf-back:hover {
-  color: var(--color-brand);
+  color: var(--color-text);
 }
 
 .sf-empty {

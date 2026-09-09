@@ -58,13 +58,13 @@
   /* 画布 */
   --node-radius: 10px;
   --node-border: var(--color-border);
-  --node-selected-border: var(--color-brand);
+  --node-selected-border: var(--color-text);
   --node-running-border: var(--color-brand);
   --edge-color: #c6ccd4;
-  --edge-selected-color: var(--color-brand);
+  --edge-selected-color: var(--color-text);
   --edge-running-color: var(--color-brand);
   --handle-color: #aeb6bf;
-  --handle-hover-color: var(--color-brand);
+  --handle-hover-color: var(--color-text);
   --canvas-dot-color: rgba(22, 24, 29, 0.12);
 
   /* 字体 */
