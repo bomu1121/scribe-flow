@@ -81,6 +81,7 @@ interface SourceInfo {
   label: string;
   status?: RunNodeResult["status"];
   summary?: string;
+  error?: string;
   url?: string;
   pageInfo?: { page?: number; part?: string; duration?: number };
   items?: { title?: string; part?: string; page?: number; duration?: number }[];
@@ -108,6 +109,10 @@ interface InputItem extends SourceInfo {
   size?: number;
   /** 该中间步骤下多个来源的独立内容；存在时主区域按模块分开展示。 */
   modules?: { key: string; label: string; text: string }[];
+  /** 在链路中的深度：0=原始素材，越靠近输出越大。 */
+  depth: number;
+  /** 节点类型短标签，用于卡片徽标展示。 */
+  typeLabel: string;
 }
 
 function asRecord(value: unknown): Record<string, unknown> {
@@ -130,25 +135,53 @@ function fmtSize(size?: number): string {
   return `${(size / 1024 / 1024).toFixed(1)} MB`;
 }
 
+/** 卡片徽标用的短类型名，避免和节点 label 重复。 */
+const CHAIN_TYPE_SHORT: Record<string, string> = {
+  "source.bili": "B站",
+  "source.file": "文件",
+  "source.text": "文本",
+  "process.transcribe": "转写",
+  "process.refine": "校对",
+  "process.prompt": "AI",
+  "process.merge": "合并",
+  "process.output": "输出",
+  "flow.if": "分支",
+  "process.text": "工具",
+  "process.chapter": "章节",
+  "process.gameguide": "攻略",
+  "process.mindmap": "导图",
+  "process.obsidian": "Obsidian",
+};
+
+function chainTypeShort(nodeType: string): string {
+  return CHAIN_TYPE_SHORT[nodeType] ?? NODE_TYPE_LABELS[nodeType as keyof typeof NODE_TYPE_LABELS] ?? nodeType;
+}
+
 function textCharCount(text?: string): number {
   return (text ?? "").replace(/\s/g, "").length;
 }
 
-/** 单 P 视频的副标题：仅在分 P 名与主标题不同时展示，避免卡片里出现两遍标题。 */
-function biliPageMeta(input: InputItem): string {
-  const part = input.pageInfo?.part?.trim();
-  const page = input.pageInfo?.page;
-  if (!part) return "";
-  if (input.title && part === input.title) return "";
-  return page && page > 1 ? `P${page} · ${part}` : part;
-}
-
-/** 非 B 站链路的卡片摘要：优先节点摘要；没有摘要时显示字数，不再把整段正文铺在小卡里。 */
-function sourceCardSummary(input: InputItem): string {
-  if (input.modules && input.modules.length > 1) return `${input.modules.length} 个独立输入`;
-  if (input.summary) return input.summary;
-  const chars = textCharCount(input.text);
-  return chars > 0 ? `${chars} 字` : input.nodeType === "source.text" ? "空文稿" : "无文本";
+/** 链路卡片副标题：把类型、元信息、字数/状态压缩成一行，避免“点击查看”这类赘余提示。 */
+function chainCardMeta(input: InputItem): string {
+  const parts: string[] = [];
+  if (input.summary) {
+    parts.push(input.summary);
+  } else {
+    if (input.nodeType === "source.bili") {
+      if (input.items && input.items.length > 1) parts.push(`${input.items.length} 个视频`);
+      else if (input.title) parts.push(input.title);
+      if (input.uploader) parts.push(input.uploader);
+      if (input.duration) parts.push(fmtDuration(input.duration));
+    } else if (input.nodeType === "source.file") {
+      if (input.fileName) parts.push(input.fileName);
+      if (input.size) parts.push(fmtSize(input.size));
+    } else if (input.text) {
+      const chars = textCharCount(input.text);
+      if (chars > 0) parts.push(`${chars} 字`);
+    }
+  }
+  if (input.status === "error" && input.error) parts.push(input.error);
+  return parts.length > 0 ? parts.join(" · ") : input.nodeType === "source.text" ? "空文稿" : "—";
 }
 
 function slugify(text: string): string {
@@ -300,61 +333,126 @@ const inputItems = computed<InputItem[]>(() => {
   if (!currentOutput.value) return [];
   const rows: RunNodeInput[] = run.value?.inputs ?? [];
   const upstream = upstreamSourceIds(currentOutput.value.node.nodeId);
-  const rowMap = new Map<string, RunNodeInput[]>();
-  for (const row of rows) {
-    if (!upstream.has(row.sourceNodeId)) continue;
-    const list = rowMap.get(row.sourceNodeId) ?? [];
-    list.push(row);
-    rowMap.set(row.sourceNodeId, list);
-  }
-  // 旧数据没有 inputs 时，仍展示原始素材入口。
-  for (const source of visibleSources.value) {
-    if (!rowMap.has(source.nodeId)) rowMap.set(source.nodeId, []);
-  }
+  const nodes = graph.value?.nodes ?? [];
+  const edges = graph.value?.edges ?? [];
+  const nodeById = new Map(nodes.map((n) => [n.id, n]));
+  const order = new Map((run.value?.nodeResults ?? []).map((n, idx) => [n.nodeId, idx]));
+
+  // 按“到输出的上游深度”分层：source 为 0，越靠近输出深度越大。
+  const depthCache = new Map<string, number>();
+  const depthOf = (id: string): number => {
+    const cached = depthCache.get(id);
+    if (cached !== undefined) return cached;
+    const node = nodeById.get(id);
+    if (!node) return 0;
+    if (node.type.startsWith("source.")) {
+      depthCache.set(id, 0);
+      return 0;
+    }
+    let max = 0;
+    for (const edge of edges) {
+      if (edge.target === id && upstream.has(edge.source)) {
+        max = Math.max(max, depthOf(edge.source) + 1);
+      }
+    }
+    depthCache.set(id, max);
+    return max;
+  };
 
   const items: InputItem[] = [];
-  for (const [sourceNodeId, sourceRows] of rowMap) {
-    const textRow = sourceRows.find((r) => r.kind === "text" && r.text);
-    const audioRow = sourceRows.find((r) => r.kind === "audio");
-    const nodeResult = nodeResultMap.value.get(sourceNodeId);
-    const graphNode = graph.value?.nodes.find((n) => n.id === sourceNodeId);
-    const source = sources.value.find((s) => s.nodeId === sourceNodeId);
-    const nodeType = source?.nodeType ?? graphNode?.type ?? nodeResult?.nodeType ?? "";
-    const label = source?.label ?? nodeResult?.nodeLabel ?? NODE_TYPE_LABELS[nodeType as keyof typeof NODE_TYPE_LABELS] ?? nodeType;
+  for (const node of nodes) {
+    if (!upstream.has(node.id)) continue;
+    const nodeResult = nodeResultMap.value.get(node.id);
+    const source = sources.value.find((s) => s.nodeId === node.id);
+    const nodeType = node.type;
+    const data = asRecord(node.data);
+    const label =
+      source?.label ??
+      nodeResult?.nodeLabel ??
+      String(data.label ?? NODE_TYPE_LABELS[nodeType as keyof typeof NODE_TYPE_LABELS] ?? nodeType);
+    const outgoing = rows.filter((r) => r.sourceNodeId === node.id);
+
+    // 同一来源给同一消费节点的多行，才是“一个来源里的多个独立内容”（如多 P 视频）；
+    // 同一内容分发给多个下游分支不应被误当成 modules。
+    const byTarget = new Map<string, RunNodeInput[]>();
+    for (const row of outgoing) {
+      const list = byTarget.get(row.targetNodeId) ?? [];
+      list.push(row);
+      byTarget.set(row.targetNodeId, list);
+    }
+    const moduleGroup = [...byTarget.values()]
+      .filter((group) => group.length > 1 && group.some((r) => r.kind === "text" && (r.text || r.resultText)))
+      .sort((a, b) => b.length - a.length)[0];
+
+    const textRow = outgoing.find((r) => r.kind === "text" && r.text);
+    const audioRow = outgoing.find((r) => r.kind === "audio");
     const fallbackText = nodeResult?.output && nodeResult.output.kind !== "audio" ? nodeResult.output.text : undefined;
+    const text = textRow?.text ?? fallbackText ?? (nodeType === "source.text" ? String(data.text ?? "") : undefined);
     const defaultKind: InputItem["kind"] = nodeType === "source.text" ? "text" : "audio";
-    const moduleRows = sourceRows.filter((r) => r.kind === "text" && (r.text || r.resultText));
-    const modules =
-      moduleRows.length > 1
-        ? moduleRows.map((r, index) => ({
-            key: r.id,
-            label: `${index + 1}. ${resolveModuleLabel(r, rows, nodeResultMap.value, graph.value, index)}`,
-            text: r.text ?? r.resultText ?? "",
-          }))
-        : undefined;
+    const modules = moduleGroup
+      ? moduleGroup.map((r, index) => ({
+          key: r.id,
+          label: `${index + 1}. ${resolveModuleLabel(r, rows, nodeResultMap.value, graph.value, index)}`,
+          text: r.text ?? r.resultText ?? "",
+        }))
+      : undefined;
+    const depth = depthOf(node.id);
+    const typeLabel = chainTypeShort(nodeType);
     const base: InputItem = {
-      key: sourceNodeId,
-      sourceNodeId,
-      nodeId: sourceNodeId,
+      key: node.id,
+      sourceNodeId: node.id,
+      nodeId: node.id,
       nodeType,
+      typeLabel,
       label,
+      depth,
       status: source?.status ?? nodeResult?.status,
       summary: source?.summary ?? nodeResult?.summary,
+      error: nodeResult?.error ?? source?.error,
       kind: textRow ? "text" : audioRow ? "audio" : fallbackText ? "text" : defaultKind,
-      text: textRow?.text ?? fallbackText,
-      path: audioRow?.path,
-      size: textRow?.size ?? audioRow?.size,
+      text,
+      path: audioRow?.path ?? (nodeResult?.output?.kind === "audio" ? nodeResult.output.path : undefined),
+      size: textRow?.size ?? audioRow?.size ?? nodeResult?.output?.size,
       modules,
     };
     items.push({ ...base, ...(source ?? {}) });
   }
 
-  const order = new Map((run.value?.nodeResults ?? []).map((n, idx) => [n.nodeId, idx]));
-  items.sort((a, b) => (order.get(a.sourceNodeId) ?? Number.MAX_SAFE_INTEGER) - (order.get(b.sourceNodeId) ?? Number.MAX_SAFE_INTEGER));
+  items.sort(
+    (a, b) =>
+      a.depth - b.depth ||
+      (order.get(a.nodeId) ?? Number.MAX_SAFE_INTEGER) - (order.get(b.nodeId) ?? Number.MAX_SAFE_INTEGER),
+  );
   return items;
 });
 
+/** 把链路输入按深度分成可读的阶段，方便展示“原始素材 → 中间加工 → 最终输入”。 */
+const chainStages = computed(() => {
+  if (inputItems.value.length === 0) return [];
+  const maxDepth = Math.max(...inputItems.value.map((item) => item.depth));
+  const groups: { key: string; title: string; items: InputItem[] }[] = [];
+  for (let depth = 0; depth <= maxDepth; depth += 1) {
+    const stageItems = inputItems.value.filter((item) => item.depth === depth);
+    if (stageItems.length === 0) continue;
+    const title =
+      depth === 0
+        ? "原始素材"
+        : depth === maxDepth
+          ? maxDepth === 1
+            ? "加工结果"
+            : "最终输入"
+          : `加工步骤 ${depth}`;
+    groups.push({ key: `chain-${depth}`, title, items: stageItems });
+  }
+  return groups;
+});
+
 const selectedInput = computed(() => inputItems.value.find((i) => i.key === selectedInputKey.value) ?? null);
+const selectedStageTitle = computed(() => {
+  const item = selectedInput.value;
+  if (!item) return "";
+  return chainStages.value.find((stage) => stage.items.some((candidate) => candidate.key === item.key))?.title ?? "";
+});
 const viewingInput = computed(() => selectedInput.value !== null);
 const currentMarkdown = computed(() => (editing.value ? draft.value : markdown.value));
 /** 用于与当前输出对比的“链路输入”完整文本；多模块输入会合并后参与对比。 */
@@ -854,54 +952,37 @@ async function forceStopRun() {
             <span class="rv-side-title">链路输入</span>
           </div>
 
-          <div v-if="!sideCollapsed" class="rv-side-content">
-            <div v-if="inputItems.length > 0" class="rv-source-list">
-              <button
-                v-for="(input, index) in inputItems"
-                :key="input.key"
-                type="button"
-                class="rv-source-card"
-                :class="{ active: selectedInputKey === input.key }"
-                @click="selectInput(input.key)"
-              >
-                <span class="rv-source-index tnum">{{ index + 1 }}</span>
-                <span class="rv-source-main">
-                  <span class="rv-source-top">
-                    <span class="rv-source-label">{{ input.label }}</span>
+          <div class="rv-side-content" :inert="sideCollapsed">
+            <template v-if="chainStages.length > 0">
+              <section v-for="stage in chainStages" :key="stage.key" class="rv-chain-stage">
+                <div class="rv-stage-head">
+                  <span class="rv-stage-title">{{ stage.title }}</span>
+                  <span class="rv-stage-count tnum">{{ stage.items.length }}</span>
+                </div>
+                <div class="rv-chain-list">
+                  <button
+                    v-for="input in stage.items"
+                    :key="input.key"
+                    type="button"
+                    class="rv-chain-row"
+                    :class="{ active: selectedInputKey === input.key, [`is-${input.status}`]: input.status }"
+                    @click="selectInput(input.key)"
+                  >
                     <span
-                      v-if="input.status"
-                      class="rv-source-dot"
+                      class="rv-chain-row-dot"
                       :class="`is-${input.status}`"
-                      :title="statusMeta[input.status]?.label ?? input.status"
+                      :title="input.status ? statusMeta[input.status]?.label ?? input.status : undefined"
                     />
-                  </span>
-
-                  <template v-if="input.nodeType === 'source.bili'">
-                    <span class="rv-source-media">
-                      <img v-if="input.cover" :src="input.cover" class="rv-source-thumb" alt="" referrerpolicy="no-referrer" loading="lazy" />
-                      <span class="rv-source-media-body">
-                        <span v-if="input.items && input.items.length > 1" class="rv-source-title">{{ input.label || "B站多选" }}（{{ input.items.length }} 项）</span>
-                        <span v-else-if="input.title" class="rv-source-title">{{ input.title }}</span>
-                        <span v-else-if="input.url" class="rv-source-url">{{ input.url }}</span>
-                        <span class="rv-source-meta tnum">
-                          {{ [input.uploader, fmtDuration(input.duration), biliPageMeta(input)].filter(Boolean).join(" · ") || "B站视频" }}
-                        </span>
-                      </span>
+                    <span class="rv-chain-row-main">
+                      <span class="rv-chain-row-label">{{ input.label }}</span>
+                      <span class="rv-chain-row-meta">{{ chainCardMeta(input) }}</span>
+                      <span v-if="input.error" class="rv-chain-row-error">{{ input.error }}</span>
                     </span>
-                  </template>
-
-                  <template v-else-if="input.nodeType === 'source.file'">
-                    <span class="rv-source-title">{{ input.fileName || "本地音视频" }}</span>
-                    <span class="rv-source-meta tnum">{{ fmtSize(input.size) || sourceCardSummary(input) }}</span>
-                  </template>
-
-                  <template v-else>
-                    <span class="rv-source-summary" :title="sourceCardSummary(input)">{{ sourceCardSummary(input) }}</span>
-                    <span v-if="input.text" class="rv-source-hint">点击查看</span>
-                  </template>
-                </span>
-              </button>
-            </div>
+                    <span class="rv-chain-row-type">{{ input.typeLabel }}</span>
+                  </button>
+                </div>
+              </section>
+            </template>
             <div v-else class="rv-side-empty">本次结果没有可追溯的输入素材</div>
 
             <div class="rv-side-section-title">输出文档</div>
@@ -911,7 +992,7 @@ async function forceStopRun() {
                 :key="doc.node.nodeId"
                 type="button"
                 class="rv-output-item"
-                :class="{ active: index === selectedOutputIndex }"
+                :class="{ active: !viewingInput && index === selectedOutputIndex }"
                 @click="selectOutput(index)"
               >
                 <span class="rv-output-name">{{ doc.title }}</span>
@@ -1035,6 +1116,7 @@ async function forceStopRun() {
             <template v-else-if="viewingInput">
               <article class="rv-paper" :style="paperStyle">
                 <header class="rv-paper-head">
+                  <p v-if="selectedStageTitle" class="rv-paper-kicker">{{ selectedStageTitle }}</p>
                   <h1 class="rv-paper-title">{{ selectedInput?.label || "输入素材" }}</h1>
                   <p class="rv-paper-meta">
                     <template v-if="selectedInput?.nodeType === 'source.bili'">
@@ -1396,12 +1478,14 @@ async function forceStopRun() {
 }
 
 .rv-side {
-  width: 300px;
-  min-width: 300px;
+  --rv-side-w: 300px;
+  width: var(--rv-side-w);
+  min-width: var(--rv-side-w);
   display: flex;
   flex-direction: column;
   border-right: 1px solid var(--color-border);
   background: var(--color-surface);
+  overflow: hidden;
   flex-shrink: 0;
   transition: width var(--dur-2) var(--ease-out), min-width var(--dur-2) var(--ease-out);
 }
@@ -1445,87 +1529,71 @@ async function forceStopRun() {
 }
 
 .rv-side-content {
+  width: var(--rv-side-w);
+  max-width: var(--rv-side-w);
   flex: 1;
   min-height: 0;
   overflow-y: auto;
   padding: 10px;
 }
 
-.rv-source-list {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
+.rv-chain-stage + .rv-chain-stage {
+  margin-top: 14px;
 }
 
-.rv-source-card {
-  display: flex;
-  align-items: flex-start;
-  gap: 8px;
-  width: 100%;
-  min-width: 0;
-  padding: 8px;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
-  background: var(--color-surface-muted);
-  color: inherit;
-  font-family: inherit;
-  text-align: left;
-  cursor: pointer;
-  transition:
-    border-color var(--dur-1) var(--ease-out),
-    background-color var(--dur-1) var(--ease-out);
-}
-
-.rv-source-card:hover {
-  border-color: var(--color-border-strong);
-}
-
-.rv-source-card.active {
-  border-color: var(--color-text-secondary);
-  background: var(--color-ink-soft);
-}
-
-.rv-source-index {
-  display: grid;
-  place-items: center;
-  width: 18px;
-  height: 18px;
-  border-radius: var(--radius-xs);
-  background: var(--color-ink);
-  color: var(--color-surface);
-  font-size: 10px;
-  line-height: 1;
-  flex-shrink: 0;
-}
-
-.rv-source-main {
-  min-width: 0;
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  gap: 5px;
-}
-
-.rv-source-top {
+.rv-stage-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 6px;
-  min-width: 0;
+  margin: 0 2px 6px;
 }
 
-.rv-source-label {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.rv-stage-title {
   font-size: 11px;
   font-weight: 600;
-  color: var(--color-text);
+  color: var(--color-text-secondary);
+  letter-spacing: 0.02em;
 }
 
-.rv-source-dot {
+.rv-stage-count {
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--color-ink-soft);
+  color: var(--color-text-tertiary);
+  font-size: 10px;
+  line-height: 1.6;
+}
+
+.rv-chain-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.rv-chain-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
+  padding: 6px 8px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: inherit;
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color var(--dur-1) var(--ease-out);
+}
+
+.rv-chain-row:hover,
+.rv-chain-row.active {
+  background: var(--color-ink-soft);
+}
+
+.rv-chain-row-dot {
   width: 6px;
   height: 6px;
   border-radius: 50%;
@@ -1533,94 +1601,63 @@ async function forceStopRun() {
   flex-shrink: 0;
 }
 
-.rv-source-dot.is-running {
+.rv-chain-row-dot.is-running {
   background: var(--color-text);
   animation: wp-pulse 1.5s var(--ease-out) infinite;
 }
 
-.rv-source-dot.is-success,
-.rv-source-dot.is-done {
+.rv-chain-row-dot.is-success,
+.rv-chain-row-dot.is-done {
   background: var(--color-success);
 }
 
-.rv-source-dot.is-error {
+.rv-chain-row-dot.is-error {
   background: var(--color-error);
 }
 
-.rv-source-dot.is-cancelled,
-.rv-source-dot.is-skipped,
-.rv-source-dot.is-idle {
+.rv-chain-row-dot.is-cancelled,
+.rv-chain-row-dot.is-skipped,
+.rv-chain-row-dot.is-idle {
   background: var(--color-text-tertiary);
 }
 
-.rv-source-media {
-  display: flex;
-  align-items: flex-start;
-  gap: 8px;
-  min-width: 0;
-}
-
-.rv-source-thumb {
-  width: 72px;
-  height: 45px;
-  object-fit: cover;
-  border-radius: var(--radius-xs);
-  background: var(--color-ink-soft);
-  flex-shrink: 0;
-}
-
-.rv-source-media-body {
-  min-width: 0;
+.rv-chain-row-main {
   flex: 1;
+  min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 3px;
+  gap: 1px;
 }
 
-.rv-source-title {
-  font-size: 12px;
-  font-weight: 500;
-  color: var(--color-text);
-  line-height: 1.4;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-  word-break: break-word;
-}
-
-.rv-source-url {
-  font-size: 11px;
-  color: var(--color-text-tertiary);
-  word-break: break-all;
-  line-height: 1.4;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-}
-
-.rv-source-meta {
-  font-size: 10.5px;
-  color: var(--color-text-tertiary);
-  line-height: 1.4;
+.rv-chain-row-label {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--color-text);
 }
 
-.rv-source-summary {
-  font-size: 11.5px;
-  color: var(--color-text-secondary);
-  line-height: 1.4;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
+.rv-chain-row-meta {
   overflow: hidden;
-  word-break: break-word;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 10.5px;
+  line-height: 1.4;
+  color: var(--color-text-tertiary);
 }
 
-.rv-source-hint {
+.rv-chain-row-error {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--color-error);
+  font-size: 10.5px;
+  line-height: 1.4;
+}
+
+.rv-chain-row-type {
+  flex-shrink: 0;
   font-size: 10px;
   color: var(--color-text-tertiary);
 }
@@ -1635,31 +1672,29 @@ async function forceStopRun() {
 .rv-output-list {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 2px;
 }
 
 .rv-output-item {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  gap: 3px;
+  gap: 1px;
   width: 100%;
   min-width: 0;
-  padding: 8px 10px;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
-  background: var(--color-surface-muted);
+  padding: 6px 8px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
   color: var(--color-text);
   font-family: inherit;
   text-align: left;
   cursor: pointer;
-  transition:
-    border-color var(--dur-1) var(--ease-out),
-    background-color var(--dur-1) var(--ease-out);
+  transition: background-color var(--dur-1) var(--ease-out);
 }
 
+.rv-output-item:hover,
 .rv-output-item.active {
-  border-color: var(--color-text-secondary);
   background: var(--color-ink-soft);
 }
 
@@ -1674,7 +1709,7 @@ async function forceStopRun() {
 
 .rv-output-name {
   font-size: 12px;
-  font-weight: 600;
+  font-weight: 500;
 }
 
 .rv-output-meta {
@@ -1879,7 +1914,7 @@ async function forceStopRun() {
 }
 
 .rv-toc-item.is-active {
-  background: var(--color-brand-soft-glass);
+  background: var(--color-ink-soft-glass);
   color: var(--color-text);
 }
 
@@ -1893,7 +1928,7 @@ async function forceStopRun() {
 }
 
 .rv-toc-item.is-active .rv-toc-item-marker {
-  background: var(--color-brand);
+  background: var(--color-text);
 }
 
 .rv-toc-item-text {
@@ -1939,6 +1974,14 @@ async function forceStopRun() {
 
 .rv-paper-head {
   margin-bottom: 32px;
+}
+
+.rv-paper-kicker {
+  margin: 0 0 4px;
+  color: var(--color-text-tertiary);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
 }
 
 .rv-paper-title {
@@ -2052,15 +2095,13 @@ async function forceStopRun() {
 
 @media (max-width: 1280px) {
   .rv-side {
-    width: 260px;
-    min-width: 260px;
+    --rv-side-w: 260px;
   }
 }
 
 @media (max-width: 1024px) {
   .rv-side {
-    width: 220px;
-    min-width: 220px;
+    --rv-side-w: 220px;
   }
 
   .rv-edit-grid {
@@ -2090,11 +2131,17 @@ async function forceStopRun() {
   }
 
   .rv-side {
+    --rv-side-w: 100%;
     width: 100%;
     min-width: 0;
     max-height: 240px;
     border-right: none;
     border-bottom: 1px solid var(--color-border);
+  }
+
+  .rv-side-content {
+    width: 100%;
+    max-width: 100%;
   }
 
   .rv-side.collapsed {
