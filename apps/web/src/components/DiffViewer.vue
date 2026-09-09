@@ -2,7 +2,11 @@
 import { computed } from "vue";
 import { DIFF_DELETE, DIFF_EQUAL, DIFF_INSERT, diff as diffMatch } from "diff-match-patch-es";
 
-const props = defineProps<{ before: string; after: string }>();
+const props = defineProps<{ before: string; after: string; beforeLabel?: string; afterLabel?: string; sameMessage?: string }>();
+
+const resolvedBeforeLabel = computed(() => props.beforeLabel ?? "上游");
+const resolvedAfterLabel = computed(() => props.afterLabel ?? "当前");
+const resolvedSameMessage = computed(() => props.sameMessage ?? "与上游一致，没有内容变化");
 
 interface DiffRow {
   type: "add" | "del";
@@ -126,14 +130,14 @@ const same = computed(() => (diff.value?.length ?? 0) === 0);
 <template>
   <div class="sf-diff">
     <div class="sf-diff-stats tnum">
-      <span>上游 {{ beforeChars }} 字</span>
+      <span>{{ resolvedBeforeLabel }} {{ beforeChars }} 字</span>
       <span>→</span>
-      <span>当前 {{ afterChars }} 字</span>
+      <span>{{ resolvedAfterLabel }} {{ afterChars }} 字</span>
       <span v-if="diff && !same" class="sf-diff-stat-change">删 {{ removedCount }} 行 · 增 {{ addedCount }} 行</span>
     </div>
 
     <div v-if="!diff" class="sf-diff-empty">内容过长，暂不逐行对比；可分别查看“处理结果”和“原始输入”。</div>
-    <div v-else-if="same" class="sf-diff-same">与上游一致，没有内容变化</div>
+    <div v-else-if="same" class="sf-diff-same">{{ resolvedSameMessage }}</div>
     <div v-else class="sf-diff-list">
       <template v-for="(row, index) in visualRows" :key="index">
         <template v-if="row.kind === 'replace'">

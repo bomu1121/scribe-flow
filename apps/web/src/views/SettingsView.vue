@@ -4,6 +4,7 @@ import { ElInput, ElInputNumber, ElMessageBox, ElOption, ElSelect, ElSwitch } fr
 import { Cloud, Download, FolderOpen, Mic, PlugZap, RefreshCw, RotateCcw, Save, Trash2, Upload } from "lucide-vue-next";
 import { toast } from "@/lib/toast";
 import ModelSelect from "../components/ModelSelect.vue";
+import PromptBlockDiffDialog from "../components/PromptBlockDiffDialog.vue";
 import type { AiProvider, AsrEngine, PromptBlock } from "@scribe-flow/shared";
 import { api } from "@/lib/api";
 import { useSettingsStore } from "@/stores/settings";
@@ -91,6 +92,9 @@ const asrOptions = [
 ];
 
 const blockForm = reactive({ id: "", name: "", prompt: "" });
+const expandedBlockId = ref<string | null>(null);
+const compareDialogOpen = ref(false);
+const compareInitialBlockId = ref("");
 const dataInfo = ref<{ dataDir: string; runCount: number; finishedRunCount: number; outputFiles: number; outputBytes: number } | null>(null);
 const nutstoreRemoteFolders = ref<string[]>([]);
 const nutstoreRemoteFiles = ref<Array<{ path: string; name: string; type: "folder" | "file"; size?: number; lastModified?: number }>>([]);
@@ -146,6 +150,51 @@ watch(seriesFilter, () => {
     versionFilter.value = "all";
   }
 });
+
+function blockVariants(block: PromptBlock): PromptBlock[] {
+  const series = blockSeries(block);
+  return promptsStore.allBlocks.filter((candidate) => blockSeries(candidate) === series);
+}
+
+function toggleBlockExpanded(block: PromptBlock) {
+  expandedBlockId.value = expandedBlockId.value === block.id ? null : block.id;
+}
+
+function blockRecipeText(block: PromptBlock): string {
+  if (!block.recipe?.steps?.length) return "";
+  const recipe = [
+    "【配方 / Recipe】",
+    `步骤数：${block.recipe.steps.length}`,
+    ...block.recipe.steps.map((step, index) => {
+      const expects = step.expects ? `\n期望输出：${step.expects.kind}${step.expects.asserts?.length ? `（${step.expects.asserts.length} 条断言）` : ""}` : "";
+      return `\n[步骤 ${index + 1} / ${step.id}] ${step.label}${expects}\n${step.system}`;
+    }),
+  ].join("\n");
+  return `${block.prompt}\n\n${recipe}`;
+}
+
+async function copyText(text: string, message: string) {
+  try {
+    await navigator.clipboard.writeText(text);
+    toast.success(message);
+  } catch {
+    toast.error("复制失败，请手动选择文本");
+  }
+}
+
+function copyBlockPrompt(block: PromptBlock) {
+  void copyText(block.prompt, `已复制「${block.name}」的提示词`);
+}
+
+function copyBlockFull(block: PromptBlock) {
+  const content = block.recipe?.steps?.length ? blockRecipeText(block) : block.prompt;
+  void copyText(content, `已复制「${block.name}」的提示词${block.recipe?.steps?.length ? "与配方" : ""}`);
+}
+
+function openBlockCompare(block?: PromptBlock) {
+  compareInitialBlockId.value = block?.id ?? "";
+  compareDialogOpen.value = true;
+}
 
 function editBlock(block: PromptBlock) {
   blockForm.id = block.id;
@@ -912,6 +961,9 @@ async function restoreNutstoreBackup(backup: { path: string; name: string }) {
       <template v-else-if="active === 'prompts'">
         <h2 class="sf-settings-title">提示词块库</h2>
         <p class="sf-settings-desc">内置块只读，可按模板系列与版本筛选；自定义块由 AI 加工节点引用，修改后下一次运行生效。</p>
+        <div class="sf-block-toolbar">
+          <button type="button" class="sf-btn" @click="openBlockCompare()">对比任意块</button>
+        </div>
         <div class="sf-block-filters">
           <label class="sf-field sf-block-filter">
             <span class="sf-field-label">模板系列</span>
@@ -936,6 +988,8 @@ async function restoreNutstoreBackup(backup: { path: string; name: string }) {
               <span v-if="block.version" class="sf-chip sf-chip--warning">{{ block.version }}</span>
               <span v-if="block.recommended" class="sf-chip sf-chip--success">推荐</span>
               <span class="sf-block-actions">
+                <button v-if="blockVariants(block).length > 1" type="button" class="sf-text-btn" title="对比同一系列的不同版本" @click="openBlockCompare(block)">对比</button>
+                <button type="button" class="sf-text-btn" @click="toggleBlockExpanded(block)">{{ expandedBlockId === block.id ? "收起" : "查看全文" }}</button>
                 <template v-if="!block.builtin">
                   <button type="button" class="sf-text-btn" @click="editBlock(block)">编辑</button>
                   <button type="button" class="sf-text-btn sf-text-btn--danger" aria-label="删除提示词块" @click="removeBlock(block)"><Trash2 :size="13" /></button>
@@ -944,6 +998,23 @@ async function restoreNutstoreBackup(backup: { path: string; name: string }) {
             </header>
             <p v-if="block.series" class="sf-block-series">{{ block.series }}</p>
             <p class="sf-block-prompt">{{ block.prompt.slice(0, 120) }}{{ block.prompt.length > 120 ? "…" : "" }}</p>
+            <div v-if="expandedBlockId === block.id" class="sf-block-detail">
+              <p v-if="block.description" class="sf-block-desc">{{ block.description }}</p>
+              <div v-if="block.recipe?.steps?.length" class="sf-block-recipe">
+                <h4 class="sf-block-recipe-title">配方步骤（recipe）</h4>
+                <ol class="sf-block-recipe-list">
+                  <li v-for="(step, index) in block.recipe.steps" :key="step.id" class="sf-block-recipe-item">
+                    <span class="sf-block-recipe-step">{{ index + 1 }}. {{ step.label }}（{{ step.id }}）</span>
+                    <pre class="sf-block-recipe-system">{{ step.system }}</pre>
+                  </li>
+                </ol>
+              </div>
+              <pre class="sf-block-full">{{ block.prompt }}</pre>
+              <div class="sf-block-detail-actions">
+                <button type="button" class="sf-text-btn" @click="copyBlockPrompt(block)">复制提示词</button>
+                <button v-if="block.recipe?.steps?.length" type="button" class="sf-text-btn" @click="copyBlockFull(block)">复制提示词+配方</button>
+              </div>
+            </div>
           </article>
         </div>
 
@@ -986,6 +1057,13 @@ async function restoreNutstoreBackup(backup: { path: string; name: string }) {
         <div class="sf-settings-placeholder">规划中</div>
       </template>
     </section>
+
+    <PromptBlockDiffDialog
+      :open="compareDialogOpen"
+      :blocks="promptsStore.allBlocks"
+      :initial-block-id="compareInitialBlockId || undefined"
+      @update:open="compareDialogOpen = $event"
+    />
   </div>
 </template>
 
@@ -1248,6 +1326,12 @@ async function restoreNutstoreBackup(backup: { path: string; name: string }) {
   text-align: center;
 }
 
+.sf-block-toolbar {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 8px;
+}
+
 .sf-block-filters {
   display: flex;
   flex-wrap: wrap;
@@ -1303,6 +1387,90 @@ async function restoreNutstoreBackup(backup: { path: string; name: string }) {
   font-size: 12px;
   color: var(--color-text-secondary);
   line-height: 1.6;
+}
+
+.sf-block-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px dashed var(--color-border);
+}
+
+.sf-block-desc {
+  margin: 0;
+  font-size: 12px;
+  color: var(--color-text-secondary);
+  line-height: 1.6;
+}
+
+.sf-block-recipe {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.sf-block-recipe-title {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.sf-block-recipe-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  padding-left: 18px;
+}
+
+.sf-block-recipe-item {
+  margin: 0;
+}
+
+.sf-block-recipe-step {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--color-text);
+}
+
+.sf-block-recipe-system {
+  margin: 4px 0 0;
+  padding: 8px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-muted);
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  line-height: 1.6;
+  color: var(--color-text-secondary);
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 180px;
+  overflow-y: auto;
+}
+
+.sf-block-full {
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-muted);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.7;
+  color: var(--color-text);
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 420px;
+  overflow-y: auto;
+}
+
+.sf-block-detail-actions {
+  display: flex;
+  gap: 6px;
 }
 
 .sf-block-form {
