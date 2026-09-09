@@ -47,6 +47,38 @@ const edgesRef = ref<ScribeFlowEdge[]>([]);
 const viewportRef = ref<ViewportTransform>({ x: 0, y: 0, zoom: 1 });
 const edgeMenu = ref<{ x: number; y: number; edgeId: string } | null>(null);
 
+const DROPDOWN_CONTROL_SELECTOR = [
+  ".sf-model-select__trigger",
+  ".el-select",
+  ".el-select__wrapper",
+  ".el-dropdown",
+  "[data-reka-menu-trigger]",
+  "[data-reka-popover-trigger]",
+  ".sf-node-bar-more",
+].join(",");
+const DROPDOWN_POPUP_SELECTOR = [
+  ".el-select__popper",
+  ".el-dropdown__popper",
+  ".el-picker__popper",
+  ".el-cascader__popper",
+  ".el-autocomplete__popper",
+  "[data-reka-menu-content]",
+  "[data-reka-popover-content]:not(.sf-node-result-preview)",
+  ".sf-node-menu",
+  ".sf-model-select__menu",
+  ".sf-tree-menu",
+  ".wp-menu",
+].join(",");
+const DROPDOWN_OPTION_SELECTOR = [
+  ".sf-model-select__option",
+  ".el-select-dropdown__item",
+  ".el-dropdown-menu__item",
+  "[data-reka-menu-item]",
+].join(",");
+
+/** 当前是否正在与“小卡内部的下拉控件”交互；用于限定只在小卡下拉场景下取消选中。 */
+let nodeDropdownOpen = false;
+
 const history = ref<WorkflowGraph[]>([]);
 const historyIndex = ref(-1);
 
@@ -124,15 +156,57 @@ function loadGraph(graph: WorkflowGraph) {
   initFromGraph(graph);
 }
 
+function isDropdownPopupTarget(target: Element | null): boolean {
+  if (!target) return false;
+  return Boolean(target.closest(DROPDOWN_POPUP_SELECTOR));
+}
+
+function clearNodeSelection() {
+  if (!nodesRef.value.some((node) => node.selected)) return;
+  nodesRef.value = nodesRef.value.map((node) => ({ ...node, selected: false }));
+  emitGraph();
+  syncSelection();
+}
+
+function isDropdownControlTarget(target: Element): boolean {
+  return Boolean(target.closest(DROPDOWN_CONTROL_SELECTOR));
+}
+
+/** 在 Vue Flow 处理 pointerdown 前记录：本次是否从小卡内部的下拉控件发起。 */
+function onWindowPointerDownCapture(event: PointerEvent) {
+  const target = event.target;
+  if (!(target instanceof Element)) return;
+  const nodeEl = target.closest<HTMLElement>(".vue-flow__node");
+  if (nodeEl && isDropdownControlTarget(target)) {
+    nodeDropdownOpen = true;
+  } else if (!document.documentElement.classList.contains("sf-dropdown-modal-open")) {
+    // 没有浮层打开时的普通点击，清除可能残留的“小卡下拉交互”标记。
+    nodeDropdownOpen = false;
+  }
+}
+
+/** 真正点选了浮层里的选项时，本次“小卡下拉交互”结束，保留小卡选中态。 */
+function onWindowClickCapture(event: MouseEvent) {
+  const target = event.target;
+  if (!(target instanceof Element)) return;
+  if (target.closest(DROPDOWN_OPTION_SELECTOR)) {
+    nodeDropdownOpen = false;
+  }
+}
+
 onMounted(() => {
   initFromGraph(props.initialGraph);
   window.addEventListener("keydown", onKeydown);
   window.addEventListener("pointerdown", onWindowPointerDown);
+  window.addEventListener("pointerdown", onWindowPointerDownCapture, true);
+  window.addEventListener("click", onWindowClickCapture, true);
 });
 
 onBeforeUnmount(() => {
   window.removeEventListener("keydown", onKeydown);
   window.removeEventListener("pointerdown", onWindowPointerDown);
+  window.removeEventListener("pointerdown", onWindowPointerDownCapture, true);
+  window.removeEventListener("click", onWindowClickCapture, true);
 });
 
 // ---------- Vue Flow 事件 ----------
@@ -234,10 +308,20 @@ function onViewportChange(viewport: ViewportTransform) {
 // ---------- 连线右键菜单 ----------
 
 function onWindowPointerDown(event: PointerEvent) {
-  if (!edgeMenu.value) return;
   const target = event.target;
-  if (target instanceof Element && target.closest(".sf-edge-menu")) return;
-  closeEdgeMenu();
+
+  if (edgeMenu.value) {
+    if (target instanceof Element && target.closest(".sf-edge-menu")) return;
+    closeEdgeMenu();
+  }
+
+  // 仅处理“小卡内部下拉”的交互：浮层打开期间，如果点击位置不在浮层内
+  // （也就是落在卡片外/画布空白处），直接取消小卡选中态；点击浮层内的选项时仍保留选中态。
+  if (!nodeDropdownOpen) return;
+  if (!(target instanceof Element) || isDropdownPopupTarget(target)) return;
+  if (!document.documentElement.classList.contains("sf-dropdown-modal-open")) return;
+  nodeDropdownOpen = false;
+  clearNodeSelection();
 }
 
 function closeEdgeMenu() {
@@ -485,13 +569,20 @@ function applyHistory() {
 // ---------- 键盘 ----------
 
 function onKeydown(event: KeyboardEvent) {
+  if (event.key === "Escape") {
+    if (edgeMenu.value) {
+      closeEdgeMenu();
+      return;
+    }
+    // 键盘取消下拉时结束“小卡下拉交互”，避免标记残留影响后续点击。
+    if (nodeDropdownOpen) {
+      nodeDropdownOpen = false;
+      return;
+    }
+  }
+
   const target = event.target as HTMLElement | null;
   if (target && (target.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName))) return;
-
-  if (event.key === "Escape" && edgeMenu.value) {
-    closeEdgeMenu();
-    return;
-  }
 
   const mod = event.ctrlKey || event.metaKey;
   const key = event.key.toLowerCase();

@@ -244,6 +244,16 @@ function onInnerListWheel(event: WheelEvent) {
   if (canScroll) event.stopPropagation();
 }
 
+/**
+ * 文本框/文本域内的滚轮守卫：光标在输入类控件里时，滚轮不再冒泡到画布缩放。
+ * 只 stopPropagation，不阻止默认行为，因此文本域自身的滚动仍然保留。
+ */
+function onNodeBodyWheel(event: WheelEvent) {
+  const target = event.target as HTMLElement | null;
+  if (!target?.closest("input, textarea, [contenteditable]")) return;
+  event.stopPropagation();
+}
+
 onMounted(() => {
   // 多选收藏卡片不需要解析“第一个视频”的预览，所有项平等展示。
   if (props.data.url && !isCollection.value) schedulePreview(props.data.url);
@@ -731,7 +741,7 @@ const themeOptions = [
           <p class="sf-node-desc">{{ nodeDescription }}</p>
         </div>
 
-        <div v-if="hasBodyContent" class="sf-node-body nodrag">
+        <div v-if="hasBodyContent" class="sf-node-body nodrag" @wheel="onNodeBodyWheel">
           <!-- 来源：B 站链接 / B 站多选收藏。多选时使用“平等列表”卡片，不再强调第一个视频。 -->
           <template v-if="nodeType === 'source.bili'">
             <template v-if="isCollection">
