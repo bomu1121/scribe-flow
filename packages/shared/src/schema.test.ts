@@ -142,7 +142,7 @@ describe("graph", () => {
 });
 
 describe("templates", () => {
-  it("6 个内置模板都能通过 graph 校验", () => {
+  it("全部内置模板都能通过 graph 校验", () => {
     for (const t of WORKFLOW_TEMPLATES) {
       const result = safeParseGraph(t.graph);
       expect(result.success).toBe(true);
@@ -166,5 +166,16 @@ describe("templates", () => {
     graph.nodes[1].id = graph.nodes[0].id;
     const result = safeParseGraph(graph);
     expect(result.success).toBe(false);
+  });
+
+  it("阴阳师攻略模板使用独立的「阴阳师攻略加工」节点并默认核对版", () => {
+    const text = WORKFLOW_TEMPLATES.find((t) => t.id === "template.text-game-guide");
+    const video = WORKFLOW_TEMPLATES.find((t) => t.id === "template.video-game-guide");
+    const isGuide = (n: { type: string; data: { mode?: string } }) =>
+      n.type === "process.gameguide" && n.data.mode === "audited";
+    const check = (t: (typeof WORKFLOW_TEMPLATES)[number] | undefined) =>
+      t?.graph.nodes.some((n) => isGuide(n as { type: string; data: { mode?: string } })) ?? false;
+    expect(check(text)).toBe(true);
+    expect(check(video)).toBe(true);
   });
 });

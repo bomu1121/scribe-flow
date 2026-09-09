@@ -76,7 +76,7 @@ async function pick(templateId?: string) {
       </button>
     </div>
     <div class="np-foot">
-      <span class="np-hint">工作流模板只决定加工路径；提示词块与思维导图在对应节点中配置。</span>
+      <span class="np-hint">通用模板需在 AI 加工节点中选择提示词块；垂直模板（如阴阳师攻略）已预选推荐提示词块，仍可更换。</span>
       <el-button plain :disabled="creating" @click="close">取消</el-button>
     </div>
   </ElDialog>

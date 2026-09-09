@@ -116,6 +116,15 @@ export interface MindMapData {
   theme?: "paper" | "presentation" | "academic";
 }
 
+export interface GameGuideData {
+  /**
+   * 加工档位：
+   * - standard：单次提炼，适合短攻略；
+   * - audited：4 步核对版（拆解→起草→回文核对→终稿），默认推荐。
+   */
+  mode?: "standard" | "audited";
+}
+
 /** Obsidian 笔记输出节点：把上游 Markdown 包装成 Obsidian 友好 frontmatter 并写入本地库。 */
 export interface ObsidianData {
   /** 笔记标题；缺省取正文第一个 H1，再缺省用“未命名笔记”。 */
@@ -144,6 +153,7 @@ export type NodeType =
   | "flow.if"
   | "process.text"
   | "process.chapter"
+  | "process.gameguide"
   | "process.mindmap"
   | "process.obsidian";
 
@@ -173,6 +183,7 @@ export type GraphNode =
   | (NodeBase & { type: "flow.if"; data: NodeBase["data"] & IfData })
   | (NodeBase & { type: "process.text"; data: NodeBase["data"] & TextToolData })
   | (NodeBase & { type: "process.chapter"; data: NodeBase["data"] & ChapterData })
+  | (NodeBase & { type: "process.gameguide"; data: NodeBase["data"] & GameGuideData })
   | (NodeBase & { type: "process.mindmap"; data: NodeBase["data"] & MindMapData })
   | (NodeBase & { type: "process.obsidian"; data: NodeBase["data"] & ObsidianData });
 
@@ -209,6 +220,7 @@ export const NODE_TYPE_LABELS: Record<NodeType, string> = {
   "flow.if": "条件分支",
   "process.text": "文本工具",
   "process.chapter": "章节切分",
+  "process.gameguide": "阴阳师攻略加工",
   "process.mindmap": "思维导图",
   "process.obsidian": "Obsidian 笔记",
 };
@@ -226,6 +238,7 @@ export const NODE_CARD_WIDTH: Record<NodeType, number> = {
   "flow.if": 300,
   "process.text": 260,
   "process.chapter": 240,
+  "process.gameguide": 300,
   "process.mindmap": 300,
   "process.obsidian": 300,
 };
@@ -275,6 +288,10 @@ export const NODE_PORTS: Record<NodeType, { inputs: PortSpec[]; outputs: PortSpe
   "process.chapter": {
     inputs: [{ id: "in", type: "transcript", label: "文稿" }],
     outputs: [{ id: "chapters", type: "noteBlock", label: "章节" }],
+  },
+  "process.gameguide": {
+    inputs: [{ id: "transcript", type: "transcript", label: "文稿" }],
+    outputs: [{ id: "noteBlock", type: "noteBlock", label: "笔记块" }],
   },
   "process.mindmap": {
     inputs: [

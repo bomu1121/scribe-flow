@@ -282,13 +282,14 @@ const nodeDescriptions: Record<NodeType, string> = {
   "flow.if": "根据条件决定下游执行分支",
   "process.text": "查找替换、正则或模板等文本处理",
   "process.chapter": "将长文稿切分为章节笔记",
+  "process.gameguide": "将阴阳师攻略文稿整理为结构化攻略笔记",
   "process.mindmap": "将文稿整理为思维导图 Markdown",
   "process.obsidian": "将结果写入 Obsidian 笔记库",
 };
 
 const nodeDescription = computed(() => nodeDescriptions[nodeType.value] ?? "");
 
-const hasAdvanced = computed(() => ["process.transcribe", "process.refine", "process.prompt", "process.chapter", "process.mindmap"].includes(nodeType.value));
+const hasAdvanced = computed(() => ["process.transcribe", "process.refine", "process.prompt", "process.chapter", "process.gameguide", "process.mindmap"].includes(nodeType.value));
 const advancedOpen = ref(false);
 
 watch(
@@ -335,6 +336,8 @@ const typeIcon = computed(() => {
       return PhSwap;
     case "process.chapter":
       return PhTreeStructure;
+    case "process.gameguide":
+      return PhSparkle;
     case "process.mindmap":
       return PhShareNetwork;
     case "process.obsidian":
@@ -346,7 +349,7 @@ const statusClass = computed(() => (props.data.status ? `is-${props.data.status}
 const sizeClass = computed(() => `sf-node--${nodeType.value.replaceAll(".", "-")}`);
 
 const canViewOutput = computed(() =>
-  ["source.text", "process.transcribe", "process.refine", "process.prompt", "process.merge", "process.output", "flow.if", "process.text", "process.chapter", "process.mindmap", "process.obsidian"].includes(
+  ["source.text", "process.transcribe", "process.refine", "process.prompt", "process.merge", "process.output", "flow.if", "process.text", "process.chapter", "process.gameguide", "process.mindmap", "process.obsidian"].includes(
     nodeType.value,
   ),
 );
@@ -530,14 +533,21 @@ const asrOptions = [
   { label: "OpenAI 兼容", value: "openai-compatible", icon: PhCloud },
 ];
 
+const gameGuideModeOptions = [
+  { label: "核对版（推荐，稳）", value: "audited", icon: PhSparkle },
+  { label: "快速版（省时）", value: "standard", icon: PhSparkle },
+];
+
 const promptOptions = computed(() =>
-  promptsStore.allBlocks.map((block) => {
-    const parts = [block.name];
-    if (block.version) parts.push(block.version);
-    if (block.recipe) parts.push("配方");
-    if (block.builtin) parts.push("内置");
-    return { label: parts.join(" · "), value: block.id };
-  }),
+  promptsStore.allBlocks
+    .filter((block) => block.series !== "阴阳师攻略加工")
+    .map((block) => {
+      const parts = [block.name];
+      if (block.version) parts.push(block.version);
+      if (block.recipe) parts.push("配方");
+      if (block.builtin) parts.push("内置");
+      return { label: parts.join(" · "), value: block.id };
+    }),
 );
 
 const asrEngine = computed<string>({
@@ -552,6 +562,14 @@ const promptBlockId = computed<string | undefined>({
   get: () => data.value.promptBlockId,
   set: (value) => {
     patch({ promptBlockId: value || undefined });
+    commit();
+  },
+});
+
+const gameGuideMode = computed<string>({
+  get: () => (data.value.mode as string | undefined) ?? "audited",
+  set: (value) => {
+    patch({ mode: value });
     commit();
   },
 });
@@ -886,6 +904,14 @@ const themeOptions = [
             <ChapterCard :granularity="data.granularity" :max-chapters="data.maxChapters" @update="patchChapter" />
           </template>
 
+          <template v-else-if="nodeType === 'process.gameguide'">
+            <div class="sf-node-field">
+              <span class="sf-node-field-label">整理强度</span>
+              <ModelSelect v-model="gameGuideMode" :options="gameGuideModeOptions" size="small" placeholder="选择整理强度" :prefix-icon="PhSparkle" />
+            </div>
+            <p class="sf-node-desc sf-node-desc--block">输出：核心结论表 / 式神速查卡 / 配队 / 避坑 / 术语 / 版本时效</p>
+          </template>
+
           <template v-else-if="nodeType === 'process.obsidian'">
             <ObsidianCard :folder="data.folder" @update="patchObsidian" />
           </template>
@@ -1096,6 +1122,9 @@ const themeOptions = [
 }
 .sf-node--process-chapter {
   width: 240px;
+}
+.sf-node--process-gameguide {
+  width: 300px;
 }
 .sf-node--process-mindmap {
   width: 300px;

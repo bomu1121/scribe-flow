@@ -59,4 +59,27 @@ describe("builtin prompt blocks", () => {
     expect(history?.prompt).toContain("不用今天的价值观简单批判古人");
     expect(history?.prompt).toContain("存疑/可能有争议");
   });
+
+  it("新增阴阳师攻略加工系列：单次版与核对版并存，核对版为推荐配方", () => {
+    const ids = BUILTIN_PROMPT_BLOCKS.map((block) => block.id);
+    expect(ids).toContain("builtin.gameguide");
+    expect(ids).toContain("builtin.gameguide.v2");
+    const v1 = BUILTIN_PROMPT_BLOCKS.find((block) => block.id === "builtin.gameguide");
+    const v2 = BUILTIN_PROMPT_BLOCKS.find((block) => block.id === "builtin.gameguide.v2");
+    expect(v1?.name).toBe("阴阳师攻略提炼");
+    expect(v1?.version).toBe("v1");
+    expect(v2?.name).toBe("阴阳师攻略加工（核对版）");
+    expect(v2?.version).toBe("v2");
+    expect(v2?.recommended).toBe(true);
+    expect(v2?.recipe).toBeDefined();
+    expect(v2?.recipe?.steps.map((step) => step.id)).toEqual(["scan", "draft", "audit", "finalize"]);
+  });
+
+  it("阴阳师攻略加工提示词包含决策/数值/版本时效等约束", () => {
+    const v1 = BUILTIN_PROMPT_BLOCKS.find((block) => block.id === "builtin.gameguide");
+    expect(v1?.prompt).toContain("信息不缩水");
+    expect(v1?.prompt).toContain("核心建议 / 优先级");
+    expect(v1?.prompt).toContain("版本时效与待核实");
+    expect(v1?.prompt).toContain("不添加原文没有的攻略信息");
+  });
 });

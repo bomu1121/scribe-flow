@@ -93,6 +93,9 @@ const nodeDataByType = {
     granularity: z.enum(["coarse", "medium", "fine"]),
     maxChapters: z.number().int().min(1).max(50).optional(),
   }),
+  gameGuide: baseDataSchema.extend({
+    mode: z.enum(["standard", "audited"]).optional(),
+  }),
   mindMap: baseDataSchema.extend({
     title: z.string().optional(),
     branchSize: z.enum(["auto", "few", "many"]).optional(),
@@ -130,6 +133,7 @@ export const graphNodeSchema = z.discriminatedUnion("type", [
   nodeOf("flow.if", nodeDataByType.ifData),
   nodeOf("process.text", nodeDataByType.textTool),
   nodeOf("process.chapter", nodeDataByType.chapter),
+  nodeOf("process.gameguide", nodeDataByType.gameGuide),
   nodeOf("process.mindmap", nodeDataByType.mindMap),
   nodeOf("process.obsidian", nodeDataByType.obsidian),
 ]);

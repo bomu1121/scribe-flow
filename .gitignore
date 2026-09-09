@@ -34,6 +34,7 @@ playwright-report/
 # CDP UI 冒烟与本地截图产物
 .tmp-cdp-*/
 .tmp-cdp-*.png
+.tmp-shots/
 .sf-*.html
 .sf-*.png
 

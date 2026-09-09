@@ -19,9 +19,9 @@ function nextColumnX(type: NodeType, fromX: number): number {
 
 /**
  * 工作流模板只描述「加工路径的形状」：
- * - 提示词块（观点提炼/技术文案提炼/信息溯源/自定义）不在工程模板里预绑，
- *   而是在画布的「AI 加工」节点检查器中选择。
- * - AI 节点默认不指定 promptBlockId，用户选择后才可运行。
+ * - 通用模板不预绑提示词块（观点提炼/技术文案提炼/信息溯源/自定义），
+ *   由用户在画布的「AI 加工」节点检查器中选择。
+ * - 垂直领域模板（如阴阳师攻略）可以预绑推荐提示词块，开箱即用；用户仍可更换。
  */
 
 /** 模板一：视频转笔记（单线）。 */
@@ -247,6 +247,61 @@ function videoMindMapGraph(): WorkflowGraph {
   };
 }
 
+/** 模板九：文稿转阴阳师攻略笔记（已有攻略文稿 → AI 校对 → 阴阳师攻略加工(核对版) → 输出）。 */
+function textGameGuideGraph(): WorkflowGraph {
+  const refineX = nextColumnX("source.text", 0);
+  const guideX = nextColumnX("process.refine", refineX);
+  const outX = nextColumnX("process.gameguide", guideX);
+  return {
+    schemaVersion: 1,
+    nodes: [
+      node("source.text", "n_text", 0, 80, { label: "阴阳师攻略文稿", text: "" }),
+      node("process.refine", "n_refine", refineX, 80, { label: "AI 校对" }),
+      node("process.gameguide", "n_guide", guideX, 80, {
+        label: "阴阳师攻略加工",
+        mode: "audited",
+        retry: { maxRetries: 2, backoffMs: 3000 },
+      }),
+      node("process.output", "n_out", outX, 80, { label: "输出", fileName: "阴阳师攻略笔记.md" }),
+    ],
+    edges: [
+      edge("e1", "n_text", "n_refine", "transcript", "transcript"),
+      edge("e2", "n_refine", "n_guide", "transcript", "transcript"),
+      edge("e3", "n_guide", "n_out", "noteBlock", "noteDoc"),
+    ],
+    viewport: { x: 0, y: 0, zoom: 1 },
+  };
+}
+
+/** 模板十：视频转阴阳师攻略笔记（B站视频 → 转写 → AI 校对 → 阴阳师攻略加工(核对版) → 输出）。 */
+function videoGameGuideGraph(): WorkflowGraph {
+  const asrX = nextColumnX("source.bili", 0);
+  const refineX = nextColumnX("process.transcribe", asrX);
+  const guideX = nextColumnX("process.refine", refineX);
+  const outX = nextColumnX("process.gameguide", guideX);
+  return {
+    schemaVersion: 1,
+    nodes: [
+      node("source.bili", "n_src", 0, 80, { label: "B站链接", url: "" }),
+      node("process.transcribe", "n_asr", asrX, 80, { label: "转写" }),
+      node("process.refine", "n_refine", refineX, 80, { label: "AI 校对" }),
+      node("process.gameguide", "n_guide", guideX, 80, {
+        label: "阴阳师攻略加工",
+        mode: "audited",
+        retry: { maxRetries: 2, backoffMs: 3000 },
+      }),
+      node("process.output", "n_out", outX, 80, { label: "输出", fileName: "阴阳师攻略笔记.md" }),
+    ],
+    edges: [
+      edge("e1", "n_src", "n_asr", "audio", "audio"),
+      edge("e2", "n_asr", "n_refine", "transcript", "transcript"),
+      edge("e3", "n_refine", "n_guide", "transcript", "transcript"),
+      edge("e4", "n_guide", "n_out", "noteBlock", "noteDoc"),
+    ],
+    viewport: { x: 0, y: 0, zoom: 1 },
+  };
+}
+
 export const WORKFLOW_TEMPLATES: WorkflowTemplate[] = [
   {
     id: "template.video-basic",
@@ -295,5 +350,17 @@ export const WORKFLOW_TEMPLATES: WorkflowTemplate[] = [
     name: "文稿转 Obsidian 笔记",
     description: "已有文稿 → AI 校对 → AI 加工 → 直接保存到 Obsidian 库",
     graph: textObsidianGraph(),
+  },
+  {
+    id: "template.text-game-guide",
+    name: "文稿转阴阳师攻略笔记（核对版）",
+    description: "阴阳师攻略文稿 → AI 校对 → AI 阴阳师攻略加工（拆解/起草/核对/终稿）→ 输出 Markdown",
+    graph: textGameGuideGraph(),
+  },
+  {
+    id: "template.video-game-guide",
+    name: "视频转阴阳师攻略笔记（核对版）",
+    description: "B站阴阳师攻略视频 → 转写 → AI 校对 → AI 阴阳师攻略加工 → 输出 Markdown",
+    graph: videoGameGuideGraph(),
   },
 ];

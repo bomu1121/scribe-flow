@@ -45,6 +45,7 @@ const groups: CatalogGroup[] = [
     items: [
       { type: "process.refine", icon: PhMagicWand, description: "AI 校对修正" },
       { type: "process.prompt", icon: PhSparkle, description: "提示词块加工" },
+      { type: "process.gameguide", icon: PhSparkle, description: "阴阳师攻略结构化笔记，无需选提示词" },
       { type: "process.chapter", icon: PhTreeStructure, description: "按结构分章" },
       { type: "process.mindmap", icon: PhShareNetwork, description: "整理为思维导图" },
     ],

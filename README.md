@@ -11,6 +11,7 @@
 - M3 分层验收：[docs/m3-acceptance.md](docs/m3-acceptance.md)（模板一「B站视频→观点笔记」真实端到端跑通）
 - 部署说明：[docs/deploy.md](docs/deploy.md)（Docker 单容器 + 环境变量 + 备份迁移）
 - M2 分层验收：[docs/m2-acceptance.md](docs/m2-acceptance.md)
+- 阴阳师攻略视频文稿加工模块：[docs/onmyoji-guide-processing.md](docs/onmyoji-guide-processing.md)
 - 产品方案：[docs/scribe-flow-proposal.md](docs/scribe-flow-proposal.md)
 - 实施清单：[docs/scribe-flow-m0-m1.md](docs/scribe-flow-m0-m1.md)
 - UI 组件库替换调研：[docs/ui-library-replacement-research.md](docs/ui-library-replacement-research.md)

@@ -3,7 +3,7 @@ import { computed, nextTick, onBeforeUnmount, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { ElMessageBox } from "element-plus";
 import { toast } from "@/lib/toast";
-import { Folder as FolderIcon, Pencil, Trash2, Workflow } from "lucide-vue-next";
+import { Folder as FolderIcon, History, Pencil, Trash2, Workflow } from "lucide-vue-next";
 import type { ProjectFolder, ProjectListItem } from "@scribe-flow/shared";
 import { useProjectsStore } from "@/stores/projects";
 import { useRunsStore } from "@/stores/runs";
@@ -135,6 +135,18 @@ function isRunning(): boolean {
   return runsStore.runs.some((r) => r.projectId === props.project.id && r.status === "running");
 }
 
+/** 该工程最近一次“已结束”的运行（成功/失败/取消都算，运行中的不算上次结果）。 */
+function lastResultRun() {
+  return runsStore.runs
+    .filter((r) => r.projectId === props.project.id && r.status !== "running")
+    .sort((a, b) => b.createdAt - a.createdAt)[0];
+}
+
+function openLastResult() {
+  const run = lastResultRun();
+  if (run) void router.push(`/project/${props.project.id}/run/${run.id}`);
+}
+
 function ensureSelected(event: MouseEvent) {
   if (!props.selectedIds.has(props.project.id)) {
     emit("select", { id: props.project.id, kind: "project", event });
@@ -159,6 +171,7 @@ function openContextMenu(event: MouseEvent) {
 
 function openMenu(x: number, y: number) {
   const running = isRunning();
+  const last = lastResultRun();
   const multi = props.selectedIds.size > 1 && props.selectedIds.has(props.project.id);
   if (multi) {
     menuItems.value = [
@@ -168,6 +181,16 @@ function openMenu(x: number, y: number) {
   } else {
     menuItems.value = [
       { key: "open", label: "打开画布", icon: Workflow, hint: "Enter" },
+      ...(last
+        ? [
+            {
+              key: "last-result",
+              label: "上次结果",
+              icon: History,
+              hint: `#${last.id.slice(-6)}`,
+            },
+          ]
+        : []),
       { key: "rename", label: "重命名", icon: Pencil, hint: "F2" },
       { key: "duplicate", label: "复制工程" },
       { key: "export", label: "导出工程" },
@@ -182,6 +205,9 @@ function onMenuSelect(key: string) {
   switch (key) {
     case "open":
       openProject();
+      break;
+    case "last-result":
+      openLastResult();
       break;
     case "rename":
       startRename();

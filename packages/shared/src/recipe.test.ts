@@ -61,4 +61,11 @@ describe("parseRecipe", () => {
     expect(v3?.recipe).toBeDefined();
     expect(parseRecipe(v3!.recipe)).toEqual(v3!.recipe);
   });
+
+  it("阴阳师攻略核对版配方可通过运行时校验（zod 与常量一致）", async () => {
+    const { BUILTIN_PROMPT_BLOCKS } = await import("./prompt");
+    const v2 = BUILTIN_PROMPT_BLOCKS.find((block) => block.id === "builtin.gameguide.v2");
+    expect(v2?.recipe).toBeDefined();
+    expect(parseRecipe(v2!.recipe)).toEqual(v2!.recipe);
+  });
 });

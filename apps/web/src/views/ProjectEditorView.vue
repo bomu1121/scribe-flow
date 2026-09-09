@@ -136,12 +136,15 @@ async function loadProject() {
 
   suppressRunWatch.value = false;
   if (projectRunningRun.value) void resumeRun(projectRunningRun.value);
+  else void restoreLastRun();
 }
 
 onMounted(() => {
-  void runsStore.load();
-  void settingsStore.load();
-  void loadProject();
+  void (async () => {
+    await runsStore.load();
+    await settingsStore.load();
+    await loadProject();
+  })();
 });
 
 onBeforeUnmount(() => {

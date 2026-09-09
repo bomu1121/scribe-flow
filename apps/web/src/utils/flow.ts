@@ -72,6 +72,7 @@ export interface ScribeNodeData {
   template?: string;
   granularity?: "coarse" | "medium" | "fine";
   maxChapters?: number;
+  mode?: "standard" | "audited";
   branchSize?: "auto" | "few" | "many";
   maxDepth?: number;
   theme?: "paper" | "presentation" | "academic";
@@ -191,6 +192,8 @@ export function emptyNodeData(type: NodeType): Record<string, unknown> {
       return { label: "文本工具", operation: "findReplace", find: "", replace: "" };
     case "process.chapter":
       return { label: "章节切分", granularity: "medium", maxChapters: 20, retry: { maxRetries: 2, backoffMs: 3000 } };
+    case "process.gameguide":
+      return { label: "阴阳师攻略加工", mode: "audited", retry: { maxRetries: 2, backoffMs: 3000 } };
     case "process.mindmap":
       return { label: "思维导图", branchSize: "auto", maxDepth: 4, theme: "paper", retry: { maxRetries: 2, backoffMs: 3000 } };
     case "process.obsidian":

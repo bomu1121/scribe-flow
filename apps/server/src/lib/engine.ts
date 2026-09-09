@@ -24,13 +24,13 @@ import { fetchBiliVideoDetail } from "./bilibili";
 import { countMindMapNodes, mindMapToMarkdown, parseMindMapJson } from "./mindmap";
 import { downloadBiliAudio, toAsrWav } from "./media";
 import { ensureRemoteDirectory, scanRemoteMarkdown, writeRemoteFile, type NutstoreConfig } from "./nutstore";
-import { appendAllOutput, assertStepOutput, renderStepSystem } from "./recipe";
+import { appendAllOutput, assertStepOutput, parseJsonLoose, renderStepSystem } from "./recipe";
 import { getAiConfig, getAsrConfig, getNutstoreConfig, getSettings } from "./settings";
 
 const MAX_INLINE_TEXT = 200_000;
 
 /** 外部调用/网络下载类节点自动重试；本地节点失败重试无意义。B 站下载最常见的失败就是瞬时网络错误。 */
-export const RETRYABLE_NODE_TYPES = new Set(["source.bili", "process.transcribe", "process.refine", "process.prompt", "process.chapter", "process.mindmap"]);
+export const RETRYABLE_NODE_TYPES = new Set(["source.bili", "process.transcribe", "process.refine", "process.prompt", "process.chapter", "process.gameguide", "process.mindmap"]);
 
 /** 判断一次失败是否值得重试：取消、配置类与永久性错误不重试，其余（超时/网络/5xx/空结果）重试。 */
 export function isRetryableError(error: Error, cancelled: boolean): boolean {
@@ -287,6 +287,32 @@ function applyTextOperation(
         .trim();
     default:
       throw new Error(`文本工具暂不支持该操作：${operation}`);
+  }
+}
+
+/**
+ * 去掉包裹整篇 Markdown 的单个代码围栏。
+ * 只在“整段输出被 ``` / ```markdown / ```md 包裹”时剥离，保留正文；
+ * 如果正文内部还含有代码围栏则不处理，避免误删用户真正想保留的代码块。
+ */
+function stripOuterCodeFence(text: string): string {
+  const trimmed = text.trim();
+  const match = trimmed.match(/^```(?:markdown|md|text)?\s*\n([\s\S]*?)\n```\s*$/);
+  if (!match) return text;
+  if (match[1].includes("```")) return text;
+  return match[1].trim();
+}
+
+/** 阴阳师攻略 scan 步骤：把可能缺失的数组型字段补成空数组，避免下游步骤读不到键。 */
+function ensureGameGuideScanKeys(raw: string): string {
+  try {
+    const parsed = parseJsonLoose(raw) as Record<string, unknown>;
+    for (const key of ["entities", "loadouts", "steps", "caveats", "terms", "versionNotes"]) {
+      if (!Array.isArray(parsed[key])) parsed[key] = [];
+    }
+    return JSON.stringify(parsed);
+  } catch {
+    return raw;
   }
 }
 
@@ -601,7 +627,7 @@ export class RunEngine {
       .limit(1)
       .get();
     if (!row || !row.outputKind) return [];
-    if (row.nodeType === "process.transcribe" || row.nodeType === "process.refine" || row.nodeType === "process.prompt") {
+    if (row.nodeType === "process.transcribe" || row.nodeType === "process.refine" || row.nodeType === "process.prompt" || row.nodeType === "process.gameguide") {
       const inputRows = this.db
         .select()
         .from(runNodeInputs)
@@ -609,7 +635,7 @@ export class RunEngine {
         .orderBy(runNodeInputs.position)
         .all();
       if (inputRows.length > 0) {
-        const kind: NodeOutput["kind"] = row.nodeType === "process.prompt" ? "noteBlock" : "text";
+        const kind: NodeOutput["kind"] = row.nodeType === "process.prompt" || row.nodeType === "process.gameguide" ? "noteBlock" : "text";
         const outputs: NodeOutput[] = [];
         for (const inputRow of inputRows) {
           const text = inputRow.resultText ?? inputRow.text;
@@ -767,7 +793,7 @@ export class RunEngine {
     if (outputs.every((output) => output.kind === "audio")) return outputs[0];
     const firstKind = outputs[0]?.kind;
     const kind: NodeOutput["kind"] =
-      node.type === "process.prompt"
+      node.type === "process.prompt" || node.type === "process.gameguide"
         ? "noteBlock"
         : node.type === "process.chapter" || node.type === "process.mindmap"
           ? "noteDoc"
@@ -952,6 +978,7 @@ export class RunEngine {
         return { outputs, summary: `${audioItems.length} 个音频 · ${total} 字` };
       }
 
+      case "process.gameguide":
       case "process.refine":
       case "process.prompt": {
         const textItems = inputs.items.filter((i) => i.output.kind !== "audio" && i.output.text?.trim());
@@ -959,12 +986,15 @@ export class RunEngine {
         await this.progress(active, node.id, 5, `准备逐个处理 ${textItems.length} 个输入`);
         const aiConfig = getAiConfig(this.db);
         if (!aiConfig.apiKey) throw new Error("未配置 AI 模型密钥，请到设置页填写");
-        const blockId = String(data.promptBlockId ?? "");
+        const mode = node.type === "process.gameguide" ? String((data.mode as string | undefined) ?? "audited") : "";
+        const blockId =
+          String(data.promptBlockId ?? "") ||
+          (node.type === "process.gameguide" ? (mode === "standard" ? "builtin.gameguide" : "builtin.gameguide.v2") : "");
         const override = String(data.promptOverride ?? "");
         const builtin = BUILTIN_PROMPT_BLOCKS.find((b) => b.id === blockId);
 
-        // M8-1 配方分支：仅 process.prompt、块带 recipe、且无自定义提示词覆盖时执行多步链。
-        const recipe = node.type === "process.prompt" && !override.trim() ? builtin?.recipe : undefined;
+        // 配方分支：process.prompt / process.gameguide 且块带 recipe、且无自定义提示词覆盖时执行多步链。
+        const recipe = (node.type === "process.prompt" || node.type === "process.gameguide") && !override.trim() ? builtin?.recipe : undefined;
         if (recipe) {
           const parts: string[] = [];
           const totalFlat = recipe.steps.length * textItems.length;
@@ -1013,7 +1043,7 @@ export class RunEngine {
           await this.updateInputResult(active, node.id, item.sourceNodeId, item.position, trimmed);
           parts.push(trimmed);
         }
-        const kind: NodeOutput["kind"] = node.type === "process.prompt" ? "noteBlock" : "text";
+        const kind: NodeOutput["kind"] = node.type === "process.prompt" || node.type === "process.gameguide" ? "noteBlock" : "text";
         const outputs = parts.map((text) => ({ kind, text, size: text.length }));
         const total = parts.reduce((sum, text) => sum + text.length, 0);
         return { outputs, summary: `${textItems.length} 个输入 · ${total} 字` };
@@ -1488,7 +1518,15 @@ ${JSON.stringify(taxonomyTags)}`;
         this.emit(active, { type: "node.step.error", runId: active.id, nodeId: node.id, stepId: step.id, index: flatIndex + 1, total: totalFlat, error: message });
         throw new Error(`步骤「${step.label}」调用失败：${message}`, { cause: error });
       }
-      const trimmed = result.trim();
+      const raw = result.trim();
+      // 文本步骤：AI 偶尔会把整篇 Markdown 用 ```markdown ... ``` 包起来。
+      // 这里先剥掉外层围栏再校验/落盘，避免因为这种格式问题误判失败。
+      let trimmed = step.expects?.kind === "text" ? stripOuterCodeFence(raw) : raw;
+      // 阴阳师攻略 scan：AI 可能少写空数组字段（如 versionNotes），这里自动补全，
+      // 避免 jsonRootKeys 因“少一个空数组”把整条流程判失败。
+      if (node.type === "process.gameguide" && step.id === "scan") {
+        trimmed = ensureGameGuideScanKeys(trimmed);
+      }
       if (!trimmed) {
         const message = `步骤「${step.label}」返回空内容`;
         this.emit(active, { type: "node.step.error", runId: active.id, nodeId: node.id, stepId: step.id, index: flatIndex + 1, total: totalFlat, error: message });

@@ -45,7 +45,27 @@ beforeAll(async () => {
       const messages = (body.messages as Array<{ role: string; content: string }>) ?? [];
       const system = String(messages[0]?.content ?? "");
       const user = String(messages.at(-1)?.content ?? "");
-      if (system.includes("只输出拆解清单 JSON")) {
+      if (system.includes("只输出攻略要素拆解 JSON")) {
+        reply(
+          res,
+          JSON.stringify({
+            meta: { game: "示例游戏", series: "示例系列", episode: "第1期", guideType: ["角色培养"], audience: "新手" },
+            oneLiner: "先培养雪御前。",
+            entities: [{ name: "雪御前", category: "角色", priority: "必练", details: "群体输出", evidence: user.slice(0, 12) }],
+            loadouts: [{ target: "雪御前", scene: "PVE", config: "隐念/狂骨 155" }],
+            steps: [{ title: "第一步", detail: "先养输出" }],
+            caveats: ["不要喂 R/SR 黑蛋"],
+            terms: [{ term: "黑蛋", meaning: "稀有升级素材" }],
+          }),
+        );
+      } else if (system.includes("起草一份 Markdown 阴阳师攻略笔记")) {
+        reply(res, "# 阴阳师攻略笔记：示例游戏\n> 一句话结论：先养雪御前。\n## 核心建议 / 优先级\n雪御前 155。");
+      } else if (system.includes("你是阴阳师攻略审校员")) {
+        reply(res, JSON.stringify({ items: [{ claim: "雪御前 155", inOriginal: true, issue: "", suggestion: "" }] }));
+      } else if (system.includes("你是阴阳师攻略终稿编辑")) {
+        expect(system).toContain("攻略要素拆解"); // {{all}} 展开后含拆解/草稿/核对表标记
+        reply(res, "```markdown\n最终阴阳师攻略笔记正文\n```");
+      } else if (system.includes("只输出拆解清单 JSON")) {
         reply(res, JSON.stringify({ blocks: [{ title: "观点一", quotes: [user.slice(0, 12)] }] }));
       } else if (system.includes("按固定格式起草")) {
         reply(res, "# 观点提炼：示例主题\n## 总体概要\n概述。\n## 核心观点\n草稿正文包含示例原文关键句甲。");
@@ -158,6 +178,30 @@ describe("RunEngine 配方执行（M8-1）", () => {
     expect(aiResponses.map((row) => row.step)).toEqual(["scan", "draft", "audit", "finalize"]);
     expect(aiRequests[0]?.content).toContain("[scan]");
     expect(logs.some((row) => row.kind === "input" && row.content.includes("示例原文关键句甲"))).toBe(true);
+  });
+
+  it("阴阳师攻略加工 v2：4 次调用、scan 根键/audit 根键断言通过、输出为最后一步产物", async () => {
+    chatCalls = 0;
+    const dataDir = await mkdtemp(join(tmpdir(), "scribe-gameguide-"));
+    tmpDirs.push(dataDir);
+    const runId = "run_gameguide_ok";
+    const { db, engine, graph } = await setup(dataDir, runId, "builtin.gameguide.v2");
+
+    runWith(engine, runId, graph);
+    await waitFinished(db, runId);
+
+    expect(db.select().from(runs).where(eq(runs.id, runId)).get()?.status).toBe("success");
+    const nodeRow = db.select().from(runNodeResults).where(eq(runNodeResults.nodeId, "n_prompt")).get();
+    expect(nodeRow?.status).toBe("done");
+    expect(nodeRow?.summary).toContain("配方 4 步");
+    expect(nodeRow?.summary).toContain("4 次调用");
+    expect(nodeRow?.outputKind).toBe("noteBlock");
+    expect(nodeRow?.outputText).toContain("最终阴阳师攻略笔记正文");
+    expect(chatCalls).toBe(4);
+
+    const logs = db.select().from(runNodeLogs).where(eq(runNodeLogs.runId, runId)).all();
+    const aiRequests = logs.filter((row) => row.kind === "ai-request" && row.nodeId === "n_prompt");
+    expect(aiRequests.map((row) => row.step)).toEqual(["scan", "draft", "audit", "finalize"]);
   });
 
   it("无配方块（观点提炼 v2）：仍走单次调用，日志无 step（零回归）", async () => {
