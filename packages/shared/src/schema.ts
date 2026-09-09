@@ -49,12 +49,15 @@ const nodeDataByType = {
     cover: z.string().optional(),
     uploader: z.string().optional(),
     duration: z.number().optional(),
+    keepVideo: z.boolean().optional(),
+    videoQn: z.number().int().min(16).max(127).optional(),
   }),
   file: baseDataSchema.extend({
     fileId: z.string().optional(),
     fileName: z.string().optional(),
     filePath: z.string().optional(),
     size: z.number().optional(),
+    keepVideo: z.boolean().optional(),
   }),
   text: baseDataSchema.extend({
     text: z.string(),

@@ -20,6 +20,7 @@ import type { AppDatabase } from "../db/client";
 import { projects, runNodeLogs, runNodeResults, runs, type RunRow } from "../db/schema";
 import { nextRunId, type RunEngine } from "../lib/engine";
 import { getAiConfig, getAsrConfig } from "../lib/settings";
+import { listRunMediaViews } from "../lib/media-store";
 
 const startSchema = z
   .object({
@@ -168,10 +169,12 @@ export function runsApi(db: AppDatabase, engine: RunEngine, dataDir: string) {
     return c.json({ items: rows.map((row) => rowToMeta(row, projectNames.get(row.projectId))) });
   });
 
-  api.get("/:id", (c) => {
-    const detail = engine.detail(c.req.param("id"));
+  api.get("/:id", async (c) => {
+    const runId = c.req.param("id");
+    const detail = engine.detail(runId);
     if (!detail.run) return c.json({ error: "运行不存在" }, 404);
-    return c.json({ ...detail.run, nodeResults: detail.nodes, graph: detail.graph, inputs: detail.inputs });
+    const media = await listRunMediaViews(db, dataDir, runId);
+    return c.json({ ...detail.run, nodeResults: detail.nodes, graph: detail.graph, inputs: detail.inputs, media });
   });
 
   api.get("/:id/events", (c) => {

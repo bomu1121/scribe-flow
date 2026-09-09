@@ -1,5 +1,6 @@
 import type { AsrEngine, WorkflowGraph } from "./graph";
 import type { NutstoreSettings } from "./nutstore";
+import type { RunMediaView } from "./media";
 
 export type RunStatus = "running" | "success" | "error" | "cancelled";
 export type NodeResultStatus = "queued" | "running" | "done" | "error" | "cancelled" | "skipped";
@@ -74,6 +75,8 @@ export interface RunDetail extends RunMeta {
   graph?: WorkflowGraph;
   /** 各节点消费的输入明细；用于在结果页单独查看“这条链路身上的所有输入”。 */
   inputs?: RunNodeInput[];
+  /** 各来源节点保留的可播放视频附件（keepVideo）。 */
+  media?: RunMediaView[];
 }
 
 export type RunNodeLogKind = "input" | "ai-request" | "ai-response" | "info" | "error";

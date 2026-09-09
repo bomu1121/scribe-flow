@@ -26,13 +26,29 @@ interface DashAudio {
   baseUrl: string;
 }
 
+/** DASH 视频流（bilibili codecid：7=AVC/H.264，12=HEVC/H.265，13=AV1）。 */
+interface DashVideo {
+  id: number;
+  codecid: number;
+  bandwidth: number;
+  width?: number;
+  height?: number;
+  frameRate?: string;
+  baseUrl: string;
+}
+
 interface PlayUrlResponse {
   code: number;
   message?: string;
   data?: {
-    dash?: { audio?: DashAudio[]; duration?: number };
-    durl?: { url: string }[];
+    quality?: number;
     accept_quality?: number[];
+    dash?: {
+      duration?: number;
+      audio?: DashAudio[];
+      video?: DashVideo[];
+    };
+    durl?: { url: string; size?: number }[];
   };
 }
 
@@ -90,4 +106,118 @@ export async function downloadBiliAudio(bvid: string, cid: number, cookie: strin
     });
   }
   return outPath;
+}
+
+export interface DownloadedBiliVideo {
+  /** DASH 视频流（.m4s）。 */
+  videoPath: string;
+  /** DASH 音轨（.m4s）。 */
+  audioPath: string;
+  /** 所选视频流的 codecid（7=AVC，12=HEVC，13=AV1）。 */
+  codecid: number;
+  qualityId: number;
+  durationSec?: number;
+}
+
+async function fetchToFile(url: string, destPath: string, failPrefix: string): Promise<void> {
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      headers: { "User-Agent": BILI_USER_AGENT, Referer: "https://www.bilibili.com/" },
+      signal: AbortSignal.timeout(600_000),
+    });
+  } catch (err) {
+    throw new Error(`${failPrefix}：${err instanceof Error ? err.message : String(err)}`, {
+      cause: err instanceof Error ? err : undefined,
+    });
+  }
+  if (!res.ok || !res.body) throw new Error(`${failPrefix}（${res.status}）`);
+  try {
+    await pipeline(Readable.fromWeb(res.body as never), createWriteStream(destPath));
+  } catch (err) {
+    throw new Error(`${failPrefix}中断：${err instanceof Error ? err.message : String(err)}`, {
+      cause: err instanceof Error ? err : undefined,
+    });
+  }
+}
+
+/**
+ * 下载 B 站 DASH 视频流 + 音轨（keepVideo 用）。
+ * 策略：AVC(codecid=7) 优先（浏览器直放），同 codec 取码率最高；无 AVC 时取整体最高码率流，由上层转码。
+ */
+export async function downloadBiliVideoStreams(
+  bvid: string,
+  cid: number,
+  cookie: string | undefined,
+  destDir: string,
+  qn = 80,
+): Promise<DownloadedBiliVideo> {
+  const headers: Record<string, string> = {
+    "User-Agent": BILI_USER_AGENT,
+    Referer: "https://www.bilibili.com/",
+    Accept: "application/json",
+  };
+  if (cookie) headers.Cookie = cookie;
+
+  const url = `https://api.bilibili.com/x/player/playurl?bvid=${encodeURIComponent(bvid)}&cid=${cid}&fnval=16&fnver=0&fourk=1&qn=${qn}`;
+  let res: Response;
+  try {
+    res = await fetch(url, { headers, signal: AbortSignal.timeout(15000) });
+  } catch (err) {
+    throw new Error(`获取播放地址失败（BV${bvid}）：${err instanceof Error ? err.message : String(err)}`, {
+      cause: err instanceof Error ? err : undefined,
+    });
+  }
+  if (!res.ok) throw new Error(`B 站播放地址请求失败（${res.status}）`);
+  const body = (await res.json()) as PlayUrlResponse;
+  if (body.code !== 0 || !body.data) throw new Error(body.message || "获取播放地址失败");
+
+  const dash = body.data.dash;
+  const videos = [...(dash?.video ?? [])];
+  if (videos.length === 0) throw new Error("该视频没有可下载的视频流（DASH 不可用）");
+  const avc = videos.filter((s) => s.codecid === 7).sort((a, b) => b.bandwidth - a.bandwidth);
+  const chosen = (avc[0] ?? [...videos].sort((a, b) => b.bandwidth - a.bandwidth)[0])!;
+  const audios = (dash?.audio ?? []).sort((a, b) => b.bandwidth - a.bandwidth);
+  const audioUrl = audios[0]?.baseUrl ?? body.data.durl?.[0]?.url;
+  if (!audioUrl) throw new Error("该视频没有可下载的音轨");
+
+  const videoPath = join(destDir, "video.m4s");
+  const audioPath = join(destDir, "audio.m4s");
+  await fetchToFile(chosen.baseUrl, videoPath, `视频流下载失败（BV${bvid}）`);
+  await fetchToFile(audioUrl, audioPath, `音轨下载失败（BV${bvid}）`);
+  return {
+    videoPath,
+    audioPath,
+    codecid: chosen.codecid,
+    qualityId: chosen.id,
+    durationSec: dash?.duration,
+  };
+}
+
+/**
+ * 双流合成浏览器直放 MP4（+faststart 保证起播/seek）：
+ * AVC 用 copy 无损 remux；HEVC/AV1 等先试 copy，失败则 libx264 转码兜底。
+ */
+export async function muxToMp4(videoPath: string, audioPath: string, outPath: string, codecid: number): Promise<void> {
+  const base = ["-y", "-i", videoPath, "-i", audioPath, "-movflags", "+faststart"];
+  try {
+    if (codecid === 7) {
+      await runFfmpeg([...base, "-c", "copy", outPath]);
+      return;
+    }
+  } catch {
+    // 非 AVC 或 copy 失败 → 转码
+  }
+  await runFfmpeg([
+    ...base,
+    "-c:v",
+    "libx264",
+    "-preset",
+    "veryfast",
+    "-crf",
+    "23",
+    "-c:a",
+    "aac",
+    outPath,
+  ]);
 }

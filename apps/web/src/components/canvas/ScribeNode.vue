@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, defineAsyncComponent, h, onBeforeUnmount, onMounted, provide, ref, watch } from "vue";
-import { ElInput, ElMessageBox, ElTooltip, ElUpload, type UploadRequestOptions } from "element-plus";
+import { ElInput, ElMessageBox, ElSwitch, ElTooltip, ElUpload, type UploadRequestOptions } from "element-plus";
 import { PhBookOpenText, PhCloud, PhDotsThreeVertical, PhFileArrowDown, PhFileText, PhGitBranch, PhGitMerge, PhMagicWand, PhMicrophone, PhPlay, PhShareNetwork, PhSlidersHorizontal, PhSparkle, PhSwap, PhTreeStructure, PhUploadSimple, PhVideo } from "@phosphor-icons/vue";
 import { CircleAlert } from "lucide-vue-next";
 import { toast } from "@/lib/toast";
@@ -233,15 +233,18 @@ function confirmSeasonSelection() {
 }
 
 /**
- * 节点内部滚动列表的滚轮守卫：列表还能继续滚动时拦截事件，
- * 避免滚轮冒泡到画布触发缩放；滚到边界后放行（此时滚轮恢复缩放画布）。
+ * 节点内部滚动列表的滚轮守卫：
+ * - 只要光标还在列表内，滚轮事件一律不再冒泡到画布（**滑到边界也不会变成缩放画布**）；
+ * - 列表还能继续滚动时保留默认滚动；
+ * - 已到边界时 preventDefault，避免滚动链把滚动继续传给外层容器。
  */
 function onInnerListWheel(event: WheelEvent) {
+  event.stopPropagation();
   const el = event.currentTarget as HTMLElement;
   const atTop = el.scrollTop <= 0;
   const atBottom = el.scrollTop + el.clientHeight >= el.scrollHeight - 1;
   const canScroll = event.deltaY < 0 ? !atTop : !atBottom;
-  if (canScroll) event.stopPropagation();
+  if (!canScroll) event.preventDefault();
 }
 
 /**
@@ -308,7 +311,12 @@ const nodeDescriptions: Record<NodeType, string> = {
 
 const nodeDescription = computed(() => nodeDescriptions[nodeType.value] ?? "");
 
-const hasAdvanced = computed(() => ["process.transcribe", "process.refine", "process.prompt", "process.chapter", "process.gameguide", "process.mindmap"].includes(nodeType.value));
+const hasAdvanced = computed(() =>
+  ["source.bili", "source.file", "process.transcribe", "process.refine", "process.prompt", "process.chapter", "process.gameguide", "process.mindmap"].includes(nodeType.value),
+);
+const isVideoSource = computed(() => nodeType.value === "source.bili" || nodeType.value === "source.file");
+/** 来源节点的「高级设置」不涉及失败重试，标题保持简洁。 */
+const advancedTitle = computed(() => (isVideoSource.value || nodeType.value === "process.mindmap" ? "高级设置" : "高级（失败重试）"));
 const advancedOpen = ref(false);
 
 watch(
@@ -601,6 +609,26 @@ function commit() {
   props.data.ctx?.commit();
 }
 
+/** keepVideo：下载完整视频并在结果页提供播放（B站/本地文件共用）。 */
+const videoQnOptions = [
+  { qn: 16, label: "360P" },
+  { qn: 32, label: "480P" },
+  { qn: 64, label: "720P" },
+  { qn: 80, label: "1080P" },
+];
+const currentVideoQn = computed(() => Number(data.value.videoQn ?? 80));
+
+function setKeepVideo(value: string | number | boolean) {
+  const on = Boolean(value);
+  patch({ keepVideo: on, ...(on && !data.value.videoQn ? { videoQn: 80 } : {}) });
+  commit();
+}
+
+function setVideoQn(qn: number) {
+  patch({ videoQn: qn });
+  commit();
+}
+
 async function renameNode() {
   if (readonly.value) return;
   try {
@@ -809,33 +837,40 @@ const themeOptions = [
                 </div>
               </div>
               <div v-else-if="previewError" class="sf-node-preview sf-node-preview--error">{{ previewError }}</div>
-              <div v-if="preview && preview.pages.length > 1" class="sf-node-pages">
-                <div class="sf-node-pages-head">
-                  <span class="sf-node-pages-title">选择分P（可多选）</span>
-                  <button type="button" class="sf-node-pages-confirm" :disabled="selectedPages.length === 0" @click="confirmPageSelection">
+              <div v-if="preview && preview.pages.length > 1" class="sf-node-picker">
+                <div class="sf-node-picker-head">
+                  <span class="sf-node-picker-title">选择分P</span>
+                  <span class="sf-node-picker-count tnum">共 {{ preview.pages.length }} P · 已选 {{ selectedPages.length }}</span>
+                </div>
+                <div class="sf-node-picker-list">
+                  <label v-for="page in preview.pages" :key="page.page" class="sf-node-picker-row">
+                    <input type="checkbox" class="sf-node-picker-check" :checked="selectedPages.includes(page.page)" @change="togglePage(page.page)" />
+                    <span class="sf-node-picker-name">P{{ page.page }} · {{ page.part || `第 ${page.page} 集` }}</span>
+                    <span class="sf-node-picker-duration tnum">{{ fmtDuration(page.duration) }}</span>
+                  </label>
+                </div>
+                <div class="sf-node-picker-foot">
+                  <span class="sf-node-picker-count tnum">{{ selectedPages.length > 0 ? `已选 ${selectedPages.length} 项` : "可多选" }}</span>
+                  <button type="button" class="sf-node-picker-confirm" :disabled="selectedPages.length === 0" @click="confirmPageSelection">
                     生成所选分P
                   </button>
                 </div>
-                <label v-for="page in preview.pages" :key="page.page" class="sf-node-page">
-                  <input type="checkbox" :checked="selectedPages.includes(page.page)" @change="togglePage(page.page)" />
-                  <span class="sf-node-page-name">P{{ page.page }} · {{ page.part || `第 ${page.page} 集` }}</span>
-                  <span class="sf-node-page-duration tnum">{{ fmtDuration(page.duration) }}</span>
-                </label>
               </div>
-              <div v-if="preview && preview.ugcSeason && preview.ugcSeason.episodes.length > 0" class="sf-node-season">
-                <div class="sf-node-season-head">
-                  <span class="sf-node-season-title">属于合集《{{ preview.ugcSeason.title || "未命名合集" }}》· {{ preview.ugcSeason.episodes.length }} 集</span>
+              <div v-if="preview && preview.ugcSeason && preview.ugcSeason.episodes.length > 0" class="sf-node-picker">
+                <div class="sf-node-picker-head">
+                  <span class="sf-node-picker-title" :title="preview.ugcSeason.title">合集《{{ preview.ugcSeason.title || "未命名合集" }}》</span>
+                  <span class="sf-node-picker-count tnum">共 {{ preview.ugcSeason.episodes.length }} 集</span>
                 </div>
-                <div class="sf-node-season-list" @wheel="onInnerListWheel">
-                  <label v-for="ep in preview.ugcSeason.episodes" :key="ep.bvid" class="sf-node-season-row">
-                    <input type="checkbox" :checked="seasonSelected.includes(ep.bvid)" @change="toggleSeasonEpisode(ep.bvid)" />
-                    <span class="sf-node-season-name" :title="ep.part">{{ ep.part }}</span>
-                    <span class="sf-node-season-duration tnum">{{ fmtDuration(ep.duration) }}</span>
+                <div class="sf-node-picker-list" @wheel="onInnerListWheel">
+                  <label v-for="ep in preview.ugcSeason.episodes" :key="ep.bvid" class="sf-node-picker-row">
+                    <input type="checkbox" class="sf-node-picker-check" :checked="seasonSelected.includes(ep.bvid)" @change="toggleSeasonEpisode(ep.bvid)" />
+                    <span class="sf-node-picker-name" :title="ep.part">{{ ep.part }}</span>
+                    <span class="sf-node-picker-duration tnum">{{ fmtDuration(ep.duration) }}</span>
                   </label>
                 </div>
-                <div class="sf-node-season-foot">
-                  <span class="sf-node-season-count tnum">已选 {{ seasonSelected.length }} 集</span>
-                  <button type="button" class="sf-node-season-confirm" :disabled="seasonSelected.length === 0" @click="confirmSeasonSelection">
+                <div class="sf-node-picker-foot">
+                  <span class="sf-node-picker-count tnum">{{ seasonSelected.length > 0 ? `已选 ${seasonSelected.length} 集` : "可多选" }}</span>
+                  <button type="button" class="sf-node-picker-confirm" :disabled="seasonSelected.length === 0" @click="confirmSeasonSelection">
                     生成所选集数
                   </button>
                 </div>
@@ -965,49 +1000,71 @@ const themeOptions = [
           </template>
 
           <div v-if="hasAdvanced && advancedOpen" class="sf-node-advanced">
-            <div class="sf-node-advanced-title">{{ nodeType === 'process.mindmap' ? '高级设置' : '高级（失败重试）' }}</div>
-            <template v-if="nodeType === 'process.mindmap'">
-              <label class="sf-node-field">
-                <NodeFieldLabel label="导图标题（可选）" hint="留空时由 AI 自动提炼标题" />
-                <el-input
-                  class="sf-node-control"
-                  size="small"
-                  :model-value="data.title ?? ''"
-                  placeholder="输入内容…"
-                  @update:model-value="(v: string | number) => patch({ title: String(v) })"
-                  @blur="commit"
-                />
-              </label>
-              <div class="sf-node-field">
-                <span class="sf-node-field-label">分支数量</span>
-                <ModelSelect
-                  :model-value="data.branchSize ?? 'auto'"
-                  :options="branchSizeOptions"
-                  size="small"
-                  @update:model-value="(v: string) => patchMindMap({ branchSize: v as 'auto' | 'few' | 'many' })"
-                />
+            <div class="sf-node-advanced-title">{{ advancedTitle }}</div>
+            <template v-if="isVideoSource">
+              <div class="sf-node-advanced-row">
+                <span class="sf-node-advanced-label" title="运行时下载完整视频，可在结果页直接播放；文件较大且默认不进云备份。">保留可播放视频</span>
+                <el-switch size="small" :model-value="data.keepVideo === true" @update:model-value="setKeepVideo" />
               </div>
-              <div class="sf-node-field">
-                <span class="sf-node-field-label">层级上限</span>
-                <ModelSelect
-                  :model-value="String(data.maxDepth ?? 4)"
-                  :options="depthOptions"
-                  size="small"
-                  @update:model-value="(v: string) => patchMindMap({ maxDepth: Number(v) })"
-                />
+              <div v-if="data.keepVideo === true && nodeType === 'source.bili'" class="sf-node-advanced-qns">
+                <button
+                  v-for="opt in videoQnOptions"
+                  :key="opt.qn"
+                  type="button"
+                  class="sf-node-advanced-qn"
+                  :class="{ 'is-active': currentVideoQn === opt.qn }"
+                  :aria-pressed="currentVideoQn === opt.qn"
+                  :disabled="readonly"
+                  @click="setVideoQn(opt.qn)"
+                >
+                  {{ opt.label }}
+                </button>
               </div>
-              <div class="sf-node-field">
-                <span class="sf-node-field-label">主题</span>
-                <ModelSelect
-                  :model-value="data.theme ?? 'paper'"
-                  :options="themeOptions"
-                  size="small"
-                  @update:model-value="(v: string) => patchMindMap({ theme: v as 'paper' | 'presentation' | 'academic' })"
-                />
-              </div>
-              <div class="sf-node-advanced-subtitle">失败重试</div>
             </template>
-            <RetryFields :retry="data.retry" @update="patchRetry" />
+            <template v-else>
+              <template v-if="nodeType === 'process.mindmap'">
+                <label class="sf-node-field">
+                  <NodeFieldLabel label="导图标题（可选）" hint="留空时由 AI 自动提炼标题" />
+                  <el-input
+                    class="sf-node-control"
+                    size="small"
+                    :model-value="data.title ?? ''"
+                    placeholder="输入内容…"
+                    @update:model-value="(v: string | number) => patch({ title: String(v) })"
+                    @blur="commit"
+                  />
+                </label>
+                <div class="sf-node-field">
+                  <span class="sf-node-field-label">分支数量</span>
+                  <ModelSelect
+                    :model-value="data.branchSize ?? 'auto'"
+                    :options="branchSizeOptions"
+                    size="small"
+                    @update:model-value="(v: string) => patchMindMap({ branchSize: v as 'auto' | 'few' | 'many' })"
+                  />
+                </div>
+                <div class="sf-node-field">
+                  <span class="sf-node-field-label">层级上限</span>
+                  <ModelSelect
+                    :model-value="String(data.maxDepth ?? 4)"
+                    :options="depthOptions"
+                    size="small"
+                    @update:model-value="(v: string) => patchMindMap({ maxDepth: Number(v) })"
+                  />
+                </div>
+                <div class="sf-node-field">
+                  <span class="sf-node-field-label">主题</span>
+                  <ModelSelect
+                    :model-value="data.theme ?? 'paper'"
+                    :options="themeOptions"
+                    size="small"
+                    @update:model-value="(v: string) => patchMindMap({ theme: v as 'paper' | 'presentation' | 'academic' })"
+                  />
+                </div>
+                <div class="sf-node-advanced-subtitle">失败重试</div>
+              </template>
+              <RetryFields :retry="data.retry" @update="patchRetry" />
+            </template>
           </div>
         </div>
 
@@ -1644,111 +1701,103 @@ const themeOptions = [
   line-height: 1.45;
 }
 
-.sf-node-pages {
-  padding: 8px;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
-  background: var(--color-surface-muted);
+/* 选择面板（分P / UGC 合集）——与新版卡片语言一致：分隔线分组 + hover 行 + 自绘勾选框 */
+.sf-node-picker {
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--color-border);
 }
 
-.sf-node-pages-head {
+.sf-node-picker-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  margin-bottom: 6px;
 }
 
-.sf-node-pages-title {
-  font-size: 11px;
-  color: var(--color-text-tertiary);
-}
-
-.sf-node-pages-confirm {
-  padding: 2px 8px;
-  border: 1px solid var(--color-border-strong);
-  border-radius: var(--radius-sm);
-  background: var(--color-surface);
-  color: var(--color-text-secondary);
-  font-family: inherit;
-  font-size: 11px;
-  cursor: pointer;
-}
-
-.sf-node-pages-confirm:hover:not(:disabled) {
-  border-color: var(--color-text);
-  color: var(--color-text);
-}
-
-.sf-node-pages-confirm:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-.sf-node-page {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 3px 2px;
-  font-size: 11.5px;
-  color: var(--color-text);
-  cursor: pointer;
-}
-
-.sf-node-page-name {
-  flex: 1;
+.sf-node-picker-title {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-text);
 }
 
-.sf-node-page-duration {
-  color: var(--color-text-tertiary);
-}
-
-.sf-node-season {
-  padding: 8px;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
-  background: var(--color-surface-muted);
-}
-
-.sf-node-season-head {
-  display: flex;
-  align-items: center;
-  margin-bottom: 6px;
-}
-
-.sf-node-season-title {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.sf-node-picker-count {
   font-size: 11px;
-  color: var(--color-text-secondary);
+  color: var(--color-text-tertiary);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 
-.sf-node-season-list {
+.sf-node-picker-list {
   display: flex;
   flex-direction: column;
   gap: 2px;
-  max-height: 168px;
+  max-height: 224px;
+  margin-top: 8px;
+  padding: 0 2px 2px;
   overflow-y: auto;
-  padding: 2px;
 }
 
-.sf-node-season-row {
+.sf-node-picker-row {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 3px 2px;
-  font-size: 11.5px;
+  gap: 9px;
+  padding: 6px;
+  border-radius: var(--radius-sm);
+  font-size: 12px;
   color: var(--color-text);
   cursor: pointer;
 }
 
-.sf-node-season-name {
+.sf-node-picker-row:hover {
+  background: var(--color-ink-soft);
+}
+
+.sf-node-picker-check {
+  position: relative;
+  flex: none;
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  appearance: none;
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-xs);
+  background: var(--color-surface);
+  cursor: pointer;
+  transition: border-color var(--dur-1) var(--ease-out), background-color var(--dur-1) var(--ease-out);
+}
+
+.sf-node-picker-check:hover {
+  border-color: var(--color-text-tertiary);
+}
+
+.sf-node-picker-check:checked {
+  background: var(--color-ink);
+  border-color: var(--color-ink);
+}
+
+.sf-node-picker-check:checked::after {
+  content: "";
+  position: absolute;
+  left: 4px;
+  top: 1px;
+  width: 4px;
+  height: 8px;
+  border: solid var(--color-surface);
+  border-width: 0 1.5px 1.5px 0;
+  transform: rotate(45deg);
+}
+
+.sf-node-picker-check:focus-visible {
+  outline: 2px solid var(--color-text);
+  outline-offset: 1px;
+}
+
+.sf-node-picker-name {
   flex: 1;
   min-width: 0;
   overflow: hidden;
@@ -1756,41 +1805,41 @@ const themeOptions = [
   white-space: nowrap;
 }
 
-.sf-node-season-duration {
+.sf-node-picker-duration {
   color: var(--color-text-tertiary);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 
-.sf-node-season-foot {
+.sf-node-picker-foot {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  margin-top: 6px;
+  margin-top: 8px;
 }
 
-.sf-node-season-count {
-  font-size: 11px;
-  color: var(--color-text-secondary);
-}
-
-.sf-node-season-confirm {
-  padding: 2px 8px;
+.sf-node-picker-confirm {
+  height: 26px;
+  padding: 0 12px;
   border: 1px solid var(--color-border-strong);
   border-radius: var(--radius-sm);
   background: var(--color-surface);
-  color: var(--color-text-secondary);
-  font-family: inherit;
-  font-size: 11px;
-  cursor: pointer;
-}
-
-.sf-node-season-confirm:hover:not(:disabled) {
-  border-color: var(--color-text);
   color: var(--color-text);
+  font-family: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  transition: background-color var(--dur-1) var(--ease-out), border-color var(--dur-1) var(--ease-out);
 }
 
-.sf-node-season-confirm:disabled {
-  opacity: 0.5;
+.sf-node-picker-confirm:hover:not(:disabled) {
+  background: var(--color-ink-soft);
+  border-color: var(--color-border-strong);
+}
+
+.sf-node-picker-confirm:disabled {
+  opacity: 0.45;
   cursor: not-allowed;
 }
 
@@ -1860,7 +1909,7 @@ const themeOptions = [
   text-align: right;
 }
 
-/* 高级设置：不用整行分割线，收进与 .sf-node-preview/.sf-node-pages 同级的柔和底纹小卡片 */
+/* 高级设置：不用整行分割线，收进与 .sf-node-preview/.sf-node-picker 同级的柔和底纹小卡片 */
 .sf-node-advanced {
   margin-top: 10px;
   padding: 10px 12px;
@@ -2206,5 +2255,58 @@ const themeOptions = [
 
 .sf-node-result-preview__mindmap-hint--error {
   color: var(--color-error);
+}
+
+/* keepVideo 选项（高级设置内）：紧凑单行，中性色 */
+.sf-node-advanced-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-height: 24px;
+}
+
+.sf-node-advanced-row + .sf-node-advanced-row {
+  margin-top: 4px;
+}
+
+.sf-node-advanced-label {
+  font-size: 12px;
+  color: var(--color-text);
+}
+
+.sf-node-advanced-qns {
+  display: flex;
+  gap: 2px;
+  margin-top: 6px;
+}
+
+.sf-node-advanced-qn {
+  height: 22px;
+  padding: 0 8px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text-secondary);
+  font-family: inherit;
+  font-size: 11.5px;
+  cursor: pointer;
+}
+
+.sf-node-advanced-qn:hover:not(:disabled) {
+  background: var(--color-ink-soft);
+  color: var(--color-text);
+}
+
+.sf-node-advanced-qn.is-active {
+  border-color: var(--color-border-strong);
+  background: var(--color-ink-soft);
+  color: var(--color-text);
+  font-weight: 500;
+}
+
+.sf-node-advanced-qn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
 }
 </style>

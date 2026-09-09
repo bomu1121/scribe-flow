@@ -55,6 +55,10 @@ export interface ScribeNodeData {
   duration?: number;
   fileName?: string;
   filePath?: string;
+  /** 是否保留可播放视频（keepVideo，结果页附件）。 */
+  keepVideo?: boolean;
+  /** B站目标清晰度（playurl qn：16/32/64/80…），默认 80。 */
+  videoQn?: number;
   text?: string;
   asrEngine?: AsrEngine;
   promptBlockId?: string;

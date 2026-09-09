@@ -18,11 +18,18 @@ import {
   type WorkflowGraph,
 } from "@scribe-flow/shared";
 import type { AppDatabase } from "../db/client";
-import { biliCookies, projects, runNodeInputs, runNodeLogs, runNodeResults, runs } from "../db/schema";
+import { biliCookies, projects, runMedia, runNodeInputs, runNodeLogs, runNodeResults, runs } from "../db/schema";
 import { chatCompletion, transcribeAudio, type AiConfig } from "./ai";
 import { fetchBiliVideoDetail } from "./bilibili";
 import { countMindMapNodes, mindMapToMarkdown, parseMindMapJson } from "./mindmap";
 import { downloadBiliAudio, toAsrWav } from "./media";
+import {
+  attachRunMedia,
+  DEFAULT_VIDEO_QN,
+  ensureBiliVideoAsset,
+  ensureFileVideoAsset,
+  gcMediaAssets,
+} from "./media-store";
 import { ensureRemoteDirectory, scanRemoteMarkdown, writeRemoteFile, type NutstoreConfig } from "./nutstore";
 import { appendAllOutput, assertStepOutput, parseJsonLoose, renderStepSystem } from "./recipe";
 import { getAiConfig, getAsrConfig, getNutstoreConfig, getSearchConfig, getSettings } from "./settings";
@@ -360,6 +367,13 @@ function parseChaptersJson(raw: string, maxChapters: number): { title: string; c
   return chapters;
 }
 
+/** keepVideo 目标清晰度档：数据里可配（16–127），缺省 1080P。 */
+function videoQn(data: Record<string, unknown>): number {
+  const n = Number(data.videoQn ?? DEFAULT_VIDEO_QN);
+  if (!Number.isFinite(n)) return DEFAULT_VIDEO_QN;
+  return Math.min(127, Math.max(16, Math.round(n)));
+}
+
 export class RunEngine {
   private actives = new Map<string, ActiveRun>();
 
@@ -450,6 +464,39 @@ export class RunEngine {
 
   private emit(active: ActiveRun, event: RunEvent) {
     for (const listener of active.listeners) listener(event);
+  }
+
+  /**
+   * 是否下载可播放视频：**只由节点显式配置决定（默认不保存）**。
+   * 无论节点是否独立运行都不自动下载大文件；需要保存/查看视频时，
+   * 在节点「高级设置 → 保留可播放视频」开启后重跑。
+   */
+  private wantsKeepVideo(_active: ActiveRun, _nodeId: string, data: Record<string, unknown>): boolean {
+    return data.keepVideo === true;
+  }
+
+  /** keepVideo 结果落 run_media 附件行 + 运行日志；视频失败不判定节点失败（D3）。 */
+  private async attachVideoResult(
+    active: ActiveRun,
+    nodeId: string,
+    sourceIndex: number,
+    result: { assetId: string; status: "ready" | "error" | "restoring"; error?: string },
+  ) {
+    attachRunMedia(this.db, {
+      runId: active.id,
+      nodeId,
+      sourceIndex,
+      assetId: result.assetId,
+      status: result.status,
+      error: result.error,
+    });
+    if (result.status === "ready") {
+      await this.log(active, nodeId, "info", `可播放视频已缓存（附件 ${result.assetId}）`);
+    } else if (result.status === "error") {
+      await this.log(active, nodeId, "error", `可播放视频下载失败：${result.error ?? "未知错误"}（不影响音轨/转写）`);
+    } else {
+      await this.log(active, nodeId, "info", "可播放视频正在下载中…");
+    }
   }
 
   private downstream(graph: WorkflowGraph, rootId: string): Set<string> {
@@ -980,7 +1027,9 @@ export class RunEngine {
     const data = node.data as Record<string, unknown>;
     switch (node.type) {
       case "source.bili": {
-        const items = Array.isArray(data.items) ? (data.items as { bvid?: string; cid?: number; page?: number; part?: string; duration?: number }[]) : [];
+        const items = Array.isArray(data.items)
+          ? (data.items as { bvid?: string; cid?: number; page?: number; part?: string; title?: string; cover?: string; uploader?: string; duration?: number }[])
+          : [];
         if (items.length > 0) {
           const cookie = this.db.select().from(biliCookies).where(eq(biliCookies.id, 1)).get()?.cookie;
           const dir = join(this.dataDir, "runs", active.id, "nodes", node.id);
@@ -1003,6 +1052,19 @@ export class RunEngine {
             await toAsrWav(audio, wav);
             const size = await stat(wav).then((s) => s.size);
             outputs.push({ kind: "audio", path: `runs/${active.id}/nodes/${node.id}/audio-${i + 1}.wav`, size });
+            if (this.wantsKeepVideo(active, node.id, data)) {
+              const result = await ensureBiliVideoAsset(this.db, this.dataDir, {
+                bvid,
+                cid,
+                qn: videoQn(data),
+                cookie,
+                title: String(item.title ?? data.title ?? "") || undefined,
+                cover: String(item.cover ?? data.cover ?? "") || undefined,
+                uploader: String(item.uploader ?? data.uploader ?? "") || undefined,
+                url: `https://www.bilibili.com/video/${bvid}`,
+              });
+              await this.attachVideoResult(active, node.id, i, result);
+            }
           }
           return { outputs, summary: `${items.length} 个音轨已就绪` };
         }
@@ -1029,6 +1091,21 @@ export class RunEngine {
         await toAsrWav(audio, wav);
         const size = await stat(wav).then((s) => s.size);
         const rel = `runs/${active.id}/nodes/${node.id}/audio.wav`;
+        if (this.wantsKeepVideo(active, node.id, data)) {
+          await this.progress(active, node.id, 75, "下载并缓存可播放视频");
+          const result = await ensureBiliVideoAsset(this.db, this.dataDir, {
+            bvid,
+            cid,
+            qn: videoQn(data),
+            cookie,
+            title: String(data.title ?? "") || undefined,
+            cover: String(data.cover ?? "") || undefined,
+            uploader: String(data.uploader ?? "") || undefined,
+            url: `https://www.bilibili.com/video/${bvid}`,
+            durationSec: typeof data.duration === "number" ? data.duration : undefined,
+          });
+          await this.attachVideoResult(active, node.id, 0, result);
+        }
         return { outputs: [{ kind: "audio", path: rel, size }], summary: "音轨已就绪" };
       }
 
@@ -1041,6 +1118,12 @@ export class RunEngine {
         await this.progress(active, node.id, 30, "FFmpeg 转码为 16k 单声道");
         const wav = join(dir, "audio.wav");
         await toAsrWav(abs, wav);
+        if (this.wantsKeepVideo(active, node.id, data)) {
+          await this.progress(active, node.id, 80, "准备可播放视频");
+          const relPath = String(data.filePath ?? "");
+          const result = await ensureFileVideoAsset(this.db, this.dataDir, relPath, String(data.fileName ?? "本地视频") || undefined);
+          await this.attachVideoResult(active, node.id, 0, result);
+        }
         return {
           outputs: [{ kind: "audio", path: `runs/${active.id}/nodes/${node.id}/audio.wav` }],
           summary: String(data.fileName ?? "音轨已就绪"),
@@ -1825,10 +1908,15 @@ ${JSON.stringify(taxonomyTags)}`;
   }
 
   async deleteRun(runId: string) {
+    const mediaRows = this.db.select().from(runMedia).where(eq(runMedia.runId, runId)).all();
+    const assetIds = mediaRows.map((r) => r.assetId);
     await this.db.delete(runNodeResults).where(eq(runNodeResults.runId, runId)).run();
     await this.db.delete(runNodeInputs).where(eq(runNodeInputs.runId, runId)).run();
     await this.db.delete(runNodeLogs).where(eq(runNodeLogs.runId, runId)).run();
+    await this.db.delete(runMedia).where(eq(runMedia.runId, runId)).run();
     await this.db.delete(runs).where(eq(runs.id, runId)).run();
+    // 媒体 GC：不再被任何运行引用的资产删行；media/ 文件删除，uploads/ 直放原件保留。
+    await gcMediaAssets(this.db, this.dataDir, assetIds);
     await rm(join(this.dataDir, "runs", runId), { recursive: true, force: true }).catch(() => undefined);
     const outputDir = getSettings(this.db).general.outputDir || "outputs";
     await rm(join(this.dataDir, outputDir, runId), { recursive: true, force: true }).catch(() => undefined);

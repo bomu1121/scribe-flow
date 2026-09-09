@@ -36,6 +36,13 @@ export interface BiliSourceData {
   cover?: string;
   uploader?: string;
   duration?: number;
+  /**
+   * 是否保留可播放完整视频（结果页附件，默认关）。
+   * 开启后引擎额外下载 DASH 视频流并与音轨合成为浏览器直放 mp4，存入媒体库。
+   */
+  keepVideo?: boolean;
+  /** 期望清晰度档（按 playurl qn 语义，默认 80=1080P；实际以接口返回的流为准）。 */
+  videoQn?: number;
 }
 
 export interface FileSourceData {
@@ -44,6 +51,8 @@ export interface FileSourceData {
   /** 服务端相对存储路径（如 uploads/xxxx.mp4）。 */
   filePath?: string;
   size?: number;
+  /** 是否保留可播放视频（结果页附件）。mp4/h264 直放原件，其余转码归一。 */
+  keepVideo?: boolean;
 }
 
 export interface TextSourceData {

@@ -145,3 +145,45 @@ export const runNodeLogs = sqliteTable("run_node_logs", {
 });
 
 export type RunNodeLogRow = typeof runNodeLogs.$inferSelect;
+
+/**
+ * 媒体资产库：视频下载/归一化后的「内容寻址」文件 + 元数据。
+ * 只存引用与元数据的结构化侧；大文件本体在 dataDir/media（默认不进坚果云备份）。
+ */
+export const mediaAssets = sqliteTable("media_assets", {
+  id: text("id").primaryKey(),
+  /** 去重键（B站：sha1("bili:"+bvid+":"+cid+":"+qn)；文件：sha1("file:"+filePath)）。 */
+  contentKey: text("content_key").notNull().unique(),
+  kind: text("kind", { enum: ["bili", "file"] }).notNull(),
+  /** restoring=下载/归一化中；ready=文件就绪；error=上次尝试失败（文件可能缺失）。 */
+  status: text("status", { enum: ["ready", "restoring", "error"] }).notNull().default("ready"),
+  /** 最近一次下载/归一化失败原因（status=error 时）。 */
+  error: text("error"),
+  /** dataDir 相对路径：media/<id>.mp4 或 uploads/…（uploads 原件的文件生命周期归上传管理）。 */
+  filePath: text("file_path").notNull(),
+  mime: text("mime").notNull().default("video/mp4"),
+  size: integer("size"),
+  durationSec: integer("duration_sec"),
+  title: text("title"),
+  /** B站：bvid/cid/qn/封面/up 主/原链接等溯源信息（JSON）。 */
+  metaJson: text("meta_json"),
+  createdAt: integer("created_at").notNull(),
+  updatedAt: integer("updated_at").notNull(),
+  lastUsedAt: integer("last_used_at").notNull(),
+});
+
+export type MediaAssetRow = typeof mediaAssets.$inferSelect;
+
+/** 运行 ↔ 节点 ↔ 资产：一次运行的来源节点产生了哪些可播放视频（含多选/分P 的逐项对应）。 */
+export const runMedia = sqliteTable("run_media", {
+  id: text("id").primaryKey(),
+  runId: text("run_id").notNull(),
+  nodeId: text("node_id").notNull(),
+  sourceIndex: integer("source_index").notNull().default(0),
+  assetId: text("asset_id").notNull(),
+  status: text("status", { enum: ["ready", "error", "restoring"] }).notNull().default("ready"),
+  error: text("error"),
+  createdAt: integer("created_at").notNull(),
+});
+
+export type RunMediaRow = typeof runMedia.$inferSelect;

@@ -8,5 +8,6 @@ export * from "./prompt";
 export * from "./recipe";
 export * from "./templates";
 export * from "./video";
+export * from "./media";
 export * from "./bili";
 export { parseGraph, safeParseGraph, graphSchema } from "./schema";

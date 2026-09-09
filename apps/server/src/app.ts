@@ -12,6 +12,7 @@ import { settingsApi } from "./routes/settings";
 import { nutstoreApi } from "./routes/nutstore";
 import { promptsApi } from "./routes/prompts";
 import { projectRunsApi, runsApi } from "./routes/runs";
+import { mediaApi } from "./routes/media";
 import { RunEngine } from "./lib/engine";
 import type { AppDatabase } from "./db/client";
 
@@ -47,6 +48,7 @@ export function createApp(db: AppDatabase, options: AppOptions) {
   app.route("/api/settings", settingsApi(db, engine, options.dataDir));
   app.route("/api/nutstore", nutstoreApi(db, engine, options.dataDir));
   app.route("/api/prompts", promptsApi(db));
+  app.route("/api/media", mediaApi(db, options.dataDir));
 
   app.notFound((c) => c.json({ error: "接口不存在" }, 404));
 

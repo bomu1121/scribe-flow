@@ -118,6 +118,39 @@ export function ensureSchema(sqlite: Database.Database) {
       created_at INTEGER NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS media_assets (
+      id TEXT PRIMARY KEY,
+      content_key TEXT NOT NULL UNIQUE,
+      kind TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'ready',
+      error TEXT,
+      file_path TEXT NOT NULL,
+      mime TEXT NOT NULL DEFAULT 'video/mp4',
+      size INTEGER,
+      duration_sec INTEGER,
+      title TEXT,
+      meta_json TEXT,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL,
+      last_used_at INTEGER NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS run_media (
+      id TEXT PRIMARY KEY,
+      run_id TEXT NOT NULL,
+      node_id TEXT NOT NULL,
+      source_index INTEGER NOT NULL DEFAULT 0,
+      asset_id TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'ready',
+      error TEXT,
+      created_at INTEGER NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_media_assets_key ON media_assets(content_key);
+    CREATE INDEX IF NOT EXISTS idx_run_media_run ON run_media(run_id);
+    CREATE INDEX IF NOT EXISTS idx_run_media_asset ON run_media(asset_id);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_run_media_node_item ON run_media(run_id, node_id, source_index);
+
     CREATE TABLE IF NOT EXISTS run_node_inputs (
       id TEXT PRIMARY KEY,
       run_id TEXT NOT NULL,
@@ -213,5 +246,11 @@ export function ensureSchema(sqlite: Database.Database) {
   const logColumns = sqlite.prepare("PRAGMA table_info(run_node_logs)").all() as Array<{ name: string }>;
   if (!logColumns.some((col) => col.name === "step")) {
     sqlite.exec("ALTER TABLE run_node_logs ADD COLUMN step TEXT");
+  }
+
+  // 视频模块：media_assets.error（资产级失败原因），兼容半途建过的旧表。
+  const assetColumns = sqlite.prepare("PRAGMA table_info(media_assets)").all() as Array<{ name: string }>;
+  if (assetColumns.length > 0 && !assetColumns.some((col) => col.name === "error")) {
+    sqlite.exec("ALTER TABLE media_assets ADD COLUMN error TEXT");
   }
 }

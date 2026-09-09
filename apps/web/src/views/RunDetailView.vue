@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { ElTable, ElTableColumn } from "element-plus";
 import { toast } from "@/lib/toast";
@@ -7,6 +7,7 @@ import {
   ArrowLeft,
   ChevronDown,
   Copy,
+  Download,
   Eye,
   FileText,
   ListTree,
@@ -23,7 +24,7 @@ import {
   ZoomIn,
   ZoomOut,
 } from "lucide-vue-next";
-import type { ProjectMeta, RunDetail, RunNodeInput, RunNodeResult, TraceReport, WorkflowGraph } from "@scribe-flow/shared";
+import type { ProjectMeta, RunDetail, RunNodeInput, RunNodeResult, RunMediaView, TraceReport, WorkflowGraph } from "@scribe-flow/shared";
 import { NODE_TYPE_LABELS, parseTraceReports, traceReportToMarkdown } from "@scribe-flow/shared";
 import { api } from "@/lib/api";
 import { renderMarkdown } from "@/lib/markdown";
@@ -33,6 +34,7 @@ import MindMapViewer from "@/components/MindMapViewer.vue";
 import DiffViewer from "@/components/DiffViewer.vue";
 import RunLogDialog from "@/components/RunLogDialog.vue";
 import TraceReportViewer from "@/components/TraceReportViewer.vue";
+import MediaPlayer from "@/components/media/MediaPlayer.vue";
 
 const route = useRoute();
 const router = useRouter();
@@ -523,6 +525,72 @@ const chainStages = computed(() => {
 });
 
 const selectedInput = computed(() => inputItems.value.find((i) => i.key === selectedInputKey.value) ?? null);
+
+// ---------- 可播放视频附件（keepVideo 产物） ----------
+const runMediaList = computed(() => run.value?.media ?? []);
+/** 当前选中的链路输入（来源节点）对应的可播放视频；多选/分P 时按 sourceIndex 逐项对应。 */
+const inputMedia = computed(() => {
+  const item = selectedInput.value;
+  if (!item) return [];
+  return runMediaList.value.filter((m) => m.nodeId === item.sourceNodeId);
+});
+const activeMediaIndex = ref(0);
+watch(
+  () => selectedInput.value?.key,
+  () => {
+    activeMediaIndex.value = 0;
+  },
+);
+const activeMedia = computed(() => inputMedia.value[Math.min(activeMediaIndex.value, inputMedia.value.length - 1)] ?? null);
+const restoreState = ref<{ id: string; progress: number; message?: string } | null>(null);
+
+/** 无文本输出（如纯「下载并查看」流程）时，直接在主区给出素材视频兜底入口。 */
+const fallbackMediaList = computed(() => (outputNodes.value.length === 0 ? runMediaList.value : []));
+const fallbackMediaIndex = ref(0);
+watch(fallbackMediaList, (list) => {
+  if (fallbackMediaIndex.value >= list.length) fallbackMediaIndex.value = 0;
+});
+const fallbackMedia = computed(
+  () => fallbackMediaList.value[Math.min(fallbackMediaIndex.value, fallbackMediaList.value.length - 1)] ?? null,
+);
+
+function mediaStreamUrl(media: RunMediaView): string {
+  return media.asset ? `/api/media/${media.asset.id}/stream` : "";
+}
+
+/** B站资产缺失时一键重新下载（文件不进备份，恢复后即可播放）。 */
+async function restoreMedia(media: RunMediaView) {
+  const asset = media.asset;
+  if (!asset || media.kind !== "bili") return;
+  if (restoreState.value) return;
+  try {
+    const created = await api.post<{ jobId: string }>(`/api/media/${asset.id}/restore`);
+    restoreState.value = { id: asset.id, progress: 0, message: "准备下载…" };
+    const deadline = Date.now() + 600_000;
+    while (Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 1200));
+      const job = await api.get<{ status: string; progress: number; message?: string; error?: string }>(
+        `/api/media/restore-jobs/${created.jobId}`,
+      );
+      restoreState.value = { id: asset.id, progress: job.progress, message: job.message ?? undefined };
+      if (job.status !== "running") {
+        restoreState.value = null;
+        if (job.status === "done") {
+          toast.success("视频已重新下载");
+          await loadRun(false);
+        } else {
+          toast.error(job.error ?? "重新下载失败");
+        }
+        return;
+      }
+    }
+    restoreState.value = null;
+    toast.error("重新下载超时，请稍后重试");
+  } catch (err) {
+    restoreState.value = null;
+    toast.error(err instanceof Error ? err.message : "重新下载失败");
+  }
+}
 const selectedStageTitle = computed(() => {
   const item = selectedInput.value;
   if (!item) return "";
@@ -1228,6 +1296,60 @@ async function forceStopRun() {
                   </p>
                 </header>
 
+                <div v-if="inputMedia.length > 0" class="rv-media">
+                  <a
+                    v-if="activeMedia?.asset?.present"
+                    class="rv-btn rv-btn--text rv-media-download rv-media-tool"
+                    :href="`/api/media/${activeMedia.asset.id}/download`"
+                  >
+                    <Download :size="13" /><span>下载视频</span>
+                  </a>
+                  <div v-if="inputMedia.length > 1" class="rv-media-tabs">
+                    <button
+                      v-for="(media, index) in inputMedia"
+                      :key="media.id"
+                      type="button"
+                      :class="{ active: index === activeMediaIndex }"
+                      @click="activeMediaIndex = index"
+                    >
+                      {{ media.label || `视频 ${index + 1}` }}
+                    </button>
+                  </div>
+                  <template v-if="activeMedia">
+                    <MediaPlayer
+                      v-if="activeMedia.asset?.present"
+                      :key="activeMedia.id"
+                      :stream-url="mediaStreamUrl(activeMedia)"
+                      :title="activeMedia.label"
+                      :poster="activeMedia.asset?.meta?.cover"
+                      :duration-sec="activeMedia.asset?.durationSec"
+                      @failed="(message: string) => toast.error(message)"
+                    />
+                    <div v-else class="rv-media-missing">
+                      <p class="rv-media-missing-title">{{ activeMedia.asset?.title || activeMedia.label || "视频" }}</p>
+                      <template v-if="activeMedia.kind === 'bili'">
+                        <p class="rv-media-missing-text">视频文件不在本地（备份不含大文件），登录 B 站后可一键重新下载。</p>
+                        <div class="rv-media-missing-actions">
+                          <button type="button" class="rv-btn rv-media-restore-btn" :disabled="restoreState !== null" @click="restoreMedia(activeMedia)">
+                            <RefreshCw :size="13" /><span>{{ restoreState ? "正在下载…" : "重新下载" }}</span>
+                          </button>
+                          <a
+                            v-if="activeMedia.asset?.sourceUrl"
+                            class="rv-btn rv-btn--text"
+                            :href="activeMedia.asset.sourceUrl"
+                            target="_blank"
+                            rel="noopener noreferrer"
+                          >
+                            在 B 站打开
+                          </a>
+                        </div>
+                        <p v-if="restoreState" class="rv-media-missing-progress tnum">{{ restoreState.message || `下载中 ${restoreState.progress}%` }}</p>
+                      </template>
+                      <p v-else class="rv-media-missing-text">上传原件已被清理，无法自动恢复；请回到工作流重新上传并重跑该节点。</p>
+                    </div>
+                  </template>
+                </div>
+
                 <div v-if="selectedInput?.modules && selectedInput.modules.length > 1" class="rv-input-modules">
                   <section v-for="module in selectedInput.modules" :key="module.key" class="rv-input-module">
                     <h2 class="rv-input-module-title">{{ module.label }}</h2>
@@ -1235,14 +1357,14 @@ async function forceStopRun() {
                   </section>
                 </div>
                 <div v-else-if="inputText" class="rv-preview markdown-body" v-html="renderedInputMarkdown" />
-                <div v-else class="rv-input-empty">
+                <div v-else-if="inputMedia.length === 0" class="rv-input-empty">
                   <p>这是一个音视频输入，当前没有单独转写文稿。</p>
                   <p>如果这是旧运行记录，重新运行一次即可在输入列表中查看每个音频的独立转写内容。</p>
                 </div>
               </article>
             </template>
             <template v-else>
-              <article class="rv-paper" :style="paperStyle">
+              <article v-if="currentMarkdown || fallbackMediaList.length === 0" class="rv-paper" :style="paperStyle">
                 <header class="rv-paper-head">
                   <h1 class="rv-paper-title">{{ currentOutput?.title || "输出文档" }}</h1>
                   <p class="rv-paper-meta">
@@ -1268,10 +1390,70 @@ async function forceStopRun() {
                 </template>
               </article>
 
-              <div v-if="!currentMarkdown" class="rv-empty">
+              <div v-if="!currentMarkdown && fallbackMediaList.length === 0" class="rv-empty">
                 <div class="rv-empty-title">本次运行没有可展示的文本产物</div>
                 <div class="rv-empty-sub">可以到「节点流水」查看各节点状态，或「查看日志」定位问题。</div>
+                <p v-if="runMediaList.length === 0" class="rv-empty-hint">
+                  默认不保存视频文件。需要保存/下载视频时：在来源节点「高级设置 → 保留可播放视频」开启后重新运行，视频会出现在这里，可直接播放并下载。
+                </p>
               </div>
+
+              <section v-if="fallbackMediaList.length > 0" class="rv-fallback-media">
+                <div class="rv-fallback-media-head">
+                  <h2 class="rv-fallback-media-title">素材视频</h2>
+                  <a
+                    v-if="fallbackMedia?.asset?.present"
+                    class="rv-btn rv-btn--text rv-media-download"
+                    :href="`/api/media/${fallbackMedia.asset.id}/download`"
+                  >
+                    <Download :size="13" /><span>下载视频</span>
+                  </a>
+                </div>
+                <div v-if="fallbackMediaList.length > 1" class="rv-media-tabs">
+                  <button
+                    v-for="(media, index) in fallbackMediaList"
+                    :key="media.id"
+                    type="button"
+                    :class="{ active: index === fallbackMediaIndex }"
+                    @click="fallbackMediaIndex = index"
+                  >
+                    {{ media.label || `视频 ${index + 1}` }}
+                  </button>
+                </div>
+                <template v-if="fallbackMedia">
+                  <MediaPlayer
+                    v-if="fallbackMedia.asset?.present"
+                    :key="fallbackMedia.id"
+                    :stream-url="mediaStreamUrl(fallbackMedia)"
+                    :title="fallbackMedia.label"
+                    :poster="fallbackMedia.asset?.meta?.cover"
+                    :duration-sec="fallbackMedia.asset?.durationSec"
+                    @failed="(message: string) => toast.error(message)"
+                  />
+                  <div v-else class="rv-media-missing">
+                    <p class="rv-media-missing-title">{{ fallbackMedia.asset?.title || fallbackMedia.label || "视频" }}</p>
+                    <template v-if="fallbackMedia.kind === 'bili'">
+                      <p class="rv-media-missing-text">视频文件不在本地（备份不含大文件），登录 B 站后可一键重新下载。</p>
+                      <div class="rv-media-missing-actions">
+                        <button type="button" class="rv-btn rv-media-restore-btn" :disabled="restoreState !== null" @click="restoreMedia(fallbackMedia)">
+                          <RefreshCw :size="13" /><span>{{ restoreState ? "正在下载…" : "重新下载" }}</span>
+                        </button>
+                        <a
+                          v-if="fallbackMedia.asset?.sourceUrl"
+                          class="rv-btn rv-btn--text"
+                          :href="fallbackMedia.asset.sourceUrl"
+                          target="_blank"
+                          rel="noopener noreferrer"
+                        >
+                          在 B 站打开
+                        </a>
+                      </div>
+                      <p v-if="restoreState" class="rv-media-missing-progress tnum">{{ restoreState.message || `下载中 ${restoreState.progress}%` }}</p>
+                    </template>
+                    <p v-else class="rv-media-missing-text">上传原件已被清理，无法自动恢复；请回到工作流重新上传并重跑该节点。</p>
+                  </div>
+                </template>
+              </section>
             </template>
           </div>
         </section>
@@ -2266,6 +2448,127 @@ async function forceStopRun() {
     height: auto;
     padding: 8px 10px;
   }
+}
+.rv-media {
+  margin-bottom: 18px;
+}
+
+.rv-media-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+.rv-media-tabs button {
+  padding: 4px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  color: var(--color-text-secondary);
+  font-family: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.rv-media-tabs button.active {
+  border-color: var(--color-border-strong);
+  background: var(--color-ink-soft);
+  color: var(--color-text);
+}
+
+.rv-media-missing {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 28px 20px;
+  border: 1px dashed var(--color-border-strong);
+  border-radius: var(--radius-lg);
+  background: var(--color-surface-muted);
+  text-align: center;
+}
+
+.rv-media-missing-title {
+  margin: 0;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.rv-media-missing-text {
+  margin: 0;
+  font-size: 12.5px;
+  color: var(--color-text-secondary);
+  line-height: 1.7;
+}
+
+.rv-media-missing-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 4px;
+}
+
+.rv-media-restore-btn {
+  border-color: var(--color-border-strong);
+  background: var(--color-surface);
+  color: var(--color-text);
+}
+
+.rv-media-restore-btn:hover:not(:disabled) {
+  border-color: var(--color-border-strong);
+  background: var(--color-ink-soft);
+  color: var(--color-text);
+}
+
+.rv-media-restore-btn:disabled {
+  opacity: 0.6;
+  cursor: wait;
+}
+
+.rv-media-missing-progress {
+  margin: 2px 0 0;
+  font-size: 12px;
+  color: var(--color-text-tertiary);
+}
+
+.rv-fallback-media {
+  max-width: 780px;
+  margin: 0 auto;
+  padding: 40px 32px 96px;
+}
+
+.rv-fallback-media-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 0 0 14px;
+}
+
+.rv-fallback-media-title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.rv-media-tool {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 8px;
+}
+
+.rv-media-download {
+  text-decoration: none;
+}
+
+.rv-empty-hint {
+  margin: 10px 0 0;
+  font-size: 12px;
+  line-height: 1.7;
+  color: var(--color-text-tertiary);
 }
 </style>
 
