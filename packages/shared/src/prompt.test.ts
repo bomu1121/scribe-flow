@@ -60,6 +60,20 @@ describe("builtin prompt blocks", () => {
     expect(history?.prompt).toContain("存疑/可能有争议");
   });
 
+  it("信息溯源 v2 为结构化核对配方：v1/v2 并存且 v2 为推荐", () => {
+    const v1 = BUILTIN_PROMPT_BLOCKS.find((block) => block.id === "builtin.trace");
+    const v2 = BUILTIN_PROMPT_BLOCKS.find((block) => block.id === "builtin.trace.v2");
+    expect(v1).toBeDefined();
+    expect(v1?.version).toBe("v1");
+    expect(v2).toBeDefined();
+    expect(v2?.name).toContain("结构化核对版");
+    expect(v2?.version).toBe("v2");
+    expect(v2?.recommended).toBe(true);
+    expect(v2?.recipe).toBeDefined();
+    expect(v2?.recipe?.steps.map((step) => step.id)).toEqual(["scan", "audit", "finalize"]);
+    expect(v2?.recipe?.steps.every((step) => step.system.length > 0)).toBe(true);
+  });
+
   it("新增阴阳师攻略加工系列：单次版与核对版并存，核对版为推荐配方", () => {
     const ids = BUILTIN_PROMPT_BLOCKS.map((block) => block.id);
     expect(ids).toContain("builtin.gameguide");

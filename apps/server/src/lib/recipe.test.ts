@@ -18,6 +18,12 @@ describe("renderStepSystem", () => {
   it("空文本替换为空串", () => {
     expect(renderStepSystem("a{{prev}}b", { ...ctx, prev: "" })).toBe("ab");
   });
+
+  it("展开 {{source}}", () => {
+    expect(renderStepSystem("来源：{{source}}", { ...ctx, source: "《示例视频》· UP：示例" })).toBe(
+      "来源：《示例视频》· UP：示例",
+    );
+  });
 });
 
 describe("parseJsonLoose", () => {

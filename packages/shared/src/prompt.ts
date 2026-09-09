@@ -270,6 +270,92 @@ const PROMPT_TRACE = [
   "按类型分块输出，信息密集时先给不超过200字的核心摘要。不编造，语义模糊加注存疑。",
 ].join("\n");
 
+/**
+ * 信息溯源 v2（结构化核对版，M8-2）。
+ * 与 v1 的差异：输出不再是“分块 Markdown 笔记”，而是一份证据清单 JSON；
+ * 通过 scan → audit → finalize 三步把“抽取 → 回原文核对 → 成稿”分开，
+ * 让溯源结果可以被前端以卡片/原文定位的方式展示，也能直接复制为 Markdown。
+ */
+const RECIPE_TRACE_V2: Recipe = {
+  schema: 1,
+  steps: [
+    {
+      id: "scan",
+      label: "通读抽取",
+      system: [
+        "你是视频/文稿信息溯源编辑。用户消息是一篇转写稿/文稿；系统消息中的 {{source}} 是当前输入对应的具体来源元信息（可能包含《标题》、UP主/作者、链接、P数等，多个来源用“；”分隔）。",
+        "先通读全文，不写正文，只抽取“值得溯源的信息”，输出 JSON。",
+        "格式：",
+        '{"items":[{"id":"item-1","category":"fact","claim":"可独立阅读的一句话信息主张","confidence":"confirmed","basis":"为什么这样归类/定级：原文哪里明确陈述、是否多处提及","attribution":{"kind":"external","name":"视频中提到的论文/人物/机构/书名","detail":"视频里是如何引述的"},"evidence":[{"quote":"逐字摘自原文，不超过80字","source":{"type":"bili","name":"《视频标题》或文件名","author":"UP主/作者（有则写）","url":"原始链接（有则写）","locator":"00:12:34 或 P2/第3段"},"note":"可选的补充说明"}],"mentions":[{"quote":"同一主张在其他位置/其他来源的逐字提及","source":{"name":"...","locator":"..."},"note":"可选"}],"note":"可选备注"}],"uncertainties":[{"claim":"原文没讲清的点","reason":"为什么需要核实"}]}',
+        "字段约束：",
+        "1. category 只允许 fact/data/viewpoint/conclusion/term/step/caveat/other：fact/data 必须是原文明确给出的客观信息；作者个人判断用 viewpoint，不要因为作者语气肯定就写成 fact；",
+        "2. confidence 只允许 confirmed/likely/uncertain：有逐字原文直接支持的用 confirmed；依据上下文间接推断的用 likely；原文确实没讲清、容易误读的放进 uncertainties 或给 uncertain；",
+        "3. 每一条 item 必须写 basis：说清“凭什么这样归类/凭什么这样定置信度”，例如“第2段明确陈述，第5段再次出现同一数据”“仅作者在结尾表态，属个人观点”；禁止用“AI判断”当理由；",
+        "4. evidence[].quote 必须逐字摘自原文，禁止改写、拼接、脑补；长句只截取连续短句；",
+        "5. evidence[].source 必须写具体来源：优先使用 {{source}} 中的标题/UP主/链接；{{source}} 为空时 name 写“当前输入素材”；不要编造来源名称/链接；",
+        "6. attribution 用于区分“这句话是视频作者自己说的”还是“作者转述外部人物/机构/研究/书/新闻”：如果视频里明确说“据 XX”“XX 研究/论文/书指出”“XX 说过”，attribution.kind 必须为 external，name 写视频里提到的外部对象；如果只是作者自己的分析/观点，attribution.kind 为 self；无法判断写 unknown；禁止把作者自己的观点伪装成外部来源，也禁止把外部引用说成作者原创；",
+        "7. 同一主张如果在原文其他段落或其他来源再次出现，必须放入 mentions，不要只贴第一处引用；",
+        "8. 每条 claim 保持信息完整：专名、数字、结论不能因为精简而丢；",
+        "9. 这是溯源清单，不是笔记：不要归纳成章节式笔记，不要写教程式总结；只输出 JSON，不要解释，不要 Markdown 围栏。",
+      ].join("\n"),
+      expects: {
+        kind: "json",
+        asserts: [
+          { op: "jsonRootKeys", value: ["items"] },
+          { op: "citationsInOriginal", field: "items[].evidence[].quote[]", maxMiss: 0 },
+        ],
+      },
+    },
+    {
+      id: "audit",
+      label: "回文核对",
+      system: [
+        "你是溯源审校员。上一条用户消息是「抽取清单」JSON，系统消息末尾附有原文全文（{{input}}），系统消息中的 {{source}} 是具体来源元信息。",
+        "逐条核对抽取清单：",
+        "1. claim 是否忠于原文，有没有把作者观点写成客观事实；",
+        "2. basis 是否充分：只说“原文有”不够，要能指出原文哪个位置、是否多处提及；",
+        "3. evidence[].quote 是否与原文逐字一致、是否足以支撑 claim；",
+        "4. evidence[].source.name/locator 是否与 {{source}} 和原文定位一致，有没有编造；",
+        "5. attribution 是否准确：作者自己观点不能写成外部归因；外部归因必须与原文引述一致，不能把视频里没提到的对象写成出处；",
+        "6. category/confidence 是否恰当；",
+        "7. 原文没有依据却仍被写成 confirmed 的条目，应改为 likely/uncertain 或移入 uncertainties；",
+        "8. 同一主张在其他位置/其他来源有提及但 scan 漏掉的，在 suggestion 中补上。",
+        "只输出 JSON 核对表：",
+        '{"items":[{"id":"item-1","ok":true,"issue":"问题说明","suggestion":"修正建议"}],"uncertainties":[{"claim":"...","reason":"..."}]}',
+        "要求：items 覆盖扫描清单中的全部条目；ok=false 的条目必须给出可执行的 suggestion；不要输出其他内容，不要 Markdown 围栏。",
+      ].join("\n"),
+      expects: {
+        kind: "json",
+        asserts: [{ op: "jsonRootKeys", value: ["items"] }],
+      },
+    },
+    {
+      id: "finalize",
+      label: "结构化成稿",
+      system: [
+        "你是溯源报告终稿编辑。系统消息中的 {{all}} 依次包含「抽取清单、核对表」（每段有标记），系统消息末尾是原文（{{input}}），系统消息中的 {{source}} 是具体来源元信息。",
+        "依据核对表生成最终结构化溯源报告 JSON：",
+        '{"schema":1,"title":"信息溯源报告","summary":"一句话概括本次溯源范围和结论","items":[{"id":"item-1","category":"fact","claim":"...","confidence":"confirmed","basis":"...","attribution":{"kind":"external","name":"外部人物/机构/研究/书","detail":"视频中的引述方式"},"evidence":[{"quote":"逐字原文","source":{"type":"bili","name":"《视频标题》或文件名","author":"UP主/作者","url":"原始链接","locator":"00:12:34"},"note":"..."}],"mentions":[{"quote":"其他位置/来源的逐字提及","source":{"name":"...","locator":"..."},"note":"..."}],"note":"..."}],"uncertainties":[{"claim":"...","reason":"..."}],"warnings":["..."]}',
+        "要求：",
+        "1. 只保留核对表中 ok=true 的条目；ok=false 能按 suggestion 修正则修正后保留，无法修正的删除或降级为 uncertainties；",
+        "2. evidence[].quote 和 mentions[].quote 必须逐字来自原文，不得新增原文没有的引用；",
+        "3. evidence[].source / mentions[].source 必须写具体来源与定位，优先使用 {{source}}，不得编造；",
+        "4. 每条 item 必须保留 basis，说明该条为何是 fact/data/viewpoint 以及为何是这个置信度；",
+        "5. attribution 必须保留：区分作者原创观点与外部归因；",
+        "6. 这是溯源报告不是笔记：不要输出章节式讲解，不要添加个人总结/行动建议；",
+        "7. 只输出 JSON，不要解释，不要 Markdown 围栏。",
+      ].join("\n"),
+      expects: {
+        kind: "json",
+        asserts: [
+          { op: "jsonRootKeys", value: ["schema", "items"] },
+          { op: "citationsInOriginal", field: "items[].evidence[].quote[]", maxMiss: 0 },
+        ],
+      },
+    },
+  ],
+};
+
 const PROMPT_CASCADE = [
   "你是一位擅长结构化拆解「概念演进型」知识视频的内容编辑。用户会发来一段视频文稿（口语化转写稿或校对稿）。你的任务不是复述全文，而是产出一份 CASCADE 摘要——抓住「一组概念为什么按这个顺序一个接一个出现」，而不是罗列名词。",
   "",
@@ -670,6 +756,17 @@ export const BUILTIN_PROMPT_BLOCKS: PromptBlock[] = [
     series: "信息溯源",
     version: "v1",
     description: "提取事实与观点，并为每条信息标注原文来源。",
+  },
+  {
+    id: "builtin.trace.v2",
+    name: "信息溯源（结构化核对版）",
+    prompt: PROMPT_TRACE,
+    builtin: true,
+    series: "信息溯源",
+    version: "v2",
+    recommended: true,
+    description: "多步核对版：通读抽取 → 回文核对 → 结构化成稿，输出可直接以卡片/原文定位展示的证据清单 JSON。约 3 次调用且每步携带原文。",
+    recipe: RECIPE_TRACE_V2,
   },
   {
     id: "builtin.cascade",

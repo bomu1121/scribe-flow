@@ -23,8 +23,8 @@ import {
   ZoomIn,
   ZoomOut,
 } from "lucide-vue-next";
-import type { ProjectMeta, RunDetail, RunNodeInput, RunNodeResult, WorkflowGraph } from "@scribe-flow/shared";
-import { NODE_TYPE_LABELS } from "@scribe-flow/shared";
+import type { ProjectMeta, RunDetail, RunNodeInput, RunNodeResult, TraceReport, WorkflowGraph } from "@scribe-flow/shared";
+import { NODE_TYPE_LABELS, parseTraceReports, traceReportToMarkdown } from "@scribe-flow/shared";
 import { api } from "@/lib/api";
 import { renderMarkdown } from "@/lib/markdown";
 import { subscribeRunEvents } from "@/lib/sse";
@@ -32,6 +32,7 @@ import { useProjectsStore } from "@/stores/projects";
 import MindMapViewer from "@/components/MindMapViewer.vue";
 import DiffViewer from "@/components/DiffViewer.vue";
 import RunLogDialog from "@/components/RunLogDialog.vue";
+import TraceReportViewer from "@/components/TraceReportViewer.vue";
 
 const route = useRoute();
 const router = useRouter();
@@ -213,10 +214,27 @@ function uniqueHeadingId(text: string, seen: Map<string, number>): string {
 const graph = computed<WorkflowGraph | undefined>(() => run.value?.graph);
 const nodeResultMap = computed(() => new Map((run.value?.nodeResults ?? []).map((n) => [n.nodeId, n])));
 
+/** 画布中配置了信息溯源块的 AI 节点；它们的结构化报告需要作为独立输出展示。 */
+const traceNodeIds = computed(() => {
+  const ids = new Set<string>();
+  for (const node of graph.value?.nodes ?? []) {
+    const data = asRecord(node.data);
+    const blockId = String(data.promptBlockId ?? "");
+    if (node.type === "process.prompt" && (blockId === "builtin.trace" || blockId === "builtin.trace.v2")) ids.add(node.id);
+  }
+  return ids;
+});
+
 const outputNodes = computed<OutputDoc[]>(() => {
   const all = run.value?.nodeResults ?? [];
   const docs = all.filter((n) => n.output?.kind === "noteDoc");
-  const list = docs.length > 0 ? docs : all.filter((n) => n.output?.kind === "text" || n.output?.kind === "noteBlock").slice(-3);
+  const traceDocs = all.filter(
+    (n) =>
+      (traceNodeIds.value.has(n.nodeId) || looksLikeTraceReport(n.output?.text ?? "")) &&
+      (n.output?.kind === "noteBlock" || n.output?.kind === "text"),
+  );
+  const fallback = docs.length > 0 ? [] : all.filter((n) => (n.output?.kind === "text" || n.output?.kind === "noteBlock") && !traceNodeIds.value.has(n.nodeId)).slice(-3);
+  const list = [...traceDocs, ...docs, ...fallback];
   return list.map((n) => ({
     node: n,
     title: n.nodeLabel || NODE_TYPE_LABELS[n.nodeType as keyof typeof NODE_TYPE_LABELS] || n.nodeType,
@@ -436,6 +454,53 @@ const inputItems = computed<InputItem[]>(() => {
   return items;
 });
 
+function sourceInfoLabel(source: SourceInfo): string {
+  if (source.nodeType === "source.bili") {
+    const parts: string[] = [];
+    if (source.title) parts.push(`《${source.title}》`);
+    else if (source.items && source.items.length > 1) parts.push(`B站 ${source.items.length} 个视频`);
+    else parts.push("B站视频");
+    if (source.uploader) parts.push(source.uploader);
+    if (source.url) parts.push(source.url);
+    return parts.join(" · ");
+  }
+  if (source.nodeType === "source.file") {
+    return source.fileName ? `本地文件《${source.fileName}》` : "本地文件";
+  }
+  if (source.nodeType === "source.text") {
+    return source.label || "文本输入";
+  }
+  return source.label || source.nodeType;
+}
+
+function originLabelForInput(item: InputItem): string {
+  const originIds = upstreamSourceIds(item.sourceNodeId);
+  const origins = sources.value.filter((source) => originIds.has(source.nodeId));
+  if (origins.length > 0) {
+    const base = origins.map(sourceInfoLabel).join("；");
+    return item.nodeType.startsWith("process.") ? `${base} · ${item.typeLabel}产物` : base;
+  }
+  return item.label || item.typeLabel || item.sourceNodeId;
+}
+
+/** 溯源报告原文定位用：把当前输出链路上的文本输入都提供给阅读器，用于高亮引用。 */
+const traceSources = computed(() => {
+  const result: { key: string; label: string; text: string }[] = [];
+  // 越靠近当前溯源节点的输入越接近模型真正看到的原文，优先用于定位高亮。
+  const ordered = [...inputItems.value].sort((a, b) => b.depth - a.depth);
+  for (const item of ordered) {
+    const label = originLabelForInput(item);
+    if (item.modules && item.modules.length > 1) {
+      for (const module of item.modules) {
+        if (module.text?.trim()) result.push({ key: `${item.key}:${module.key}`, label: `${label} · ${module.label}`, text: module.text });
+      }
+    } else if (item.text?.trim()) {
+      result.push({ key: item.key, label, text: item.text });
+    }
+  }
+  return result;
+});
+
 /** 把链路输入按深度分成可读的阶段，方便展示“原始素材 → 中间加工 → 最终输入”。 */
 const chainStages = computed(() => {
   if (inputItems.value.length === 0) return [];
@@ -473,9 +538,23 @@ const inputCompareText = computed(() => {
   return item.text ?? "";
 });
 const canCompareInputToOutput = computed(() => viewingInput.value && Boolean(inputCompareText.value.trim()) && Boolean(markdown.value.trim()));
+function looksLikeTraceReport(text: string): boolean {
+  return /"schema"\s*:\s*1/.test(text) && /"items"\s*:/.test(text);
+}
+
+const isTraceOutput = computed(() =>
+  Boolean(
+    currentOutput.value &&
+      (traceNodeIds.value.has(currentOutput.value.node.nodeId) || looksLikeTraceReport(markdown.value)),
+  ),
+);
+const traceReports = computed<TraceReport[]>(() => (isTraceOutput.value ? parseTraceReports(markdown.value) : []));
+const traceMarkdownExport = computed(() => traceReports.value.map((report) => traceReportToMarkdown(report)).join("\n\n---\n\n"));
 const activeMarkdown = computed(() => {
   if (activeTab.value === "mindmap") return mindMapMarkdown.value;
-  return viewingInput.value ? inputText.value : currentMarkdown.value;
+  if (viewingInput.value) return inputText.value;
+  if (traceReports.value.length > 0) return traceMarkdownExport.value;
+  return currentMarkdown.value;
 });
 const renderedMarkdown = computed(() => renderMarkdown(markdown.value));
 const renderedDraft = computed(() => renderMarkdown(draft.value));
@@ -1005,7 +1084,10 @@ async function forceStopRun() {
                 :class="{ active: !viewingInput && index === selectedOutputIndex }"
                 @click="selectOutput(index)"
               >
-                <span class="rv-output-name">{{ doc.title }}</span>
+                <span class="rv-output-name">
+                  {{ doc.title }}
+                  <span v-if="traceNodeIds.has(doc.node.nodeId)" class="rv-output-badge">溯源</span>
+                </span>
                 <span class="rv-output-meta tnum">{{ doc.node.summary || "—" }}</span>
               </button>
             </div>
@@ -1049,7 +1131,7 @@ async function forceStopRun() {
                 <ArrowLeft :size="14" /><span>输出</span>
               </button>
               <button
-                v-if="!viewingInput"
+                v-if="!viewingInput && traceReports.length === 0"
                 type="button"
                 class="rv-tool-btn"
                 :class="{ active: editing }"
@@ -1063,7 +1145,7 @@ async function forceStopRun() {
               <span v-if="editing && !viewingInput" class="rv-tool-text">编辑中</span>
             </div>
             <div
-              v-if="toc.length > 0"
+              v-if="toc.length > 0 && traceReports.length === 0"
               ref="tocRootRef"
               class="rv-toc"
               @mouseenter="openTocPanel"
@@ -1168,17 +1250,22 @@ async function forceStopRun() {
                   </p>
                 </header>
 
-                <div v-if="editing" class="rv-edit-grid">
-                  <textarea v-model="draft" class="rv-editor" spellcheck="false" aria-label="Markdown 编辑器" />
-                  <div class="rv-preview markdown-body" v-html="renderedDraft" />
-                </div>
-                <div v-else class="rv-preview markdown-body" v-html="renderedMarkdown" />
+                <template v-if="traceReports.length > 0 && !editing">
+                  <TraceReportViewer :reports="traceReports" :sources="traceSources" />
+                </template>
+                <template v-else>
+                  <div v-if="editing" class="rv-edit-grid">
+                    <textarea v-model="draft" class="rv-editor" spellcheck="false" aria-label="Markdown 编辑器" />
+                    <div class="rv-preview markdown-body" v-html="renderedDraft" />
+                  </div>
+                  <div v-else class="rv-preview markdown-body" v-html="renderedMarkdown" />
 
-                <div v-if="editing" class="rv-edit-actions">
-                  <button type="button" class="rv-btn rv-btn--text" :disabled="draft === markdown" @click="resetDraft">恢复原始</button>
-                  <button type="button" class="rv-btn rv-btn--text" @click="toggleEdit">退出编辑</button>
-                  <button type="button" class="rv-btn rv-btn--text" :disabled="!draft" @click="copyMarkdown">复制编辑结果</button>
-                </div>
+                  <div v-if="editing" class="rv-edit-actions">
+                    <button type="button" class="rv-btn rv-btn--text" :disabled="draft === markdown" @click="resetDraft">恢复原始</button>
+                    <button type="button" class="rv-btn rv-btn--text" @click="toggleEdit">退出编辑</button>
+                    <button type="button" class="rv-btn rv-btn--text" :disabled="!draft" @click="copyMarkdown">复制编辑结果</button>
+                  </div>
+                </template>
               </article>
 
               <div v-if="!currentMarkdown" class="rv-empty">
@@ -1718,8 +1805,22 @@ async function forceStopRun() {
 }
 
 .rv-output-name {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   font-size: 12px;
   font-weight: 500;
+}
+
+.rv-output-badge {
+  flex: 0 0 auto;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: var(--color-brand-soft);
+  color: var(--color-brand-hover);
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1.5;
 }
 
 .rv-output-meta {
@@ -1875,12 +1976,10 @@ async function forceStopRun() {
   max-width: min(360px, calc(100vw - 24px));
   max-height: min(480px, 65vh);
   overflow: hidden;
-  border: 1px solid var(--color-border-glass);
+  border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
-  background: var(--color-surface-glass);
+  background: var(--color-surface);
   box-shadow: var(--shadow-overlay);
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
 }
 
 .rv-toc-panel-title {

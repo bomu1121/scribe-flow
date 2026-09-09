@@ -17,6 +17,11 @@ const ASR_DEFAULTS: Record<string, string> = {
   "asr.model": "mimo-v2.5-asr",
 };
 
+const SEARCH_DEFAULTS: Record<string, string> = {
+  "search.provider": "tavily",
+  "search.maxResults": "5",
+};
+
 const GENERAL_DEFAULTS: Record<string, string> = {
   "general.concurrency": "2",
   "general.outputDir": "outputs",
@@ -87,6 +92,11 @@ export function getSettings(db: AppDatabase): AppSettings {
       model: raw(db, "asr.model", ASR_DEFAULTS["asr.model"]) ?? "",
       hasKey: Boolean(raw(db, "asr.apiKey", "")),
     },
+    search: {
+      provider: "tavily",
+      hasKey: Boolean(raw(db, "search.apiKey", "")),
+      maxResults: Number(raw(db, "search.maxResults", SEARCH_DEFAULTS["search.maxResults"]) ?? 5) || 5,
+    },
     general: {
       concurrency: Number(raw(db, "general.concurrency", GENERAL_DEFAULTS["general.concurrency"]) ?? 2),
       outputDir: raw(db, "general.outputDir", GENERAL_DEFAULTS["general.outputDir"]) ?? "outputs",
@@ -133,6 +143,19 @@ export function getAsrConfig(db: AppDatabase): AsrConfig {
   };
 }
 
+export interface SearchConfig {
+  apiKey: string;
+  maxResults: number;
+}
+
+export function getSearchConfig(db: AppDatabase): SearchConfig {
+  const settings = getSettings(db);
+  return {
+    apiKey: raw(db, "search.apiKey", ""),
+    maxResults: Math.max(1, Math.min(10, settings.search.maxResults || 5)),
+  };
+}
+
 export function getNutstoreConfig(db: AppDatabase): NutstoreConfig {
   const settings = getSettings(db);
   return {
@@ -159,6 +182,11 @@ export function updateSettings(db: AppDatabase, patch: UpdateSettingsRequest) {
     if (patch.asr.baseUrl) set(db, "asr.baseUrl", patch.asr.baseUrl.trim().replace(/\/+$/, ""));
     if (patch.asr.model) set(db, "asr.model", patch.asr.model.trim());
     if (patch.asr.apiKey) set(db, "asr.apiKey", patch.asr.apiKey.trim());
+  }
+  if (patch.search) {
+    if (patch.search.provider) set(db, "search.provider", patch.search.provider);
+    if (patch.search.apiKey !== undefined && patch.search.apiKey.trim()) set(db, "search.apiKey", patch.search.apiKey.trim());
+    if (patch.search.maxResults !== undefined) set(db, "search.maxResults", String(Math.max(1, Math.min(10, patch.search.maxResults))));
   }
   if (patch.general) {
     if (patch.general.concurrency) set(db, "general.concurrency", String(Math.min(4, Math.max(1, patch.general.concurrency))));

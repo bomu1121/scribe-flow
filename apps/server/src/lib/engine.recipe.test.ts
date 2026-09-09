@@ -65,6 +65,45 @@ beforeAll(async () => {
       } else if (system.includes("你是阴阳师攻略终稿编辑")) {
         expect(system).toContain("攻略要素拆解"); // {{all}} 展开后含拆解/草稿/核对表标记
         reply(res, "```markdown\n最终阴阳师攻略笔记正文\n```");
+      } else if (system.includes("只抽取“值得溯源的信息”")) {
+        reply(
+          res,
+          JSON.stringify({
+            items: [
+              {
+                id: "item-1",
+                category: "fact",
+                claim: "示例原文包含关键句甲。",
+                confidence: "confirmed",
+                evidence: [{ quote: "示例原文关键句甲", locator: "00:12" }],
+              },
+            ],
+            uncertainties: [],
+          }),
+        );
+      } else if (system.includes("你是溯源审校员")) {
+        reply(res, JSON.stringify({ items: [{ id: "item-1", ok: true, issue: "", suggestion: "" }], uncertainties: [] }));
+      } else if (system.includes("你是溯源报告终稿编辑")) {
+        expect(system).toContain("抽取清单"); // {{all}} 展开后含「抽取清单、核对表」标记
+        reply(
+          res,
+          JSON.stringify({
+            schema: 1,
+            title: "示例信息溯源",
+            summary: "共提取 1 条信息。",
+            items: [
+              {
+                id: "item-1",
+                category: "fact",
+                claim: "示例原文包含关键句甲。",
+                confidence: "confirmed",
+                evidence: [{ quote: "示例原文关键句甲", locator: "00:12" }],
+              },
+            ],
+            uncertainties: [],
+            warnings: [],
+          }),
+        );
       } else if (system.includes("只输出拆解清单 JSON")) {
         reply(res, JSON.stringify({ blocks: [{ title: "观点一", quotes: [user.slice(0, 12)] }] }));
       } else if (system.includes("按固定格式起草")) {
@@ -202,6 +241,31 @@ describe("RunEngine 配方执行（M8-1）", () => {
     const logs = db.select().from(runNodeLogs).where(eq(runNodeLogs.runId, runId)).all();
     const aiRequests = logs.filter((row) => row.kind === "ai-request" && row.nodeId === "n_prompt");
     expect(aiRequests.map((row) => row.step)).toEqual(["scan", "draft", "audit", "finalize"]);
+  });
+
+  it("信息溯源 v2：3 次调用、scan/finalize 引用回查通过、输出结构化 JSON", async () => {
+    chatCalls = 0;
+    const dataDir = await mkdtemp(join(tmpdir(), "scribe-trace-"));
+    tmpDirs.push(dataDir);
+    const runId = "run_trace_ok";
+    const { db, engine, graph } = await setup(dataDir, runId, "builtin.trace.v2");
+
+    runWith(engine, runId, graph);
+    await waitFinished(db, runId);
+
+    expect(db.select().from(runs).where(eq(runs.id, runId)).get()?.status).toBe("success");
+    const nodeRow = db.select().from(runNodeResults).where(eq(runNodeResults.nodeId, "n_prompt")).get();
+    expect(nodeRow?.status).toBe("done");
+    expect(nodeRow?.summary).toContain("配方 3 步");
+    expect(nodeRow?.summary).toContain("3 次调用");
+    expect(nodeRow?.outputKind).toBe("noteBlock");
+    expect(nodeRow?.outputText).toContain('"schema":1');
+    expect(nodeRow?.outputText).toContain("示例原文关键句甲");
+    expect(chatCalls).toBe(3);
+
+    const logs = db.select().from(runNodeLogs).where(eq(runNodeLogs.runId, runId)).all();
+    const aiRequests = logs.filter((row) => row.kind === "ai-request" && row.nodeId === "n_prompt");
+    expect(aiRequests.map((row) => row.step)).toEqual(["scan", "audit", "finalize"]);
   });
 
   it("无配方块（观点提炼 v2）：仍走单次调用，日志无 step（零回归）", async () => {

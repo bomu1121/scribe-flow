@@ -17,6 +17,7 @@ const runsStore = useRunsStore();
 const groups = [
   { key: "ai", label: "AI 模型" },
   { key: "asr", label: "语音识别" },
+  { key: "search", label: "外部溯源" },
   { key: "general", label: "常规" },
   { key: "obsidian", label: "Obsidian" },
   { key: "nutstore", label: "坚果云" },
@@ -37,6 +38,8 @@ const form = reactive({
   asrBaseUrl: "",
   asrModel: "",
   asrKey: "",
+  searchKey: "",
+  searchMaxResults: 5,
   concurrency: 2,
   outputDir: "outputs",
   obsidianVaultPath: "",
@@ -247,6 +250,7 @@ function fillForm() {
   form.asrEngine = store.settings.asr.engine;
   form.asrBaseUrl = store.settings.asr.baseUrl;
   form.asrModel = store.settings.asr.model;
+  form.searchMaxResults = store.settings.search.maxResults;
   form.concurrency = store.settings.general.concurrency;
   form.outputDir = store.settings.general.outputDir;
   form.obsidianVaultPath = store.settings.obsidian.vaultPath;
@@ -322,6 +326,7 @@ async function saveAll() {
     await store.save({
       ai: { provider: form.aiProvider, baseUrl: form.aiBaseUrl, model: form.aiModel, apiKey: form.aiKey || undefined },
       asr: { engine: form.asrEngine, baseUrl: form.asrBaseUrl, model: form.asrModel, apiKey: form.asrKey || undefined },
+      search: { provider: "tavily", apiKey: form.searchKey || undefined, maxResults: form.searchMaxResults },
       general: { concurrency: form.concurrency, outputDir: form.outputDir },
       obsidian: {
         vaultPath: form.obsidianVaultPath,
@@ -679,6 +684,28 @@ async function restoreNutstoreBackup(backup: { path: string; name: string }) {
           </label>
           <div class="sf-settings-actions">
             <button type="button" class="sf-btn" :disabled="asrTesting" @click="testAsr"><PlugZap :size="14" /><span>{{ asrTesting ? "测试中…" : "测试连接" }}</span></button>
+            <button type="button" class="sf-btn sf-btn--primary" @click="saveAll"><span>保存设置</span></button>
+          </div>
+        </div>
+      </template>
+
+      <template v-else-if="active === 'search'">
+        <h2 class="sf-settings-title">外部溯源</h2>
+        <p class="sf-settings-desc">用于“信息溯源（结构化核对版）”对外部人物/机构/研究/新闻做联网核查。当前接入 Tavily Search API。</p>
+        <div class="sf-settings-form">
+          <label class="sf-field">
+            <span class="sf-field-label">
+              Tavily API Key
+              <span v-if="store.settings?.search.hasKey" class="sf-chip sf-chip--success">已保存</span>
+              <span v-else class="sf-chip sf-chip--warning">未配置</span>
+            </span>
+            <el-input v-model="form.searchKey" type="password" show-password class="sf-field-control" :placeholder="store.settings?.search.hasKey ? '已保存，留空则不修改' : 'tvly-…'" />
+          </label>
+          <label class="sf-field">
+            <span class="sf-field-label">每条最多返回结果数</span>
+            <el-input-number v-model="form.searchMaxResults" :min="1" :max="10" class="sf-field-control" />
+          </label>
+          <div class="sf-settings-actions">
             <button type="button" class="sf-btn sf-btn--primary" @click="saveAll"><span>保存设置</span></button>
           </div>
         </div>

@@ -25,7 +25,8 @@ import { countMindMapNodes, mindMapToMarkdown, parseMindMapJson } from "./mindma
 import { downloadBiliAudio, toAsrWav } from "./media";
 import { ensureRemoteDirectory, scanRemoteMarkdown, writeRemoteFile, type NutstoreConfig } from "./nutstore";
 import { appendAllOutput, assertStepOutput, parseJsonLoose, renderStepSystem } from "./recipe";
-import { getAiConfig, getAsrConfig, getNutstoreConfig, getSettings } from "./settings";
+import { getAiConfig, getAsrConfig, getNutstoreConfig, getSearchConfig, getSettings } from "./settings";
+import { enrichTraceReportWithExternalChecks } from "./traceExternal";
 
 const MAX_INLINE_TEXT = 200_000;
 
@@ -81,10 +82,27 @@ interface ActiveRun {
   startedAt: number;
 }
 
+interface InputSourceMetaItem {
+  sourceType: string;
+  title?: string;
+  author?: string;
+  url?: string;
+  fileName?: string;
+  part?: string;
+}
+
+interface InputSourceMeta {
+  /** 给大模型看的人类可读来源说明。 */
+  label: string;
+  items: InputSourceMetaItem[];
+}
+
 interface ResolvedInput {
   sourceNodeId: string;
   output: NodeOutput;
   position: number;
+  /** 该输入对应的原始素材来源；用于溯源配方在 JSON 中写明“哪条视频/文稿/哪一段”。 */
+  sourceMeta?: InputSourceMeta;
 }
 
 interface ResolvedInputs {
@@ -706,6 +724,85 @@ export class RunEngine {
     return {};
   }
 
+  /** 收集一个输入最终来自哪些原始素材节点（B站/本地文件/文本），用于溯源配方写明“具体来源”。 */
+  private upstreamSourceMetas(active: ActiveRun, nodeId: string): InputSourceMetaItem[] {
+    const result: InputSourceMetaItem[] = [];
+    const seen = new Set<string>();
+    const visit = (id: string): void => {
+      if (seen.has(id)) return;
+      seen.add(id);
+      const node = active.graph.nodes.find((n) => n.id === id);
+      if (!node) return;
+      const data = node.data as Record<string, unknown>;
+      if (node.type === "source.bili") {
+        const items = Array.isArray(data.items)
+          ? (data.items as { bvid?: string; cid?: number; page?: number; part?: string; title?: string; uploader?: string; url?: string }[])
+          : [];
+        const uploader = String(data.uploader ?? "").trim() || undefined;
+        if (items.length > 0) {
+          for (const item of items) {
+            const bvid = String(item.bvid ?? "").trim() || String(data.url ?? "").match(/BV[0-9A-Za-z]+/)?.[0] || "";
+            result.push({
+              sourceType: "bili",
+              title: String(item.title ?? data.title ?? "").trim() || undefined,
+              author: String(item.uploader ?? uploader ?? "").trim() || undefined,
+              url: String(data.url ?? "").trim() || (bvid ? `https://www.bilibili.com/video/${bvid}` : undefined),
+              part: item.page ? `P${item.page}${item.part ? ` ${item.part}` : ""}` : undefined,
+            });
+          }
+        } else {
+          const bvid = String(data.bvid ?? "").trim() || String(data.url ?? "").match(/BV[0-9A-Za-z]+/)?.[0] || "";
+          result.push({
+            sourceType: "bili",
+            title: String(data.title ?? "").trim() || undefined,
+            author: uploader,
+            url: String(data.url ?? "").trim() || (bvid ? `https://www.bilibili.com/video/${bvid}` : undefined),
+          });
+        }
+        return;
+      }
+      if (node.type === "source.file") {
+        result.push({
+          sourceType: "file",
+          fileName: String(data.fileName ?? "").trim() || undefined,
+          title: String(data.label ?? "本地文件").trim(),
+        });
+        return;
+      }
+      if (node.type === "source.text") {
+        result.push({
+          sourceType: "text",
+          title: String(data.label ?? "文本输入").trim(),
+        });
+        return;
+      }
+      for (const edge of active.graph.edges) {
+        if (edge.target === id) visit(edge.source);
+      }
+    };
+    visit(nodeId);
+    return result;
+  }
+
+  private describeInputSource(active: ActiveRun, nodeId: string): InputSourceMeta | undefined {
+    const items = this.upstreamSourceMetas(active, nodeId);
+    if (items.length === 0) return undefined;
+    const labels = items.map((item) => {
+      if (item.sourceType === "bili") {
+        const title = item.title ? `《${item.title}》` : "B站视频";
+        const part = item.part ? ` ${item.part}` : "";
+        const author = item.author ? ` · UP：${item.author}` : "";
+        const url = item.url ? ` · ${item.url}` : "";
+        return `${title}${part}${author}${url}`;
+      }
+      if (item.sourceType === "file") {
+        return `本地文件《${item.fileName ?? item.title ?? "未命名文件"}》`;
+      }
+      return item.title || "文本输入";
+    });
+    return { label: labels.join("；"), items };
+  }
+
   private async resolveInputs(active: ActiveRun, node: GraphNode): Promise<ResolvedInputs> {
     const items: ResolvedInput[] = [];
     for (const edge of active.graph.edges) {
@@ -718,7 +815,8 @@ export class RunEngine {
         if (branch && branch !== (edge.sourceHandle || "true")) continue;
       }
       const outputs = active.nodeIds.has(source.id) ? (active.outputs.get(source.id) ?? []) : await this.previousOutputs(source.id, active.projectId);
-      for (const output of outputs) items.push({ sourceNodeId: source.id, output, position: items.length });
+      const sourceMeta = this.describeInputSource(active, source.id);
+      for (const output of outputs) items.push({ sourceNodeId: source.id, output, position: items.length, sourceMeta });
     }
     const audioPaths = items
       .filter((i) => i.output.kind === "audio")
@@ -1002,16 +1100,29 @@ export class RunEngine {
             const item = textItems[i];
             const inputText = item.output.text?.trim() ?? "";
             await this.progress(active, node.id, 8, `输入 ${i + 1}/${textItems.length}：运行配方 ${recipe.steps.length} 步`);
-            const finalText = await this.executeRecipeOnInput(
+            let finalText = await this.executeRecipeOnInput(
               active,
               node,
               inputText,
               recipe,
               aiConfig,
               signal,
+              item.sourceMeta?.label ?? "当前输入素材",
               i * recipe.steps.length,
               totalFlat,
             );
+            // 信息溯源 v2：若配置了 Tavily，则对最终 JSON 做外部联网核查并回填 external 字段。
+            if (blockId === "builtin.trace.v2") {
+              const searchConfig = getSearchConfig(this.db);
+              if (searchConfig.apiKey) {
+                try {
+                  finalText = await enrichTraceReportWithExternalChecks(inputText, finalText, aiConfig, searchConfig, signal);
+                  await this.log(active, node.id, "info", "已执行外部联网核查");
+                } catch (err) {
+                  await this.log(active, node.id, "info", `外部联网核查未完成，已保留内部溯源结果：${describeError(err)}`);
+                }
+              }
+            }
             await this.updateInputResult(active, node.id, item.sourceNodeId, item.position, finalText);
             parts.push(finalText);
           }
@@ -1495,6 +1606,7 @@ ${JSON.stringify(taxonomyTags)}`;
     recipe: Recipe,
     aiConfig: AiConfig,
     signal: AbortSignal | undefined,
+    sourceLabel: string,
     flatBase: number,
     totalFlat: number,
   ): Promise<string> {
@@ -1504,7 +1616,7 @@ ${JSON.stringify(taxonomyTags)}`;
     for (let j = 0; j < recipe.steps.length; j += 1) {
       const step = recipe.steps[j];
       const flatIndex = flatBase + j;
-      const system = renderStepSystem(step.system, { input: inputText, prev, all });
+      const system = renderStepSystem(step.system, { input: inputText, prev, all, source: sourceLabel });
       const user = j === 0 ? inputText : prev;
       const model = step.model ?? aiConfig.model;
       const progress = Math.round(10 + ((flatIndex + 1) / totalFlat) * 86);

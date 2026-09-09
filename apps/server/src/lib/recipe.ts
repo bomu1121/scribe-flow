@@ -12,16 +12,19 @@ export interface StepContext {
   prev: string;
   /** 此前所有步骤输出（带步骤标记拼接），供需要全局上下文的步骤使用。 */
   all: string;
+  /** 当前输入对应的来源元信息（如《视频标题》· UP主 · 链接），由引擎注入。 */
+  source?: string;
 }
 
-const TEMPLATE_VARS = ["{{input}}", "{{prev}}", "{{all}}"] as const;
+const TEMPLATE_VARS = ["{{input}}", "{{prev}}", "{{all}}", "{{source}}"] as const;
 
-/** 展开 {{input}} / {{prev}} / {{all}}；其余 {{...}} 原样保留（避免误伤老提示词）。 */
+/** 展开 {{input}} / {{prev}} / {{all}} / {{source}}；其余 {{...}} 原样保留（避免误伤老提示词）。 */
 export function renderStepSystem(template: string, ctx: StepContext): string {
   return template
     .replace(/\{\{input\}\}/g, ctx.input)
     .replace(/\{\{prev\}\}/g, ctx.prev)
-    .replace(/\{\{all\}\}/g, ctx.all);
+    .replace(/\{\{all\}\}/g, ctx.all)
+    .replace(/\{\{source\}\}/g, ctx.source ?? "");
 }
 
 /** 把某一步的输出拼接进“全部产物”上下文。 */

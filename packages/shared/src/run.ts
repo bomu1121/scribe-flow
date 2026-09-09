@@ -125,9 +125,17 @@ export interface AsrSettings {
   hasKey: boolean;
 }
 
+/** 外部溯源检索服务配置。当前支持 Tavily Search API。 */
+export interface SearchSettings {
+  provider: "tavily";
+  hasKey: boolean;
+  maxResults: number;
+}
+
 export interface AppSettings {
   ai: AiSettings;
   asr: AsrSettings;
+  search: SearchSettings;
   general: {
     /** 节点执行并发数（1-4）。 */
     concurrency: number;
@@ -169,6 +177,11 @@ export interface UpdateSettingsRequest {
     baseUrl?: string;
     model?: string;
     apiKey?: string;
+  };
+  search?: {
+    provider?: "tavily";
+    apiKey?: string;
+    maxResults?: number;
   };
   general?: {
     concurrency?: number;

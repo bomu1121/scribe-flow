@@ -29,6 +29,13 @@ const updateSchema = z.object({
       apiKey: z.string().max(500).optional(),
     })
     .optional(),
+  search: z
+    .object({
+      provider: z.enum(["tavily"]).optional(),
+      apiKey: z.string().max(500).optional(),
+      maxResults: z.number().int().min(1).max(10).optional(),
+    })
+    .optional(),
   general: z
     .object({
       concurrency: z.number().int().min(1).max(4).optional(),
