@@ -7,10 +7,11 @@ describe("builtin prompt blocks", () => {
     expect(new Set(ids).size).toBe(ids.length);
   });
 
-  it("保留旧版与新版观点提炼并标注版本", () => {
+  it("保留各版本观点提炼并标注版本：v4 接管推荐位", () => {
     const insightBlocks = BUILTIN_PROMPT_BLOCKS.filter((block) => block.series === "观点提炼");
-    expect(insightBlocks.map((block) => block.version).sort()).toEqual(["v1", "v2", "v3"]);
-    expect(insightBlocks.find((block) => block.id === "builtin.insight")?.recommended).toBe(true);
+    expect(insightBlocks.map((block) => block.version).sort()).toEqual(["v1", "v2", "v3", "v4"]);
+    expect(insightBlocks.find((block) => block.id === "builtin.insight")?.recommended).toBeUndefined();
+    expect(insightBlocks.find((block) => block.id === "builtin.insight.v4")?.recommended).toBe(true);
   });
 
   it("观点提炼 v3 为配方试点：带 recipe、不设 recommended", () => {
@@ -20,6 +21,21 @@ describe("builtin prompt blocks", () => {
     expect(v3?.recipe?.steps.map((step) => step.id)).toEqual(["scan", "draft", "audit", "finalize"]);
     expect(v3?.recommended).toBeUndefined();
     expect(v3?.recipe?.steps.every((step) => step.system.length > 0)).toBe(true);
+  });
+
+  it("观点提炼 v4 为排版核对配方：4 步、finalize 带禁 ### 硬门、prompt 字段是新版式", () => {
+    const v4 = BUILTIN_PROMPT_BLOCKS.find((block) => block.id === "builtin.insight.v4");
+    expect(v4).toBeDefined();
+    expect(v4?.name).toContain("排版版");
+    expect(v4?.version).toBe("v4");
+    expect(v4?.recommended).toBe(true);
+    expect(v4?.recipe?.steps.map((step) => step.id)).toEqual(["scan", "draft", "audit", "finalize"]);
+    expect(v4?.recipe?.steps.every((step) => step.system.length > 0)).toBe(true);
+    const finalize = v4?.recipe?.steps.find((step) => step.id === "finalize");
+    expect(finalize?.expects?.kind).toBe("text");
+    expect(finalize?.expects?.asserts).toContainEqual({ op: "notContains", value: "###" });
+    expect(v4?.prompt).toContain("期刊式");
+    expect(v4?.prompt).not.toContain("## 总体概要"); // prompt 字段须为 v4 新版式，而非 v2 旧文本
   });
 
   it("新增知识科普提炼内置块", () => {

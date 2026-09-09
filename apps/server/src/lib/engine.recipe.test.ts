@@ -20,6 +20,8 @@ const INPUT_TEXT =
 let server: Server;
 let baseUrl: string;
 let chatCalls = 0;
+/** v4 终稿步 mock 是否故意输出含 ### 的违规文本（版式硬门用例）。 */
+let v4FinalizeViolates = false;
 
 function reply(res: ServerResponse, content: string): void {
   res.setHeader("Content-Type", "application/json");
@@ -103,6 +105,30 @@ beforeAll(async () => {
             uncertainties: [],
             warnings: [],
           }),
+        );
+      } else if (system.includes("拆解清单 JSON（含 oneLiner")) {
+        // 观点提炼 v4 scan：带 oneLiner 根键，quotes 逐字取自原文。
+        reply(
+          res,
+          JSON.stringify({ oneLiner: "示例原文给出观点结论 42。", blocks: [{ title: "观点一", quotes: [user.slice(0, 12)] }] }),
+        );
+      } else if (system.includes("按下面的「期刊式」母版起草")) {
+        reply(
+          res,
+          "# 观点提炼：示例主题\n> **一句话读懂**：示例原文包含关键句甲。\n\n---\n\n## 核心观点\n\n**1. 示例观点**\n正文保留示例原文关键句甲。",
+        );
+      } else if (system.includes("你是文字校对与版式审计员")) {
+        reply(
+          res,
+          JSON.stringify({ items: [{ quote: "正文保留示例原文关键句甲", inOriginal: true, issue: "", suggestion: "" }], layoutIssues: [] }),
+        );
+      } else if (system.includes("你是深度内容编辑兼终稿排版编辑")) {
+        expect(system).toContain("回文核对"); // {{all}} 展开后含「拆解清单、草稿、回文核对表」标记
+        reply(
+          res,
+          v4FinalizeViolates
+            ? "# 观点提炼：示例主题\n### 违规小标题\n正文。"
+            : "# 观点提炼：示例主题\n> **一句话读懂**：示例原文包含关键句甲。\n\n---\n\n## 核心观点\n\n**1. 示例观点**\n终稿正文包含示例原文关键句甲。",
         );
       } else if (system.includes("只输出拆解清单 JSON")) {
         reply(res, JSON.stringify({ blocks: [{ title: "观点一", quotes: [user.slice(0, 12)] }] }));
@@ -217,6 +243,54 @@ describe("RunEngine 配方执行（M8-1）", () => {
     expect(aiResponses.map((row) => row.step)).toEqual(["scan", "draft", "audit", "finalize"]);
     expect(aiRequests[0]?.content).toContain("[scan]");
     expect(logs.some((row) => row.kind === "input" && row.content.includes("示例原文关键句甲"))).toBe(true);
+  });
+
+  it("观点提炼 v4：4 次调用、oneLiner/引用回查与排版硬门全过、输出为终稿", async () => {
+    chatCalls = 0;
+    v4FinalizeViolates = false;
+    const dataDir = await mkdtemp(join(tmpdir(), "scribe-insight-v4-"));
+    tmpDirs.push(dataDir);
+    const runId = "run_insight_v4_ok";
+    const { db, engine, graph } = await setup(dataDir, runId, "builtin.insight.v4");
+
+    runWith(engine, runId, graph);
+    await waitFinished(db, runId);
+
+    expect(db.select().from(runs).where(eq(runs.id, runId)).get()?.status).toBe("success");
+    const nodeRow = db.select().from(runNodeResults).where(eq(runNodeResults.nodeId, "n_prompt")).get();
+    expect(nodeRow?.status).toBe("done");
+    expect(nodeRow?.summary).toContain("配方 4 步");
+    expect(nodeRow?.summary).toContain("4 次调用");
+    expect(nodeRow?.outputKind).toBe("noteBlock");
+    expect(nodeRow?.outputText).toContain("终稿正文包含示例原文关键句甲");
+    expect(nodeRow?.outputText).not.toContain("###");
+    expect(chatCalls).toBe(4);
+
+    const logs = db.select().from(runNodeLogs).where(eq(runNodeLogs.runId, runId)).all();
+    const aiRequests = logs.filter((row) => row.kind === "ai-request" && row.nodeId === "n_prompt");
+    expect(aiRequests.map((row) => row.step)).toEqual(["scan", "draft", "audit", "finalize"]);
+    expect(aiRequests[0]?.content).toContain("[scan]");
+  });
+
+  it("观点提炼 v4：finalize 输出含 ### 触发版式硬门，节点报步骤级断言错误", async () => {
+    chatCalls = 0;
+    v4FinalizeViolates = true;
+    const dataDir = await mkdtemp(join(tmpdir(), "scribe-insight-v4-bad-"));
+    tmpDirs.push(dataDir);
+    const runId = "run_insight_v4_bad";
+    const { db, engine, graph } = await setup(dataDir, runId, "builtin.insight.v4");
+
+    runWith(engine, runId, graph);
+    await waitFinished(db, runId);
+
+    const nodeRow = db.select().from(runNodeResults).where(eq(runNodeResults.nodeId, "n_prompt")).get();
+    expect(nodeRow?.status).toBe("error");
+    expect(nodeRow?.error).toContain("修正成稿");
+    expect(nodeRow?.error).toContain("断言未通过");
+    expect(chatCalls).toBe(4);
+    const logs = db.select().from(runNodeLogs).where(eq(runNodeLogs.runId, runId)).all();
+    const aiResponses = logs.filter((row) => row.kind === "ai-response" && row.nodeId === "n_prompt");
+    expect(aiResponses.map((row) => row.step)).toEqual(["scan", "draft", "audit", "finalize"]);
   });
 
   it("阴阳师攻略加工 v2：4 次调用、scan 根键/audit 根键断言通过、输出为最后一步产物", async () => {

@@ -45,3 +45,4 @@ playwright-report/
 .dsh-verify/
 .delivery-evidence-*/
 .tmp-evidence-*/
+.tmp-v4-verify/

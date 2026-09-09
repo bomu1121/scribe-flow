@@ -170,3 +170,24 @@ pnpm dev
 - 前端 http://localhost:5173
 - 后端 http://localhost:8787（`/api/health`）
 - 数据目录 `apps/server/data/scribe-flow.sqlite`（git 忽略）
+
+## 9. 视频下载与结果页播放模块（M9 候选，2026-09-09）
+
+- 调研与设计：[video-module-research.md](./video-module-research.md)（决策点 D1–D7；四项方向已与用户对齐并评审通过：原生播放器自研封装 / B站+本地视频 / 媒体缓存库+引用且默认不进备份 / 调研先行）
+- P0 实测：[research/video-module-poc.md](./research/video-module-poc.md)：游客实际流 ≤480P、登录（非大会员）可达 1080P AVC；m4s `-c copy +faststart` 秒级合成；Range 206 + Chrome 起播/seek 通过
+- P1 存储与引擎：`media_assets`/`run_media` 表与幂等迁移、`lib/media-store.ts`（内容寻址去重/GC/restore）、engine `source.bili`/`source.file` keepVideo 分支、`routes/media.ts` Range 流式与恢复任务；删除运行引用归零即 GC（uploads 原件保留）
+- P2 结果页：`components/media/MediaPlayer.vue` 自研播放器（进度条自有 DOM，为将来区间选择预留）、RunDetailView「链路输入播放 + 素材视频兜底 + 缺失重下」、来源节点高级设置内的 keepVideo 开关与清晰度段选（紧凑两行、中性墨色选中态）
+- 依据用户两次反馈收敛（2026-09-09）：① 只放来源节点的运行结果页不得是莫名“空输出” → 补结果页指引文案；② **默认不保存视频**（用户明确要求）→ 撤销此前“独立运行自动下载”规则，仅来源节点高级设置显式开启「保留可播放视频」才下载保存；结果页无视频时提示开启后重跑
+- 验收：[video-module-acceptance.md](./video-module-acceptance.md) L0–L4（真实 B站 1080P 全链路 + 真实 Chrome 截图复核）
+- 待办：`pnpm build` 回归、既有 `smoke:ui` 全量回归与播放器自动化用例补录、durl/仅 HEVC 样本补测
+
+## 10. 观点提炼 v4：期刊式排版版（2026-09-09）
+
+- 背景：用户反馈「观点提炼」输出文档排版丑——小标题层级堆叠（H1+8×H2+每观点 H3+嵌套列表）、脚手架占位多（逐条「未提及」）；要求在信息不缺失前提下按同类笔记产品排版调研重做一版。
+- 调研与设计：[insight-v4-note-layout.md](./insight-v4-note-layout.md)（通义听悟 / 飞书纪要 / NotebookLM / NoteKing / bili-note / 卡片笔记工作流 / 中文排版规范）；版式样例（用户已确认）：[v4 期刊式](./samples/insight-v4-layout-sample.md) vs [v2 现状](./samples/insight-v2-layout-sample.md)，同稿演示稿见 [demo](./samples/insight-v4-demo-transcript.md)。
+- 用户拍板：新增 v4 并接管推荐位；配方 4 步核对版；期刊式轻排版；空槽省略 + 文末「原文未覆盖」汇总。
+- 实现：`packages/shared/src/prompt.ts` 新增 `PROMPT_GUANDIAN_V4`（单次形态，作 v4 的 prompt 字段）与 `RECIPE_INSIGHT_V4`（scan 增 oneLiner 根键、draft/finalize 执行期刊式母版、audit 增版式核对 layoutIssues、finalize 带禁 `###` 硬门）；新增内置块 `builtin.insight.v4`（recommended=true），v2 让出推荐位但保留为单次快版。
+- 测试：`prompt.test.ts`（版本集合 v1–v4 / 推荐位 / 版式断言）、`recipe.test.ts`（v4 配方 zod 校验）、`engine.recipe.test.ts`（v4 四步全流程 + `###` 违规触发步骤级错误）。
+- 自检：`pnpm -r typecheck / test / build`、`pnpm lint:slop`、`pnpm lint:ui` 全绿；`engine.recipe.test.ts` 7/7（含 v4 全流程与 `###` 版式硬门用例）；v2/v4 样例同稿渲染并排截图视觉复核通过（无 H3 堆叠、导读引用块与表格渲染正常）。
+- 待办：真实 Key L2 抽测（视环境另行安排）。
+

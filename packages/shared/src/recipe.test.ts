@@ -62,6 +62,13 @@ describe("parseRecipe", () => {
     expect(parseRecipe(v3!.recipe)).toEqual(v3!.recipe);
   });
 
+  it("观点提炼 v4 排版版配方可通过运行时校验（zod 与常量一致）", async () => {
+    const { BUILTIN_PROMPT_BLOCKS } = await import("./prompt");
+    const v4 = BUILTIN_PROMPT_BLOCKS.find((block) => block.id === "builtin.insight.v4");
+    expect(v4?.recipe).toBeDefined();
+    expect(parseRecipe(v4!.recipe)).toEqual(v4!.recipe);
+  });
+
   it("阴阳师攻略核对版配方可通过运行时校验（zod 与常量一致）", async () => {
     const { BUILTIN_PROMPT_BLOCKS } = await import("./prompt");
     const v2 = BUILTIN_PROMPT_BLOCKS.find((block) => block.id === "builtin.gameguide.v2");
