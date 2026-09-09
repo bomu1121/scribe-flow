@@ -5,6 +5,7 @@ import { PhBookOpenText, PhFileArrowDown, PhFileText, PhFolderStar, PhGitBranch,
 import { toast } from "@/lib/toast";
 import { NODE_TYPE_LABELS, type NodeType } from "@scribe-flow/shared";
 import { useUiStore } from "@/stores/ui";
+import { useRunsStore } from "@/stores/runs";
 
 type CatalogItemType = NodeType | "source.biliCollection";
 
@@ -71,19 +72,31 @@ const groups: CatalogGroup[] = [
 
 const route = useRoute();
 const ui = useUiStore();
+const runsStore = useRunsStore();
 
 const inCanvas = computed(() => route.name === "project-editor");
+const projectRunning = computed(() => {
+  if (!inCanvas.value) return false;
+  const projectId = String(route.params.id ?? "");
+  return runsStore.runs.some((run) => run.projectId === projectId && run.status === "running");
+});
+/** 运行进行中画布只读：当前改动不会影响正在进行的流程，禁止从节点库添加节点。 */
+const canAdd = computed(() => inCanvas.value && !projectRunning.value);
 
 function add(type: CatalogItemType) {
   if (!inCanvas.value) {
     toast.info("请先打开一个工程画布");
     return;
   }
+  if (projectRunning.value) {
+    toast.info("工程运行中，暂不能添加节点");
+    return;
+  }
   ui.requestAddNode(type);
 }
 
 function onDragStart(event: DragEvent, item: CatalogItem) {
-  if (!inCanvas.value || item.action) return;
+  if (!canAdd.value || item.action) return;
   event.dataTransfer?.setData("application/scribe-node", item.type);
   if (event.dataTransfer) event.dataTransfer.effectAllowed = "move";
 }
@@ -96,6 +109,7 @@ function displayName(item: CatalogItem): string {
 <template>
   <div class="wp-view wp-nodes">
     <p v-if="!inCanvas" class="wp-note">打开一个工程画布后，才能在这里添加节点。</p>
+    <p v-else-if="projectRunning" class="wp-note">工程运行中，画布为只读状态，不能添加节点。</p>
     <p v-else class="wp-note">点击添加到画布中心，或拖到画布上的目标位置。</p>
 
     <div class="wp-nodes-scroll">
@@ -107,9 +121,9 @@ function displayName(item: CatalogItem): string {
             :key="item.type"
             type="button"
             class="wp-node-item"
-            :class="{ action: item.action, disabled: !inCanvas }"
-            :disabled="!inCanvas"
-            :draggable="inCanvas && !item.action"
+            :class="{ action: item.action, disabled: !canAdd }"
+            :disabled="!canAdd"
+            :draggable="canAdd && !item.action"
             :title="item.description"
             @dragstart="onDragStart($event, item)"
             @click="add(item.type)"

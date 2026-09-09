@@ -22,6 +22,8 @@ export interface NodeContextActions {
   runFromNode: () => void;
   /** 当前工程是否有运行正在进行；用于禁用右键菜单里的“运行”入口。 */
   running?: boolean;
+  /** 运行进行中画布应只读：当前编辑不会影响正在进行的运行，禁止改动节点数据/结构。 */
+  readonly?: boolean;
   copyOutput: () => void;
   /** 打开该节点在最近一次运行中的输出结果页。 */
   viewOutput: () => void;

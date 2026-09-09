@@ -28,7 +28,12 @@ const authStore = useAuthStore();
 const uiStore = useUiStore();
 
 const projectId = computed(() => String(route.params.id));
-const projectName = ref("");
+/** 顶部栏工程名跟随工程列表/store.current 响应式更新，左侧栏重命名后立即同步。 */
+const projectName = computed(() => {
+  const item = store.list.find((p) => p.id === projectId.value);
+  if (item) return item.name;
+  return store.current?.id === projectId.value ? store.current.name : "";
+});
 const graph = ref<WorkflowGraph>(emptyGraph());
 const loaded = ref(false);
 const suppressRunWatch = ref(false);
@@ -40,6 +45,8 @@ const activeRun = ref<RunMeta | null>(null);
 const lastRun = ref<RunMeta | null>(null);
 const running = ref(false);
 const projectRunningRun = computed(() => runsStore.runs.find((r) => r.projectId === projectId.value && r.status === "running") ?? null);
+/** 当前工程有运行进行中：画布进入只读，避免编辑无法影响本次运行的节点造成歧义。 */
+const canvasRunning = computed(() => running.value || Boolean(projectRunningRun.value));
 const activeTaskCount = computed(() => {
   const localActive = running.value && activeRun.value && !runsStore.runs.some((r) => r.id === activeRun.value?.id && r.status === "running") ? 1 : 0;
   return runsStore.runningCount + localActive;
@@ -90,9 +97,6 @@ async function loadProject() {
     saveState.value = "loading";
   }
 
-  const cached = store.list.find((p) => p.id === id);
-  if (cached) projectName.value = cached.name;
-
   try {
     const project = await store.getProject(id);
     if (disposed || token !== loadProjectToken || projectId.value !== id) return;
@@ -107,7 +111,6 @@ async function loadProject() {
         return { ...n, data } as typeof n;
       }),
     };
-    projectName.value = project.name;
     graph.value = nextGraph;
     saveState.value = "saved";
     loaded.value = true;
@@ -193,6 +196,10 @@ watch(
 );
 
 function onPaletteAdd(type: NodeType | "source.biliCollection") {
+  if (canvasRunning.value) {
+    toast.info("工程运行中，画布为只读状态，暂不能添加节点");
+    return;
+  }
   if (type === "source.biliCollection") {
     if (!authStore.loggedIn) {
       toast.info("请先点击右上角 B 站头像扫码登录");
@@ -209,6 +216,10 @@ function onPaletteAdd(type: NodeType | "source.biliCollection") {
 }
 
 function onBiliPickerConfirm(videos: SourceVideoItem[]) {
+  if (canvasRunning.value) {
+    toast.info("工程运行中，画布为只读状态，暂不能添加节点");
+    return;
+  }
   if (videos.length > 0) {
     flowCanvasRef.value?.addBiliVideos(videos);
     toast.success(videos.length > 1 ? `已添加 1 张多选卡片（${videos.length} 个视频）` : "已添加 1 个视频来源");
@@ -294,6 +305,7 @@ async function resumeRun(run: RunMeta) {
     if (disposed) return;
     if (detail.status !== "running") {
       running.value = false;
+      runsStore.upsert({ ...run, status: detail.status });
       activeRun.value = null;
       const snapshot = await mergedNodeResults(detail);
       flowCanvasRef.value?.applyRunSnapshot(snapshot);
@@ -319,6 +331,7 @@ async function resumeRun(run: RunMeta) {
     } else if (event.type === "run.done") {
       running.value = false;
       activeRun.value = { ...(activeRun.value as RunMeta), status: event.status };
+      runsStore.upsert(activeRun.value);
       stopRunEvents?.();
       stopRunEvents = null;
       subscribedRunId = null;
@@ -339,6 +352,7 @@ async function reconcileActiveRun() {
     if (detail.status !== "running") {
       running.value = false;
       activeRun.value = { ...run, status: detail.status };
+      runsStore.upsert(activeRun.value);
       stopRunEvents?.();
       stopRunEvents = null;
       subscribedRunId = null;
@@ -453,7 +467,7 @@ function missingKeyMessage(scope: "all" | "fromNode" | "node", nodeId?: string):
 }
 
 async function startRun(scope: "all" | "fromNode" | "node", nodeId?: string) {
-  if (running.value) {
+  if (canvasRunning.value) {
     toast.warning("已有运行正在进行");
     return;
   }
@@ -488,6 +502,7 @@ async function startRun(scope: "all" | "fromNode" | "node", nodeId?: string) {
     const run = await api.post<RunMeta>(`/api/projects/${projectId.value}/runs`, { scope, nodeId });
     if (disposed) return;
     activeRun.value = run;
+    runsStore.upsert(run);
     toast.clear();
     if (subscribedRunId !== run.id) {
       stopRunEvents?.();
@@ -502,6 +517,7 @@ async function startRun(scope: "all" | "fromNode" | "node", nodeId?: string) {
         } else if (event.type === "run.done") {
           running.value = false;
           activeRun.value = { ...(activeRun.value as RunMeta), status: event.status };
+          runsStore.upsert(activeRun.value);
           stopRunEvents?.();
           stopRunEvents = null;
           subscribedRunId = null;
@@ -544,7 +560,9 @@ async function forceStopRun() {
   try {
     await api.post<{ ok: boolean }>(`/api/runs/${target.id}/force-stop`);
     toast.success("已强制结束运行");
-    if (activeRun.value) activeRun.value = { ...activeRun.value, status: "cancelled" };
+    const cancelled = activeRun.value ? { ...activeRun.value, status: "cancelled" as const } : { ...target, status: "cancelled" as const };
+    if (activeRun.value) activeRun.value = cancelled;
+    runsStore.upsert(cancelled);
     running.value = false;
     await runsStore.load();
   } catch (err) {
@@ -636,10 +654,10 @@ async function viewOutput(nodeId: string) {
           </button>
           <template #dropdown>
             <el-dropdown-menu>
-              <el-dropdown-item command="layout"><LayoutPanelTop :size="14" />整理画布</el-dropdown-item>
+              <el-dropdown-item command="layout" :disabled="canvasRunning"><LayoutPanelTop :size="14" />整理画布</el-dropdown-item>
               <el-dropdown-item command="fit"><Maximize :size="14" />适应视图</el-dropdown-item>
-              <el-dropdown-item command="undo" :disabled="!historyState.canUndo"><Undo2 :size="14" />撤销</el-dropdown-item>
-              <el-dropdown-item command="redo" :disabled="!historyState.canRedo"><Redo2 :size="14" />重做</el-dropdown-item>
+              <el-dropdown-item command="undo" :disabled="canvasRunning || !historyState.canUndo"><Undo2 :size="14" />撤销</el-dropdown-item>
+              <el-dropdown-item command="redo" :disabled="canvasRunning || !historyState.canRedo"><Redo2 :size="14" />重做</el-dropdown-item>
               <el-dropdown-item command="duplicate" divided><Copy :size="14" />复制工程</el-dropdown-item>
               <el-dropdown-item command="export"><Download :size="14" />导出工程</el-dropdown-item>
               <el-dropdown-item command="clear-runs" disabled class="sf-dropdown-danger"><Trash2 :size="14" />清空运行记录（M4）</el-dropdown-item>
@@ -654,7 +672,7 @@ async function viewOutput(nodeId: string) {
       <div class="sf-mobile-hint">画布编辑器需要桌面端（≥1024px）。当前仅作只读预览，请在电脑上打开以编辑。</div>
       <div class="sf-canvas-wrap">
         <div v-if="loaded" class="sf-editor-float-actions">
-          <button type="button" class="sf-float-btn sf-float-run" :disabled="running" @click="startRun('all')">
+          <button type="button" class="sf-float-btn sf-float-run" :disabled="canvasRunning" @click="startRun('all')">
             <Play :size="13" />
             <span>运行</span>
           </button>
@@ -682,7 +700,7 @@ async function viewOutput(nodeId: string) {
           v-if="loaded"
           ref="flowCanvasRef"
           :initial-graph="graph"
-          :running="running"
+          :running="canvasRunning"
           :fetch-node-output="fetchCanvasNodeOutput"
           @update:graph="onGraphUpdate"
           @history-change="historyState = $event"

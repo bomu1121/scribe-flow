@@ -279,6 +279,15 @@ const isMindMapNode = computed(() => nodeType.value === "process.mindmap");
 const ports = computed(() => NODE_PORTS[nodeType.value]);
 const defaultLabel = computed(() => NODE_TYPE_LABELS[nodeType.value]);
 const label = computed(() => props.data.label || defaultLabel.value);
+/** 运行进行中画布只读：可查看节点/结果，但不能修改节点配置或结构。 */
+const readonly = computed(() => Boolean(props.data.ctx?.readonly));
+
+// 若运行开始时焦点正在节点表单里，主动失焦，避免只读后仍能继续键入造成“改了但没生效”的误解。
+watch(readonly, (locked) => {
+  if (!locked) return;
+  const active = document.activeElement as HTMLElement | null;
+  if (active?.closest(".sf-node-body")) active.blur();
+});
 
 const nodeDescriptions: Record<NodeType, string> = {
   "source.bili": "粘贴 B 站视频或合集链接",
@@ -593,6 +602,7 @@ function commit() {
 }
 
 async function renameNode() {
+  if (readonly.value) return;
   try {
     const { value } = await ElMessageBox.prompt("输入新的模块名称", "重命名模块", {
       inputValue: label.value,
@@ -662,7 +672,7 @@ const themeOptions = [
 <template>
   <ContextMenuRoot>
     <ContextMenuTrigger as-child>
-      <div class="sf-node" :class="[statusClass, sizeClass, { 'is-selected': props.selected, 'is-bodyless': !hasBodyContent }]" @dblclick="onNodeDoubleClick">
+      <div class="sf-node" :class="[statusClass, sizeClass, { 'is-selected': props.selected, 'is-bodyless': !hasBodyContent, 'is-readonly': readonly }]" @dblclick="onNodeDoubleClick">
         <Handle
           v-for="port in ports.inputs"
           :key="port.id"
@@ -672,7 +682,7 @@ const themeOptions = [
           class="sf-handle sf-handle--target"
         />
 
-        <div v-if="props.selected" class="sf-node-selection-bar nodrag">
+        <div v-if="props.selected" class="sf-node-selection-bar nodrag" :inert="readonly ? true : undefined">
           <div class="sf-node-selection-bar-left">
             <button
               type="button"
@@ -705,11 +715,11 @@ const themeOptions = [
                 <DropdownMenuItem class="sf-node-menu-item" :disabled="props.data.ctx?.running" title="运行中不可启动新运行" @select="props.data.ctx?.runNode()">运行此节点</DropdownMenuItem>
                 <DropdownMenuItem class="sf-node-menu-item" :disabled="props.data.ctx?.running" title="运行中不可启动新运行" @select="props.data.ctx?.runFromNode()">从此节点运行</DropdownMenuItem>
                 <DropdownMenuSeparator class="sf-node-menu-sep" />
-                <DropdownMenuItem class="sf-node-menu-item" @select="renameNode">重命名</DropdownMenuItem>
-                <DropdownMenuItem class="sf-node-menu-item" @select="props.data.ctx?.duplicate()">复制</DropdownMenuItem>
+                <DropdownMenuItem class="sf-node-menu-item" :disabled="readonly" title="运行中不可编辑" @select="renameNode">重命名</DropdownMenuItem>
+                <DropdownMenuItem class="sf-node-menu-item" :disabled="readonly" title="运行中不可编辑" @select="props.data.ctx?.duplicate()">复制</DropdownMenuItem>
                 <DropdownMenuItem class="sf-node-menu-item" :disabled="true" title="M4 接入">复制输出</DropdownMenuItem>
                 <DropdownMenuSeparator class="sf-node-menu-sep" />
-                <DropdownMenuItem class="sf-node-menu-item sf-node-menu-item--danger" @select="props.data.ctx?.remove()">删除</DropdownMenuItem>
+                <DropdownMenuItem class="sf-node-menu-item sf-node-menu-item--danger" :disabled="readonly" title="运行中不可编辑" @select="props.data.ctx?.remove()">删除</DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenuPortal>
           </DropdownMenuRoot>
@@ -741,7 +751,7 @@ const themeOptions = [
           <p class="sf-node-desc">{{ nodeDescription }}</p>
         </div>
 
-        <div v-if="hasBodyContent" class="sf-node-body nodrag" @wheel="onNodeBodyWheel">
+        <div v-if="hasBodyContent" class="sf-node-body nodrag" :inert="readonly ? true : undefined" @wheel="onNodeBodyWheel">
           <!-- 来源：B 站链接 / B 站多选收藏。多选时使用“平等列表”卡片，不再强调第一个视频。 -->
           <template v-if="nodeType === 'source.bili'">
             <template v-if="isCollection">
@@ -1078,11 +1088,11 @@ const themeOptions = [
         <ContextMenuItem class="sf-node-menu-item" :disabled="props.data.ctx?.running" title="运行中不可启动新运行" @select="props.data.ctx?.runNode()">运行此节点</ContextMenuItem>
         <ContextMenuItem class="sf-node-menu-item" :disabled="props.data.ctx?.running" title="运行中不可启动新运行" @select="props.data.ctx?.runFromNode()">从此节点运行</ContextMenuItem>
         <ContextMenuSeparator class="sf-node-menu-sep" />
-        <ContextMenuItem class="sf-node-menu-item" @select="renameNode">重命名</ContextMenuItem>
-        <ContextMenuItem class="sf-node-menu-item" @select="props.data.ctx?.duplicate()">复制</ContextMenuItem>
+        <ContextMenuItem class="sf-node-menu-item" :disabled="readonly" title="运行中不可编辑" @select="renameNode">重命名</ContextMenuItem>
+        <ContextMenuItem class="sf-node-menu-item" :disabled="readonly" title="运行中不可编辑" @select="props.data.ctx?.duplicate()">复制</ContextMenuItem>
         <ContextMenuItem class="sf-node-menu-item" :disabled="true" title="M4 接入">复制输出</ContextMenuItem>
         <ContextMenuSeparator class="sf-node-menu-sep" />
-        <ContextMenuItem class="sf-node-menu-item sf-node-menu-item--danger" @select="props.data.ctx?.remove()">删除</ContextMenuItem>
+        <ContextMenuItem class="sf-node-menu-item sf-node-menu-item--danger" :disabled="readonly" title="运行中不可编辑" @select="props.data.ctx?.remove()">删除</ContextMenuItem>
       </ContextMenuContent>
     </ContextMenuPortal>
   </ContextMenuRoot>
@@ -1145,6 +1155,18 @@ const themeOptions = [
 
 .sf-node.is-selected {
   border-color: var(--control-border-focus);
+}
+
+/* 运行中只读：节点可查看/选中，但内部表单、上传、选择器等编辑区域不可交互。 */
+.sf-node.is-readonly .sf-node-body,
+.sf-node.is-readonly .sf-node-selection-bar {
+  pointer-events: none;
+  opacity: 0.82;
+}
+
+.sf-node.is-readonly .sf-node-head,
+.sf-node.is-readonly .sf-node-head:active {
+  cursor: default;
 }
 
 .sf-node.is-running {
@@ -2134,28 +2156,27 @@ const themeOptions = [
 }
 
 .sf-node-result-preview__open {
-  padding: 3px 0;
+  padding: 3px 6px;
   border: none;
+  border-radius: var(--radius-sm);
   background: transparent;
   color: var(--color-text);
   font-family: inherit;
   font-size: 11.5px;
   font-weight: 600;
   cursor: pointer;
-  transition: text-decoration-color var(--dur-1) var(--ease-out);
+  transition: background-color var(--dur-1) var(--ease-out);
 }
 
 .sf-node-result-preview__open:hover {
-  text-decoration: underline;
-  text-underline-offset: 2px;
+  background: var(--color-ink-soft);
 }
 
-/* 面板内文字按钮：聚焦也不画 outline，用下划线作为唯一聚焦反馈 */
+/* 面板内文字按钮：聚焦用浅色背景反馈，不画 outline */
 .sf-node-result-preview__open:focus-visible {
   outline: none;
   box-shadow: none;
-  text-decoration: underline;
-  text-underline-offset: 2px;
+  background: var(--color-ink-soft);
 }
 
 /* 思维导图节点预览：浮层加宽给导图留足横向空间，内嵌渲染器与画布/详情页同源 */

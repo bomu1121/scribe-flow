@@ -28,12 +28,14 @@ import { NODE_TYPE_LABELS } from "@scribe-flow/shared";
 import { api } from "@/lib/api";
 import { renderMarkdown } from "@/lib/markdown";
 import { subscribeRunEvents } from "@/lib/sse";
+import { useProjectsStore } from "@/stores/projects";
 import MindMapViewer from "@/components/MindMapViewer.vue";
 import DiffViewer from "@/components/DiffViewer.vue";
 import RunLogDialog from "@/components/RunLogDialog.vue";
 
 const route = useRoute();
 const router = useRouter();
+const projectsStore = useProjectsStore();
 const run = ref<RunDetail | null>(null);
 const loading = ref(false);
 const activeTab = ref<"result" | "nodes" | "mindmap">("result");
@@ -59,6 +61,14 @@ const docScrollRef = ref<HTMLElement | null>(null);
 
 const runId = String(route.params.runId);
 const projectId = String(route.params.id);
+
+/** 顶部副标题里的工程名跟随工程列表响应式更新，左侧栏重命名后立即同步。 */
+const projectName = computed(() => {
+  const item = projectsStore.list.find((p) => p.id === projectId);
+  if (item) return item.name;
+  if (projectsStore.current?.id === projectId) return projectsStore.current.name;
+  return run.value?.projectName ?? "";
+});
 
 let stopRunEvents: (() => void) | null = null;
 let reloadTimer: ReturnType<typeof setTimeout> | null = null;
@@ -854,7 +864,7 @@ async function forceStopRun() {
             </span>
           </h2>
           <p class="rv-sub">
-            {{ run ? `${run.projectName ?? ""} · 耗时 ${fmt(run.elapsedMs)} · ${new Date(run.createdAt).toLocaleString("zh-CN")}` : "加载中…" }}
+            {{ run ? `${projectName} · 耗时 ${fmt(run.elapsedMs)} · ${new Date(run.createdAt).toLocaleString("zh-CN")}` : "加载中…" }}
           </p>
         </div>
       </div>

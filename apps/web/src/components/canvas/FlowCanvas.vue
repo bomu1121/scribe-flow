@@ -124,7 +124,13 @@ function ctxFor(nodeId: string) {
     remove: () => removeNodes([nodeId]),
     runNode: () => emit("run-request", { scope: "node", nodeId }),
     runFromNode: () => emit("run-request", { scope: "fromNode", nodeId }),
-    running: props.running,
+    // 用 getter 而不是快照值，运行状态变化时节点内菜单/表单能立即响应只读。
+    get running() {
+      return props.running;
+    },
+    get readonly() {
+      return props.running;
+    },
     copyOutput: () => emit("notice", "节点输出将在运行后可用"),
     viewOutput: () => emit("view-output", nodeId),
     fetchNodeOutput: () => {
@@ -214,6 +220,11 @@ onBeforeUnmount(() => {
 // Vue Flow 的 applyNodeChanges 依赖内部节点上的 computedPosition 才会更新 position；
 // 我们的受控节点是纯业务节点，需要自己把 position/select/remove/add 同步回 nodesRef。
 function applyScribeNodeChanges(changes: NodeChange[], nodes: ScribeFlowNode[]): ScribeFlowNode[] {
+  // 运行期间画布只读：允许选中节点用于查看，但禁止拖动/删除/新增等结构性修改。
+  if (props.running) {
+    changes = changes.filter((change) => change.type === "select");
+    if (changes.length === 0) return nodes;
+  }
   const removedIds = new Set(changes.filter((change) => change.type === "remove").map((change) => change.id));
   const idChanges = changes.filter((change): change is NodeChange & { id: string } => "id" in change);
   let next = nodes
@@ -248,11 +259,16 @@ function onNodesChange(changes: NodeChange[]) {
 }
 
 function onEdgesChange(changes: EdgeChange[]) {
+  if (props.running) {
+    changes = changes.filter((change) => change.type === "select");
+    if (changes.length === 0) return;
+  }
   edgesRef.value = applyEdgeChanges(changes, edgesRef.value as never) as unknown as ScribeFlowEdge[];
   emitGraph();
 }
 
 function onConnect(connection: Connection) {
+  if (props.running) return;
   if (!connection.source || !connection.target) return;
   const duplicate = edgesRef.value.some(
     (edge) =>
@@ -296,6 +312,7 @@ function onPaneClick() {
 }
 
 function onNodeDragStop() {
+  if (props.running) return;
   pushHistory();
   emitGraph();
 }
@@ -329,6 +346,7 @@ function closeEdgeMenu() {
 }
 
 function openEdgeContextMenu({ event, edge }: EdgeMouseEvent) {
+  if (props.running) return;
   event.preventDefault();
   const mouseEvent = event as MouseEvent;
   const menuWidth = 196;
@@ -341,6 +359,7 @@ function openEdgeContextMenu({ event, edge }: EdgeMouseEvent) {
 }
 
 function removeEdgeFromMenu() {
+  if (props.running) return;
   const edgeId = edgeMenu.value?.edgeId;
   if (!edgeId) return;
   closeEdgeMenu();
@@ -380,6 +399,7 @@ function centerPosition(): { x: number; y: number } {
 }
 
 function addNodeAt(type: NodeType, position?: { x: number; y: number }) {
+  if (props.running) return;
   if (nodesRef.value.length >= 200) {
     emit("notice", "节点数量已达 200 上限，请拆分工程");
     return;
@@ -398,6 +418,7 @@ function addNodeAtCenter(type: NodeType) {
 }
 
 function duplicateNodes(ids: string[]) {
+  if (props.running) return;
   const sources = nodesRef.value.filter((node) => ids.includes(node.id));
   if (sources.length === 0) return;
   const created: ScribeFlowNode[] = sources.map((node, index) => {
@@ -417,6 +438,7 @@ function duplicateNodes(ids: string[]) {
 }
 
 function removeNodes(ids: string[]) {
+  if (props.running) return;
   if (ids.length === 0) return;
   nodesRef.value = nodesRef.value.filter((node) => !ids.includes(node.id));
   edgesRef.value = edgesRef.value.filter((edge) => !ids.includes(edge.source) && !ids.includes(edge.target));
@@ -430,6 +452,7 @@ function selectedNodeIds(): string[] {
 }
 
 function deleteSelection() {
+  if (props.running) return;
   const nodeIds = selectedNodeIds();
   const edgeIds = edgesRef.value.filter((edge) => edge.selected).map((edge) => edge.id);
   if (nodeIds.length === 0 && edgeIds.length === 0) return;
@@ -448,6 +471,7 @@ function duplicateSelection() {
 }
 
 function updateNodeData(id: string, patch: Record<string, unknown>) {
+  if (props.running) return;
   nodesRef.value = nodesRef.value.map((node) =>
     node.id === id
       ? { ...node, data: { ...node.data, ...patch, nodeType: node.data.nodeType, ctx: node.data.ctx } as ScribeNodeData }
@@ -457,6 +481,7 @@ function updateNodeData(id: string, patch: Record<string, unknown>) {
 }
 
 function commitHistory() {
+  if (props.running) return;
   pushHistory();
 }
 
@@ -516,7 +541,7 @@ function multiSourcePatch(items: BiliSourceItem[], label = "B站多选"): Record
  * 后续运行逻辑仍按每个 item 逐个产出音频，等价于多张独立来源卡片。
  */
 function addSourceVideos(nodeId: string, videos: import("@scribe-flow/shared").SourceVideoItem[]) {
-  if (videos.length === 0) return;
+  if (props.running || videos.length === 0) return;
   const target = nodesRef.value.find((node) => node.id === nodeId);
   if (!target) return;
 
@@ -529,7 +554,7 @@ function addSourceVideos(nodeId: string, videos: import("@scribe-flow/shared").S
 
 /** 从“B站收藏”来源入口：单选生成普通 B 站链接节点，多选合并为一张多选卡片。 */
 function addBiliVideos(videos: import("@scribe-flow/shared").SourceVideoItem[]) {
-  if (videos.length === 0) return;
+  if (props.running || videos.length === 0) return;
   if (nodesRef.value.length >= 200) {
     emit("notice", "节点数量已达 200 上限，请拆分工程");
     return;
@@ -547,13 +572,13 @@ function addBiliVideos(videos: import("@scribe-flow/shared").SourceVideoItem[]) 
 // ---------- 撤销 / 重做 ----------
 
 function undo() {
-  if (historyIndex.value <= 0) return;
+  if (props.running || historyIndex.value <= 0) return;
   historyIndex.value -= 1;
   applyHistory();
 }
 
 function redo() {
-  if (historyIndex.value >= history.value.length - 1) return;
+  if (props.running || historyIndex.value >= history.value.length - 1) return;
   historyIndex.value += 1;
   applyHistory();
 }
@@ -580,6 +605,8 @@ function onKeydown(event: KeyboardEvent) {
       return;
     }
   }
+
+  if (props.running) return;
 
   const target = event.target as HTMLElement | null;
   if (target && (target.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName))) return;
@@ -611,6 +638,7 @@ function onKeydown(event: KeyboardEvent) {
 // ---------- 拖入 ----------
 
 function onDrop(event: DragEvent) {
+  if (props.running) return;
   const type = event.dataTransfer?.getData("application/scribe-node") as NodeType | "";
   if (!type) return;
   event.preventDefault();
@@ -621,6 +649,7 @@ function onDrop(event: DragEvent) {
 // ---------- 布局 ----------
 
 async function autoLayout() {
+  if (props.running) return;
   const children = nodesRef.value.map((node) => ({ id: node.id, width: NODE_CARD_WIDTH[node.data.nodeType] ?? 224, height: 120 }));
   const edges = edgesRef.value.map((edge) => ({ id: edge.id, sources: [edge.source], targets: [edge.target] }));
   try {
@@ -820,6 +849,9 @@ defineExpose({
       :delete-key-code="null"
       :zoom-on-double-click="false"
       multi-selection-key-code="Shift"
+      :nodes-draggable="!props.running"
+      :nodes-connectable="!props.running"
+      :edges-updatable="!props.running"
       :is-valid-connection="validateConnection"
       :fit-view-on-init="true"
       @nodes-change="onNodesChange"
