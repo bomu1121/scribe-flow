@@ -1,0 +1,152 @@
+{
+  "schemaVersion": 1,
+  "nodes": [
+    {
+      "id": "n_src",
+      "type": "source.bili",
+      "position": {
+        "x": 0,
+        "y": 40
+      },
+      "data": {
+        "label": "B站链接",
+        "url": "bilibili.com/video/BV1STbg6JEhF/?spm_id_from=333.1007.top_right_bar_window_dynamic.content.click",
+        "pageInfo": {
+          "cid": 41681355741,
+          "page": 1,
+          "part": "Astra是AGI吗？AI大规模替代人类开始了？",
+          "duration": 1054
+        },
+        "items": [],
+        "bvid": "BV1STbg6JEhF",
+        "title": "Astra是AGI吗？AI大规模替代人类开始了？",
+        "cover": "https://i0.hdslb.com/bfs/archive/a5acab3d5aa48f6a4b308bf7bfe0f39adfe06c3e.jpg",
+        "uploader": "内部看美国",
+        "duration": 1054
+      }
+    },
+    {
+      "id": "n_asr",
+      "type": "process.transcribe",
+      "position": {
+        "x": 460,
+        "y": 40
+      },
+      "data": {
+        "label": "转写"
+      }
+    },
+    {
+      "id": "n_refine",
+      "type": "process.refine",
+      "position": {
+        "x": 764,
+        "y": 40
+      },
+      "data": {
+        "label": "AI 校对"
+      }
+    },
+    {
+      "id": "n_prompt",
+      "type": "process.prompt",
+      "position": {
+        "x": 1068,
+        "y": 40
+      },
+      "data": {
+        "label": "AI 加工",
+        "promptBlockId": "builtin.trace.v2"
+      }
+    },
+    {
+      "id": "n_out",
+      "type": "process.output",
+      "position": {
+        "x": 1468,
+        "y": 40
+      },
+      "data": {
+        "label": "输出",
+        "fileName": "笔记.md"
+      }
+    },
+    {
+      "id": "n_mttuu43c002",
+      "type": "process.prompt",
+      "position": {
+        "x": 1041.8201714636716,
+        "y": -278.9283492938604
+      },
+      "data": {
+        "label": "AI 加工",
+        "retry": {
+          "maxRetries": 2,
+          "backoffMs": 3000
+        },
+        "promptBlockId": "builtin.insight.v3"
+      }
+    },
+    {
+      "id": "n_mttuuq0u004",
+      "type": "process.output",
+      "position": {
+        "x": 1464.0819591284949,
+        "y": -276.5222992216962
+      },
+      "data": {
+        "label": "输出",
+        "fileName": "笔记.md"
+      }
+    }
+  ],
+  "edges": [
+    {
+      "id": "e1",
+      "source": "n_src",
+      "target": "n_asr",
+      "sourceHandle": "audio",
+      "targetHandle": "audio"
+    },
+    {
+      "id": "e2",
+      "source": "n_asr",
+      "target": "n_refine",
+      "sourceHandle": "transcript",
+      "targetHandle": "transcript"
+    },
+    {
+      "id": "e3",
+      "source": "n_refine",
+      "target": "n_prompt",
+      "sourceHandle": "transcript",
+      "targetHandle": "transcript"
+    },
+    {
+      "id": "e4",
+      "source": "n_prompt",
+      "target": "n_out",
+      "sourceHandle": "noteBlock",
+      "targetHandle": "noteDoc"
+    },
+    {
+      "id": "e_mttuu8c8003",
+      "source": "n_refine",
+      "target": "n_mttuu43c002",
+      "sourceHandle": "transcript",
+      "targetHandle": "transcript"
+    },
+    {
+      "id": "e_mttuus7q005",
+      "source": "n_mttuu43c002",
+      "target": "n_mttuuq0u004",
+      "sourceHandle": "noteBlock",
+      "targetHandle": "noteDoc"
+    }
+  ],
+  "viewport": {
+    "x": -503.71415438079407,
+    "y": 412.53698510289246,
+    "zoom": 0.6299605249474357
+  }
+}
