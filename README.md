@@ -12,6 +12,8 @@
 - 部署说明：[docs/deploy.md](docs/deploy.md)（Docker 单容器 + 环境变量 + 备份迁移）
 - M2 分层验收：[docs/m2-acceptance.md](docs/m2-acceptance.md)
 - 阴阳师攻略视频文稿加工模块：[docs/onmyoji-guide-processing.md](docs/onmyoji-guide-processing.md)
+- 知识巩固节点方案（`process.drill`「练一练」：文字→知识点+题+延伸，结果页答题；含 2026-09 市面调研）：[docs/knowledge-consolidation-module.md](docs/knowledge-consolidation-module.md)
+  - 实施清单与验收记录：[docs/scribe-flow-m-drill.md](docs/scribe-flow-m-drill.md)（**T1–T5 已实施** · 154 项自动化用例全绿 · L3 真实浏览器答题验收通过）
 - 产品方案：[docs/scribe-flow-proposal.md](docs/scribe-flow-proposal.md)
 - 实施清单：[docs/scribe-flow-m0-m1.md](docs/scribe-flow-m0-m1.md)
 - UI 组件库替换调研：[docs/ui-library-replacement-research.md](docs/ui-library-replacement-research.md)
