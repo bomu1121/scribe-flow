@@ -251,7 +251,11 @@ async function run() {
   );
 
   // 树行：文件夹行 [data-folder-id] 与工程行 [data-project-id]
-  const rowsReady = await waitFor("document.querySelectorAll('.wp-projects [data-tree-row]').length > 0", 12000);
+  // 等「工程行」本身出现，而不是任意树行——否则文件夹行先渲染时会误判（工程数据异步到达）。
+  const rowsReady = await waitFor(
+    "document.querySelectorAll('.wp-projects [data-tree-row]').length > 0 && document.querySelectorAll('.wp-projects [data-project-id]').length > 0",
+    12000,
+  );
   const readTree = () => evalJs(`(() => {
     try {
       const folderRows = [...document.querySelectorAll('.wp-projects [data-folder-id]')];
