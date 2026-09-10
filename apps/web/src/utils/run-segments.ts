@@ -28,7 +28,14 @@ export interface RunSegment {
   size: number;
 }
 
-/** 「一个输入一份结果」的加工节点：独立结果就存在自己的输入行上（text / resultText）。 */
+/**
+ * 「一个输入一份结果」的加工节点：独立结果就存在自己的输入行上（text / resultText）。
+ *
+ * 注意：这里**不能**改用 shared 的 `PER_INPUT_NODE_TYPES`。两者语义不同——
+ * 那一份用于「素材挑选的识别链」（判断身份能否穿过该节点，文本工具/挑选节点可以穿）；
+ * 这一份用于「结果页解析该节点自己的产出」（文本工具的产出是交付给下游的加工结果，
+ * 不是它自己的输入行）。混用会让文本工具的分段退回未加工的原文。
+ */
 const PER_INPUT_RESULT_TYPES = new Set([
   "process.transcribe",
   "process.refine",

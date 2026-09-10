@@ -41,6 +41,11 @@ export interface NodeContextActions {
   commit: () => void;
   /** 多选合并：把多个 B 站视频/分P 合并进当前节点，生成一张多选卡片。 */
   addSourceVideos: (videos: SourceVideoItem[]) => void;
+  /**
+   * 当前工程图（工程定义，非 Vue Flow 渲染态）。
+   * 节点卡片据此计算上游可挑选的素材，保证与真实链路一致。
+   */
+  getGraph?: () => WorkflowGraph;
 }
 
 export interface ScribeNodeData {
@@ -75,6 +80,8 @@ export interface ScribeNodeData {
   author?: string;
   folder?: string;
   retry?: { maxRetries?: number; backoffMs?: number };
+  /** 素材挑选：来源节点 id → 选中的素材段标识（未配置即全选）。 */
+  pick?: Record<string, string[]>;
   condition?: { field: "charCount" | "wordCount" | "contains"; op: "gt" | "gte" | "lt" | "lte" | "eq" | "contains" | "notContains"; value: string };
   operation?: "findReplace" | "regexReplace" | "template" | "cleanup";
   find?: string;
@@ -205,6 +212,8 @@ export function emptyNodeData(type: NodeType): Record<string, unknown> {
       return { label: "输出", fileName: "笔记.md" };
     case "flow.if":
       return { label: "条件分支", condition: { field: "charCount", op: "gt", value: "5000" } };
+    case "flow.pick":
+      return { label: "素材挑选" };
     case "process.text":
       return { label: "文本工具", operation: "findReplace", find: "", replace: "" };
     case "process.chapter":

@@ -37,7 +37,7 @@ export function createApp(db: AppDatabase, options: AppOptions) {
   );
 
   app.route("/api/health", health);
-  app.route("/api/projects", projectsApi(db, engine));
+  app.route("/api/projects", projectsApi(db, engine, options.dataDir));
   app.route("/api/folders", foldersApi(db));
   app.route("/api/projects/:id/runs", projectRunsApi(db, engine));
   app.route("/api/runs", runsApi(db, engine, options.dataDir));

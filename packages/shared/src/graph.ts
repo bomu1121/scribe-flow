@@ -1,5 +1,6 @@
 import { canConnect, type PortSpec, type PortType } from "./port";
 import type { DrillDifficulty, DrillKind } from "./drill";
+import type { NodePick } from "./segment";
 
 export type NodeRunStatus = "idle" | "queued" | "running" | "done" | "error" | "cancelled" | "skipped";
 
@@ -31,6 +32,8 @@ export interface BiliSourceData {
    * 运行时会逐个产出音频，等价于多张独立来源卡片连到下游。
    */
   items?: BiliSourceItem[];
+  /** 单链接模式下解析出的分 P 号；参与素材挑选时用于拼段标识（缺省按第 1 P）。 */
+  page?: number;
   /** 展示用元信息（解析成功后写入，运行结果页据此展示封面/标题/UP主）。 */
   bvid?: string;
   title?: string;
@@ -115,6 +118,18 @@ export interface ChapterData {
   maxChapters?: number;
 }
 
+/**
+ * 素材挑选节点：把上游那个模块给出的「一堆内容」按段挑选后再放行。
+ *
+ * 典型用法：一个校对模块处理了 8 个输入，但下游只需要其中 3 个——
+ * 在本节点上勾选那 3 个，未选中的就不会流到下游。
+ * 选择结果复用 NodeBase.data.pick（与「节点高级设置里的素材挑选」同一份数据）。
+ */
+export interface PickNodeData {
+  /** 预留：放行方式；当前只有「只放行勾选的」一种。 */
+  mode?: "only";
+}
+
 export interface MindMapData {
   /** 导图标题；缺省由服务端根据输入首句/文稿生成。 */
   title?: string;
@@ -174,6 +189,7 @@ export type NodeType =
   | "process.merge"
   | "process.output"
   | "flow.if"
+  | "flow.pick"
   | "process.text"
   | "process.chapter"
   | "process.gameguide"
@@ -192,6 +208,12 @@ export interface NodeBase {
     summary?: string;
     /** 失败重试策略（仅对转写/AI/章节等外部调用节点生效）。 */
     retry?: RetryConfig;
+    /**
+     * 素材挑选（可选）：只让上游的部分素材进入本节点，未选中的素材连同其下游一并跳过。
+     * 键为来源节点 id，值为该来源里被选中的素材段标识（见 segmentKey）；
+     * 来源节点 id 缺失 = 该来源全部选中（旧工程兼容）；空数组 = 全部排除（运行前会被拒绝）。
+     */
+    pick?: NodePick;
   };
 }
 
@@ -205,6 +227,7 @@ export type GraphNode =
   | (NodeBase & { type: "process.merge"; data: NodeBase["data"] & MergeData })
   | (NodeBase & { type: "process.output"; data: NodeBase["data"] & OutputData })
   | (NodeBase & { type: "flow.if"; data: NodeBase["data"] & IfData })
+  | (NodeBase & { type: "flow.pick"; data: NodeBase["data"] & PickNodeData })
   | (NodeBase & { type: "process.text"; data: NodeBase["data"] & TextToolData })
   | (NodeBase & { type: "process.chapter"; data: NodeBase["data"] & ChapterData })
   | (NodeBase & { type: "process.gameguide"; data: NodeBase["data"] & GameGuideData })
@@ -243,6 +266,7 @@ export const NODE_TYPE_LABELS: Record<NodeType, string> = {
   "process.merge": "合并",
   "process.output": "输出",
   "flow.if": "条件分支",
+  "flow.pick": "素材挑选",
   "process.text": "文本工具",
   "process.chapter": "章节切分",
   "process.gameguide": "阴阳师攻略加工",
@@ -262,6 +286,7 @@ export const NODE_CARD_WIDTH: Record<NodeType, number> = {
   "process.merge": 224,
   "process.output": 320,
   "flow.if": 300,
+  "flow.pick": 264,
   "process.text": 260,
   "process.chapter": 240,
   "process.gameguide": 300,
@@ -302,6 +327,14 @@ export const NODE_PORTS: Record<NodeType, { inputs: PortSpec[]; outputs: PortSpe
     outputs: [
       { id: "true", type: "transcript", label: "是", accepts: ["transcript", "noteBlock", "noteDoc"] },
       { id: "false", type: "transcript", label: "否", accepts: ["transcript", "noteBlock", "noteDoc"] },
+    ],
+  },
+  "flow.pick": {
+    inputs: [
+      { id: "in", type: "transcript", label: "输入", accepts: ["transcript", "noteBlock", "noteDoc"] },
+    ],
+    outputs: [
+      { id: "out", type: "transcript", label: "选中", accepts: ["transcript", "noteBlock", "noteDoc"] },
     ],
   },
   "process.text": {

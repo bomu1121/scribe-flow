@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from "vue";
 import { useRoute } from "vue-router";
-import { PhBookOpenText, PhFileArrowDown, PhFileText, PhFolderStar, PhGitBranch, PhGitMerge, PhListChecks, PhMagicWand, PhMicrophone, PhShareNetwork, PhSparkle, PhSwap, PhTreeStructure, PhUploadSimple, PhVideo } from "@phosphor-icons/vue";
+import { PhBookOpenText, PhFileArrowDown, PhFileText, PhFolderStar, PhFunnel, PhGitBranch, PhGitMerge, PhListChecks, PhMagicWand, PhMicrophone, PhShareNetwork, PhSparkle, PhSwap, PhTreeStructure, PhUploadSimple, PhVideo } from "@phosphor-icons/vue";
 import { toast } from "@/lib/toast";
 import { NODE_TYPE_LABELS, type NodeType } from "@scribe-flow/shared";
 import { useUiStore } from "@/stores/ui";
@@ -57,6 +57,7 @@ const groups: CatalogGroup[] = [
     label: "文本与逻辑",
     items: [
       { type: "process.text", icon: PhSwap, description: "文本转换 / 替换" },
+      { type: "flow.pick", icon: PhFunnel, description: "只放行其中几段素材" },
       { type: "flow.if", icon: PhGitBranch, description: "条件分支" },
     ],
   },

@@ -6,7 +6,7 @@ import { CircleAlert } from "lucide-vue-next";
 import { toast } from "@/lib/toast";
 import { Handle, Position, useVueFlow, type NodeProps } from "@vue-flow/core";
 import { ContextMenuContent, ContextMenuItem, ContextMenuPortal, ContextMenuRoot, ContextMenuSeparator, ContextMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuPortal, DropdownMenuRoot, DropdownMenuSeparator, DropdownMenuTrigger, PopoverContent, PopoverPortal, PopoverRoot, PopoverTrigger } from "reka-ui";
-import { NODE_PORTS, NODE_TYPE_LABELS, type NodeType, type UploadedFile, type VideoPreview } from "@scribe-flow/shared";
+import { NODE_PORTS, NODE_TYPE_LABELS, type NodePick, type NodeType, type UploadedFile, type VideoPreview } from "@scribe-flow/shared";
 import ModelSelect from "../ModelSelect.vue";
 import NodeFieldLabel from "./NodeFieldLabel.vue";
 import IfCard from "./node-cards/IfCard.vue";
@@ -15,6 +15,9 @@ import ChapterCard from "./node-cards/ChapterCard.vue";
 import RetryFields from "./node-cards/RetryFields.vue";
 import ObsidianCard from "./node-cards/ObsidianCard.vue";
 import DrillCard from "./node-cards/DrillCard.vue";
+import PickCard from "./node-cards/PickCard.vue";
+import PickFields from "./node-cards/PickFields.vue";
+import { useSegmentPick } from "@/composables/useSegmentPick";
 import { renderMarkdown } from "@/lib/markdown";
 import { usePromptsStore } from "@/stores/prompts";
 import { api } from "@/lib/api";
@@ -286,6 +289,20 @@ const label = computed(() => props.data.label || defaultLabel.value);
 /** 运行进行中画布只读：可查看节点/结果，但不能修改节点配置或结构。 */
 const readonly = computed(() => Boolean(props.data.ctx?.readonly));
 
+/**
+ * 素材挑选：上游可挑素材由 useSegmentPick 统一算出（与「素材挑选」节点卡片共用一份逻辑）。
+ * 单素材链路返回空数组，选择器与「高级设置」入口都不出现——不靠藏，是真的没有。
+ */
+const { options: pickOptions, staleKeys: pickStale, visible: hasPickSection, selectedCount: pickSelectedCount } = useSegmentPick(
+  () => props.data,
+  () => props.id,
+);
+
+function patchPick(value: NodePick) {
+  patch({ pick: Object.keys(value).length > 0 ? value : undefined });
+  commit();
+}
+
 // 若运行开始时焦点正在节点表单里，主动失焦，避免只读后仍能继续键入造成“改了但没生效”的误解。
 watch(readonly, (locked) => {
   if (!locked) return;
@@ -303,6 +320,7 @@ const nodeDescriptions: Record<NodeType, string> = {
   "process.merge": "将多个笔记块合并为一份文档",
   "process.output": "将结果保存为 Markdown 文件",
   "flow.if": "根据条件决定下游执行分支",
+  "flow.pick": "只放行其中几段素材",
   "process.text": "查找替换、正则或模板等文本处理",
   "process.chapter": "将长文稿切分为章节笔记",
   "process.gameguide": "将阴阳师攻略文稿整理为结构化攻略笔记",
@@ -313,8 +331,8 @@ const nodeDescriptions: Record<NodeType, string> = {
 
 const nodeDescription = computed(() => nodeDescriptions[nodeType.value] ?? "");
 
-const hasAdvanced = computed(() =>
-  [
+const hasAdvanced = computed(() => {
+  const base = [
     "source.bili",
     "source.file",
     "process.transcribe",
@@ -324,8 +342,11 @@ const hasAdvanced = computed(() =>
     "process.gameguide",
     "process.mindmap",
     "process.drill",
-  ].includes(nodeType.value),
-);
+  ].includes(nodeType.value);
+  // 可挑选素材的节点也要能打开高级设置（合并/输出等节点同样需要按素材挑选）。
+  // 「素材挑选」节点自身的挑选就在卡片正文里，不必再给一个重复入口。
+  return base || (hasPickSection.value && nodeType.value !== "flow.pick");
+});
 const isVideoSource = computed(() => nodeType.value === "source.bili" || nodeType.value === "source.file");
 /** 来源节点的「高级设置」不涉及失败重试，标题保持简洁。 */
 const advancedTitle = computed(() => (isVideoSource.value || nodeType.value === "process.mindmap" ? "高级设置" : "高级（失败重试）"));
@@ -1003,6 +1024,17 @@ const themeOptions = [
             <IfCard :condition="data.condition" @update="patchIf" />
           </template>
 
+          <template v-else-if="nodeType === 'flow.pick'">
+            <PickCard
+              :options="pickOptions"
+              :pick="data.pick"
+              :stale-keys="pickStale"
+              :readonly="readonly"
+              :selected-count="pickSelectedCount"
+              @update="patchPick"
+            />
+          </template>
+
           <template v-else-if="nodeType === 'process.text'">
             <TextToolCard
               :operation="data.operation"
@@ -1133,6 +1165,10 @@ const themeOptions = [
                   />
                 </div>
                 <div class="sf-node-advanced-subtitle">失败重试</div>
+              </template>
+              <template v-if="hasPickSection && nodeType !== 'flow.pick'">
+                <div class="sf-node-advanced-subtitle">素材挑选</div>
+                <PickFields :options="pickOptions" :pick="data.pick" :stale-keys="pickStale" :readonly="readonly" @update="patchPick" />
               </template>
               <RetryFields :retry="data.retry" @update="patchRetry" />
             </template>
@@ -1332,6 +1368,9 @@ const themeOptions = [
 .sf-node--flow-if {
   width: 300px;
 }
+.sf-node--flow-pick {
+  width: 280px;
+}
 .sf-node--process-text {
   width: 260px;
 }
@@ -1510,6 +1549,14 @@ const themeOptions = [
   font-size: 11px;
   line-height: 1.4;
   user-select: none;
+}
+
+/* 正文里的说明文字：换行完整显示，不做单行截断（头部那行空间有限才截断）。 */
+.sf-node-desc--block {
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
+  line-height: 1.55;
 }
 
 .sf-node-error-trigger {

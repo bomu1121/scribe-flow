@@ -5,9 +5,14 @@ import { and, desc, eq, inArray, notInArray } from "drizzle-orm";
 import {
   BUILTIN_PROMPT_BLOCKS,
   NODE_TYPE_LABELS,
+  fileSegmentKey,
+  isSourceOutputNeeded,
   maybeDrillToMarkdown,
+  passesPick,
+  segmentKey,
   type GraphNode,
   type NodeOutput,
+  type NodePick,
   type Recipe,
   type ResultDelta,
   type RunEvent,
@@ -112,12 +117,84 @@ interface ResolvedInput {
   position: number;
   /** 该输入对应的原始素材来源；用于溯源配方在 JSON 中写明“哪条视频/文稿/哪一段”。 */
   sourceMeta?: InputSourceMeta;
+  /** 该输入承载的素材段标识（用于把身份传给下游，以及按挑选过滤）。 */
+  itemKey?: string;
 }
 
 interface ResolvedInputs {
   text?: string;
   audioPaths: string[];
   items: ResolvedInput[];
+  /** 被素材挑选排除、本次没有进入处理的素材（保留来源与段标识，供落库与日志说明）。 */
+  excluded: { sourceNodeId: string; itemKey: string }[];
+}
+
+/** 节点是否配了素材挑选（含空数组：空数组表示明确排除该来源的全部素材）。 */
+function nodePick(node: GraphNode): NodePick | undefined {
+  const pick = (node.data as { pick?: NodePick }).pick;
+  return pick && typeof pick === "object" ? pick : undefined;
+}
+
+/**
+ * 按「连线顺序 + 该来源产出顺序」给产物补一个确定性段标识（仅用于兜底派生）。
+ * `explicit`：产出方自己写好的段标识，优先沿用——若在这里被重新派生，
+ * 下游再按标识挑选时就选不中了（标识会变成产出方的 position）。
+ */
+function derivedItemKey(sourceNodeId: string, position: number, explicit?: string): string {
+  return explicit ?? `pos:${sourceNodeId}:${position}`;
+}
+
+/**
+ * 从历史运行还原来源产物的素材身份。
+ * 内容寻址的下载路径对同一条视频是稳定的（例如 `…/nodes/n_src/7ee5….m4a`），
+ * 而多选卡片的转码产物固定为 `audio-<序号>.wav`，序号即 items 下标。
+ */
+function restoredAudioKey(node: GraphNode | undefined, outputPath: string): string | undefined {
+  if (!node) return undefined;
+  const data = node.data as { items?: unknown; bvid?: string; page?: number; fileId?: string; fileName?: string; filePath?: string };
+  if (node.type === "source.bili") {
+    const seq = Number(/audio-(\d+)\.wav$/.exec(outputPath)?.[1] ?? 0);
+    if (seq > 0) {
+      const items = Array.isArray(data.items)
+        ? (data.items as { bvid?: string; page?: number; cid?: number }[])
+        : [];
+      const item = items[seq - 1];
+      if (item) return segmentKey(node.id, { bvid: item.bvid ?? data.bvid, page: item.page, cid: item.cid });
+    }
+    const bvid = String(data.bvid ?? "").trim();
+    return bvid ? segmentKey(node.id, { bvid, page: Number(data.page ?? 1) }) : undefined;
+  }
+  if (node.type === "source.file") return fileSegmentKey(data);
+  return undefined;
+}
+
+/**
+ * 摘要里写明「本次只加工了其中几段」。
+ * 素材挑选会让节点只处理一部分素材，若摘要不点明，结果页会看起来像丢内容。
+ */
+function appendSkippedNote(summary: string | undefined, kept: number, skipped: number): string {
+  const total = kept + skipped;
+  const note = `已按挑选执行：处理 ${kept}/${total} 段（跳过 ${skipped} 段）`;
+  return summary ? `${summary} · ${note}` : note;
+}
+
+/**
+ * 把输入项与产出项配对，把素材身份传给下游。
+ *
+ * 采用「下标优先 + 唯一匹配兜底」：顺序一致时精确配对，数量不一致时（例如文本工具
+ * 过滤掉了空文本）若产出唯一则直接沿用唯一的那个输入身份，避免错配到别的素材上。
+ */
+function pairItemKeys(inputs: ResolvedInput[], outputs: NodeOutput[]): void {
+  if (outputs.length === 0) return;
+  if (inputs.length === outputs.length) {
+    outputs.forEach((output, i) => {
+      if (!output.itemKey && inputs[i]?.itemKey) output.itemKey = inputs[i].itemKey;
+    });
+    return;
+  }
+  if (outputs.length === 1 && inputs.length === 1 && !outputs[0].itemKey && inputs[0].itemKey) {
+    outputs[0].itemKey = inputs[0].itemKey;
+  }
 }
 
 function escapePathName(value: string): string {
@@ -678,7 +755,7 @@ export class RunEngine {
   }
 
   /** 单节点/局部运行：不在本次运行内的上游节点，从当前工程的最近一次成功结果取输入（支持多输出节点）。 */
-  private async previousOutputs(nodeId: string, projectId: string): Promise<NodeOutput[]> {
+  private async previousOutputs(nodeId: string, projectId: string, graph?: WorkflowGraph): Promise<NodeOutput[]> {
     const runIds = this.db
       .select({ id: runs.id })
       .from(runs)
@@ -731,10 +808,11 @@ export class RunEngine {
         .all();
       const seen = new Set<string>();
       const outputs: NodeOutput[] = [];
+      const originNode = graph?.nodes.find((n) => n.id === nodeId);
       for (const inputRow of audioRows) {
         if (!inputRow.path || seen.has(inputRow.path)) continue;
         seen.add(inputRow.path);
-        outputs.push({ kind: "audio", path: inputRow.path, size: inputRow.size ?? undefined });
+        outputs.push({ kind: "audio", path: inputRow.path, size: inputRow.size ?? undefined, itemKey: restoredAudioKey(originNode, inputRow.path) });
       }
       if (outputs.length > 0) return outputs;
     }
@@ -872,47 +950,124 @@ export class RunEngine {
         const branch = active.branches.get(source.id);
         if (branch && branch !== (edge.sourceHandle || "true")) continue;
       }
-      const outputs = active.nodeIds.has(source.id) ? (active.outputs.get(source.id) ?? []) : await this.previousOutputs(source.id, active.projectId);
+      const outputs = active.nodeIds.has(source.id)
+        ? (active.outputs.get(source.id) ?? [])
+        : await this.previousOutputs(source.id, active.projectId, active.graph);
       const sourceMeta = this.describeInputSource(active, source.id);
-      for (const output of outputs) items.push({ sourceNodeId: source.id, output, position: items.length, sourceMeta });
+      for (const output of outputs) {
+        const position = items.length;
+        items.push({
+          sourceNodeId: source.id,
+          output,
+          position,
+          sourceMeta,
+          // 产物自带身份时沿用；否则按「来源+产出顺序」派生。转写/AI 等节点逐个素材产出，
+          // 这个顺序与来源 items 的顺序一致，因此派生标识在下游可稳定匹配。
+          itemKey: derivedItemKey(source.id, position, output.itemKey),
+        });
+      }
     }
-    const audioPaths = items
+
+    // 素材挑选：未选中的素材不进入本节点，其下游因拿不到数据而一并跳过。
+    const pick = nodePick(node);
+    const kept: ResolvedInput[] = [];
+    const excluded: { sourceNodeId: string; itemKey: string }[] = [];
+    for (const item of items) {
+      if (passesPick(pick, item.sourceNodeId, item.itemKey)) kept.push(item);
+      else excluded.push({ sourceNodeId: item.sourceNodeId, itemKey: item.itemKey ?? "" });
+    }
+    if (excluded.length > 0) {
+      const detail = excluded.map((e) => e.itemKey).filter(Boolean).slice(0, 6).join("、");
+      await this.log(
+        active,
+        node.id,
+        "info",
+        `素材挑选：已跳过 ${excluded.length} 段未选中素材${detail ? `（${detail}）` : ""}`,
+      );
+    }
+    if (kept.length === 0 && items.length > 0) {
+      throw new Error(`素材挑选没有选中任何素材：共 ${items.length} 段全部被排除，请在节点高级设置里至少保留一段`);
+    }
+
+    const resolved = kept.map((item, i) => ({ ...item, position: i }));
+    const audioPaths = resolved
       .filter((i) => i.output.kind === "audio")
       .map((i) => i.output.path)
       .filter((p): p is string => Boolean(p))
       .map((p) => resolve(this.dataDir, p));
-    const texts = items.filter((i) => i.output.kind !== "audio");
-    return { text: texts.map((t) => t.output.text ?? "").filter(Boolean).join("\n\n") || undefined, audioPaths, items };
+    const texts = resolved.filter((i) => i.output.kind !== "audio");
+    return { text: texts.map((t) => t.output.text ?? "").filter(Boolean).join("\n\n") || undefined, audioPaths, items: resolved, excluded };
   }
 
   /** 把当前节点消费到的每个输入落库，供结果页单独查看。 */
-  private async persistInputs(active: ActiveRun, targetNodeId: string, items: ResolvedInput[]) {
+  private async persistInputs(
+    active: ActiveRun,
+    targetNodeId: string,
+    items: ResolvedInput[],
+    excluded: { sourceNodeId: string; itemKey: string }[] = [],
+  ) {
     const now = Date.now();
-    for (const item of items) {
-      const output = item.output;
+    let position = 0;
+    const insertRow = async (values: {
+      sourceNodeId: string;
+      kind: "text" | "audio";
+      text?: string;
+      path?: string;
+      size?: number;
+      itemKey?: string;
+      excluded: boolean;
+    }) => {
       await this.db
         .insert(runNodeInputs)
         .values({
           id: randomUUID(),
           runId: active.id,
           targetNodeId,
-          sourceNodeId: item.sourceNodeId,
-          kind: output.kind === "audio" ? "audio" : "text",
-          text: output.kind === "audio" ? undefined : output.text,
-          path: output.path,
-          size: output.size,
-          position: item.position,
+          sourceNodeId: values.sourceNodeId,
+          kind: values.kind,
+          text: values.text,
+          path: values.path,
+          size: values.size,
+          position: position++,
+          itemKey: values.itemKey,
+          excluded: values.excluded,
           createdAt: now,
         })
         .run();
+    };
+
+    for (const item of items) {
+      const output = item.output;
+      await insertRow({
+        sourceNodeId: item.sourceNodeId,
+        kind: output.kind === "audio" ? "audio" : "text",
+        text: output.kind === "audio" ? undefined : output.text,
+        path: output.path,
+        size: output.size,
+        itemKey: item.itemKey,
+        excluded: false,
+      });
+    }
+
+    // 被挑选排除了的素材也记一行：结果页据此说明「共 8 段、本次只加工 2 段」。
+    for (const skip of excluded) {
+      await insertRow({ sourceNodeId: skip.sourceNodeId, kind: "text", itemKey: skip.itemKey, excluded: true });
     }
   }
 
   /** 音频转写完成后，把对应音频输入行升级为文本（保留 source/target/position）。 */
-  private async updateInputText(active: ActiveRun, targetNodeId: string, sourceNodeId: string, position: number, text: string, size: number) {
+  private async updateInputText(
+    active: ActiveRun,
+    targetNodeId: string,
+    sourceNodeId: string,
+    position: number,
+    text: string,
+    size: number,
+    itemKey?: string,
+  ) {
     await this.db
       .update(runNodeInputs)
-      .set({ kind: "text", text, size, path: undefined })
+      .set({ kind: "text", text, size, path: undefined, itemKey })
       .where(
         and(
           eq(runNodeInputs.runId, active.id),
@@ -985,22 +1140,35 @@ export class RunEngine {
 
     let attempts = 0;
     try {
-      const inputs = await this.resolveInputs(active, node);
-      await this.persistInputs(active, node.id, inputs.items);
+      let inputs: ResolvedInputs;
+      try {
+        inputs = await this.resolveInputs(active, node);
+      } catch (err) {
+        // 取输入阶段就失败（例如素材挑选把所有素材都排除了）也必须落一条失败状态，
+        // 否则节点会永远停在「运行中」，运行结束时也说不清它为什么没产物。
+        const message = describeError(err);
+        const status = active.cancelled ? "cancelled" : "error";
+        await this.updateNode(active, nodeId, status, Date.now() - started, undefined, undefined, active.cancelled ? "已取消" : message, 1);
+        this.emit(active, { type: "node.error", runId: active.id, nodeId, error: active.cancelled ? "已取消" : message });
+        return status === "cancelled" ? "done" : "error";
+      }
+      await this.persistInputs(active, node.id, inputs.items, inputs.excluded);
       while (true) {
         attempts += 1;
         try {
           const result = await this.runNode(active, node, inputs, abort.signal);
           if (active.cancelled) throw new Error("运行已取消");
           const elapsed = Date.now() - started;
+          pairItemKeys(inputs.items, result.outputs);
           const combined = this.combineOutputs(node, result.outputs);
           const delta = computeResultDelta(combined, inputs);
-          await this.updateNode(active, nodeId, "done", elapsed, result.summary, combined, undefined, attempts);
+          const summary = inputs.excluded.length > 0 ? appendSkippedNote(result.summary, inputs.items.length, inputs.excluded.length) : result.summary;
+          await this.updateNode(active, nodeId, "done", elapsed, summary, combined, undefined, attempts);
           this.emit(active, {
             type: "node.done",
             runId: active.id,
             nodeId,
-            summary: result.summary ?? "完成",
+            summary: summary ?? "完成",
             preview: node.type === "process.mindmap" || node.type === "process.output" || node.type === "process.drill" ? undefined : previewFor(combined),
             delta,
           });
@@ -1046,10 +1214,18 @@ export class RunEngine {
           const dir = join(this.dataDir, "runs", active.id, "nodes", node.id);
           await mkdir(dir, { recursive: true });
           const outputs: NodeOutput[] = [];
+          let skippedCount = 0;
           for (let i = 0; i < items.length; i += 1) {
             const item = items[i];
             const bvid = String(item.bvid ?? "").trim();
             if (!bvid) throw new Error(`多选卡片第 ${i + 1} 项缺少 BV 号`);
+            const itemKey = segmentKey(node.id, { bvid, page: Number(item.page ?? 1), cid: Number(item.cid ?? 0) });
+            // 素材挑选：下游都不要的素材不下载，避免「没选它却仍然跑了一遍」。
+            if (!isSourceOutputNeeded(active.graph, node.id, itemKey)) {
+              skippedCount += 1;
+              await this.log(active, node.id, "info", `跳过素材 ${i + 1}/${items.length}（未被任何下游节点选中）：${itemKey}`);
+              continue;
+            }
             let cid = Number(item.cid ?? 0);
             if (!cid) {
               const detail = await fetchBiliVideoDetail(bvid);
@@ -1062,7 +1238,7 @@ export class RunEngine {
             const wav = join(dir, `audio-${i + 1}.wav`);
             await toAsrWav(audio, wav);
             const size = await stat(wav).then((s) => s.size);
-            outputs.push({ kind: "audio", path: `runs/${active.id}/nodes/${node.id}/audio-${i + 1}.wav`, size });
+            outputs.push({ kind: "audio", path: `runs/${active.id}/nodes/${node.id}/audio-${i + 1}.wav`, size, itemKey });
             if (this.wantsKeepVideo(active, node.id, data)) {
               const result = await ensureBiliVideoAsset(this.db, this.dataDir, {
                 bvid,
@@ -1077,7 +1253,7 @@ export class RunEngine {
               await this.attachVideoResult(active, node.id, i, result);
             }
           }
-          return { outputs, summary: `${items.length} 个音轨已就绪` };
+          return { outputs, summary: `${outputs.length} 个音轨已就绪${skippedCount > 0 ? `（另跳过 ${skippedCount} 个未选中素材）` : ""}` };
         }
 
         const url = String(data.url ?? "").trim();
@@ -1092,6 +1268,11 @@ export class RunEngine {
           cid = page?.cid ?? 0;
         }
         if (!cid) throw new Error("该视频缺少 cid，请重新在卡片中解析链接");
+        const singleKey = segmentKey(node.id, { bvid, page: Number(pageInfo?.page ?? 1) });
+        if (!isSourceOutputNeeded(active.graph, node.id, singleKey)) {
+          await this.log(active, node.id, "info", `跳过该素材（未被任何下游节点选中）：${singleKey}`);
+          return { outputs: [], summary: "未被选中" };
+        }
         const cookie = this.db.select().from(biliCookies).where(eq(biliCookies.id, 1)).get()?.cookie;
         const dir = join(this.dataDir, "runs", active.id, "nodes", node.id);
         await mkdir(dir, { recursive: true });
@@ -1117,12 +1298,17 @@ export class RunEngine {
           });
           await this.attachVideoResult(active, node.id, 0, result);
         }
-        return { outputs: [{ kind: "audio", path: rel, size }], summary: "音轨已就绪" };
+        return { outputs: [{ kind: "audio", path: rel, size, itemKey: singleKey }], summary: "音轨已就绪" };
       }
 
       case "source.file": {
         const filePath = String(data.filePath ?? "");
         if (!filePath) throw new Error("请先上传本地音视频");
+        const fileKey = fileSegmentKey(data as { fileId?: string; fileName?: string; filePath?: string });
+        if (!isSourceOutputNeeded(active.graph, node.id, fileKey)) {
+          await this.log(active, node.id, "info", `跳过该素材（未被任何下游节点选中）：${fileKey}`);
+          return { outputs: [], summary: "未被选中" };
+        }
         const abs = resolve(this.dataDir, filePath);
         const dir = join(this.dataDir, "runs", active.id, "nodes", node.id);
         await mkdir(dir, { recursive: true });
@@ -1136,7 +1322,7 @@ export class RunEngine {
           await this.attachVideoResult(active, node.id, 0, result);
         }
         return {
-          outputs: [{ kind: "audio", path: `runs/${active.id}/nodes/${node.id}/audio.wav` }],
+          outputs: [{ kind: "audio", path: `runs/${active.id}/nodes/${node.id}/audio.wav`, itemKey: fileKey }],
           summary: String(data.fileName ?? "音轨已就绪"),
         };
       }
@@ -1144,7 +1330,8 @@ export class RunEngine {
       case "source.text": {
         const text = String(data.text ?? "").trim();
         if (!text) throw new Error("文稿为空");
-        return { outputs: [{ kind: "text", text, size: text.length }], summary: `${text.length} 字` };
+        // 多份文稿连到同一节点时同样可以挑选，因此单份文稿也带上身份。
+        return { outputs: [{ kind: "text", text, size: text.length, itemKey: segmentKey(node.id, {}) }], summary: `${text.length} 字` };
       }
 
       case "process.transcribe": {
@@ -1163,7 +1350,7 @@ export class RunEngine {
           if (!text.trim()) throw new Error(`第 ${i + 1} 个音频转写结果为空`);
           await this.log(active, node.id, "ai-response", text, undefined, inputRef(item));
           const trimmed = text.trim();
-          await this.updateInputText(active, node.id, item.sourceNodeId, item.position, trimmed, trimmed.length);
+          await this.updateInputText(active, node.id, item.sourceNodeId, item.position, trimmed, trimmed.length, item.itemKey);
           parts.push(trimmed);
         }
         const outputs = parts.map((text) => ({ kind: "text" as const, text, size: text.length }));
@@ -1326,6 +1513,21 @@ export class RunEngine {
         return { outputs: [{ kind: "noteDoc", text: outText, path: rel, size: outText.length }], summary: `${fileName} · ${outText.length} 字` };
       }
 
+      case "flow.pick": {
+        // 到达这里说明挑选已经在 resolveInputs 里生效（未选中的素材根本没进来），
+        // 本节点的职责只是把选中的原样放行，并把素材身份一起传下去。
+        const textItems = inputs.items.filter((i) => i.output.kind !== "audio" && (i.output.text ?? "").trim());
+        if (textItems.length === 0) throw new Error("没有可挑选的内容输入");
+        const outputs: NodeOutput[] = textItems.map((item) => ({
+          kind: item.output.kind,
+          text: item.output.text,
+          size: item.output.size ?? item.output.text?.length,
+          itemKey: item.itemKey,
+        }));
+        const total = inputs.items.length + inputs.excluded.length;
+        return { outputs, summary: `放行 ${textItems.length}/${total} 段` };
+      }
+
       case "flow.if": {
         if (!inputs.text) throw new Error("没有可判断的输入");
         const cond = data.condition as { field?: string; op?: string; value?: string } | undefined;
@@ -1368,7 +1570,7 @@ export class RunEngine {
         const operation = String(data.operation ?? "cleanup");
         const outputs: NodeOutput[] = textItems.map((item) => {
           const text = applyTextOperation(operation, item.output.text ?? "", data);
-          return { kind: item.output.kind as NodeOutput["kind"], text, size: text.length };
+          return { kind: item.output.kind as NodeOutput["kind"], text, size: text.length, itemKey: item.itemKey };
         });
         const total = outputs.reduce((sum, output) => sum + (output.text?.length ?? 0), 0);
         return { outputs, summary: `${outputs.length} 个输入 · ${total} 字` };
@@ -1966,6 +2168,8 @@ ${JSON.stringify(taxonomyTags)}`;
       path: r.path ?? undefined,
       size: r.size ?? undefined,
       position: r.position,
+      itemKey: r.itemKey ?? undefined,
+      excluded: r.excluded === true,
       createdAt: r.createdAt,
     }));
     let graph = row.graphJson ? (JSON.parse(row.graphJson) as WorkflowGraph) : undefined;

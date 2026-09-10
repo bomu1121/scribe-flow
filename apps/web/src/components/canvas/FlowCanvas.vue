@@ -139,6 +139,12 @@ function ctxFor(nodeId: string) {
     },
     updateData: (patch: Record<string, unknown>) => updateNodeData(nodeId, patch),
     commit: () => commitHistory(),
+    /**
+     * 当前工程图。用画布自己的 nodesRef/edgesRef（工程定义）而不是 Vue Flow 的 store：
+     * store 只保证「能渲染的边」都在，边集可能与工程定义不一致，
+     * 节点卡片据此计算可挑选的素材才不会与真实链路走偏。
+     */
+    getGraph: () => snapshot(),
     addSourceVideos: (videos: import("@scribe-flow/shared").SourceVideoItem[]) => addSourceVideos(nodeId, videos),
   };
 }

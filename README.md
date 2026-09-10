@@ -4,7 +4,9 @@
 
 ## 项目状态
 
-- 当前里程碑：**M0–M5 全部完成** 🎉
+- 当前里程碑：**M0–M6 全部完成** 🎉
+- M6 基础件（失败重试 / 条件分支 `flow.if` / 文本工具 `process.text` / 章节切分 `process.chapter`）**已实施**：`packages/shared/src/graph.ts` 已含四类节点，运行状态含 `skipped`；实施清单见 [docs/scribe-flow-m6.md](docs/scribe-flow-m6.md)（该文档正文为实施依据，头部状态已过期，以代码为准）
+- 素材挑选（段级分流）：多素材链路可在节点高级设置里只加工其中几段，未选中的素材连同其下游一并跳过（开发记录 §15）
 - M5 分层验收：[docs/m5-acceptance.md](docs/m5-acceptance.md)（主包 1130KB→124.6KB · smoke 37/37 · Docker 构建通过）
 - 结果展示页方案：[docs/result-viewer-design.md](docs/result-viewer-design.md)（多输入/多输出、缩放/编辑/全屏、返回工作流）
 - M4 分层验收：[docs/m4-acceptance.md](docs/m4-acceptance.md)（L0 9 用例 · L1 12/12 · L2 34/34 · L3 bsk 真实浏览器）

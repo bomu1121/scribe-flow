@@ -1,4 +1,6 @@
 import { randomUUID } from "node:crypto";
+import { mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { desc, eq, isNull } from "drizzle-orm";
 import { Hono } from "hono";
 import { z } from "zod";
@@ -64,6 +66,34 @@ function cleanGraph(graph: WorkflowGraph): WorkflowGraph {
   };
 }
 
+/**
+ * 覆盖工程图前，把「前一版」留档到 data/graph-backups/。
+ *
+ * 背景（2026-09-10 实际发生过两次）：工程图只有服务端这一份，而编辑器在异常路径
+ * （热更新换组件树、渲染失败、防抖保存竞态）下可能把空画布写回来，一次覆盖就永久丢失。
+ * 留档让丢失永远可回滚，且不依赖前端时序。每工程保留最近 20 份。
+ */
+function backupGraph(_db: AppDatabase, dataDir: string, projectId: string, previousJson: string): void {
+  try {
+    const graph = JSON.parse(previousJson) as WorkflowGraph;
+    // 空图没有留档价值。
+    if (!Array.isArray(graph.nodes) || graph.nodes.length === 0) return;
+    const dir = join(dataDir, "graph-backups");
+    mkdirSync(dir, { recursive: true });
+    const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+    writeFileSync(join(dir, `${projectId}.${stamp}.json`), previousJson, "utf8");
+    const prefix = `${projectId}.`;
+    const mine = readdirSync(dir)
+      .filter((name) => name.startsWith(prefix) && name.endsWith(".json"))
+      .sort();
+    for (const stale of mine.slice(0, Math.max(0, mine.length - 20))) {
+      rmSync(join(dir, stale), { force: true });
+    }
+  } catch {
+    // 留档失败不影响正常保存：这是保险，不是主流程。
+  }
+}
+
 function toListItem(row: ProjectRow) {
   let nodeCount = 0;
   try {
@@ -115,7 +145,7 @@ function graphForTemplate(templateId: string | undefined): { graph: WorkflowGrap
   return { graph: emptyGraph(), name: "未命名工程", description: "" };
 }
 
-export function projectsApi(db: AppDatabase, engine: RunEngine) {
+export function projectsApi(db: AppDatabase, engine: RunEngine, dataDir: string) {
   const api = new Hono();
 
   api.get("/", (c) => {
@@ -193,6 +223,9 @@ export function projectsApi(db: AppDatabase, engine: RunEngine) {
       return c.json({ error: "画布数据校验失败：存在非法节点或连线" }, 400);
     }
 
+    // 覆盖前留一份「前一版」：编辑器在异常路径（热更新换树、渲染失败、防抖竞态）下
+    // 可能把空画布写回来，而工程图只有服务端这一份。留档让丢失永远可恢复。
+    backupGraph(db, dataDir, id, row.graphJson);
     db.update(projects)
       .set({ graphJson: JSON.stringify(graph), updatedAt: now() })
       .where(eq(projects.id, id))

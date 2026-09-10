@@ -49,6 +49,11 @@ export interface NodeOutput {
   /** 音频/大文件的相对存储路径（data 目录内）。 */
   path?: string;
   size?: number;
+  /**
+   * 素材段标识（见 segmentKey）：该产物对应哪一个来源素材。
+   * 缺失表示不可筛选的整体产物（如合并后的文档），一律通过节点的素材挑选。
+   */
+  itemKey?: string;
 }
 
 export interface RunNodeInput {
@@ -66,6 +71,13 @@ export interface RunNodeInput {
   size?: number;
   /** 同一目标节点下的输入顺序（按连线顺序）。 */
   position: number;
+  /** 该输入承载的素材段标识（见 segment.ts 的 segmentKey）；整体产物可能没有。 */
+  itemKey?: string;
+  /**
+   * 该输入被节点的素材挑选排除，本次没有进入处理。
+   * 记录它只为让结果页能说明「素材共 8 段、本次只加工 2 段」，不代表节点消费了它。
+   */
+  excluded?: boolean;
   createdAt: number;
 }
 

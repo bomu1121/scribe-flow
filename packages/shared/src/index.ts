@@ -1,5 +1,6 @@
 export * from "./port";
 export * from "./graph";
+export * from "./segment";
 export * from "./project";
 export * from "./run";
 export * from "./nutstore";

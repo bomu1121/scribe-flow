@@ -1,6 +1,6 @@
 # ScribeFlow 实施清单 M6（基础件补全：重试 / 条件分支 / 文本工具 / 章节切分）
 
-> 状态：**M6 实施清单，待开工**（2026-09-02 由模块拓展路线图拆出）
+> 状态：**四个基础件已实施**（代码为准：`packages/shared/src/graph.ts` 已含 `flow.if` / `process.text` / `process.chapter` 与 `skipped` 运行状态，引擎侧重试与跳过传播已落地）；本文件头部的「待开工」是 2026-09-02 拆分时的旧状态，清单正文保留作实施依据与验收对照。
 > 依据：[workflow-module-roadmap.md](./workflow-module-roadmap.md) §3、[r1-desktop-research.md](./research/r1-desktop-research.md)、[scribe-flow-proposal.md](./scribe-flow-proposal.md)
 > 工作方式：沿用 M0–M5 约定——中文文案、UTF-8、颜色走设计令牌、交互照搬 n8n、许可证红线（只复刻行为不抄代码）。
 
