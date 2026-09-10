@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
-import { ElDropdown, ElDropdownItem, ElDropdownMenu } from "element-plus";
+import { ElDropdown, ElDropdownItem, ElDropdownMenu, ElMessageBox } from "element-plus";
 import { toast } from "@/lib/toast";
 import { Activity, Check, Copy, Download, History, LayoutPanelTop, Maximize, MoreHorizontal, Play, Redo2, StopCircle, Trash2, Undo2 } from "lucide-vue-next";
 import { emptyGraph, type NodeType, type RunDetail, type RunMeta, type RunNodeResult, type SourceVideoItem, type WorkflowGraph } from "@scribe-flow/shared";
@@ -115,6 +115,8 @@ async function loadProject() {
       }),
     };
     graph.value = nextGraph;
+    lastSavedNodeCount = nextGraph.nodes.length;
+    guardProjectId = id;
     saveState.value = "saved";
     loaded.value = true;
     await nextTick();
@@ -234,12 +236,42 @@ function onGraphUpdate(next: WorkflowGraph) {
   scheduleSave();
 }
 
+/**
+ * 防误清空护栏：最近一次成功落盘的节点数。
+ * 画布被清空（误触删除、全选删除、渲染异常）时，防抖自动保存会把空 nodes 写回服务端，
+ * 覆盖掉唯一一份工程图——刷新后节点就永久消失（2026-09-10 实际发生过一次）。
+ * 因此写成空画布前先让用户确认：取消则本次不落盘、服务端保留上一版非空图（刷新即可恢复）。
+ */
+let lastSavedNodeCount = 0;
+let guardProjectId = "";
+let emptyGraphConfirming = false;
+
 function scheduleSave() {
   saveState.value = "saving";
   if (saveTimer) clearTimeout(saveTimer);
   saveTimer = setTimeout(async () => {
+    if (graph.value.nodes.length === 0 && lastSavedNodeCount > 0 && guardProjectId === projectId.value) {
+      if (emptyGraphConfirming) return;
+      emptyGraphConfirming = true;
+      try {
+        await ElMessageBox.confirm("画布已没有任何节点，确定要清空这个工程的画布并保存吗？", "清空画布确认", {
+          confirmButtonText: "清空并保存",
+          cancelButtonText: "取消",
+          type: "warning",
+          confirmButtonClass: "el-button--danger",
+        });
+      } catch {
+        saveState.value = "saved";
+        toast.warning("已取消：空画布未保存，刷新页面即可恢复上一版画布。");
+        return;
+      } finally {
+        emptyGraphConfirming = false;
+      }
+      if (disposed || !loaded.value) return;
+    }
     try {
       await store.saveGraph(projectId.value, graph.value);
+      lastSavedNodeCount = graph.value.nodes.length;
       saveState.value = "saved";
     } catch (err) {
       saveState.value = "error";
