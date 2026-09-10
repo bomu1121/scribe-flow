@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, defineAsyncComponent, h, onBeforeUnmount, onMounted, provide, ref, watch } from "vue";
 import { ElInput, ElMessageBox, ElSwitch, ElTooltip, ElUpload, type UploadRequestOptions } from "element-plus";
-import { PhBookOpenText, PhCloud, PhDotsThreeVertical, PhFileArrowDown, PhFileText, PhGitBranch, PhGitMerge, PhMagicWand, PhMicrophone, PhPlay, PhShareNetwork, PhSlidersHorizontal, PhSparkle, PhSwap, PhTreeStructure, PhUploadSimple, PhVideo } from "@phosphor-icons/vue";
+import { PhBookOpenText, PhCloud, PhDotsThreeVertical, PhFileArrowDown, PhFileText, PhGitBranch, PhGitMerge, PhListChecks, PhMagicWand, PhMicrophone, PhPlay, PhShareNetwork, PhSlidersHorizontal, PhSparkle, PhSwap, PhTreeStructure, PhUploadSimple, PhVideo } from "@phosphor-icons/vue";
 import { CircleAlert } from "lucide-vue-next";
 import { toast } from "@/lib/toast";
 import { Handle, Position, useVueFlow, type NodeProps } from "@vue-flow/core";
@@ -14,6 +14,7 @@ import TextToolCard from "./node-cards/TextToolCard.vue";
 import ChapterCard from "./node-cards/ChapterCard.vue";
 import RetryFields from "./node-cards/RetryFields.vue";
 import ObsidianCard from "./node-cards/ObsidianCard.vue";
+import DrillCard from "./node-cards/DrillCard.vue";
 import { renderMarkdown } from "@/lib/markdown";
 import { usePromptsStore } from "@/stores/prompts";
 import { api } from "@/lib/api";
@@ -307,12 +308,23 @@ const nodeDescriptions: Record<NodeType, string> = {
   "process.gameguide": "将阴阳师攻略文稿整理为结构化攻略笔记",
   "process.mindmap": "将文稿整理为思维导图 Markdown",
   "process.obsidian": "将结果写入 Obsidian 笔记库",
+  "process.drill": "从文稿提炼可考察的知识点并出题，在结果页答题",
 };
 
 const nodeDescription = computed(() => nodeDescriptions[nodeType.value] ?? "");
 
 const hasAdvanced = computed(() =>
-  ["source.bili", "source.file", "process.transcribe", "process.refine", "process.prompt", "process.chapter", "process.gameguide", "process.mindmap"].includes(nodeType.value),
+  [
+    "source.bili",
+    "source.file",
+    "process.transcribe",
+    "process.refine",
+    "process.prompt",
+    "process.chapter",
+    "process.gameguide",
+    "process.mindmap",
+    "process.drill",
+  ].includes(nodeType.value),
 );
 const isVideoSource = computed(() => nodeType.value === "source.bili" || nodeType.value === "source.file");
 /** 来源节点的「高级设置」不涉及失败重试，标题保持简洁。 */
@@ -369,6 +381,8 @@ const typeIcon = computed(() => {
       return PhShareNetwork;
     case "process.obsidian":
       return PhBookOpenText;
+    case "process.drill":
+      return PhListChecks;
   }
 });
 
@@ -719,6 +733,11 @@ function patchObsidian(value: Record<string, unknown>) {
   commit();
 }
 
+function patchDrill(value: Record<string, unknown>) {
+  patch(value);
+  commit();
+}
+
 const branchSizeOptions = [
   { label: "自动（4-7 个）", value: "auto" },
   { label: "精简（3-5 个）", value: "few" },
@@ -1010,6 +1029,17 @@ const themeOptions = [
 
           <template v-else-if="nodeType === 'process.obsidian'">
             <ObsidianCard :folder="data.folder" @update="patchObsidian" />
+          </template>
+
+          <template v-else-if="nodeType === 'process.drill'">
+            <DrillCard
+              :point-count="data.pointCount"
+              :kinds="data.kinds"
+              :difficulty="data.difficulty"
+              :with-extensions="data.withExtensions"
+              :focus="data.focus"
+              @update="patchDrill"
+            />
           </template>
 
           <template v-else-if="nodeType === 'process.merge'">
@@ -1315,6 +1345,9 @@ const themeOptions = [
   width: 300px;
 }
 .sf-node--process-obsidian {
+  width: 300px;
+}
+.sf-node--process-drill {
   width: 300px;
 }
 

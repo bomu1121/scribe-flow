@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from "vue";
 import { useRoute } from "vue-router";
-import { PhBookOpenText, PhFileArrowDown, PhFileText, PhFolderStar, PhGitBranch, PhGitMerge, PhMagicWand, PhMicrophone, PhShareNetwork, PhSparkle, PhSwap, PhTreeStructure, PhUploadSimple, PhVideo } from "@phosphor-icons/vue";
+import { PhBookOpenText, PhFileArrowDown, PhFileText, PhFolderStar, PhGitBranch, PhGitMerge, PhListChecks, PhMagicWand, PhMicrophone, PhShareNetwork, PhSparkle, PhSwap, PhTreeStructure, PhUploadSimple, PhVideo } from "@phosphor-icons/vue";
 import { toast } from "@/lib/toast";
 import { NODE_TYPE_LABELS, type NodeType } from "@scribe-flow/shared";
 import { useUiStore } from "@/stores/ui";
@@ -49,6 +49,7 @@ const groups: CatalogGroup[] = [
       { type: "process.gameguide", icon: PhSparkle, description: "阴阳师攻略结构化笔记，无需选提示词" },
       { type: "process.chapter", icon: PhTreeStructure, description: "按结构分章" },
       { type: "process.mindmap", icon: PhShareNetwork, description: "整理为思维导图" },
+      { type: "process.drill", icon: PhListChecks, description: "提炼考察点并出题，结果页答题" },
     ],
   },
   {

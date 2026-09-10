@@ -14,17 +14,23 @@ export interface StepContext {
   all: string;
   /** 当前输入对应的来源元信息（如《视频标题》· UP主 · 链接），由引擎注入。 */
   source?: string;
+  /**
+   * 节点参数指令（如「考察点数量 / 题型 / 难度」），由引擎按节点 data 生成后注入。
+   * 刻意与 input 分离：断言门的引用回查以 input 为比对源，参数不能混进原文。
+   */
+  params?: string;
 }
 
-const TEMPLATE_VARS = ["{{input}}", "{{prev}}", "{{all}}", "{{source}}"] as const;
+const TEMPLATE_VARS = ["{{input}}", "{{prev}}", "{{all}}", "{{source}}", "{{params}}"] as const;
 
-/** 展开 {{input}} / {{prev}} / {{all}} / {{source}}；其余 {{...}} 原样保留（避免误伤老提示词）。 */
+/** 展开 {{input}} / {{prev}} / {{all}} / {{source}} / {{params}}；其余 {{...}} 原样保留（避免误伤老提示词）。 */
 export function renderStepSystem(template: string, ctx: StepContext): string {
   return template
     .replace(/\{\{input\}\}/g, ctx.input)
     .replace(/\{\{prev\}\}/g, ctx.prev)
     .replace(/\{\{all\}\}/g, ctx.all)
-    .replace(/\{\{source\}\}/g, ctx.source ?? "");
+    .replace(/\{\{source\}\}/g, ctx.source ?? "")
+    .replace(/\{\{params\}\}/g, ctx.params ?? "");
 }
 
 /** 把某一步的输出拼接进“全部产物”上下文。 */

@@ -1,4 +1,5 @@
 import { canConnect, type PortSpec, type PortType } from "./port";
+import type { DrillDifficulty, DrillKind } from "./drill";
 
 export type NodeRunStatus = "idle" | "queued" | "running" | "done" | "error" | "cancelled" | "skipped";
 
@@ -150,6 +151,19 @@ export interface ObsidianData {
   folder?: string;
 }
 
+export interface DrillData {
+  /** 考察点数量上限，3-12，默认 6。 */
+  pointCount?: number;
+  /** 题型白名单；默认单选 + 判断 + 填空。 */
+  kinds?: DrillKind[];
+  /** 难度，默认适中。 */
+  difficulty?: DrillDifficulty;
+  /** 是否输出「再想一步」延伸问题，默认开。 */
+  withExtensions?: boolean;
+  /** 可选考察侧重，例如「只考察数据与结论」。 */
+  focus?: string;
+}
+
 export type NodeType =
   | "source.bili"
   | "source.file"
@@ -164,7 +178,8 @@ export type NodeType =
   | "process.chapter"
   | "process.gameguide"
   | "process.mindmap"
-  | "process.obsidian";
+  | "process.obsidian"
+  | "process.drill";
 
 export interface NodeBase {
   id: string;
@@ -194,7 +209,8 @@ export type GraphNode =
   | (NodeBase & { type: "process.chapter"; data: NodeBase["data"] & ChapterData })
   | (NodeBase & { type: "process.gameguide"; data: NodeBase["data"] & GameGuideData })
   | (NodeBase & { type: "process.mindmap"; data: NodeBase["data"] & MindMapData })
-  | (NodeBase & { type: "process.obsidian"; data: NodeBase["data"] & ObsidianData });
+  | (NodeBase & { type: "process.obsidian"; data: NodeBase["data"] & ObsidianData })
+  | (NodeBase & { type: "process.drill"; data: NodeBase["data"] & DrillData });
 
 export interface GraphEdge {
   id: string;
@@ -232,6 +248,7 @@ export const NODE_TYPE_LABELS: Record<NodeType, string> = {
   "process.gameguide": "阴阳师攻略加工",
   "process.mindmap": "思维导图",
   "process.obsidian": "Obsidian 笔记",
+  "process.drill": "知识巩固",
 };
 
 /** 画布节点卡片宽度（px）；与 apps/web/src/components/canvas/ScribeNode.vue 的 .sf-node--* 宽度保持一致。 */
@@ -250,6 +267,7 @@ export const NODE_CARD_WIDTH: Record<NodeType, number> = {
   "process.gameguide": 300,
   "process.mindmap": 300,
   "process.obsidian": 300,
+  "process.drill": 300,
 };
 
 /** 每个节点类型的端口定义。 */
@@ -313,6 +331,12 @@ export const NODE_PORTS: Record<NodeType, { inputs: PortSpec[]; outputs: PortSpe
       { id: "in", type: "noteDoc", label: "输入", accepts: ["transcript", "noteBlock", "noteDoc"] },
     ],
     outputs: [],
+  },
+  "process.drill": {
+    inputs: [
+      { id: "in", type: "transcript", label: "文稿", accepts: ["transcript", "noteBlock", "noteDoc"] },
+    ],
+    outputs: [{ id: "out", type: "noteBlock", label: "练习产物" }],
   },
 };
 

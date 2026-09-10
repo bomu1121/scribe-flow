@@ -302,6 +302,40 @@ function videoGameGuideGraph(): WorkflowGraph {
   };
 }
 
+/** 模板十一：视频转练一练（B站视频 → 转写 → 校对 → AI 加工 → 输出 + 知识巩固）。 */
+function videoDrillGraph(): WorkflowGraph {
+  const asrX = nextColumnX("source.bili", 0);
+  const refineX = nextColumnX("process.transcribe", asrX);
+  const promptX = nextColumnX("process.refine", refineX);
+  const outX = nextColumnX("process.prompt", promptX);
+  return {
+    schemaVersion: 1,
+    nodes: [
+      node("source.bili", "n_src", 0, 40, { label: "B站链接", url: "" }),
+      node("process.transcribe", "n_asr", asrX, 40, { label: "转写" }),
+      node("process.refine", "n_refine", refineX, 40, { label: "AI 校对" }),
+      node("process.prompt", "n_prompt", promptX, 40, { label: "AI 加工" }),
+      node("process.output", "n_out", outX, 40, { label: "输出", fileName: "笔记.md" }),
+      node("process.drill", "n_drill", outX, 420, {
+        label: "知识巩固",
+        pointCount: 6,
+        kinds: ["single", "judge", "cloze"],
+        difficulty: "medium",
+        withExtensions: true,
+        retry: { maxRetries: 2, backoffMs: 3000 },
+      }),
+    ],
+    edges: [
+      edge("e1", "n_src", "n_asr", "audio", "audio"),
+      edge("e2", "n_asr", "n_refine", "transcript", "transcript"),
+      edge("e3", "n_refine", "n_prompt", "transcript", "transcript"),
+      edge("e4", "n_prompt", "n_out", "noteBlock", "noteDoc"),
+      edge("e5", "n_prompt", "n_drill", "noteBlock", "in"),
+    ],
+    viewport: { x: 0, y: 0, zoom: 1 },
+  };
+}
+
 export const WORKFLOW_TEMPLATES: WorkflowTemplate[] = [
   {
     id: "template.video-basic",
@@ -362,5 +396,11 @@ export const WORKFLOW_TEMPLATES: WorkflowTemplate[] = [
     name: "视频转阴阳师攻略笔记（核对版）",
     description: "B站阴阳师攻略视频 → 转写 → AI 校对 → AI 阴阳师攻略加工 → 输出 Markdown",
     graph: videoGameGuideGraph(),
+  },
+  {
+    id: "template.video-drill",
+    name: "视频转练一练",
+    description: "B站视频 → 转写 → AI 校对 → AI 加工成笔记 → 输出，并用「知识巩固」提炼可考察知识点、出题与延伸问题，在结果页答题",
+    graph: videoDrillGraph(),
   },
 ];

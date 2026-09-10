@@ -113,6 +113,13 @@ const nodeDataByType = {
     url: z.string().optional(),
     folder: z.string().optional(),
   }),
+  drill: baseDataSchema.extend({
+    pointCount: z.number().int().min(3).max(12).optional(),
+    kinds: z.array(z.enum(["single", "multi", "judge", "cloze"])).min(1).optional(),
+    difficulty: z.enum(["basic", "medium", "hard"]).optional(),
+    withExtensions: z.boolean().optional(),
+    focus: z.string().max(200).optional(),
+  }),
 };
 
 function nodeOf(type: string, data: z.ZodTypeAny) {
@@ -139,6 +146,7 @@ export const graphNodeSchema = z.discriminatedUnion("type", [
   nodeOf("process.gameguide", nodeDataByType.gameGuide),
   nodeOf("process.mindmap", nodeDataByType.mindMap),
   nodeOf("process.obsidian", nodeDataByType.obsidian),
+  nodeOf("process.drill", nodeDataByType.drill),
 ]);
 
 export const graphEdgeSchema = z.object({

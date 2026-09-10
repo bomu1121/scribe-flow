@@ -1,5 +1,5 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
@@ -22,6 +22,8 @@ let baseUrl: string;
 let chatCalls = 0;
 /** v4 终稿步 mock 是否故意输出含 ### 的违规文本（版式硬门用例）。 */
 let v4FinalizeViolates = false;
+/** 知识巩固用例：出题/审题步是否额外产出一道引文不存在的题（触发降级丢弃）。 */
+let drillExtraItem = false;
 
 function reply(res: ServerResponse, content: string): void {
   res.setHeader("Content-Type", "application/json");
@@ -139,6 +141,106 @@ beforeAll(async () => {
       } else if (system.includes("依据核对表修正草稿")) {
         expect(system).toContain("回文核对"); // {{all}} 展开后含「拆解清单、草稿、核对表」标记
         reply(res, "最终修正后的笔记正文，无代码围栏。");
+      } else if (system.includes("值得被考察")) {
+        // 知识巩固 scan：参数经 {{params}} 注入 system，引文逐字取自原文。
+        expect(system).toContain("【出题要求】");
+        reply(
+          res,
+          JSON.stringify({
+            points: [
+              {
+                id: "p1",
+                name: "关键结论数据",
+                type: "fact",
+                gist: "原文给出的结论数据是 42",
+                worthTesting: "数字最容易被记错",
+                sourceQuote: "示例原文关键句甲",
+              },
+            ],
+          }),
+        );
+      } else if (system.includes("为每个知识点出题")) {
+        expect(system).toContain("【出题要求】");
+        expect(system).toContain("示例原文关键句甲"); // 原文经 {{input}} 注入 step 2
+        reply(
+          res,
+          JSON.stringify({
+            items: [
+              {
+                id: "q1",
+                pointId: "p1",
+                kind: "single",
+                difficulty: "medium",
+                stem: "原文给出的结论数据是多少？",
+                options: ["42", "7", "100"],
+                answer: ["42"],
+                explanation: "原文末尾给出结论数据 42。",
+                sourceQuote: "示例原文关键句甲",
+              },
+              ...(drillExtraItem
+                ? [
+                    {
+                      id: "q2",
+                      pointId: "p1",
+                      kind: "single",
+                      stem: "这篇文章主要用于什么测试？",
+                      options: ["观点提炼测试", "语音识别测试", "排版测试"],
+                      answer: ["观点提炼测试"],
+                      explanation: "原文说明供观点提炼测试使用。",
+                      sourceQuote: "这句引文在原文里根本不存在",
+                    },
+                  ]
+                : []),
+            ],
+            extensions: [{ pointId: "p1", question: "再想一步：42 这个数字是怎么得出的？", hint: "回到原文找依据", angle: "举证方式" }],
+          }),
+        );
+      } else if (system.includes("你是审题编辑")) {
+        expect(system).toContain("示例原文关键句甲");
+        reply(
+          res,
+          JSON.stringify({
+            title: "示例练习",
+            points: [
+              {
+                id: "p1",
+                name: "关键结论数据",
+                type: "fact",
+                gist: "原文给出的结论数据是 42",
+                worthTesting: "数字最容易被记错",
+                sourceQuote: "示例原文关键句甲",
+              },
+            ],
+            items: [
+              {
+                id: "q1",
+                pointId: "p1",
+                kind: "single",
+                difficulty: "medium",
+                stem: "原文给出的结论数据是多少？",
+                options: ["42", "7", "100"],
+                answer: ["42"],
+                explanation: "原文末尾给出结论数据 42。",
+                sourceQuote: "示例原文关键句甲",
+              },
+              ...(drillExtraItem
+                ? [
+                    {
+                      id: "q2",
+                      pointId: "p1",
+                      kind: "single",
+                      stem: "这篇文章主要用于什么测试？",
+                      options: ["观点提炼测试", "语音识别测试", "排版测试"],
+                      answer: ["观点提炼测试"],
+                      explanation: "原文说明供观点提炼测试使用。",
+                      sourceQuote: "这句引文在原文里根本不存在",
+                    },
+                  ]
+                : []),
+            ],
+            extensions: [{ pointId: "p1", question: "再想一步：42 这个数字是怎么得出的？", hint: "回到原文找依据", angle: "举证方式" }],
+          }),
+        );
       } else {
         reply(res, "AI 内容");
       }
@@ -210,6 +312,48 @@ async function setup(dataDir: string, runId: string, promptBlockId: string, prom
 
 function runWith(engine: RunEngine, runId: string, graph: WorkflowGraph): void {
   engine.start(runId, "prj_recipe", graph, "all");
+}
+
+/** 知识巩固节点用例的工程搭台：文稿 → process.drill [→ 合并 → 输出]。 */
+async function setupDrill(
+  dataDir: string,
+  runId: string,
+  options: { withOutput?: boolean; drillData?: Record<string, unknown> } = {},
+) {
+  const db = createDatabase(dataDir);
+  const now = Date.now();
+  const projectId = "prj_recipe";
+  for (const [key, value] of [
+    ["ai.provider", "custom"],
+    ["ai.baseUrl", baseUrl.replace(/\/+$/, "")],
+    ["ai.model", "mock-model"],
+    ["ai.apiKey", "mock-key"],
+  ] as const) {
+    db.insert(appSettings).values({ key, value, updatedAt: now }).run();
+  }
+  const nodes: unknown[] = [
+    { id: "n_text", type: "source.text", position: { x: 0, y: 0 }, data: { label: "文稿", text: INPUT_TEXT } },
+    {
+      id: "n_drill",
+      type: "process.drill",
+      position: { x: 400, y: 0 },
+      data: { label: "知识巩固", ...(options.drillData ?? {}) },
+    },
+  ];
+  const edges: unknown[] = [{ id: "e1", source: "n_text", target: "n_drill", sourceHandle: "transcript", targetHandle: "in" }];
+  if (options.withOutput) {
+    nodes.push({ id: "n_merge", type: "process.merge", position: { x: 800, y: 0 }, data: { label: "合并", title: "练一练" } });
+    nodes.push({ id: "n_out", type: "process.output", position: { x: 1200, y: 0 }, data: { label: "输出", fileName: "练一练.md" } });
+    edges.push({ id: "e2", source: "n_drill", target: "n_merge", sourceHandle: "out", targetHandle: "noteBlock" });
+    edges.push({ id: "e3", source: "n_merge", target: "n_out", sourceHandle: "noteDoc", targetHandle: "noteDoc" });
+  }
+  const graph = parseGraph({ schemaVersion: 1, nodes, edges, viewport: { x: 0, y: 0, zoom: 1 } });
+  db.insert(projects)
+    .values({ id: projectId, name: "配方测试", description: "", graphJson: JSON.stringify(graph), schemaVersion: 1, createdAt: now, updatedAt: now })
+    .run();
+  db.insert(runs).values({ id: runId, projectId, status: "running", scope: "all", createdAt: now, graphJson: JSON.stringify(graph) }).run();
+  const engine = new RunEngine(db, dataDir);
+  return { db, engine, graph };
 }
 
 afterEach(async () => {
@@ -379,5 +523,113 @@ describe("RunEngine 配方执行（M8-1）", () => {
     expect(aiRequests).toHaveLength(1);
     expect(aiRequests[0]?.content).toContain("自定义编辑");
     expect(aiRequests[0]?.step).toBeNull();
+  });
+});
+
+describe("知识巩固节点（process.drill）", () => {
+  it("三步配方跑通：参数经 {{params}} 注入、产物编译为 drillSet、摘要可读", async () => {
+    chatCalls = 0;
+    drillExtraItem = false;
+    const dataDir = await mkdtemp(join(tmpdir(), "scribe-drill-"));
+    tmpDirs.push(dataDir);
+    const runId = "run_drill_ok";
+    const { db, engine, graph } = await setupDrill(dataDir, runId);
+
+    runWith(engine, runId, graph);
+    await waitFinished(db, runId);
+
+    expect(db.select().from(runs).where(eq(runs.id, runId)).get()?.status).toBe("success");
+    const nodeRow = db.select().from(runNodeResults).where(eq(runNodeResults.nodeId, "n_drill")).get();
+    expect(nodeRow?.status).toBe("done");
+    expect(nodeRow?.summary).toBe("1 个考察点 · 1 题 · 1 条延伸");
+    expect(nodeRow?.outputKind).toBe("noteBlock");
+
+    const product = JSON.parse(nodeRow?.outputText ?? "{}") as {
+      kind?: string;
+      points?: unknown[];
+      items?: { options?: string[]; answer?: string[] }[];
+      extensions?: unknown[];
+    };
+    expect(product.kind).toBe("drillSet");
+    expect(product.points).toHaveLength(1);
+    expect(product.items).toHaveLength(1);
+    expect(product.items?.[0]?.options).toEqual(["42", "7", "100"]);
+    expect(product.items?.[0]?.answer).toEqual(["42"]);
+    expect(product.extensions).toHaveLength(1);
+    expect(chatCalls).toBe(3);
+
+    const logs = db.select().from(runNodeLogs).where(eq(runNodeLogs.runId, runId)).all();
+    const aiRequests = logs.filter((row) => row.kind === "ai-request" && row.nodeId === "n_drill");
+    expect(aiRequests.map((row) => row.step)).toEqual(["scan", "author", "audit"]);
+    // 节点参数注入配方 system（与原文分离，避免污染引用回查的比对源）
+    expect(aiRequests[0]?.content).toContain("考察点数量：不超过 6 个");
+    expect(aiRequests[0]?.content).toContain("题型：单选、判断、填空");
+    expect(aiRequests[2]?.content).toContain("逐条审查并修正");
+  });
+
+  it("引文未命中的题目降级丢弃并在摘要报数，不整节点失败", async () => {
+    chatCalls = 0;
+    drillExtraItem = true;
+    const dataDir = await mkdtemp(join(tmpdir(), "scribe-drill-drop-"));
+    tmpDirs.push(dataDir);
+    const runId = "run_drill_drop";
+    const { db, engine, graph } = await setupDrill(dataDir, runId);
+
+    runWith(engine, runId, graph);
+    await waitFinished(db, runId);
+
+    // 断言门 maxMiss=2 容忍 1 条坏引文；精确丢弃由解析层完成
+    expect(db.select().from(runs).where(eq(runs.id, runId)).get()?.status).toBe("success");
+    const nodeRow = db.select().from(runNodeResults).where(eq(runNodeResults.nodeId, "n_drill")).get();
+    expect(nodeRow?.status).toBe("done");
+    expect(nodeRow?.summary).toBe("1 个考察点 · 1 题 · 1 条延伸 · 丢弃 1（引文未命中原文）");
+
+    const product = JSON.parse(nodeRow?.outputText ?? "{}") as { items?: { id?: string }[] };
+    expect(product.items).toHaveLength(1);
+    expect(product.items?.[0]?.id).toBe("q1");
+
+    const logs = db.select().from(runNodeLogs).where(eq(runNodeLogs.runId, runId)).all();
+    expect(logs.some((row) => row.kind === "info" && row.content.includes("丢弃明细"))).toBe(true);
+    expect(chatCalls).toBe(3);
+  });
+
+  it("接到合并与输出节点：写出的是可读 Markdown 题目集，不是原始 JSON", async () => {
+    chatCalls = 0;
+    drillExtraItem = false;
+    const dataDir = await mkdtemp(join(tmpdir(), "scribe-drill-out-"));
+    tmpDirs.push(dataDir);
+    const runId = "run_drill_out";
+    const { db, engine, graph } = await setupDrill(dataDir, runId, { withOutput: true });
+
+    runWith(engine, runId, graph);
+    await waitFinished(db, runId);
+
+    expect(db.select().from(runs).where(eq(runs.id, runId)).get()?.status).toBe("success");
+    const text = await readFile(join(dataDir, "outputs", runId, "练一练.md"), "utf8");
+    expect(text).toContain("# 练一练");
+    expect(text).toContain("## 考察点");
+    expect(text).toContain("## 练习题");
+    expect(text).toContain("**答案**：42");
+    expect(text).toContain("## 再想一步");
+    expect(text).not.toContain('"drillSet"');
+    expect(text).not.toContain('"points"');
+  });
+
+  it("withExtensions=false 时确定性剔除延伸问题（不依赖模型自觉）", async () => {
+    chatCalls = 0;
+    drillExtraItem = false;
+    const dataDir = await mkdtemp(join(tmpdir(), "scribe-drill-noext-"));
+    tmpDirs.push(dataDir);
+    const runId = "run_drill_noext";
+    const { db, engine, graph } = await setupDrill(dataDir, runId, { drillData: { withExtensions: false } });
+
+    runWith(engine, runId, graph);
+    await waitFinished(db, runId);
+
+    const nodeRow = db.select().from(runNodeResults).where(eq(runNodeResults.nodeId, "n_drill")).get();
+    expect(nodeRow?.status).toBe("done");
+    expect(nodeRow?.summary).toBe("1 个考察点 · 1 题 · 0 条延伸");
+    const product = JSON.parse(nodeRow?.outputText ?? "{}") as { extensions?: unknown[] };
+    expect(product.extensions).toEqual([]);
   });
 });

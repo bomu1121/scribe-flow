@@ -4,6 +4,7 @@ export * from "./project";
 export * from "./run";
 export * from "./nutstore";
 export * from "./trace";
+export * from "./drill";
 export * from "./prompt";
 export * from "./recipe";
 export * from "./templates";

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { canConnect, canConnectSpecs, type PortSpec } from "./port";
-import { isValidConnection, NODE_CARD_WIDTH, type GraphNode } from "./graph";
+import { isValidConnection, NODE_CARD_WIDTH, NODE_PORTS, type GraphNode } from "./graph";
 import { WORKFLOW_TEMPLATES } from "./templates";
 import { safeParseGraph } from "./schema";
 
@@ -121,6 +121,48 @@ describe("graph", () => {
       viewport: { x: 0, y: 0, zoom: 1 },
     });
     expect(result.success).toBe(true);
+  });
+
+  it("接受知识巩固节点，并拒绝越界参数", () => {
+    const ok = safeParseGraph({
+      schemaVersion: 1,
+      nodes: [
+        {
+          id: "a",
+          type: "process.drill",
+          position: { x: 0, y: 0 },
+          data: { pointCount: 6, kinds: ["single", "judge"], difficulty: "medium", withExtensions: true, focus: "只考察结论" },
+        },
+      ],
+      edges: [],
+      viewport: { x: 0, y: 0, zoom: 1 },
+    });
+    expect(ok.success).toBe(true);
+
+    const tooMany = safeParseGraph({
+      schemaVersion: 1,
+      nodes: [{ id: "a", type: "process.drill", position: { x: 0, y: 0 }, data: { pointCount: 99 } }],
+      edges: [],
+      viewport: { x: 0, y: 0, zoom: 1 },
+    });
+    expect(tooMany.success).toBe(false);
+
+    const emptyKinds = safeParseGraph({
+      schemaVersion: 1,
+      nodes: [{ id: "a", type: "process.drill", position: { x: 0, y: 0 }, data: { kinds: [] } }],
+      edges: [],
+      viewport: { x: 0, y: 0, zoom: 1 },
+    });
+    expect(emptyKinds.success).toBe(false);
+  });
+
+  it("知识巩固节点可接笔记块输入，并输出可进合并/输出的笔记块", () => {
+    const drillIn = NODE_PORTS["process.drill"].inputs[0];
+    const drillOut = NODE_PORTS["process.drill"].outputs[0];
+    const promptOut = NODE_PORTS["process.prompt"].outputs[0];
+    const mergeIn = NODE_PORTS["process.merge"].inputs[0];
+    expect(canConnectSpecs(promptOut, drillIn)).toBe(true);
+    expect(canConnectSpecs(drillOut, mergeIn)).toBe(true);
   });
 
   it("拒绝非法的重试配置", () => {

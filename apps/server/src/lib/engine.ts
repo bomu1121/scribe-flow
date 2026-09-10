@@ -5,6 +5,7 @@ import { and, desc, eq, inArray, notInArray } from "drizzle-orm";
 import {
   BUILTIN_PROMPT_BLOCKS,
   NODE_TYPE_LABELS,
+  maybeDrillToMarkdown,
   type GraphNode,
   type NodeOutput,
   type Recipe,
@@ -21,6 +22,7 @@ import type { AppDatabase } from "../db/client";
 import { biliCookies, projects, runMedia, runNodeInputs, runNodeLogs, runNodeResults, runs } from "../db/schema";
 import { chatCompletion, transcribeAudio, type AiConfig } from "./ai";
 import { fetchBiliVideoDetail } from "./bilibili";
+import { buildDrill, buildDrillParams } from "./drill";
 import { countMindMapNodes, mindMapToMarkdown, parseMindMapJson } from "./mindmap";
 import { downloadBiliAudio, toAsrWav } from "./media";
 import {
@@ -38,13 +40,13 @@ import { enrichTraceReportWithExternalChecks } from "./traceExternal";
 const MAX_INLINE_TEXT = 200_000;
 
 /** 外部调用/网络下载类节点自动重试；本地节点失败重试无意义。B 站下载最常见的失败就是瞬时网络错误。 */
-export const RETRYABLE_NODE_TYPES = new Set(["source.bili", "process.transcribe", "process.refine", "process.prompt", "process.chapter", "process.gameguide", "process.mindmap"]);
+export const RETRYABLE_NODE_TYPES = new Set(["source.bili", "process.transcribe", "process.refine", "process.prompt", "process.chapter", "process.gameguide", "process.mindmap", "process.drill"]);
 
 /** 判断一次失败是否值得重试：取消、配置类与永久性错误不重试，其余（超时/网络/5xx/空结果）重试。 */
 export function isRetryableError(error: Error, cancelled: boolean): boolean {
   if (cancelled) return false;
   const message = error.message;
-  if (/运行已取消|未配置.*密钥|没有可.*输入|文稿为空|链接为空|缺少 BV|缺少 cid|文件为空|正则表达式无效|文稿过短|B 站登录已失效|没有可下载的音轨|断言未通过|不是合法 JSON/.test(message)) return false;
+  if (/运行已取消|未配置.*密钥|没有可.*输入|文稿为空|链接为空|缺少 BV|缺少 cid|文件为空|正则表达式无效|文稿过短|B 站登录已失效|没有可下载的音轨|断言未通过|不是合法 JSON|没有生成可用的练习题|练习产物|未通过校验/.test(message)) return false;
   return true;
 }
 
@@ -692,7 +694,13 @@ export class RunEngine {
       .limit(1)
       .get();
     if (!row || !row.outputKind) return [];
-    if (row.nodeType === "process.transcribe" || row.nodeType === "process.refine" || row.nodeType === "process.prompt" || row.nodeType === "process.gameguide") {
+    if (
+      row.nodeType === "process.transcribe" ||
+      row.nodeType === "process.refine" ||
+      row.nodeType === "process.prompt" ||
+      row.nodeType === "process.gameguide" ||
+      row.nodeType === "process.drill"
+    ) {
       const inputRows = this.db
         .select()
         .from(runNodeInputs)
@@ -700,7 +708,10 @@ export class RunEngine {
         .orderBy(runNodeInputs.position)
         .all();
       if (inputRows.length > 0) {
-        const kind: NodeOutput["kind"] = row.nodeType === "process.prompt" || row.nodeType === "process.gameguide" ? "noteBlock" : "text";
+        const kind: NodeOutput["kind"] =
+          row.nodeType === "process.prompt" || row.nodeType === "process.gameguide" || row.nodeType === "process.drill"
+            ? "noteBlock"
+            : "text";
         const outputs: NodeOutput[] = [];
         for (const inputRow of inputRows) {
           const text = inputRow.resultText ?? inputRow.text;
@@ -938,7 +949,7 @@ export class RunEngine {
     if (outputs.every((output) => output.kind === "audio")) return outputs[0];
     const firstKind = outputs[0]?.kind;
     const kind: NodeOutput["kind"] =
-      node.type === "process.prompt" || node.type === "process.gameguide"
+      node.type === "process.prompt" || node.type === "process.gameguide" || node.type === "process.drill"
         ? "noteBlock"
         : node.type === "process.chapter" || node.type === "process.mindmap"
           ? "noteDoc"
@@ -990,7 +1001,7 @@ export class RunEngine {
             runId: active.id,
             nodeId,
             summary: result.summary ?? "完成",
-            preview: node.type === "process.mindmap" || node.type === "process.output" ? undefined : previewFor(combined),
+            preview: node.type === "process.mindmap" || node.type === "process.output" || node.type === "process.drill" ? undefined : previewFor(combined),
             delta,
           });
           active.outputs.set(nodeId, result.outputs);
@@ -1162,21 +1173,31 @@ export class RunEngine {
 
       case "process.gameguide":
       case "process.refine":
-      case "process.prompt": {
+      case "process.prompt":
+      case "process.drill": {
         const textItems = inputs.items.filter((i) => i.output.kind !== "audio" && i.output.text?.trim());
         if (textItems.length === 0) throw new Error("没有文稿输入");
         await this.progress(active, node.id, 5, `准备逐个处理 ${textItems.length} 个输入`);
         const aiConfig = getAiConfig(this.db);
         if (!aiConfig.apiKey) throw new Error("未配置 AI 模型密钥，请到设置页填写");
         const mode = node.type === "process.gameguide" ? String((data.mode as string | undefined) ?? "audited") : "";
+        const isDrill = node.type === "process.drill";
         const blockId =
           String(data.promptBlockId ?? "") ||
-          (node.type === "process.gameguide" ? (mode === "standard" ? "builtin.gameguide" : "builtin.gameguide.v2") : "");
+          (node.type === "process.gameguide" ? (mode === "standard" ? "builtin.gameguide" : "builtin.gameguide.v2") : "") ||
+          (isDrill ? "builtin.drill" : "");
         const override = String(data.promptOverride ?? "");
         const builtin = BUILTIN_PROMPT_BLOCKS.find((b) => b.id === blockId);
+        /** 知识巩固：节点参数经 {{params}} 注入配方 system，刻意与原文分离（引用回查以 input 为比对源）。 */
+        const drillParams = isDrill ? buildDrillParams(data) : undefined;
+        /** 知识巩固产物编译后的摘要；空串表示沿用通用摘要。 */
+        let drillSummary = "";
 
-        // 配方分支：process.prompt / process.gameguide 且块带 recipe、且无自定义提示词覆盖时执行多步链。
-        const recipe = (node.type === "process.prompt" || node.type === "process.gameguide") && !override.trim() ? builtin?.recipe : undefined;
+        // 配方分支：process.prompt / process.gameguide / process.drill 且块带 recipe、且无自定义提示词覆盖时执行多步链。
+        const recipe =
+          (node.type === "process.prompt" || node.type === "process.gameguide" || isDrill) && !override.trim()
+            ? builtin?.recipe
+            : undefined;
         if (recipe) {
           const parts: string[] = [];
           const totalFlat = recipe.steps.length * textItems.length;
@@ -1196,6 +1217,7 @@ export class RunEngine {
               i * recipe.steps.length,
               totalFlat,
               inputRef,
+              drillParams,
             );
             // 信息溯源 v2：若配置了 Tavily，则对最终 JSON 做外部联网核查并回填 external 字段。
             if (blockId === "builtin.trace.v2") {
@@ -1209,12 +1231,22 @@ export class RunEngine {
                 }
               }
             }
+            // 知识巩固：把多步产物编译成结构化练习集（引文校验 + 逐条丢弃），并覆盖节点摘要。
+            if (isDrill) {
+              const built = buildDrill(finalText, inputText, { withExtensions: data.withExtensions !== false });
+              if (!built.set) throw new Error(built.error ?? "没有生成可用的练习题，请重跑本节点");
+              finalText = JSON.stringify(built.set);
+              drillSummary = built.summary;
+              if (built.drops.length > 0) {
+                await this.log(active, node.id, "info", `丢弃明细：${built.dropDetail}`, undefined, inputRef);
+              }
+            }
             await this.updateInputResult(active, node.id, item.sourceNodeId, item.position, finalText);
             parts.push(finalText);
           }
           const outputs = parts.map((text) => ({ kind: "noteBlock" as const, text, size: text.length }));
           const total = parts.reduce((sum, text) => sum + text.length, 0);
-          return { outputs, summary: `配方 ${recipe.steps.length} 步 · ${textItems.length} 输入 · ${totalFlat} 次调用 · ${total} 字` };
+          return { outputs, summary: drillSummary || `配方 ${recipe.steps.length} 步 · ${textItems.length} 输入 · ${totalFlat} 次调用 · ${total} 字` };
         }
         if (override.trim() && builtin?.recipe) {
           await this.log(active, node.id, "info", "自定义提示词覆盖配方，按单步执行");
@@ -1241,17 +1273,37 @@ export class RunEngine {
           await this.updateInputResult(active, node.id, item.sourceNodeId, item.position, trimmed);
           parts.push(trimmed);
         }
-        const kind: NodeOutput["kind"] = node.type === "process.prompt" || node.type === "process.gameguide" ? "noteBlock" : "text";
+        // 知识巩固：自定义提示词覆盖配方时走单步路径，产物同样要编译成练习集再落盘。
+        if (isDrill) {
+          const builtList = parts.map((text, index) =>
+            buildDrill(text, textItems[index]?.output.text?.trim() ?? "", { withExtensions: data.withExtensions !== false }),
+          );
+          const failed = builtList.find((built) => !built.set);
+          if (failed) throw new Error(failed.error ?? "没有生成可用的练习题，请重跑本节点");
+          parts.splice(0, parts.length, ...builtList.map((built) => JSON.stringify(built.set)));
+          drillSummary =
+            builtList.length === 1
+              ? builtList[0].summary
+              : `${builtList.length} 份练习 · ${builtList.map((built) => `${built.set!.items.length} 题`).join(" / ")}`;
+        }
+        const kind: NodeOutput["kind"] =
+          node.type === "process.prompt" || node.type === "process.gameguide" || isDrill ? "noteBlock" : "text";
         const outputs = parts.map((text) => ({ kind, text, size: text.length }));
         const total = parts.reduce((sum, text) => sum + text.length, 0);
-        return { outputs, summary: `${textItems.length} 个输入 · ${total} 字` };
+        return { outputs, summary: drillSummary || `${textItems.length} 个输入 · ${total} 字` };
       }
 
       case "process.merge": {
         if (!inputs.text) throw new Error("没有可合并的笔记块");
+        // 知识巩固产物是 JSON：逐输入序列化成可读 Markdown，避免原始 JSON 混进笔记文档。
+        const noteText = inputs.items
+          .filter((item) => item.output.kind !== "audio")
+          .map((item) => maybeDrillToMarkdown(item.output.text ?? ""))
+          .filter(Boolean)
+          .join("\n\n");
         const title = String(data.title ?? "").trim() || "合并笔记";
-        const markdown = `# ${title}\n\n${inputs.text}`;
-        await this.log(active, node.id, "input", inputs.text);
+        const markdown = `# ${title}\n\n${noteText}`;
+        await this.log(active, node.id, "input", noteText);
         return { outputs: [{ kind: "noteDoc", text: markdown, size: markdown.length }], summary: `${markdown.length} 字` };
       }
 
@@ -1262,10 +1314,16 @@ export class RunEngine {
         const dir = join(this.dataDir, outputDir, active.id);
         await mkdir(dir, { recursive: true });
         const outPath = join(dir, fileName);
-        await writeFile(outPath, inputs.text, "utf8");
+        // 知识巩固产物是 JSON：写出前序列化成可读 Markdown 题目集。
+        const outText = inputs.items
+          .filter((item) => item.output.kind !== "audio")
+          .map((item) => maybeDrillToMarkdown(item.output.text ?? ""))
+          .filter(Boolean)
+          .join("\n\n");
+        await writeFile(outPath, outText, "utf8");
         const rel = `${outputDir}/${active.id}/${fileName}`;
         await this.log(active, node.id, "info", `输出文件：${rel}`);
-        return { outputs: [{ kind: "noteDoc", text: inputs.text, path: rel, size: inputs.text.length }], summary: `${fileName} · ${inputs.text.length} 字` };
+        return { outputs: [{ kind: "noteDoc", text: outText, path: rel, size: outText.length }], summary: `${fileName} · ${outText.length} 字` };
       }
 
       case "flow.if": {
@@ -1702,6 +1760,8 @@ ${JSON.stringify(taxonomyTags)}`;
     totalFlat: number,
     /** 该输入在节点输入列表里的位置，用于把日志归到对应分段。 */
     inputRef?: { index: number; total: number },
+    /** 节点参数指令（{{params}}），与原文分离注入，避免污染引用回查的比对源。 */
+    params?: string,
   ): Promise<string> {
     await this.log(active, node.id, "input", inputText, undefined, inputRef);
     let prev = "";
@@ -1709,7 +1769,7 @@ ${JSON.stringify(taxonomyTags)}`;
     for (let j = 0; j < recipe.steps.length; j += 1) {
       const step = recipe.steps[j];
       const flatIndex = flatBase + j;
-      const system = renderStepSystem(step.system, { input: inputText, prev, all, source: sourceLabel });
+      const system = renderStepSystem(step.system, { input: inputText, prev, all, source: sourceLabel, params });
       const user = j === 0 ? inputText : prev;
       const model = step.model ?? aiConfig.model;
       const progress = Math.round(10 + ((flatIndex + 1) / totalFlat) * 86);

@@ -1,5 +1,5 @@
 import type { ViewportTransform } from "@vue-flow/core";
-import type { AsrEngine, BiliSourceItem, GraphEdge, GraphNode, NodeRunStatus, NodeType, PageRef, ResultDelta, SourceVideoItem, WorkflowGraph } from "@scribe-flow/shared";
+import type { AsrEngine, BiliSourceItem, DrillDifficulty, DrillKind, GraphEdge, GraphNode, NodeRunStatus, NodeType, PageRef, ResultDelta, SourceVideoItem, WorkflowGraph } from "@scribe-flow/shared";
 import type { RunSegment } from "./run-segments";
 
 export const SCRIBE_NODE_TYPE = "scribe";
@@ -88,6 +88,11 @@ export interface ScribeNodeData {
   branchSize?: "auto" | "few" | "many";
   maxDepth?: number;
   theme?: "paper" | "presentation" | "academic";
+  pointCount?: number;
+  kinds?: DrillKind[];
+  difficulty?: DrillDifficulty;
+  withExtensions?: boolean;
+  focus?: string;
   /** 运行时注入的右键菜单动作，不会持久化。 */
   ctx?: NodeContextActions;
 }
@@ -210,5 +215,14 @@ export function emptyNodeData(type: NodeType): Record<string, unknown> {
       return { label: "思维导图", branchSize: "auto", maxDepth: 4, theme: "paper", retry: { maxRetries: 2, backoffMs: 3000 } };
     case "process.obsidian":
       return { label: "Obsidian 笔记", folder: "" };
+    case "process.drill":
+      return {
+        label: "知识巩固",
+        pointCount: 6,
+        kinds: ["single", "judge", "cloze"],
+        difficulty: "medium",
+        withExtensions: true,
+        retry: { maxRetries: 2, backoffMs: 3000 },
+      };
   }
 }

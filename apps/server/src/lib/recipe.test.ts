@@ -24,6 +24,17 @@ describe("renderStepSystem", () => {
       "来源：《示例视频》· UP：示例",
     );
   });
+
+  it("展开 {{params}}（节点参数指令，与原文分离）", () => {
+    const params = "【出题要求】\n考察点数量：不超过 6 个";
+    expect(renderStepSystem("{{params}}\n\n原文：{{input}}", { ...ctx, params })).toBe(
+      `【出题要求】\n考察点数量：不超过 6 个\n\n原文：原文全文`,
+    );
+  });
+
+  it("未提供 params 时 {{params}} 替换为空串", () => {
+    expect(renderStepSystem("A{{params}}B", ctx)).toBe("AB");
+  });
 });
 
 describe("parseJsonLoose", () => {

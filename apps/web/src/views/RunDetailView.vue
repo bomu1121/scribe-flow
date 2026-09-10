@@ -23,6 +23,7 @@ import {
   RotateCcw,
   ScrollText,
   StopCircle,
+  ListChecks,
   ZoomIn,
   ZoomOut,
 } from "lucide-vue-next";
@@ -34,6 +35,7 @@ import { buildNodeSegments, type RunSegment } from "@/utils/run-segments";
 import { subscribeRunEvents } from "@/lib/sse";
 import { useProjectsStore } from "@/stores/projects";
 import MindMapViewer from "@/components/MindMapViewer.vue";
+import DrillViewer from "@/components/DrillViewer.vue";
 import DiffViewer from "@/components/DiffViewer.vue";
 import RunLogDialog from "@/components/RunLogDialog.vue";
 import TraceReportViewer from "@/components/TraceReportViewer.vue";
@@ -44,7 +46,7 @@ const router = useRouter();
 const projectsStore = useProjectsStore();
 const run = ref<RunDetail | null>(null);
 const loading = ref(false);
-const activeTab = ref<"result" | "nodes" | "mindmap">("result");
+const activeTab = ref<DetailTab>("result");
 const markdown = ref("");
 const draft = ref("");
 const mindMapMarkdown = ref("");
@@ -66,7 +68,7 @@ const resultRootRef = ref<HTMLElement | null>(null);
 const docScrollRef = ref<HTMLElement | null>(null);
 
 // ---------- 顶部「结果 / 思维导图 / 节点流水」切换：滑动墨条 + 内容淡入 ----------
-type DetailTab = "result" | "nodes" | "mindmap";
+type DetailTab = "result" | "nodes" | "mindmap" | "drill";
 const tabsEl = ref<HTMLElement | null>(null);
 const tabRefs = ref<Partial<Record<DetailTab, HTMLButtonElement | null>>>({});
 /** 墨条位置（相对 tablist 容器），首次测量前隐藏，避免进场时从 0 滑一次。 */
@@ -79,6 +81,7 @@ const failedNodeCount = computed(() => (run.value?.nodeResults ?? []).filter((no
 /** tablist 的可见顺序（思维导图只在有导图时才出现）。 */
 const tabOrder = computed<DetailTab[]>(() => {
   const order: DetailTab[] = ["result"];
+  if (drillNodes.value.length > 0) order.push("drill");
   if (mindMapNodes.value.length > 0) order.push("mindmap");
   order.push("nodes");
   return order;
@@ -306,7 +309,7 @@ const traceNodeIds = computed(() => {
 });
 
 const outputNodes = computed<OutputDoc[]>(() => {
-  const all = run.value?.nodeResults ?? [];
+  const all = (run.value?.nodeResults ?? []).filter((n) => !isDrillOutput(n));
   const docs = all.filter((n) => n.output?.kind === "noteDoc");
   const traceDocs = all.filter(
     (n) =>
@@ -334,6 +337,55 @@ const mindMapNodes = computed<OutputDoc[]>(() => {
 });
 
 const currentMindMap = computed(() => mindMapNodes.value[selectedMindMapIndex.value] ?? null);
+
+// ---------- 知识巩固（练一练）tab：产物是结构化 JSON，由 DrillViewer 解析后交互答题 ----------
+const drillNodes = computed<OutputDoc[]>(() => {
+  const all = run.value?.nodeResults ?? [];
+  return all
+    .filter((n) => n.nodeType === "process.drill" && (n.output?.kind === "noteBlock" || n.output?.kind === "text") && (n.output?.text || n.output?.path))
+    .map((n) => ({
+      node: n,
+      title: n.nodeLabel || NODE_TYPE_LABELS[n.nodeType as keyof typeof NODE_TYPE_LABELS] || n.nodeType,
+    }));
+});
+
+const selectedDrillIndex = ref(0);
+const currentDrill = computed(() => drillNodes.value[selectedDrillIndex.value] ?? null);
+const drillText = ref("");
+
+async function loadDrillContent(index?: number) {
+  if (index !== undefined) selectedDrillIndex.value = index;
+  const doc = currentDrill.value;
+  if (!doc) {
+    drillText.value = "";
+    return;
+  }
+  const node = doc.node;
+  if (node.output?.text) {
+    drillText.value = node.output.text;
+    return;
+  }
+  if (node.output?.path) {
+    try {
+      const result = await api.get<{ text: string }>(`/api/runs/${runId.value}/outputs/${node.nodeId}/content`);
+      drillText.value = result.text ?? "";
+    } catch (err) {
+      drillText.value = "";
+      toast.error(err instanceof Error ? err.message : "练习产物读取失败");
+    }
+    return;
+  }
+  drillText.value = "";
+}
+
+async function openDrillTab(index = 0) {
+  setActiveTab("drill");
+  await loadDrillContent(index);
+}
+
+async function selectDrill(index: number) {
+  await loadDrillContent(index);
+}
 
 // 思维导图 tab 的出现/消失由运行数据决定，会改变按钮宽度 → 重新量一次墨条。
 watch([activeTab, () => mindMapNodes.value.length], () => {
@@ -769,7 +821,18 @@ function ensureActiveRailRowVisible() {
 }
 
 function looksLikeTraceReport(text: string): boolean {
+  // 知识巩固产物同样带 schema/items 根键，靠 kind 标记先排除，避免被当成溯源报告渲染成空表。
+  if (isDrillProduct(text)) return false;
   return /"schema"\s*:\s*1/.test(text) && /"items"\s*:/.test(text);
+}
+
+/** 知识巩固产物（process.drill）识别：结果页由 DrillViewer 消费，不进入结果文档列表。 */
+function isDrillProduct(text: string): boolean {
+  return /"kind"\s*:\s*"drillSet"/.test(text);
+}
+
+function isDrillOutput(node: RunNodeResult): boolean {
+  return node.nodeType === "process.drill" || isDrillProduct(node.output?.text ?? "");
 }
 
 const isTraceOutput = computed(() =>
@@ -1279,6 +1342,21 @@ async function forceStopRun() {
         结果
       </button>
       <button
+        v-if="drillNodes.length > 0"
+        :ref="(el) => setTabRef('drill', el)"
+        type="button"
+        role="tab"
+        id="rv-tab-drill"
+        aria-controls="rv-panel-drill"
+        :aria-selected="activeTab === 'drill'"
+        :tabindex="activeTab === 'drill' ? 0 : -1"
+        :class="{ active: activeTab === 'drill' }"
+        @click="openDrillTab()"
+        @keydown="onTabKeydown($event, 'drill')"
+      >
+        <ListChecks :size="14" /><span>练一练</span>
+      </button>
+      <button
         v-if="mindMapNodes.length > 0"
         :ref="(el) => setTabRef('mindmap', el)"
         type="button"
@@ -1367,6 +1445,35 @@ async function forceStopRun() {
             </template>
           </el-table-column>
         </el-table>
+      </div>
+
+      <div
+        v-show="activeTab === 'drill'"
+        id="rv-panel-drill"
+        role="tabpanel"
+        aria-labelledby="rv-tab-drill"
+        class="rv-drill-panel"
+      >
+        <div v-if="drillNodes.length > 1" class="rv-mindmap-tabs">
+          <button
+            v-for="(doc, index) in drillNodes"
+            :key="doc.node.nodeId"
+            type="button"
+            :class="{ active: index === selectedDrillIndex }"
+            @click="selectDrill(index)"
+          >
+            {{ doc.title }}
+          </button>
+        </div>
+        <div class="rv-mindmap-main">
+          <template v-if="currentDrill && drillText">
+            <DrillViewer :key="currentDrill.node.nodeId" :text="drillText" :node-label="currentDrill.title" />
+          </template>
+          <div v-else class="rv-empty">
+            <div class="rv-empty-title">没有可作答的练习</div>
+            <div class="rv-empty-sub">运行「知识巩固」节点后，题目会显示在这里。</div>
+          </div>
+        </div>
       </div>
 
       <div
@@ -2143,6 +2250,21 @@ async function forceStopRun() {
   padding: 16px;
   overflow: hidden;
   background: var(--color-canvas);
+}
+
+/* 练一练：内容比导图长，面板整体滚动，内部不再固定视口高度。 */
+.rv-drill-panel {
+  flex: 1;
+  min-height: 0;
+  padding: 16px;
+  overflow: auto;
+  background: var(--color-canvas);
+}
+
+.rv-drill-panel .rv-mindmap-main {
+  height: auto;
+  min-height: 0;
+  overflow: visible;
 }
 
 .rv-mindmap-tabs {

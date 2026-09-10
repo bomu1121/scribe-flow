@@ -904,6 +904,106 @@ const RECIPE_GAME_GUIDE_V2: Recipe = {
   ],
 };
 
+/**
+ * 知识巩固（练一练）单次版提示词。
+ * 只在配方被自定义提示词覆盖时作为回退；正常路径走 RECIPE_DRILL 三步。
+ */
+const PROMPT_DRILL = [
+  "你是知识巩固编辑。用户消息是一段已经整理好的文稿或笔记。",
+  "你的任务不是总结，而是把它变成一份可以拿来练的产物：可考察的知识点、检验题、以及「再想一步」的延伸问题。",
+  "",
+  "## 输出格式",
+  "只输出 JSON，不要解释，不要 Markdown 围栏：",
+  '{"title":"练习标题","points":[{"id":"p1","name":"知识点名称","type":"concept|fact|causal|method|claim|boundary","gist":"一句话说清","worthTesting":"为什么值得考","sourceQuote":"逐字摘自原文的一句"}],"items":[{"id":"q1","pointId":"p1","kind":"single|multi|judge|cloze","difficulty":"basic|medium|hard","stem":"题干","options":["选项"],"answer":["正确答案"],"explanation":"为什么是这个答案","sourceQuote":"逐字摘自原文的一句"}],"extensions":[{"pointId":"p1","question":"再想一步：…","hint":"只给思考脚手架","angle":"延伸方向"}]}',
+  "",
+  "## 要求",
+  "1. 只取真正的知识（概念、事实、因果、方法、观点、边界条件），不要取过渡句、寒暄、口头禅；一个知识点 = 一个能被单独提问的东西。",
+  "2. sourceQuote 必须逐字复制原文里的一句话，不要改写、不要拼接；做不到的条目直接不输出。",
+  "3. 干扰项必须是「看起来对但确实错」的同类表述，禁止明显荒唐的选项；选项 3-5 个且互不重复。",
+  "4. answer 必须是 options 的子集；题干不得包含答案原文；解析要指向原文那一句。",
+  "5. 延伸问题不是再考一次，而是往「关系 / 边界 / 应用」方向追问一步，hint 不给答案。",
+].join("\n");
+
+/**
+ * 知识巩固（练一练）三步配方。
+ * 步骤语义：
+ * - scan   用户消息 = 原文 → 输出可考察知识点 JSON（含逐字引文）；
+ * - author 用户消息 = 上一步知识点，系统含 {{input}} 原文 → 输出题目与延伸问题 JSON；
+ * - audit  用户消息 = 上一步产物，系统含 {{input}} 原文 → 自检修正后输出最终产物 JSON。
+ *
+ * 质量分工（刻意设计）：
+ * - 机械校验（JSON 根键、引文逐字命中原文）交给断言门，不依赖第二次 LLM 的自觉；
+ * - 语义校验（干扰项是否荒唐、题干是否泄漏答案）交给 audit 步骤与解析层启发式。
+ * audit 的 citationsInOriginal 用 maxMiss: 2 而不是现网溯源配方的 0：出题场景 8 题丢 1 题
+ * 不影响另外 7 题，避免「一条引文对不上就整篇白跑」；精确丢弃由 parseDrillSet 负责并计入摘要。
+ */
+const RECIPE_DRILL: Recipe = {
+  schema: 1,
+  steps: [
+    {
+      id: "scan",
+      label: "抽点",
+      system: [
+        "你是知识整理编辑。用户消息是一段文稿，阅读后找出其中「值得被考察」的知识点。",
+        "只输出 JSON，不要解释，不要 Markdown 围栏：",
+        '{"points":[{"id":"p1","name":"知识点名称（不超过20字）","type":"concept|fact|causal|method|claim|boundary","gist":"一句话说清（不超过60字）","worthTesting":"为什么值得考（易混 / 是后续理解的前提 / 反直觉结论）","sourceQuote":"逐字摘自原文的一句"}]}',
+        "要求：",
+        "1. 只取真正的知识（概念、事实、因果、方法、观点、边界条件）；不要取过渡句、寒暄、口头禅。",
+        "2. sourceQuote 必须逐字复制原文里的一句话，不要改写、不要拼接；做不到的知识点直接不输出。",
+        "3. 按重要性排序，宁少勿滥，不要拆分过细——一个知识点 = 一个能被单独提问的东西。",
+        "4. 知识点数量上限与考察侧重遵从上方的【出题要求】。",
+        "{{params}}",
+      ].join("\n"),
+      expects: { kind: "json", asserts: [{ op: "jsonRootKeys", value: ["points"] }] },
+    },
+    {
+      id: "author",
+      label: "出题与延伸",
+      system: [
+        "你是出题编辑。上一条用户消息是已选定的知识点 JSON，系统消息末尾附有原文全文（{{input}}）。",
+        "为每个知识点出题，并写一条「再想一步」的延伸问题。",
+        "只输出 JSON，不要解释，不要 Markdown 围栏：",
+        '{"items":[{"id":"q1","pointId":"p1","kind":"single|multi|judge|cloze","difficulty":"basic|medium|hard","stem":"题干","options":["选项"],"answer":["正确答案"],"explanation":"为什么是这个答案","sourceQuote":"逐字摘自原文的一句"}],"extensions":[{"pointId":"p1","question":"再想一步：…","hint":"只给思考脚手架，不给答案","angle":"延伸方向（与其他概念的关系 / 边界条件 / 实际应用）"}]}',
+        "要求：",
+        "1. 每个知识点 1-3 题；题型、难度、数量遵从上方的【出题要求】；cloze 的 options 填空数组，answer 填原文中的填空答案。",
+        "2. 干扰项必须是「看起来对但确实错」的同类表述，禁止明显荒唐或与题干无关的选项；选项 3-5 个且互不重复。",
+        "3. 答案必须严格来自原文，不得引入原文没有的知识；answer 必须是 options 的子集。",
+        "4. 题干不得包含答案原文，否则等于送分。",
+        "5. 解析要指向原文那一句，而不是把正确答案再说一遍。",
+        "6. 判断题的 options 固定写 [\"正确\",\"错误\"]。",
+        "7. 延伸问题不是再考一次，而是往「关系 / 边界 / 应用」方向追问一步；hint 不给答案。",
+        "{{params}}",
+      ].join("\n"),
+      expects: { kind: "json", asserts: [{ op: "jsonRootKeys", value: ["items"] }] },
+    },
+    {
+      id: "audit",
+      label: "审题",
+      system: [
+        "你是审题编辑。上一条用户消息是练习产物 JSON，系统消息末尾附有原文全文（{{input}}）。",
+        "逐条审查并修正后输出**修正后的完整 JSON**（结构与输入相同，只含 title/points/items/extensions 四个根键），不要解释，不要 Markdown 围栏。",
+        "审查规则（不满足的条目直接删除，不要编造替换）：",
+        "1. 引文核对：sourceQuote 必须能在原文中逐字找到；找不到 → 删除该条。",
+        "2. 答案唯一：正确答案必须唯一，且 answer 必须是 options 的子集（cloze 除外）。",
+        "3. 题干泄漏：题干里出现了答案原文 → 改写题干；改不了就删除。",
+        "4. 干扰项：明显荒唐、与题干无关、或本身也是正确答案的选项 → 换掉或删除该题。",
+        "5. 悬空引用：item.pointId / extensions[].pointId 必须存在于 points，否则删除。",
+        "6. 每个知识点至少保留 1 题；否则连同该知识点一起删除。",
+        "7. 不要新增原文之外的知识。",
+        "8. 为产物写一个不超过 30 字的 title。",
+      ].join("\n"),
+      expects: {
+        kind: "json",
+        asserts: [
+          { op: "jsonRootKeys", value: ["points", "items", "extensions"] },
+          { op: "citationsInOriginal", field: "points[].sourceQuote[]", maxMiss: 2 },
+          { op: "citationsInOriginal", field: "items[].sourceQuote[]", maxMiss: 2 },
+        ],
+      },
+    },
+  ],
+};
+
 export const BUILTIN_PROMPT_BLOCKS: PromptBlock[] = [
   {
     id: "builtin.insight",
@@ -1021,5 +1121,16 @@ export const BUILTIN_PROMPT_BLOCKS: PromptBlock[] = [
     recommended: true,
     description: "多步核对版：攻略要素拆解 → 起草 → 回文核对 → 修正成稿。约 4 次调用且每步携带原文，专名/数值/优先级更稳，适合长攻略与新手开荒/配队类高价值内容。",
     recipe: RECIPE_GAME_GUIDE_V2,
+  },
+  {
+    id: "builtin.drill",
+    name: "知识巩固（练一练）",
+    prompt: PROMPT_DRILL,
+    builtin: true,
+    series: "知识巩固",
+    version: "v1",
+    recommended: true,
+    description: "多步核对版：抽点 → 出题与延伸 → 审题。产出练习集 JSON（可考察知识点 + 检验题 + 「再想一步」延伸问题），在运行结果页直接答题；引文必须逐字命中的原文，未命中的条目自动丢弃并在摘要里报数。",
+    recipe: RECIPE_DRILL,
   },
 ];

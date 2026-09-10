@@ -75,4 +75,12 @@ describe("parseRecipe", () => {
     expect(v2?.recipe).toBeDefined();
     expect(parseRecipe(v2!.recipe)).toEqual(v2!.recipe);
   });
+
+  it("知识巩固配方可通过运行时校验（zod 与常量一致）", async () => {
+    const { BUILTIN_PROMPT_BLOCKS } = await import("./prompt");
+    const drill = BUILTIN_PROMPT_BLOCKS.find((block) => block.id === "builtin.drill");
+    expect(drill?.recipe).toBeDefined();
+    expect(drill!.recipe!.steps.map((step) => step.id)).toEqual(["scan", "author", "audit"]);
+    expect(parseRecipe(drill!.recipe)).toEqual(drill!.recipe);
+  });
 });
