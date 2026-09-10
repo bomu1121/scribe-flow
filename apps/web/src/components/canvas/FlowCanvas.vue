@@ -39,7 +39,7 @@ const emit = defineEmits<{
   notice: [message: string];
   "history-change": [state: { canUndo: boolean; canRedo: boolean }];
   "run-request": [request: { scope: "all" | "fromNode" | "node"; nodeId?: string }];
-  "view-output": [nodeId: string];
+  "view-output": [nodeId: string, segmentIndex?: number];
 }>();
 
 const nodesRef = ref<ScribeFlowNode[]>([]);
@@ -132,7 +132,7 @@ function ctxFor(nodeId: string) {
       return props.running;
     },
     copyOutput: () => emit("notice", "节点输出将在运行后可用"),
-    viewOutput: () => emit("view-output", nodeId),
+    viewOutput: (segmentIndex?: number) => emit("view-output", nodeId, segmentIndex),
     fetchNodeOutput: () => {
       if (!props.fetchNodeOutput) return Promise.resolve(null);
       return props.fetchNodeOutput(nodeId);

@@ -393,11 +393,20 @@ const previewPinned = ref(false);
 const outputPreviewLoading = ref(false);
 const outputPreviewError = ref("");
 const previewOutput = ref<NodePreviewOutput | null>(null);
+/** 多输入分段：-1 = 合并全文；>=0 = 选中第 N 段。默认落在第 1 段，不再把 8 个视频塞成一整段。 */
+const previewSegmentIndex = ref(-1);
 let previewOpenTimer: ReturnType<typeof setTimeout> | null = null;
 let previewCloseTimer: ReturnType<typeof setTimeout> | null = null;
 let previewLoadSeq = 0;
 
-const previewText = computed(() => previewOutput.value?.text || data.value.preview || "");
+const previewSegments = computed(() => previewOutput.value?.segments ?? []);
+const previewSegment = computed(
+  () => previewSegments.value.find((segment) => segment.index === previewSegmentIndex.value) ?? null,
+);
+/** 分段下拉的展开态（浮层内联列表，不做二级 Portal，避免嵌套浮层互相关闭）。 */
+const segmentListOpen = ref(false);
+const previewFullChars = computed(() => (previewOutput.value?.text ?? "").replace(/\s/g, "").length);
+const previewText = computed(() => previewSegment.value?.text || previewOutput.value?.text || data.value.preview || "");
 const renderedPreviewText = computed(() => (previewText.value ? renderMarkdown(previewText.value) : ""));
 const previewTitle = computed(() => previewOutput.value?.nodeLabel || label.value);
 const previewRunLabel = computed(() => (previewOutput.value?.runId ? `运行 #${previewOutput.value.runId.slice(-6)}` : ""));
@@ -407,6 +416,31 @@ const previewCharLabel = computed(() => {
   const count = text.replace(/\s/g, "").length;
   return count >= 1000 ? `${(count / 1000).toFixed(1)}k 字` : `${count} 字`;
 });
+
+/** 打开浮层时先落到第 1 段：默认视图本身就是「一个视频的完整结果」。 */
+function resetPreviewSegment() {
+  previewSegmentIndex.value = previewSegments.value.length > 1 ? 0 : -1;
+  segmentListOpen.value = false;
+}
+
+function choosePreviewSegment(index: number) {
+  previewSegmentIndex.value = index;
+  segmentListOpen.value = false;
+}
+
+function fmtSegmentChars(size: number): string {
+  if (!size) return "";
+  return size >= 10000 ? `${(size / 10000).toFixed(1)} 万字` : `${size} 字`;
+}
+
+/** 顺序切段：只在 1..N 之间走，「全文」由下拉列表进入（避免顺序阅读时误跳合并稿）。 */
+function stepPreviewSegment(delta: number) {
+  const count = previewSegments.value.length;
+  if (count === 0) return;
+  const current = previewSegmentIndex.value;
+  const next = current < 0 ? (delta > 0 ? 0 : -1) : Math.min(count - 1, Math.max(0, current + delta));
+  if (next !== current) previewSegmentIndex.value = next;
+}
 
 function clearPreviewOpenTimer() {
   if (previewOpenTimer) clearTimeout(previewOpenTimer);
@@ -432,6 +466,8 @@ function resetPreview() {
   outputPreviewLoading.value = false;
   outputPreviewError.value = "";
   previewOutput.value = null;
+  previewSegmentIndex.value = -1;
+  segmentListOpen.value = false;
 }
 
 function schedulePreviewOpen() {
@@ -503,9 +539,10 @@ function activatePreview() {
 }
 
 function openFullPreview() {
+  const segmentIndex = previewSegment.value?.index;
   previewPinned.value = false;
   previewOpen.value = false;
-  props.data.ctx?.viewOutput();
+  props.data.ctx?.viewOutput(segmentIndex);
 }
 
 async function ensurePreviewOutput() {
@@ -517,8 +554,12 @@ async function ensurePreviewOutput() {
   try {
     const output = await fetchOutput();
     if (seq !== previewLoadSeq) return;
-    if (output) previewOutput.value = output;
-    else outputPreviewError.value = "未找到该节点的运行输出";
+    if (output) {
+      previewOutput.value = output;
+      resetPreviewSegment();
+    } else {
+      outputPreviewError.value = "未找到该节点的运行输出";
+    }
   } catch (err) {
     if (seq !== previewLoadSeq) return;
     outputPreviewError.value = err instanceof Error ? err.message : "完整输出加载失败";
@@ -1106,6 +1147,73 @@ const themeOptions = [
                   <span class="sf-node-result-preview__status" />
                   <span class="sf-node-result-preview__title">{{ previewTitle }}</span>
                   <span v-if="previewRunLabel" class="sf-node-result-preview__run tnum">{{ previewRunLabel }}</span>
+                </div>
+                <!-- 一个节点处理多个视频时：单行标题 + 下拉列表，不在 360px 里铺开 8 个按钮 -->
+                <div v-if="previewSegments.length > 1" class="sf-node-result-preview__segments">
+                  <div class="sf-seg-pick">
+                    <button
+                      type="button"
+                      class="sf-seg-trigger"
+                      aria-haspopup="listbox"
+                      :aria-expanded="segmentListOpen"
+                      :title="previewSegment ? `${previewSegment.index + 1}/${previewSegments.length} · ${previewSegment.label}` : `全文（${previewSegments.length} 段合并）`"
+                      @click.stop="segmentListOpen = !segmentListOpen"
+                      @keydown.down.prevent="stepPreviewSegment(1)"
+                      @keydown.up.prevent="stepPreviewSegment(-1)"
+                    >
+                      <span class="sf-seg-trigger-idx tnum">
+                        {{ previewSegmentIndex < 0 ? "—" : `${previewSegmentIndex + 1} / ${previewSegments.length}` }}
+                      </span>
+                      <span class="sf-seg-trigger-name">{{ previewSegment?.label || `全文（${previewSegments.length} 段合并）` }}</span>
+                      <ChevronDown :size="12" class="sf-seg-trigger-caret" :class="{ 'is-open': segmentListOpen }" />
+                    </button>
+                    <button
+                      type="button"
+                      class="sf-seg-arrow"
+                      aria-label="上一段"
+                      :disabled="previewSegmentIndex <= -1"
+                      @click.stop="stepPreviewSegment(-1)"
+                    >
+                      ‹
+                    </button>
+                    <button
+                      type="button"
+                      class="sf-seg-arrow"
+                      aria-label="下一段"
+                      :disabled="previewSegmentIndex >= previewSegments.length - 1"
+                      @click.stop="stepPreviewSegment(1)"
+                    >
+                      ›
+                    </button>
+                  </div>
+                  <div v-if="segmentListOpen" class="sf-seg-list" role="listbox" aria-label="选择分段">
+                    <button
+                      v-for="segment in previewSegments"
+                      :key="segment.inputId"
+                      type="button"
+                      role="option"
+                      class="sf-seg-item"
+                      :class="{ on: segment.index === previewSegmentIndex }"
+                      :aria-selected="segment.index === previewSegmentIndex"
+                      @click.stop="choosePreviewSegment(segment.index)"
+                    >
+                      <span class="sf-seg-item-idx tnum">{{ String(segment.index + 1).padStart(2, "0") }}</span>
+                      <span class="sf-seg-item-name" :title="segment.label">{{ segment.label }}</span>
+                      <span class="sf-seg-item-len tnum">{{ fmtSegmentChars(segment.size) }}</span>
+                    </button>
+                    <button
+                      type="button"
+                      role="option"
+                      class="sf-seg-item sf-seg-item--full"
+                      :class="{ on: previewSegmentIndex < 0 }"
+                      :aria-selected="previewSegmentIndex < 0"
+                      @click.stop="choosePreviewSegment(-1)"
+                    >
+                      <span class="sf-seg-item-idx tnum">—</span>
+                      <span class="sf-seg-item-name">全文（{{ previewSegments.length }} 段合并）</span>
+                      <span class="sf-seg-item-len tnum">{{ fmtSegmentChars(previewFullChars) }}</span>
+                    </button>
+                  </div>
                 </div>
                 <div class="sf-node-result-preview__body">
                   <div v-if="!previewText && outputPreviewLoading" class="sf-node-result-preview__hint sf-node-result-preview__hint--loading">
@@ -2071,6 +2179,156 @@ const themeOptions = [
   flex-shrink: 0;
   font-size: 10.5px;
   color: var(--color-text-tertiary);
+}
+
+/* 多输入分段选择：单行「03 / 08 标题 ▾」+ ‹ › 翻段；展开的列表浮在浮层内部（不嵌套 Portal） */
+.sf-node-result-preview__segments {
+  flex-shrink: 0;
+  position: relative;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-surface);
+}
+
+.sf-seg-pick {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.sf-seg-trigger {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  height: 26px;
+  padding: 0 8px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  color: var(--color-text);
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.sf-seg-trigger:hover {
+  border-color: var(--color-border-strong);
+  background: var(--color-ink-soft);
+}
+
+.sf-seg-trigger-idx {
+  flex-shrink: 0;
+  font-size: 11px;
+  color: var(--color-text-tertiary);
+}
+
+.sf-seg-trigger-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: 12px;
+  text-align: left;
+}
+
+.sf-seg-trigger-caret {
+  flex-shrink: 0;
+  color: var(--color-text-tertiary);
+  transition: transform var(--dur-1) var(--ease-out);
+}
+
+.sf-seg-trigger-caret.is-open {
+  transform: rotate(180deg);
+}
+
+.sf-seg-arrow {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  flex-shrink: 0;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.sf-seg-arrow:hover:not(:disabled) {
+  background: var(--color-ink-soft);
+  color: var(--color-text);
+}
+
+.sf-seg-arrow:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.sf-seg-list {
+  position: absolute;
+  top: calc(100% - 4px);
+  left: 8px;
+  right: 8px;
+  z-index: var(--z-rail);
+  max-height: 232px;
+  overflow-y: auto;
+  padding: 4px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background: var(--color-surface);
+  box-shadow: var(--shadow-overlay);
+}
+
+.sf-seg-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 8px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: inherit;
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.sf-seg-item:hover,
+.sf-seg-item.on {
+  background: var(--color-ink-soft);
+}
+
+.sf-seg-item-idx {
+  flex-shrink: 0;
+  width: 16px;
+  font-size: 11px;
+  color: var(--color-text-tertiary);
+}
+
+.sf-seg-item-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: 12px;
+}
+
+.sf-seg-item-len {
+  flex-shrink: 0;
+  font-size: 10.5px;
+  color: var(--color-text-tertiary);
+}
+
+.sf-seg-item--full {
+  margin-top: 4px;
+  border-top: 1px solid var(--color-border);
+  border-radius: 0 0 var(--radius-sm) var(--radius-sm);
+  color: var(--color-text-secondary);
 }
 
 .sf-node-result-preview__body {

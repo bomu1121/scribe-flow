@@ -141,6 +141,13 @@ export const runNodeLogs = sqliteTable("run_node_logs", {
   content: text("content").notNull(),
   /** M8-1：配方步骤 id；非配方节点日志为空。 */
   step: text("step"),
+  /**
+   * 多输入节点的输入归属：该条日志是第几个输入产生的（对应 run_node_inputs.position）。
+   * 一个节点处理 8 个视频时，8 组同名日志靠它才能分清是哪个视频。
+   */
+  inputIndex: integer("input_index"),
+  /** 该节点本次执行的输入总数，用于展示「3/8」。 */
+  inputTotal: integer("input_total"),
   createdAt: integer("created_at").notNull(),
 });
 

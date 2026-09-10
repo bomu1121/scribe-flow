@@ -247,6 +247,13 @@ export function ensureSchema(sqlite: Database.Database) {
   if (!logColumns.some((col) => col.name === "step")) {
     sqlite.exec("ALTER TABLE run_node_logs ADD COLUMN step TEXT");
   }
+  // 多输入节点：日志标注属于第几个输入（一个转写节点处理 8 个视频时用来分组）。
+  if (!logColumns.some((col) => col.name === "input_index")) {
+    sqlite.exec("ALTER TABLE run_node_logs ADD COLUMN input_index INTEGER");
+  }
+  if (!logColumns.some((col) => col.name === "input_total")) {
+    sqlite.exec("ALTER TABLE run_node_logs ADD COLUMN input_total INTEGER");
+  }
 
   // 视频模块：media_assets.error（资产级失败原因），兼容半途建过的旧表。
   const assetColumns = sqlite.prepare("PRAGMA table_info(media_assets)").all() as Array<{ name: string }>;

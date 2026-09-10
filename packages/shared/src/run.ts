@@ -90,6 +90,13 @@ export interface RunNodeLog {
   content: string;
   /** M8-1：配方步骤 id（无配方/非配方节点的日志为空）。 */
   step?: string;
+  /**
+   * 多输入节点的输入归属：该条日志由第几个输入产生（对应 RunNodeInput.position）。
+   * 一个节点处理 8 个视频时，8 组同名日志靠它分组到具体视频。
+   */
+  inputIndex?: number;
+  /** 该节点本次执行的输入总数，用于展示「3/8」。 */
+  inputTotal?: number;
   createdAt: number;
 }
 

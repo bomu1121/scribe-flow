@@ -11,6 +11,7 @@ import BiliAccountButton from "@/components/auth/BiliAccountButton.vue";
 import { api } from "@/lib/api";
 import { subscribeRunEvents } from "@/lib/sse";
 import type { NodePreviewOutput } from "@/utils/flow";
+import { buildNodeSegments, type RunSegment } from "@/utils/run-segments";
 import { useAuthStore } from "@/stores/auth";
 import { useProjectsStore } from "@/stores/projects";
 import { useRunsStore } from "@/stores/runs";
@@ -61,6 +62,8 @@ const biliPickerVisible = ref(false);
 interface CachedNodeOutputMeta {
   run: RunMeta;
   nodeResult: RunNodeResult;
+  /** 该节点产出被拆成的分段（一个输入一份结果时才有），供预览浮层直接切换。 */
+  segments: RunSegment[];
 }
 const nodeOutputMetaCache = new Map<string, CachedNodeOutputMeta | null>();
 const nodeOutputTextCache = new Map<string, string>();
@@ -581,7 +584,13 @@ async function findLatestNodeOutput(nodeId: string): Promise<CachedNodeOutputMet
     const detail = await api.get<RunDetail>(`/api/runs/${run.id}`);
     const nodeResult = detail.nodeResults.find((node) => node.nodeId === nodeId);
     if (nodeResult) {
-      const meta = { run, nodeResult };
+      // 一个输入一份结果时（如 8 个视频经同一个转写节点），预览浮层按分段切换而不是首尾相接。
+      const resultMap = new Map(detail.nodeResults.map((node) => [node.nodeId, node]));
+      const meta: CachedNodeOutputMeta = {
+        run,
+        nodeResult,
+        segments: buildNodeSegments(nodeId, detail.inputs ?? [], resultMap, detail.graph),
+      };
       nodeOutputMetaCache.set(nodeId, meta);
       return meta;
     }
@@ -606,7 +615,7 @@ async function readNodeOutputText(nodeResult: RunNodeResult, runId: string): Pro
   return text;
 }
 
-/** 画布悬停预览的数据源：最近一次运行里该节点的完整文本输出。 */
+/** 画布悬停预览的数据源：最近一次运行里该节点的完整文本输出 + 分段。 */
 async function fetchCanvasNodeOutput(nodeId: string): Promise<NodePreviewOutput | null> {
   const found = await findLatestNodeOutput(nodeId);
   if (!found || found.nodeResult.status !== "done") return null;
@@ -615,10 +624,11 @@ async function fetchCanvasNodeOutput(nodeId: string): Promise<NodePreviewOutput 
     runId: found.run.id,
     nodeLabel: found.nodeResult.nodeLabel || found.nodeResult.nodeType,
     text,
+    segments: found.segments,
   };
 }
 
-async function viewOutput(nodeId: string) {
+async function viewOutput(nodeId: string, segmentIndex?: number) {
   try {
     const found = await findLatestNodeOutput(nodeId);
     if (!found) {
@@ -628,6 +638,10 @@ async function viewOutput(nodeId: string) {
     const { run, nodeResult } = found;
     const query: Record<string, string> = { focus: nodeId };
     if (nodeResult.nodeType === "process.mindmap") query.tab = "mindmap";
+    // 从浮层的某一段跳转时，结果页直接打开同一段。
+    if (typeof segmentIndex === "number" && segmentIndex >= 0 && segmentIndex < found.segments.length) {
+      query.seg = String(segmentIndex);
+    }
     void router.push({ path: `/project/${projectId.value}/run/${run.id}`, query });
   } catch (err) {
     toast.error(err instanceof Error ? err.message : "打开结果页失败");

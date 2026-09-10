@@ -277,9 +277,10 @@ async function run() {
   const treeProjects = Array.isArray(tree.projects) ? tree.projects : [];
   const treeFolders = Array.isArray(tree.folders) ? tree.folders : [];
   check("工程树渲染出工程行（≥1）", rowsReady && treeRows > 0 && treeProjects.length >= 1, `${treeRows} 行：${treeProjects.join("、")}`);
+  // 文件夹名来自用户真实数据（会重命名/删除），因此只断言「文件夹行能渲染」，不写死具体名字。
   check(
-    "工程树渲染出文件夹行（真拖测试 / 12312312）",
-    treeRows > 0 && treeFolders.length >= 2 && treeFolders.includes("真拖测试") && treeFolders.includes("12312312"),
+    "工程树渲染出文件夹行（≥1）",
+    treeRows > 0 && treeFolders.length >= 1,
     treeFolders.join("、") || "无文件夹行",
   );
 
@@ -298,11 +299,12 @@ async function run() {
     count: document.querySelectorAll('.np-tpl').length,
     names: [...document.querySelectorAll('.np-tpl-name')].map((n) => n.textContent.trim()),
   }))()`)) ?? { count: 0, names: [] };
-  // NewProjectDialog = 「空白工程」+ WORKFLOW_TEMPLATES（packages/shared/src/templates.ts 共 8 个）
-  const expectTpl = 1 + 8;
+  // NewProjectDialog = 「空白工程」+ WORKFLOW_TEMPLATES（packages/shared/src/templates.ts）。
+  // 模板会随里程碑增加，所以只断言「空白 + 至少 8 个模板」，避免每加一个模板就要改一次脚本。
+  const expectTplMin = 1 + 8;
   check(
-    "模板按钮渲染 9 个（空白 + 8 工作流模板）",
-    tpl.count === expectTpl,
+    `模板按钮渲染 ≥${expectTplMin} 个（空白 + ≥8 工作流模板）`,
+    tpl.count >= expectTplMin && tpl.names[0] === "空白工程",
     `${tpl.count} 个：${tpl.names.join("、")}`,
   );
   // Element Plus 按钮/输入框断言落在对话框真实语境（footer 取消 el-button + 名称 el-input）

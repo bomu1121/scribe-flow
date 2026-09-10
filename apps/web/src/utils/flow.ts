@@ -1,5 +1,6 @@
 import type { ViewportTransform } from "@vue-flow/core";
 import type { AsrEngine, BiliSourceItem, GraphEdge, GraphNode, NodeRunStatus, NodeType, PageRef, ResultDelta, SourceVideoItem, WorkflowGraph } from "@scribe-flow/shared";
+import type { RunSegment } from "./run-segments";
 
 export const SCRIBE_NODE_TYPE = "scribe";
 export const SCRIBE_EDGE_TYPE = "scribe";
@@ -13,6 +14,11 @@ export interface NodePreviewOutput {
   nodeLabel: string;
   /** 完整文本内容；可能为空字符串（该次运行无文本产物）。 */
   text: string;
+  /**
+   * 一个输入一份结果时的分段（例如 8 个视频经同一个转写节点）。
+   * 空数组表示该节点只有一份内容，浮层沿用整段预览。
+   */
+  segments: RunSegment[];
 }
 
 export interface NodeContextActions {
@@ -25,8 +31,8 @@ export interface NodeContextActions {
   /** 运行进行中画布应只读：当前编辑不会影响正在进行的运行，禁止改动节点数据/结构。 */
   readonly?: boolean;
   copyOutput: () => void;
-  /** 打开该节点在最近一次运行中的输出结果页。 */
-  viewOutput: () => void;
+  /** 打开该节点在最近一次运行中的输出结果页；传入段序号可直达对应分段。 */
+  viewOutput: (segmentIndex?: number) => void;
   /** 拉取该节点最近一次运行的完整文本（画布悬停预览用）；无匹配运行或无输出时返回 null。 */
   fetchNodeOutput?: () => Promise<NodePreviewOutput | null>;
   /** 卡片内表单更新节点数据。 */

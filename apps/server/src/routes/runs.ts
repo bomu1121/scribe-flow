@@ -278,6 +278,8 @@ export function runsApi(db: AppDatabase, engine: RunEngine, dataDir: string) {
       kind: row.kind,
       content: row.content,
       step: row.step ?? undefined,
+      inputIndex: row.inputIndex ?? undefined,
+      inputTotal: row.inputTotal ?? undefined,
       createdAt: row.createdAt,
     }));
     return c.json({ items });

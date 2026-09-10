@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
-import { ElTable, ElTableColumn } from "element-plus";
+import { ElOption, ElSelect, ElTable, ElTableColumn } from "element-plus";
 import { toast } from "@/lib/toast";
 import {
   ArrowLeft,
@@ -17,6 +17,8 @@ import {
   PanelLeftClose,
   PanelLeftOpen,
   PenLine,
+  PanelRightClose,
+  PanelRightOpen,
   RefreshCw,
   RotateCcw,
   ScrollText,
@@ -28,6 +30,7 @@ import type { ProjectMeta, RunDetail, RunNodeInput, RunNodeResult, RunMediaView,
 import { NODE_TYPE_LABELS, parseTraceReports, traceReportToMarkdown } from "@scribe-flow/shared";
 import { api } from "@/lib/api";
 import { renderMarkdown } from "@/lib/markdown";
+import { buildNodeSegments, type RunSegment } from "@/utils/run-segments";
 import { subscribeRunEvents } from "@/lib/sse";
 import { useProjectsStore } from "@/stores/projects";
 import MindMapViewer from "@/components/MindMapViewer.vue";
@@ -62,20 +65,26 @@ const comparingDiff = ref(false);
 const resultRootRef = ref<HTMLElement | null>(null);
 const docScrollRef = ref<HTMLElement | null>(null);
 
-const runId = String(route.params.runId);
-const projectId = String(route.params.id);
+/**
+ * 结果页在同一路由名下会被复用实例（App.vue 按路由名 key），
+ * 所以在左侧运行库切换运行 / 工程时，必须让这两个 id 保持响应式并主动重载。
+ */
+const runId = computed(() => String(route.params.runId ?? ""));
+const projectId = computed(() => String(route.params.id ?? ""));
 
 /** 顶部副标题里的工程名跟随工程列表响应式更新，左侧栏重命名后立即同步。 */
 const projectName = computed(() => {
-  const item = projectsStore.list.find((p) => p.id === projectId);
+  const item = projectsStore.list.find((p) => p.id === projectId.value);
   if (item) return item.name;
-  if (projectsStore.current?.id === projectId) return projectsStore.current.name;
+  if (projectsStore.current?.id === projectId.value) return projectsStore.current.name;
   return run.value?.projectName ?? "";
 });
 
 let stopRunEvents: (() => void) | null = null;
 let reloadTimer: ReturnType<typeof setTimeout> | null = null;
 let tocCloseTimer: ReturnType<typeof setTimeout> | null = null;
+/** 竞态令牌：切换运行后，先前发出的详情/输出请求返回时直接丢弃。 */
+let loadRunToken = 0;
 
 const isRunning = computed(() => run.value?.status === "running");
 
@@ -120,8 +129,8 @@ interface InputItem extends SourceInfo {
   text?: string;
   path?: string;
   size?: number;
-  /** 该中间步骤下多个来源的独立内容；存在时主区域按模块分开展示。 */
-  modules?: { key: string; label: string; text: string }[];
+  /** 该中间步骤下多个来源的独立内容；存在时主区域按分段切换阅读。 */
+  segments?: RunSegment[];
   /** 在链路中的深度：0=原始素材，越靠近输出越大。 */
   depth: number;
   /** 节点类型短标签，用于卡片徽标展示。 */
@@ -301,42 +310,6 @@ const sources = computed<SourceInfo[]>(() => {
     });
 });
 
-function resolveModuleLabel(
-  row: RunNodeInput,
-  rows: RunNodeInput[],
-  resultMap: Map<string, RunNodeResult>,
-  graph?: WorkflowGraph,
-  sourceIndex = 0,
-): string {
-  let current = row;
-  for (let depth = 0; depth < 12; depth += 1) {
-    const nodeResult = resultMap.get(current.sourceNodeId);
-    const graphNode = graph?.nodes.find((n) => n.id === current.sourceNodeId);
-    const nodeType = nodeResult?.nodeType ?? graphNode?.type ?? "";
-    if (nodeType.startsWith("source.")) {
-      const data = (graphNode?.data ?? {}) as Record<string, unknown>;
-      if (nodeType === "source.bili") {
-        const items = Array.isArray(data.items) ? (data.items as { title?: string; part?: string; page?: number }[]) : [];
-        const entry = items[sourceIndex];
-        if (entry?.title || entry?.part) {
-          const base = entry.title || (typeof data.title === "string" ? data.title : "") || nodeResult?.nodeLabel || NODE_TYPE_LABELS[nodeType as keyof typeof NODE_TYPE_LABELS] || nodeType;
-          return entry.part ? `${base} · P${entry.page} ${entry.part}` : base;
-        }
-        if (typeof data.title === "string" && data.title) return data.title;
-      }
-      if (nodeType === "source.file" && typeof data.fileName === "string" && data.fileName) return data.fileName;
-      return nodeResult?.nodeLabel || NODE_TYPE_LABELS[nodeType as keyof typeof NODE_TYPE_LABELS] || nodeType;
-    }
-    const next = rows.find((r) => r.targetNodeId === current.sourceNodeId && r.position === current.position);
-    if (!next) break;
-    current = next;
-  }
-  const nodeResult = resultMap.get(row.sourceNodeId);
-  const graphNode = graph?.nodes.find((n) => n.id === row.sourceNodeId);
-  const nodeType = nodeResult?.nodeType ?? graphNode?.type ?? "";
-  return nodeResult?.nodeLabel || NODE_TYPE_LABELS[nodeType as keyof typeof NODE_TYPE_LABELS] || row.sourceNodeId;
-}
-
 function upstreamSourceIds(nodeId: string): Set<string> {
   const edges = graph.value?.edges ?? [];
   const result = new Set<string>();
@@ -402,30 +375,14 @@ const inputItems = computed<InputItem[]>(() => {
       String(data.label ?? NODE_TYPE_LABELS[nodeType as keyof typeof NODE_TYPE_LABELS] ?? nodeType);
     const outgoing = rows.filter((r) => r.sourceNodeId === node.id);
 
-    // 同一来源给同一消费节点的多行，才是“一个来源里的多个独立内容”（如多 P 视频）；
-    // 同一内容分发给多个下游分支不应被误当成 modules。
-    const byTarget = new Map<string, RunNodeInput[]>();
-    for (const row of outgoing) {
-      const list = byTarget.get(row.targetNodeId) ?? [];
-      list.push(row);
-      byTarget.set(row.targetNodeId, list);
-    }
-    const moduleGroup = [...byTarget.values()]
-      .filter((group) => group.length > 1 && group.some((r) => r.kind === "text" && (r.text || r.resultText)))
-      .sort((a, b) => b.length - a.length)[0];
+    // 一个节点处理多个输入时，每个输入一份独立结果：这里还原成分段，供主区域切换阅读。
+    const segments = buildNodeSegments(node.id, rows, nodeResultMap.value, graph.value);
 
     const textRow = outgoing.find((r) => r.kind === "text" && r.text);
     const audioRow = outgoing.find((r) => r.kind === "audio");
     const fallbackText = nodeResult?.output && nodeResult.output.kind !== "audio" ? nodeResult.output.text : undefined;
     const text = textRow?.text ?? fallbackText ?? (nodeType === "source.text" ? String(data.text ?? "") : undefined);
     const defaultKind: InputItem["kind"] = nodeType === "source.text" ? "text" : "audio";
-    const modules = moduleGroup
-      ? moduleGroup.map((r, index) => ({
-          key: r.id,
-          label: `${index + 1}. ${resolveModuleLabel(r, rows, nodeResultMap.value, graph.value, index)}`,
-          text: r.text ?? r.resultText ?? "",
-        }))
-      : undefined;
     const depth = depthOf(node.id);
     const typeLabel = chainTypeShort(nodeType);
     const base: InputItem = {
@@ -443,7 +400,7 @@ const inputItems = computed<InputItem[]>(() => {
       text,
       path: audioRow?.path ?? (nodeResult?.output?.kind === "audio" ? nodeResult.output.path : undefined),
       size: textRow?.size ?? audioRow?.size ?? nodeResult?.output?.size,
-      modules,
+      segments: segments.length > 1 ? segments : undefined,
     };
     items.push({ ...base, ...(source ?? {}) });
   }
@@ -492,9 +449,15 @@ const traceSources = computed(() => {
   const ordered = [...inputItems.value].sort((a, b) => b.depth - a.depth);
   for (const item of ordered) {
     const label = originLabelForInput(item);
-    if (item.modules && item.modules.length > 1) {
-      for (const module of item.modules) {
-        if (module.text?.trim()) result.push({ key: `${item.key}:${module.key}`, label: `${label} · ${module.label}`, text: module.text });
+    if (item.segments && item.segments.length > 1) {
+      for (const segment of item.segments) {
+        if (segment.text.trim()) {
+          result.push({
+            key: `${item.key}:${segment.inputId}`,
+            label: `${label} · ${segment.index + 1}. ${segment.label}`,
+            text: segment.text,
+          });
+        }
       }
     } else if (item.text?.trim()) {
       result.push({ key: item.key, label, text: item.text });
@@ -598,14 +561,139 @@ const selectedStageTitle = computed(() => {
 });
 const viewingInput = computed(() => selectedInput.value !== null);
 const currentMarkdown = computed(() => (editing.value ? draft.value : markdown.value));
-/** 用于与当前输出对比的“链路输入”完整文本；多模块输入会合并后参与对比。 */
+/** 用于与当前输出对比的“链路输入”完整文本；多输入会按原顺序合并后参与对比。 */
 const inputCompareText = computed(() => {
   const item = selectedInput.value;
   if (!item) return "";
-  if (item.modules && item.modules.length > 1) return item.modules.map((module) => module.text).join("\n\n");
+  if (item.segments && item.segments.length > 1) return item.segments.map((segment) => segment.text).join("\n\n---\n\n");
   return item.text ?? "";
 });
-const canCompareInputToOutput = computed(() => viewingInput.value && Boolean(inputCompareText.value.trim()) && Boolean(markdown.value.trim()));
+
+// ---------- 多输入分段阅读：一个节点处理 8 个视频时，按视频切开而不是首尾相接 ----------
+/** -1 = 合并全文；>=0 = 选中第 N 段。 */
+const segmentIndex = ref(-1);
+/** 右侧「分段大纲」栏的收起状态与筛选词（段数多时用）。 */
+const railCollapsed = ref(false);
+const segmentFilter = ref("");
+const railListRef = ref<HTMLElement | null>(null);
+
+/** 当前输出文档的可分段内容（如「输出」节点由 8 个视频的笔记汇成）。 */
+const docSegments = computed<RunSegment[]>(() =>
+  currentOutput.value ? buildNodeSegments(currentOutput.value.node.nodeId, run.value?.inputs ?? [], nodeResultMap.value, graph.value) : [],
+);
+/** 当前选中的链路中间节点产出的可分段内容。 */
+const activeSegments = computed<RunSegment[]>(() => (viewingInput.value ? selectedInput.value?.segments ?? [] : docSegments.value));
+const selectedSegment = computed<RunSegment | null>(
+  () => activeSegments.value.find((segment) => segment.index === segmentIndex.value) ?? null,
+);
+/** 大纲筛选（仅按标题过滤，段数 > 12 才出现输入框）。 */
+const visibleSegments = computed(() => {
+  const keyword = segmentFilter.value.trim().toLowerCase();
+  if (!keyword) return activeSegments.value;
+  return activeSegments.value.filter((segment) => `${segment.label} ${segment.meta}`.toLowerCase().includes(keyword));
+});
+/** 「全文」那一行的字数：分段视图取当前视图的合并正文。 */
+const fullBodyChars = computed(() => (viewingInput.value ? inputCompareText.value : currentMarkdown.value).replace(/\s/g, "").length);
+const segmentPositionLabel = computed(() => (segmentIndex.value < 0 ? "全文" : `${segmentIndex.value + 1} / ${activeSegments.value.length}`));
+/** 分段视图下的正文：选中某段时只渲染该段，「全文」时仍是合并全文。 */
+const inputBodyText = computed(() => selectedSegment.value?.text ?? inputCompareText.value);
+const outputBodyText = computed(() => (selectedSegment.value ? selectedSegment.value.text : currentMarkdown.value));
+const renderedOutputBody = computed(() => renderMarkdown(outputBodyText.value));
+const renderedInputBody = computed(() => renderMarkdown(inputBodyText.value));
+/** 分段所属的视图标识：切换节点 / 运行 / 视图时回到第 1 段，运行中被 SSE 刷新时不打断当前选择。 */
+const segmentScope = computed(() => {
+  if (activeSegments.value.length <= 1) return "";
+  const target = viewingInput.value ? selectedInputKey.value : currentOutput.value?.node.nodeId ?? "";
+  return target ? `${runId.value}::${viewingInput.value ? "in" : "out"}::${target}` : "";
+});
+
+/** 分段选择：默认第 1 段；（画布浮层带来的）?focus=&seg= 只作用于它指向的那个节点。 */
+function syncSegmentSelection() {
+  const segments = activeSegments.value;
+  if (segments.length === 0) {
+    segmentIndex.value = -1;
+    return;
+  }
+  const focus = String(route.query.focus ?? "");
+  const target = viewingInput.value ? selectedInputKey.value : currentOutput.value?.node.nodeId ?? "";
+  if (focus && focus !== target) {
+    segmentIndex.value = 0;
+    return;
+  }
+  const raw = Number(route.query.seg);
+  if (Number.isInteger(raw) && raw >= 0 && raw < segments.length) {
+    segmentIndex.value = raw;
+    return;
+  }
+  segmentIndex.value = 0;
+}
+
+watch(segmentScope, (scope) => {
+  segmentFilter.value = "";
+  if (editing.value) return;
+  if (!scope) {
+    segmentIndex.value = -1;
+    return;
+  }
+  syncSegmentSelection();
+});
+
+function selectSegment(index: number) {
+  segmentIndex.value = index;
+  // 切段等同于换一份正文，回到顶部，避免停在上一段的滚动位置。
+  docScrollRef.value?.scrollTo({ top: 0 });
+  tocValue.value = "";
+}
+
+function fmtSegmentChars(size: number): string {
+  if (!size) return "";
+  return size >= 10000 ? `${(size / 10000).toFixed(1)} 万字` : `${size} 字`;
+}
+
+/** 顺序切段：全文 ↔ 1..N，越界不动（顺序阅读用，不把「全文」卷进循环）。 */
+function stepSegment(delta: number) {
+  const count = activeSegments.value.length;
+  if (count === 0) return;
+  const current = segmentIndex.value;
+  const next = current < 0 ? (delta > 0 ? 0 : -1) : Math.min(count - 1, Math.max(0, current + delta));
+  if (next !== current) selectSegment(next);
+}
+
+/** 大纲内的键盘导航：↑↓ / j k / Home End，焦点跟着选中项走。 */
+function onRailKeydown(event: KeyboardEvent, index: number) {
+  const keys = ["ArrowDown", "ArrowUp", "Home", "End", "j", "k"];
+  if (!keys.includes(event.key)) return;
+  event.preventDefault();
+  const ordered = [-1, ...activeSegments.value.map((segment) => segment.index)];
+  const position = ordered.indexOf(index);
+  let target = index;
+  if (event.key === "ArrowDown" || event.key === "j") target = ordered[Math.min(ordered.length - 1, position + 1)] ?? index;
+  else if (event.key === "ArrowUp" || event.key === "k") target = ordered[Math.max(0, position - 1)] ?? index;
+  else if (event.key === "Home") target = ordered[0] ?? index;
+  else if (event.key === "End") target = ordered[ordered.length - 1] ?? index;
+  if (target === index) return;
+  selectSegment(target);
+  void nextTick(() => {
+    railListRef.value?.querySelector<HTMLElement>(`[data-seg-index="${target}"]`)?.focus();
+  });
+}
+
+// 换段后把当前项滚进可视区（深链直达第 7 段时不至于还停在列表顶部）。
+watch([segmentIndex, segmentScope, visibleSegments], () => {
+  void nextTick(ensureActiveRailRowVisible);
+});
+
+/** 只用大纲容器自身的滚动，避免整页被带着跳（因此不用 scrollIntoView）。 */
+function ensureActiveRailRowVisible() {
+  const container = railListRef.value;
+  const row = container?.querySelector<HTMLElement>(".rv-rail-row.on");
+  if (!container || !row) return;
+  const delta = row.getBoundingClientRect().top - container.getBoundingClientRect().top;
+  const bottom = delta + row.offsetHeight;
+  if (delta < 0) container.scrollTop += delta - 6;
+  else if (bottom > container.clientHeight) container.scrollTop += bottom - container.clientHeight + 6;
+}
+
 function looksLikeTraceReport(text: string): boolean {
   return /"schema"\s*:\s*1/.test(text) && /"items"\s*:/.test(text);
 }
@@ -617,18 +705,24 @@ const isTraceOutput = computed(() =>
   ),
 );
 const traceReports = computed<TraceReport[]>(() => (isTraceOutput.value ? parseTraceReports(markdown.value) : []));
-const traceMarkdownExport = computed(() => traceReports.value.map((report) => traceReportToMarkdown(report)).join("\n\n---\n\n"));
+/** 溯源产物同样按分段收敛：选中某一段时只展示该段的报告，而不是 8 个视频的报告叠在一起。 */
+const activeTraceReports = computed<TraceReport[]>(() =>
+  selectedSegment.value ? parseTraceReports(selectedSegment.value.text) : traceReports.value,
+);
+const traceMarkdownExport = computed(() => activeTraceReports.value.map((report) => traceReportToMarkdown(report)).join("\n\n---\n\n"));
 const activeMarkdown = computed(() => {
   if (activeTab.value === "mindmap") return mindMapMarkdown.value;
-  if (viewingInput.value) return inputText.value;
-  if (traceReports.value.length > 0) return traceMarkdownExport.value;
+  if (activeTraceReports.value.length > 0) return traceMarkdownExport.value;
+  if (selectedSegment.value) return selectedSegment.value.text;
+  if (viewingInput.value) return inputCompareText.value;
   return currentMarkdown.value;
 });
-const renderedMarkdown = computed(() => renderMarkdown(markdown.value));
 const renderedDraft = computed(() => renderMarkdown(draft.value));
-const renderedInputMarkdown = computed(() => renderMarkdown(inputText.value));
 const paperStyle = computed(() => ({ "--doc-scale": String(zoom.value / 100) }));
-const inputWordCount = computed(() => inputText.value.replace(/\s/g, "").length);
+const canCompareInputToOutput = computed(
+  () => viewingInput.value && Boolean(inputCompareText.value.trim()) && Boolean(markdown.value.trim()),
+);
+const inputWordCount = computed(() => inputBodyText.value.replace(/\s/g, "").length);
 const inputReadingTime = computed(() => Math.max(1, Math.round(inputWordCount.value / 400)));
 
 const toc = computed(() => {
@@ -674,12 +768,14 @@ onBeforeUnmount(() => {
 });
 
 async function loadRun(showLoading = true) {
+  const token = ++loadRunToken;
   if (showLoading) loading.value = true;
   try {
-    const data = await api.get<RunDetail>(`/api/runs/${runId}`);
+    const data = await api.get<RunDetail>(`/api/runs/${runId.value}`);
+    if (token !== loadRunToken) return;
     if (!data.graph) {
       try {
-        const project = await api.get<ProjectMeta>(`/api/projects/${projectId}`);
+        const project = await api.get<ProjectMeta>(`/api/projects/${projectId.value}`);
         data.graph = project.graph;
       } catch {
         // 旧数据或工程已删除时，保留无图状态，仍展示节点结果
@@ -692,8 +788,8 @@ async function loadRun(showLoading = true) {
       editing.value = false;
       draft.value = markdown.value;
     }
+    const focusNodeId = route.query.focus ? String(route.query.focus) : "";
     if (outputNodes.value.length > 0) {
-      const focusNodeId = route.query.focus ? String(route.query.focus) : "";
       const focusIndex = focusNodeId ? outputNodes.value.findIndex((doc) => doc.node.nodeId === focusNodeId) : -1;
       const previousIndex = outputNodes.value.findIndex((doc) => doc.node.nodeId === previousOutputId);
       selectedOutputIndex.value = focusIndex >= 0 ? focusIndex : previousIndex >= 0 ? previousIndex : 0;
@@ -702,12 +798,18 @@ async function loadRun(showLoading = true) {
       markdown.value = "";
       draft.value = "";
     }
+    // 中间节点（转写 / 校对 / AI 加工）不是「输出文档」：画布上点它的「查看输出」时，
+    // 直接按链路输入打开它自己的产物，而不是退回到最后一篇输出文档。
+    if (focusNodeId && !outputNodes.value.some((doc) => doc.node.nodeId === focusNodeId)) {
+      if (inputItems.value.some((item) => item.key === focusNodeId)) {
+        await selectInput(focusNodeId);
+      }
+    }
     const queryTab = String(route.query.tab ?? "");
     if (queryTab === "mindmap" && mindMapNodes.value.length > 0) {
       activeTab.value = "mindmap";
-      const focusNodeId = route.query.focus ? String(route.query.focus) : "";
-      const focusIndex = focusNodeId ? mindMapNodes.value.findIndex((doc) => doc.node.nodeId === focusNodeId) : -1;
-      selectedMindMapIndex.value = focusIndex >= 0 ? focusIndex : 0;
+      const mindFocusIndex = focusNodeId ? mindMapNodes.value.findIndex((doc) => doc.node.nodeId === focusNodeId) : -1;
+      selectedMindMapIndex.value = mindFocusIndex >= 0 ? mindFocusIndex : 0;
     } else if (activeTab.value === "mindmap" && mindMapNodes.value.length === 0) {
       activeTab.value = "result";
     }
@@ -719,7 +821,7 @@ async function loadRun(showLoading = true) {
 
     if (stopRunEvents) stopRunEvents();
     if (data.status === "running") {
-      stopRunEvents = subscribeRunEvents(runId, (event) => {
+      stopRunEvents = subscribeRunEvents(runId.value, (event) => {
         if (event.type === "node.done" || event.type === "node.error" || event.type === "run.done") {
           scheduleReload();
         }
@@ -728,9 +830,9 @@ async function loadRun(showLoading = true) {
       stopRunEvents = null;
     }
   } catch (err) {
-    toast.error(err instanceof Error ? err.message : "运行详情加载失败");
+    if (token === loadRunToken) toast.error(err instanceof Error ? err.message : "运行详情加载失败");
   } finally {
-    loading.value = false;
+    if (token === loadRunToken) loading.value = false;
   }
 }
 
@@ -741,6 +843,47 @@ function scheduleReload() {
     void loadRun(false);
   }, 400);
 }
+
+/** 切换运行前清空上一份运行的本地视图状态，避免旧结果、旧编辑草稿短暂串台。 */
+function resetRunViewState() {
+  loadRunToken += 1;
+  stopRunEvents?.();
+  stopRunEvents = null;
+  if (reloadTimer) {
+    clearTimeout(reloadTimer);
+    reloadTimer = null;
+  }
+  restoreState.value = null;
+  run.value = null;
+  markdown.value = "";
+  draft.value = "";
+  mindMapMarkdown.value = "";
+  inputText.value = "";
+  selectedOutputIndex.value = 0;
+  selectedMindMapIndex.value = 0;
+  selectedInputKey.value = "";
+  segmentIndex.value = -1;
+  activeMediaIndex.value = 0;
+  fallbackMediaIndex.value = 0;
+  editing.value = false;
+  comparingDiff.value = false;
+  tocValue.value = "";
+  tocPanelOpen.value = false;
+  logDialogOpen.value = false;
+  logDialogNodeId.value = "";
+}
+
+/**
+ * 结果页复用同一组件实例：在左侧运行库切换到别的运行（含重跑后跳转、跨工程打开上次结果）时，
+ * 路由参数变了但组件不会重建，必须在这里自己重载。
+ */
+watch(
+  () => `${projectId.value}::${runId.value}`,
+  () => {
+    resetRunViewState();
+    void loadRun();
+  },
+);
 
 async function loadOutputContent(nodeId: string) {
   const node = run.value?.nodeResults.find((n) => n.nodeId === nodeId);
@@ -753,7 +896,7 @@ async function loadOutputContent(nodeId: string) {
     markdown.value = node.output.text;
   } else if (node.output.path) {
     try {
-      const result = await api.get<{ text: string }>(`/api/runs/${runId}/outputs/${nodeId}/content`);
+      const result = await api.get<{ text: string }>(`/api/runs/${runId.value}/outputs/${nodeId}/content`);
       markdown.value = result.text ?? "";
     } catch (err) {
       markdown.value = "";
@@ -777,7 +920,7 @@ async function loadMindMapContent(index?: number) {
     mindMapMarkdown.value = node.output.text;
   } else if (node.output?.path) {
     try {
-      const result = await api.get<{ text: string }>(`/api/runs/${runId}/outputs/${node.nodeId}/content`);
+      const result = await api.get<{ text: string }>(`/api/runs/${runId.value}/outputs/${node.nodeId}/content`);
       mindMapMarkdown.value = result.text ?? "";
     } catch (err) {
       mindMapMarkdown.value = "";
@@ -800,27 +943,32 @@ async function selectMindMap(index: number) {
 async function selectOutput(index: number) {
   const doc = outputNodes.value[index];
   if (!doc) return;
+  // 重复点同一个输出时保持当前分段，只有真的换了目标才回到第 1 段。
+  const switched = selectedOutputIndex.value !== index || selectedInputKey.value !== "";
   selectedInputKey.value = "";
   inputText.value = "";
   comparingDiff.value = false;
   selectedOutputIndex.value = index;
   editing.value = false;
+  if (switched) segmentIndex.value = -1;
   await loadOutputContent(doc.node.nodeId);
 }
 
 async function selectInput(key: string) {
   const item = inputItems.value.find((i) => i.key === key);
   if (!item) return;
+  const switched = selectedInputKey.value !== key;
   selectedInputKey.value = key;
   editing.value = false;
   comparingDiff.value = false;
+  if (switched) segmentIndex.value = -1;
   inputText.value = item.text ?? "";
   // 旧数据没有 run_node_inputs 时，大文本可能只存在输出文件里，按需读取。
   if (!inputText.value) {
     const node = nodeResultMap.value.get(item.sourceNodeId);
     if (node?.output && node.output.kind !== "audio" && node.output.path) {
       try {
-        const result = await api.get<{ text: string }>(`/api/runs/${runId}/outputs/${item.sourceNodeId}/content`);
+        const result = await api.get<{ text: string }>(`/api/runs/${runId.value}/outputs/${item.sourceNodeId}/content`);
         inputText.value = result.text ?? "";
       } catch (err) {
         toast.error(err instanceof Error ? err.message : "输入内容读取失败");
@@ -841,6 +989,8 @@ function toggleInputDiff() {
 
 function toggleEdit() {
   if (!editing.value) {
+    // 编辑只针对整篇输出：进入编辑时退出分段视图，避免「编辑一段却保存不上去」的误解。
+    segmentIndex.value = -1;
     draft.value = markdown.value;
     editing.value = true;
   } else {
@@ -925,7 +1075,7 @@ function scrollToHeading(id: string) {
 
 function goBack() {
   const focus = activeTab.value === "mindmap" ? currentMindMap.value?.node.nodeId : currentOutput.value?.node.nodeId;
-  router.push({ path: `/project/${projectId}`, query: focus ? { focus } : {} });
+  router.push({ path: `/project/${projectId.value}`, query: focus ? { focus } : {} });
 }
 
 function fmt(ms?: number): string {
@@ -944,7 +1094,10 @@ function downloadMarkdown() {
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
-  a.download = viewingInput.value ? `run-${runId.slice(-6)}-input.md` : `run-${runId.slice(-6)}.md`;
+  // 分段视图下文件名带上该段标题，导出的就是这一段而不是整篇。
+  const segment = selectedSegment.value;
+  const segmentSuffix = segment ? `-${String(segment.index + 1).padStart(2, "0")}-${slugify(segment.label).slice(0, 40)}` : "";
+  a.download = viewingInput.value ? `run-${runId.value.slice(-6)}-input${segmentSuffix}.md` : `run-${runId.value.slice(-6)}${segmentSuffix}.md`;
   a.click();
   URL.revokeObjectURL(url);
 }
@@ -967,10 +1120,10 @@ function openLogs(nodeId = "") {
 
 async function retryNode(node: RunNodeResult) {
   try {
-    const created = await api.post<{ id: string }>(`/api/runs/${runId}/nodes/${node.nodeId}/retry`);
+    const created = await api.post<{ id: string }>(`/api/runs/${runId.value}/nodes/${node.nodeId}/retry`);
     toast.clear();
     toast.success(`已启动重跑：#${created.id.slice(-6)}`);
-    void router.push({ path: `/project/${projectId}/run/${created.id}`, query: { focus: node.nodeId } });
+    void router.push({ path: `/project/${projectId.value}/run/${created.id}`, query: { focus: node.nodeId } });
   } catch (err) {
     toast.error(err instanceof Error ? err.message : "重跑失败");
   }
@@ -978,7 +1131,7 @@ async function retryNode(node: RunNodeResult) {
 
 async function stopRun() {
   try {
-    await api.post<{ ok: boolean }>(`/api/runs/${runId}/stop`);
+    await api.post<{ ok: boolean }>(`/api/runs/${runId.value}/stop`);
     toast.success("已发送停止指令");
     await loadRun(false);
   } catch (err) {
@@ -988,7 +1141,7 @@ async function stopRun() {
 
 async function forceStopRun() {
   try {
-    await api.post<{ ok: boolean }>(`/api/runs/${runId}/force-stop`);
+    await api.post<{ ok: boolean }>(`/api/runs/${runId.value}/force-stop`);
     toast.success("已强制结束运行");
     await loadRun(false);
   } catch (err) {
@@ -1175,6 +1328,16 @@ async function forceStopRun() {
                 <PanelLeftOpen v-if="sideCollapsed" :size="14" />
                 <PanelLeftClose v-else :size="14" />
               </button>
+              <button
+                v-if="activeSegments.length > 1"
+                type="button"
+                class="rv-tool-btn rv-rail-toggle"
+                :title="railCollapsed ? '展开分段大纲' : '收起分段大纲'"
+                @click="railCollapsed = !railCollapsed"
+              >
+                <PanelRightOpen v-if="railCollapsed" :size="14" />
+                <PanelRightClose v-else :size="14" />
+              </button>
               <span class="rv-tool-divider" />
               <button type="button" class="rv-tool-btn" title="缩小" @click="setZoom(-10)"><ZoomOut :size="14" /></button>
               <span class="rv-zoom tnum">{{ zoom }}%</span>
@@ -1263,7 +1426,37 @@ async function forceStopRun() {
             </div>
           </div>
 
-          <div ref="docScrollRef" class="rv-doc-scroll">
+          <!-- 窄屏（<1280px）降级：单行标题 + 下拉 + 翻页，不铺开 N 个按钮 -->
+          <div v-if="activeSegments.length > 1 && !editing && !comparingDiff" class="rv-segbar">
+            <button type="button" class="rv-segbar-arrow" aria-label="上一段" :disabled="segmentIndex <= -1" @click="stepSegment(-1)">‹</button>
+            <el-select
+              :model-value="segmentIndex"
+              class="rv-segbar-select"
+              size="small"
+              aria-label="选择分段"
+              @change="(value: number) => selectSegment(Number(value))"
+            >
+              <el-option :value="-1" :label="`全文（合并 ${activeSegments.length} 段）`" />
+              <el-option
+                v-for="segment in activeSegments"
+                :key="segment.inputId"
+                :value="segment.index"
+                :label="`${segment.index + 1}. ${segment.label}${segment.size ? ` · ${fmtSegmentChars(segment.size)}` : ''}`"
+              />
+            </el-select>
+            <button
+              type="button"
+              class="rv-segbar-arrow"
+              aria-label="下一段"
+              :disabled="segmentIndex >= activeSegments.length - 1"
+              @click="stepSegment(1)"
+            >
+              ›
+            </button>
+          </div>
+
+          <div class="rv-doc-area">
+            <div ref="docScrollRef" class="rv-doc-scroll">
             <template v-if="viewingInput && comparingDiff">
               <article class="rv-paper" :style="paperStyle">
                 <header class="rv-paper-head">
@@ -1289,10 +1482,12 @@ async function forceStopRun() {
                     <template v-else>
                       {{ selectedInput?.label || "文本输入" }}
                     </template>
-                    <template v-if="selectedInput?.modules && selectedInput.modules.length > 1">
-                      · {{ selectedInput.modules.length }} 个独立输入
+                    <template v-if="selectedInput?.segments && selectedInput.segments.length > 1">
+                      · {{ selectedInput.segments.length }} 个独立输入
+                      <template v-if="selectedSegment"> · 第 {{ selectedSegment.index + 1 }}/{{ selectedInput.segments.length }} 段</template>
+                      · {{ inputWordCount }} 字
                     </template>
-                    <template v-else-if="inputText"> · {{ inputWordCount }} 字 · 约 {{ inputReadingTime }} 分钟阅读</template>
+                    <template v-else-if="inputBodyText"> · {{ inputWordCount }} 字 · 约 {{ inputReadingTime }} 分钟阅读</template>
                   </p>
                 </header>
 
@@ -1350,13 +1545,7 @@ async function forceStopRun() {
                   </template>
                 </div>
 
-                <div v-if="selectedInput?.modules && selectedInput.modules.length > 1" class="rv-input-modules">
-                  <section v-for="module in selectedInput.modules" :key="module.key" class="rv-input-module">
-                    <h2 class="rv-input-module-title">{{ module.label }}</h2>
-                    <div class="rv-preview markdown-body" v-html="renderMarkdown(module.text)" />
-                  </section>
-                </div>
-                <div v-else-if="inputText" class="rv-preview markdown-body" v-html="renderedInputMarkdown" />
+                <div v-if="inputBodyText" class="rv-preview markdown-body" v-html="renderedInputBody" />
                 <div v-else-if="inputMedia.length === 0" class="rv-input-empty">
                   <p>这是一个音视频输入，当前没有单独转写文稿。</p>
                   <p>如果这是旧运行记录，重新运行一次即可在输入列表中查看每个音频的独立转写内容。</p>
@@ -1368,19 +1557,20 @@ async function forceStopRun() {
                 <header class="rv-paper-head">
                   <h1 class="rv-paper-title">{{ currentOutput?.title || "输出文档" }}</h1>
                   <p class="rv-paper-meta">
+                    <template v-if="selectedSegment">第 {{ selectedSegment.index + 1 }}/{{ activeSegments.length }} 段 · </template>
                     {{ sourceSummary }} · {{ wordCount }} 字 · 约 {{ readingTime }} 分钟阅读
                   </p>
                 </header>
 
-                <template v-if="traceReports.length > 0 && !editing">
-                  <TraceReportViewer :reports="traceReports" :sources="traceSources" />
+                <template v-if="activeTraceReports.length > 0 && !editing">
+                  <TraceReportViewer :reports="activeTraceReports" :sources="traceSources" />
                 </template>
                 <template v-else>
                   <div v-if="editing" class="rv-edit-grid">
                     <textarea v-model="draft" class="rv-editor" spellcheck="false" aria-label="Markdown 编辑器" />
                     <div class="rv-preview markdown-body" v-html="renderedDraft" />
                   </div>
-                  <div v-else class="rv-preview markdown-body" v-html="renderedMarkdown" />
+                  <div v-else class="rv-preview markdown-body" v-html="renderedOutputBody" />
 
                   <div v-if="editing" class="rv-edit-actions">
                     <button type="button" class="rv-btn rv-btn--text" :disabled="draft === markdown" @click="resetDraft">恢复原始</button>
@@ -1456,6 +1646,74 @@ async function forceStopRun() {
               </section>
             </template>
           </div>
+
+          <!-- 分段大纲（≥1280px）：顺序内容用列表而不是平级标签；当前段左侧墨色标记 -->
+          <aside v-if="activeSegments.length > 1 && !railCollapsed && !editing && !comparingDiff" class="rv-rail">
+            <div class="rv-rail-head">
+              <span class="rv-rail-title">分段</span>
+              <span class="rv-rail-count tnum">共 {{ activeSegments.length }} 段</span>
+            </div>
+            <div v-if="activeSegments.length > 12" class="rv-rail-search">
+              <input v-model="segmentFilter" type="search" placeholder="筛选分段标题…" aria-label="筛选分段标题" />
+            </div>
+            <div ref="railListRef" class="rv-rail-list" role="listbox" aria-label="分段大纲">
+              <button
+                type="button"
+                role="option"
+                class="rv-rail-row"
+                :class="{ on: segmentIndex < 0 }"
+                :aria-selected="segmentIndex < 0"
+                data-seg-index="-1"
+                @click="selectSegment(-1)"
+                @keydown="onRailKeydown($event, -1)"
+              >
+                <span class="rv-rail-idx tnum">—</span>
+                <span class="rv-rail-body">
+                  <span class="rv-rail-label">全文（{{ activeSegments.length }} 段合并）</span>
+                  <span class="rv-rail-meta tnum">{{ fmtSegmentChars(fullBodyChars) }}</span>
+                </span>
+              </button>
+              <button
+                v-for="segment in visibleSegments"
+                :key="segment.inputId"
+                type="button"
+                role="option"
+                class="rv-rail-row"
+                :class="{ on: segment.index === segmentIndex }"
+                :aria-selected="segment.index === segmentIndex"
+                :data-seg-index="segment.index"
+                @click="selectSegment(segment.index)"
+                @keydown="onRailKeydown($event, segment.index)"
+              >
+                <span class="rv-rail-idx tnum">{{ String(segment.index + 1).padStart(2, "0") }}</span>
+                <span class="rv-rail-body">
+                  <span class="rv-rail-label" :title="segment.label">{{ segment.label }}</span>
+                  <span class="rv-rail-meta tnum">
+                    <span v-if="segment.size">{{ fmtSegmentChars(segment.size) }}</span>
+                    <span v-if="segment.meta">{{ segment.meta }}</span>
+                  </span>
+                </span>
+              </button>
+              <p v-if="visibleSegments.length === 0" class="rv-rail-empty">没有匹配的分段</p>
+            </div>
+            <div class="rv-rail-foot">
+              <div class="rv-rail-pager">
+                <button type="button" class="rv-rail-pager-btn" aria-label="上一段" :disabled="segmentIndex <= -1" @click="stepSegment(-1)">‹</button>
+                <span class="rv-rail-pos tnum">{{ segmentPositionLabel }}</span>
+                <button
+                  type="button"
+                  class="rv-rail-pager-btn"
+                  aria-label="下一段"
+                  :disabled="segmentIndex >= activeSegments.length - 1"
+                  @click="stepSegment(1)"
+                >
+                  ›
+                </button>
+              </div>
+              <span class="rv-rail-hint tnum">↑↓ 切段</span>
+            </div>
+          </aside>
+        </div>
         </section>
       </div>
     </template>
@@ -1465,6 +1723,8 @@ async function forceStopRun() {
       :run-id="runId"
       :nodes="run?.nodeResults ?? []"
       :initial-node-id="logDialogNodeId"
+      :inputs="run?.inputs ?? []"
+      :graph="run?.graph"
     />
   </div>
 </template>
@@ -2365,28 +2625,254 @@ async function forceStopRun() {
   margin: 4px 0;
 }
 
-.rv-input-module {
-  margin: 0 0 24px;
-  padding-bottom: 20px;
+/* 多输入分段：宽屏走右侧「分段大纲」，窄屏降级为单行标题 + 下拉 */
+.rv-doc-area {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+
+.rv-segbar {
+  display: none;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
   border-bottom: 1px solid var(--color-border);
+  background: var(--color-surface);
+  flex-shrink: 0;
 }
 
-.rv-input-module:last-child {
-  margin-bottom: 0;
-  padding-bottom: 0;
-  border-bottom: none;
+.rv-segbar-arrow {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  flex-shrink: 0;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  color: var(--color-text-secondary);
+  font-size: 13px;
+  cursor: pointer;
 }
 
-.rv-input-module-title {
-  margin: 0 0 12px;
-  font-size: 1.05em;
+.rv-segbar-arrow:hover:not(:disabled) {
+  background: var(--color-ink-soft);
+  color: var(--color-text);
+}
+
+.rv-segbar-arrow:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.rv-segbar-select {
+  flex: 1;
+  min-width: 0;
+}
+
+/* 分段大纲栏：顺序内容用列表（而非平级标签），段数到 20+ 也不会退化成轮播 */
+.rv-rail {
+  width: 268px;
+  min-width: 268px;
+  display: flex;
+  flex-direction: column;
+  border-left: 1px solid var(--color-border);
+  background: var(--color-surface);
+  min-height: 0;
+}
+
+.rv-rail-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 10px 12px 8px;
+  flex-shrink: 0;
+}
+
+.rv-rail-title {
+  font-size: 12px;
   font-weight: 600;
   color: var(--color-text);
+}
+
+.rv-rail-count {
+  font-size: 11px;
+  color: var(--color-text-tertiary);
+}
+
+.rv-rail-search {
+  padding: 0 12px 8px;
+  flex-shrink: 0;
+}
+
+.rv-rail-search input {
+  width: 100%;
+  height: 28px;
+  padding: 0 8px;
+  border: 1px solid var(--color-control-border);
+  border-radius: var(--control-radius-sm);
+  background: var(--color-surface);
+  color: var(--color-text);
+  font-family: inherit;
+  font-size: 12px;
+}
+
+.rv-rail-search input::placeholder {
+  color: var(--color-control-placeholder);
+}
+
+.rv-rail-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 0 8px 8px;
+}
+
+.rv-rail-row {
+  display: flex;
+  gap: 9px;
+  width: 100%;
+  padding: 7px 8px 7px 10px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: inherit;
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+  position: relative;
+}
+
+.rv-rail-row:hover,
+.rv-rail-row.on {
+  background: var(--color-ink-soft);
+}
+
+.rv-rail-row.on::before {
+  content: "";
+  position: absolute;
+  left: 2px;
+  top: 8px;
+  bottom: 8px;
+  width: 2px;
+  border-radius: 2px;
+  background: var(--color-text);
+}
+
+.rv-rail-row:focus-visible {
+  outline: 2px solid var(--color-border-strong);
+  outline-offset: -2px;
+}
+
+.rv-rail-idx {
+  width: 18px;
+  flex-shrink: 0;
+  padding-top: 1px;
+  font-size: 11px;
+  color: var(--color-text-tertiary);
+}
+
+.rv-rail-row.on .rv-rail-idx {
+  color: var(--color-text);
+}
+
+.rv-rail-body {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+
+.rv-rail-label {
+  font-size: 12.5px;
+  font-weight: 500;
+  line-height: 1.35;
+  color: var(--color-text);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.rv-rail-meta {
+  margin-top: 2px;
+  display: flex;
+  gap: 8px;
+  font-size: 10.5px;
+  color: var(--color-text-tertiary);
+}
+
+.rv-rail-empty {
+  margin: 12px 4px;
+  font-size: 12px;
+  color: var(--color-text-tertiary);
+}
+
+.rv-rail-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 10px;
+  border-top: 1px solid var(--color-border);
+  flex-shrink: 0;
+}
+
+.rv-rail-pager {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.rv-rail-pager-btn {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  color: var(--color-text-secondary);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.rv-rail-pager-btn:hover:not(:disabled) {
+  background: var(--color-ink-soft);
+  color: var(--color-text);
+}
+
+.rv-rail-pager-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.rv-rail-pos {
+  min-width: 54px;
+  text-align: center;
+  font-size: 11.5px;
+  color: var(--color-text-secondary);
+}
+
+.rv-rail-hint {
+  font-size: 10.5px;
+  color: var(--color-text-tertiary);
 }
 
 @media (max-width: 1280px) {
   .rv-side {
     --rv-side-w: 260px;
+  }
+
+  .rv-rail,
+  .rv-rail-toggle {
+    display: none;
+  }
+
+  .rv-segbar {
+    display: flex;
   }
 }
 

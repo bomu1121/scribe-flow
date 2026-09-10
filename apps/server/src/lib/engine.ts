@@ -1142,14 +1142,15 @@ export class RunEngine {
         const config = getAsrConfig(this.db);
         if (!config.apiKey) throw new Error("未配置语音识别密钥，请到设置页填写");
         const parts: string[] = [];
+        const inputRef = (item: ResolvedInput) => ({ index: item.position, total: audioItems.length });
         for (let i = 0; i < audioItems.length; i += 1) {
           const item = audioItems[i];
           const audioPath = resolve(this.dataDir, item.output.path ?? "");
           await this.progress(active, node.id, Math.round(10 + (i / audioItems.length) * 80), `转写音频 ${i + 1}/${audioItems.length}`);
-          await this.log(active, node.id, "info", `音频输入 ${i + 1}：${audioPath}`);
+          await this.log(active, node.id, "info", `音频输入 ${i + 1}：${audioPath}`, undefined, inputRef(item));
           const text = await transcribeAudio(config, audioPath, signal);
           if (!text.trim()) throw new Error(`第 ${i + 1} 个音频转写结果为空`);
-          await this.log(active, node.id, "ai-response", text);
+          await this.log(active, node.id, "ai-response", text, undefined, inputRef(item));
           const trimmed = text.trim();
           await this.updateInputText(active, node.id, item.sourceNodeId, item.position, trimmed, trimmed.length);
           parts.push(trimmed);
@@ -1181,6 +1182,7 @@ export class RunEngine {
           const totalFlat = recipe.steps.length * textItems.length;
           for (let i = 0; i < textItems.length; i += 1) {
             const item = textItems[i];
+            const inputRef = { index: item.position, total: textItems.length };
             const inputText = item.output.text?.trim() ?? "";
             await this.progress(active, node.id, 8, `输入 ${i + 1}/${textItems.length}：运行配方 ${recipe.steps.length} 步`);
             let finalText = await this.executeRecipeOnInput(
@@ -1193,6 +1195,7 @@ export class RunEngine {
               item.sourceMeta?.label ?? "当前输入素材",
               i * recipe.steps.length,
               totalFlat,
+              inputRef,
             );
             // 信息溯源 v2：若配置了 Tavily，则对最终 JSON 做外部联网核查并回填 external 字段。
             if (blockId === "builtin.trace.v2") {
@@ -1200,9 +1203,9 @@ export class RunEngine {
               if (searchConfig.apiKey) {
                 try {
                   finalText = await enrichTraceReportWithExternalChecks(inputText, finalText, aiConfig, searchConfig, signal);
-                  await this.log(active, node.id, "info", "已执行外部联网核查");
+                  await this.log(active, node.id, "info", "已执行外部联网核查", undefined, inputRef);
                 } catch (err) {
-                  await this.log(active, node.id, "info", `外部联网核查未完成，已保留内部溯源结果：${describeError(err)}`);
+                  await this.log(active, node.id, "info", `外部联网核查未完成，已保留内部溯源结果：${describeError(err)}`, undefined, inputRef);
                 }
               }
             }
@@ -1226,14 +1229,15 @@ export class RunEngine {
         const parts: string[] = [];
         for (let i = 0; i < textItems.length; i += 1) {
           const item = textItems[i];
+          const inputRef = { index: item.position, total: textItems.length };
           const inputText = item.output.text?.trim() ?? "";
           await this.progress(active, node.id, Math.round(10 + (i / textItems.length) * 80), `处理输入 ${i + 1}/${textItems.length}`);
-          await this.log(active, node.id, "input", inputText);
-          await this.log(active, node.id, "ai-request", `${model}\n\n${system}`);
+          await this.log(active, node.id, "input", inputText, undefined, inputRef);
+          await this.log(active, node.id, "ai-request", `${model}\n\n${system}`, undefined, inputRef);
           const result = await chatCompletion({ ...aiConfig, model }, system, inputText, signal);
           if (!result.trim()) throw new Error(`第 ${i + 1} 个输入处理结果为空`);
           const trimmed = result.trim();
-          await this.log(active, node.id, "ai-response", trimmed);
+          await this.log(active, node.id, "ai-response", trimmed, undefined, inputRef);
           await this.updateInputResult(active, node.id, item.sourceNodeId, item.position, trimmed);
           parts.push(trimmed);
         }
@@ -1660,6 +1664,8 @@ ${JSON.stringify(taxonomyTags)}`;
     kind: "input" | "ai-request" | "ai-response" | "info" | "error",
     content: string,
     step?: string,
+    /** 多输入节点：标注该条日志属于第几个输入（对应 run_node_inputs.position）。 */
+    input?: { index: number; total: number },
   ) {
     if (!content) return;
     await this.db
@@ -1671,6 +1677,8 @@ ${JSON.stringify(taxonomyTags)}`;
         kind,
         content: content.slice(0, 8000),
         step: step ?? undefined,
+        inputIndex: input?.index,
+        inputTotal: input?.total,
         createdAt: Date.now(),
       })
       .run();
@@ -1692,8 +1700,10 @@ ${JSON.stringify(taxonomyTags)}`;
     sourceLabel: string,
     flatBase: number,
     totalFlat: number,
+    /** 该输入在节点输入列表里的位置，用于把日志归到对应分段。 */
+    inputRef?: { index: number; total: number },
   ): Promise<string> {
-    await this.log(active, node.id, "input", inputText);
+    await this.log(active, node.id, "input", inputText, undefined, inputRef);
     let prev = "";
     let all = "";
     for (let j = 0; j < recipe.steps.length; j += 1) {
@@ -1704,7 +1714,7 @@ ${JSON.stringify(taxonomyTags)}`;
       const model = step.model ?? aiConfig.model;
       const progress = Math.round(10 + ((flatIndex + 1) / totalFlat) * 86);
       await this.progress(active, node.id, progress, `步骤 ${flatIndex + 1}/${totalFlat} ${step.label}`);
-      await this.log(active, node.id, "ai-request", `[${step.id}] ${step.label}\n\n${model}\n\n${system}`, step.id);
+      await this.log(active, node.id, "ai-request", `[${step.id}] ${step.label}\n\n${model}\n\n${system}`, step.id, inputRef);
       let result: string;
       try {
         result = await chatCompletion({ ...aiConfig, model }, system, user, signal);
@@ -1727,7 +1737,7 @@ ${JSON.stringify(taxonomyTags)}`;
         this.emit(active, { type: "node.step.error", runId: active.id, nodeId: node.id, stepId: step.id, index: flatIndex + 1, total: totalFlat, error: message });
         throw new Error(message);
       }
-      await this.log(active, node.id, "ai-response", `[${step.label}] 输出 ${trimmed.length} 字\n\n${trimmed}`, step.id);
+      await this.log(active, node.id, "ai-response", `[${step.label}] 输出 ${trimmed.length} 字\n\n${trimmed}`, step.id, inputRef);
       try {
         assertStepOutput(step, trimmed, { input: inputText, prev, all });
       } catch (error) {

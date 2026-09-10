@@ -1,0 +1,295 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<title>ScribeFlow · 多视频分组切换 3 个方案对比</title>
+<style>
+  :root {
+    --color-bg: #f4f5f6; --color-canvas: #f8f9fa; --color-surface: #ffffff; --color-surface-muted: #f7f8f9;
+    --color-border: #e4e7eb; --color-border-strong: #cdd3da; --color-text: #16181d; --color-text-secondary: #545b66;
+    --color-text-tertiary: #8a929e; --color-brand: #00aeec; --color-brand-soft: #e6f7fe; --color-ink-soft: #f0f1f3;
+    --color-success: #18a058; --color-accent-indigo: #6366f1; --color-accent-indigo-soft: #eef0fe;
+    --radius-sm: 6px; --radius-md: 8px; --radius-lg: 10px; --radius-xl: 14px;
+    --shadow-xs: 0 1px 2px rgba(22,24,29,.04); --shadow-card: 0 1px 2px rgba(22,24,29,.05), 0 4px 12px rgba(22,24,29,.04);
+    --shadow-overlay: 0 8px 24px rgba(22,24,29,.12);
+    --font: "PingFang SC", "Microsoft YaHei", "Noto Sans SC", -apple-system, "Segoe UI", sans-serif;
+    --mono: "Cascadia Code", ui-monospace, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; padding: 28px 32px 40px; background: #eef0f2; font-family: var(--font); color: var(--color-text); }
+  .doc-head { max-width: 1400px; margin: 0 auto 18px; }
+  .doc-head h1 { margin: 0 0 6px; font-size: 20px; }
+  .doc-head p { margin: 0; font-size: 13px; color: var(--color-text-secondary); }
+  .tpl { max-width: 1400px; margin: 0 auto 30px; }
+  .tpl-head { display: flex; align-items: baseline; gap: 10px; margin: 0 0 10px; }
+  .tpl-head b { font-size: 15px; }
+  .tpl-head span { font-size: 12.5px; color: var(--color-text-secondary); }
+  .frame { width: 1400px; height: 620px; display: flex; flex-direction: column; overflow: hidden;
+           border: 1px solid var(--color-border); border-radius: var(--radius-xl); background: var(--color-bg); box-shadow: var(--shadow-card); }
+  .bar { display: flex; align-items: center; justify-content: space-between; height: 46px; padding: 0 14px; background: var(--color-surface);
+         border-bottom: 1px solid var(--color-border); flex-shrink: 0; }
+  .bar-title { font-size: 13px; font-weight: 600; }
+  .bar-sub { font-size: 11.5px; color: var(--color-text-tertiary); margin-left: 8px; }
+  .bar-actions { display: flex; gap: 8px; }
+  .chip-btn { height: 26px; padding: 0 10px; display: inline-flex; align-items: center; gap: 5px; font-size: 12px; color: var(--color-text-secondary);
+              border: 1px solid var(--color-border); border-radius: var(--radius-sm); background: var(--color-surface); }
+  .body { flex: 1; display: flex; min-height: 0; }
+  .side { width: 260px; flex-shrink: 0; background: var(--color-surface); border-right: 1px solid var(--color-border); padding: 10px; overflow: hidden; }
+  .side-title { font-size: 12px; font-weight: 600; margin: 0 2px 8px; }
+  .side-sec { margin: 14px 2px 6px; font-size: 11px; font-weight: 600; color: var(--color-text-secondary); }
+  .row { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: var(--radius-sm); }
+  .row + .row { margin-top: 1px; }
+  .row.on { background: var(--color-ink-soft); }
+  .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--color-success); flex-shrink: 0; }
+  .row-main { min-width: 0; flex: 1; display: flex; flex-direction: column; gap: 1px; }
+  .row-label { font-size: 12px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .row-meta { font-size: 10.5px; color: var(--color-text-tertiary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .row-type { font-size: 10px; color: var(--color-text-tertiary); flex-shrink: 0; }
+  .main { flex: 1; min-width: 0; display: flex; flex-direction: column; background: var(--color-canvas); }
+  .toolbar { height: 40px; flex-shrink: 0; display: flex; align-items: center; justify-content: space-between; gap: 10px;
+             padding: 0 12px; background: var(--color-surface); border-bottom: 1px solid var(--color-border); }
+  .tool-group { display: flex; align-items: center; gap: 6px; color: var(--color-text-secondary); font-size: 12px; }
+  .icon { width: 26px; height: 26px; display: grid; place-items: center; border-radius: var(--radius-sm); color: var(--color-text-secondary); }
+  .icon.on { background: var(--color-ink-soft); color: var(--color-text); }
+  .divider { width: 1px; height: 16px; background: var(--color-border); margin: 0 4px; }
+  .pane { flex: 1; min-height: 0; display: flex; overflow: hidden; }
+  .paper-wrap { flex: 1; min-width: 0; overflow: hidden; padding: 18px 22px; }
+  .paper { background: var(--color-surface); border-radius: var(--radius-lg); box-shadow: var(--shadow-card); padding: 26px 30px; height: 100%; overflow: hidden; }
+  .paper h1 { font-size: 21px; margin: 0 0 6px; }
+  .paper .lede { color: var(--color-text-secondary); font-size: 12.5px; border-left: 3px solid var(--color-border-strong); padding-left: 10px; margin: 0 0 14px; }
+  .paper h2 { font-size: 15px; margin: 16px 0 6px; }
+  .paper p { font-size: 13px; line-height: 1.75; color: var(--color-text-secondary); margin: 6px 0; }
+  .paper li { font-size: 13px; line-height: 1.7; color: var(--color-text-secondary); }
+  .paper-meta { font-size: 11.5px; color: var(--color-text-tertiary); margin: 0 0 12px; }
+  .seg-count { font-family: var(--mono); font-size: 11px; }
+
+  /* ── 方案 A：右侧分段大纲 ───────────────────────────── */
+  .rail { width: 268px; flex-shrink: 0; border-left: 1px solid var(--color-border); background: var(--color-surface);
+          display: flex; flex-direction: column; min-height: 0; }
+  .rail-head { display: flex; align-items: center; justify-content: space-between; padding: 10px 12px 8px; flex-shrink: 0; }
+  .rail-head b { font-size: 12px; }
+  .rail-head span { font-size: 11px; color: var(--color-text-tertiary); }
+  .rail-list { flex: 1; min-height: 0; overflow: hidden; padding: 0 8px; }
+  .rail-row { display: flex; gap: 9px; width: 100%; text-align: left; padding: 7px 8px 7px 10px; border: none; border-radius: var(--radius-sm);
+              background: transparent; position: relative; }
+  .rail-row.on { background: var(--color-ink-soft); }
+  .rail-row.on::before { content: ""; position: absolute; left: 2px; top: 8px; bottom: 8px; width: 2px; border-radius: 2px; background: var(--color-text); }
+  .rail-idx { font-family: var(--mono); font-size: 11px; color: var(--color-text-tertiary); width: 18px; flex-shrink: 0; padding-top: 1px; }
+  .rail-row.on .rail-idx { color: var(--color-text); }
+  .rail-body { min-width: 0; flex: 1; }
+  .rail-title { font-size: 12.5px; font-weight: 500; line-height: 1.35; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+  .rail-meta { margin-top: 2px; font-size: 10.5px; color: var(--color-text-tertiary); display: flex; gap: 8px; }
+  .rail-full { display: flex; align-items: center; justify-content: space-between; margin: 2px 8px 10px; padding: 6px 10px;
+               border: 1px solid var(--color-border); border-radius: var(--radius-sm); font-size: 12px; color: var(--color-text-secondary); }
+  .rail-list { padding-top: 2px; }
+  .rail-foot { flex-shrink: 0; border-top: 1px solid var(--color-border); padding: 8px 10px; display: flex; align-items: center; justify-content: space-between; }
+  .pager { display: flex; align-items: center; gap: 6px; font-size: 11.5px; color: var(--color-text-secondary); }
+  .pager-btn { width: 24px; height: 24px; display: grid; place-items: center; border: 1px solid var(--color-border); border-radius: var(--radius-sm); background: var(--color-surface); }
+  .kbd { font-family: var(--mono); font-size: 10px; color: var(--color-text-tertiary); }
+
+  /* ── 方案 B：阅读器式标题行 + 下拉 ───────────────────── */
+  .reader-bar { height: 46px; flex-shrink: 0; display: flex; align-items: center; gap: 10px; padding: 0 14px;
+                background: var(--color-surface); border-bottom: 1px solid var(--color-border); }
+  .reader-arrow { width: 26px; height: 26px; display: grid; place-items: center; border: 1px solid var(--color-border); border-radius: var(--radius-sm);
+                  background: var(--color-surface); color: var(--color-text-secondary); }
+  .reader-trigger { display: flex; align-items: center; gap: 8px; height: 30px; padding: 0 10px; border: 1px solid var(--color-border-strong);
+                    border-radius: var(--radius-md); background: var(--color-surface); min-width: 420px; }
+  .reader-trigger .idx { font-family: var(--mono); font-size: 11.5px; color: var(--color-text-tertiary); }
+  .reader-trigger .name { font-size: 12.5px; font-weight: 500; flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .reader-trigger .caret { color: var(--color-text-tertiary); font-size: 10px; }
+  .seg-toggle { margin-left: auto; display: flex; border: 1px solid var(--color-border); border-radius: var(--radius-sm); overflow: hidden; }
+  .seg-toggle span { padding: 4px 10px; font-size: 12px; color: var(--color-text-secondary); }
+  .seg-toggle span.on { background: var(--color-ink-soft); color: var(--color-text); }
+  .dropdown { position: absolute; margin-top: 6px; width: 420px; max-height: 300px; overflow: hidden;
+              border: 1px solid var(--color-border); border-radius: var(--radius-lg); background: var(--color-surface); box-shadow: var(--shadow-overlay); }
+  .dd-row { display: flex; align-items: center; gap: 8px; padding: 6px 10px; }
+  .dd-row.on { background: var(--color-ink-soft); }
+  .dd-idx { font-family: var(--mono); font-size: 11px; color: var(--color-text-tertiary); width: 16px; }
+  .dd-name { flex: 1; min-width: 0; font-size: 12.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .dd-len { font-family: var(--mono); font-size: 11px; color: var(--color-text-tertiary); width: 64px; text-align: right; flex-shrink: 0; }
+  .dd-full { border-top: 1px solid var(--color-border); color: var(--color-text-secondary); }
+
+  /* ── 方案 C：左侧输出文档树内嵌套 ───────────────────── */
+  .tree-row { display: flex; align-items: center; gap: 7px; padding: 5px 8px; border-radius: var(--radius-sm); }
+  .tree-row.on { background: var(--color-ink-soft); }
+  .tree-row.sub { padding-left: 26px; position: relative; }
+  .tree-row.sub + .tree-row.sub::before { content: ""; position: absolute; left: 14px; top: -2px; bottom: 0; width: 1px; background: var(--color-border); }
+  .tree-sub-label { margin: 6px 8px 3px 26px; font-size: 10.5px; color: var(--color-text-tertiary); }
+  .tree-caret { width: 10px; font-size: 9px; color: var(--color-text-tertiary); }
+  .tree-name { font-size: 12px; flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .tree-len { font-family: var(--mono); font-size: 10.5px; color: var(--color-text-tertiary); width: 44px; text-align: right; flex-shrink: 0; }
+  .cap { max-width: 1400px; margin: 0 auto 6px; font-size: 12px; color: var(--color-text-secondary); }
+  .pros { max-width: 1400px; margin: 0 auto 26px; font-size: 12.5px; color: var(--color-text-secondary); }
+  .pros b { color: var(--color-text); }
+</style>
+</head>
+<body>
+<div class="doc-head">
+  <h1>多视频分组切换：3 个方案的对照稿</h1>
+  <p>数据取自真实运行（8 个视频经同一转写 → AI 加工 → 输出）：每段标题、字数、时长都是真的。方案 A / B 为结果页阅读场景，C 为「不动正文」的最小改动路线。</p>
+</div>
+
+<!-- ══════════ 方案 A ══════════ -->
+<div class="tpl-head"><b>方案 A · 右侧「分段大纲」栏（推荐）</b><span>把分段做成真正的大纲列表：序号 + 标题 + 字数/时长，当前段左侧墨色标记；底部常驻上一段/下一段。</span></div>
+<div class="frame">
+  <div class="bar">
+    <div><span class="bar-title">运行结果 #795004</span><span class="bar-sub">网络安全-负基础篇 · 耗时 2362.4s</span></div>
+    <div class="bar-actions"><span class="chip-btn">查看日志</span><span class="chip-btn">复制</span><span class="chip-btn">下载 Markdown</span></div>
+  </div>
+  <div class="body">
+    <div class="side">
+      <div class="side-title">链路输入</div>
+      <div class="row"><span class="dot"></span><div class="row-main"><span class="row-label">B站链接</span><span class="row-meta">8 个音轨已就绪</span></div><span class="row-type">B站</span></div>
+      <div class="side-sec">加工步骤 1</div>
+      <div class="row"><span class="dot"></span><div class="row-main"><span class="row-label">转写</span><span class="row-meta">8 个音频 · 111917 字</span></div><span class="row-type">转写</span></div>
+      <div class="side-sec">最终输入</div>
+      <div class="row"><span class="dot"></span><div class="row-main"><span class="row-label">AI 加工</span><span class="row-meta">8 个输入 · 57629 字</span></div><span class="row-type">AI</span></div>
+      <div class="side-sec">输出文档</div>
+      <div class="row on"><span class="dot"></span><div class="row-main"><span class="row-label">输出</span><span class="row-meta">笔记.md · 57643 字</span></div></div>
+    </div>
+    <div class="main">
+      <div class="toolbar">
+        <div class="tool-group"><span class="icon">◧</span><span class="divider"></span><span class="icon">−</span><span class="seg-count">100%</span><span class="icon">＋</span><span class="icon">⟲</span><span class="divider"></span><span class="icon">⤢</span><span class="icon">✎</span></div>
+        <div class="tool-group"><span class="icon">≡</span><span>文档目录</span><span class="icon">▾</span></div>
+      </div>
+      <div class="pane">
+        <div class="paper-wrap">
+          <div class="paper">
+            <p class="paper-meta">第 3/8 段 · 8 个音视频 · 6885 字 · 约 17 分钟阅读</p>
+            <h1>知识科普提炼：认识主流操作系统分类及其在安全学习中的意义</h1>
+            <p class="lede">从“操作系统像公司行政部门”讲起，把系统分成桌面端、服务器端、移动端、嵌入式四类。</p>
+            <h2>【一句话结论】</h2>
+            <p>操作系统是把底层硬件复杂操作封装成“按钮”、负责协调软硬件资源的中间层；主流系统可按桌面端、服务器端、移动端、嵌入式/专用系统四大类划分。</p>
+            <h2>【前置知识与受众】</h2>
+            <ul>
+              <li>目标受众：零基础小白，或准备转行进入网络安全的人</li>
+              <li>需要的前置知识：无特殊前置，从生活场景讲起</li>
+            </ul>
+            <p>（正文继续在下方滚动，右侧大纲与左侧正文是两个独立滚动容器，换段不丢位置。）</p>
+          </div>
+        </div>
+        <div class="rail">
+          <div class="rail-head"><b>分段</b><span>共 8 段 · 5.1 万字</span></div>
+          <div class="rail-full"><span>全文</span><span class="seg-count">50912 字</span></div>
+          <div class="rail-list">
+            <div class="rail-row"><span class="rail-idx">01</span><div class="rail-body"><div class="rail-title">负基础篇—网络安全入门基本认知</div><div class="rail-meta"><span>8297 字</span><span>53:23</span></div></div></div>
+            <div class="rail-row"><span class="rail-idx">02</span><div class="rail-body"><div class="rail-title">AI 渗透测试与 CTF 中 AI 应用的优势、局限与正确学习路线</div><div class="rail-meta"><span>1.0 万字</span><span>1:19:52</span></div></div></div>
+            <div class="rail-row on"><span class="rail-idx">03</span><div class="rail-body"><div class="rail-title">负基础篇——认识操作系统：主流操作系统介绍</div><div class="rail-meta"><span>6885 字</span><span>29:45</span></div></div></div>
+            <div class="rail-row"><span class="rail-idx">04</span><div class="rail-body"><div class="rail-title">负基础篇—网络通信核心认识终端、IP、端口、域名、DNS，内外网</div><div class="rail-meta"><span>8326 字</span><span>43:52</span></div></div></div>
+            <div class="rail-row"><span class="rail-idx">05</span><div class="rail-body"><div class="rail-title">负基础篇—web安全学习之网站结构与访问流程</div><div class="rail-meta"><span>4366 字</span><span>31:20</span></div></div></div>
+            <div class="rail-row"><span class="rail-idx">06</span><div class="rail-body"><div class="rail-title">负基础篇—WEB安全之HTTP协议精讲</div><div class="rail-meta"><span>6545 字</span><span>58:24</span></div></div></div>
+            <div class="rail-row"><span class="rail-idx">07</span><div class="rail-body"><div class="rail-title">负基础篇—Burp Suite 与 Yakit 安装与基础抓包</div><div class="rail-meta"><span>5542 字</span><span>32:09</span></div></div></div>
+            <div class="rail-row"><span class="rail-idx">08</span><div class="rail-body"><div class="rail-title">负基础篇—网安之AI渗透:LLM、Skills、MCP、模型、智能体基础</div><div class="rail-meta"><span>6199 字</span><span>36:16</span></div></div></div>
+          </div>
+          <div class="rail-foot">
+            <div class="pager"><span class="pager-btn">‹</span><span>3 / 8</span><span class="pager-btn">›</span></div>
+            <span class="kbd">↑↓ 切段</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+<div class="pros"><b>优点：</b>8 段全可见、标题两行不截断、字数/时长可比；顺序阅读有 ‹ › 与 ↑↓；段数到 20+ 也不会“变成轮播”；不占正文顶部空间，滚动正文时大纲常驻。<b>代价：</b>正文宽度少 268px（900px 稿纸仍能容纳）；多一根可折叠的栏。</div>
+
+<!-- ══════════ 方案 B ══════════ -->
+<div class="tpl-head"><b>方案 B · 阅读器式标题行 + 下拉跳转</b><span>顶部一行「‹ 03/08 标题 ▾ ›」，点标题打开全部分段列表；不在屏幕上摊开 8 个按钮。</span></div>
+<div class="frame">
+  <div class="bar">
+    <div><span class="bar-title">运行结果 #795004</span><span class="bar-sub">网络安全-负基础篇 · 耗时 2362.4s</span></div>
+    <div class="bar-actions"><span class="chip-btn">查看日志</span><span class="chip-btn">复制</span><span class="chip-btn">下载 Markdown</span></div>
+  </div>
+  <div class="body">
+    <div class="side">
+      <div class="side-title">链路输入</div>
+      <div class="side-sec">输出文档</div>
+      <div class="row on"><span class="dot"></span><div class="row-main"><span class="row-label">输出</span><span class="row-meta">笔记.md · 57643 字</span></div></div>
+    </div>
+    <div class="main">
+      <div class="toolbar">
+        <div class="tool-group"><span class="icon">◧</span><span class="divider"></span><span class="icon">−</span><span class="seg-count">100%</span><span class="icon">＋</span><span class="divider"></span><span class="icon">⤢</span><span class="icon">✎</span></div>
+        <div class="tool-group"><span class="icon">≡</span><span>文档目录</span><span class="icon">▾</span></div>
+      </div>
+      <div class="reader-bar" style="position: relative;">
+        <span class="reader-arrow">‹</span>
+        <span class="reader-trigger"><span class="idx">03 / 08</span><span class="name">负基础篇——认识操作系统：主流操作系统介绍</span><span class="caret">▾</span></span>
+        <span class="reader-arrow">›</span>
+        <div class="seg-toggle"><span>分段</span><span class="on">全文</span></div>
+        <div class="dropdown" style="top: 46px; left: 50px;">
+          <div class="dd-row"><span class="dd-idx">01</span><span class="dd-name">负基础篇—网络安全入门基本认知</span><span class="dd-len">8297 字</span></div>
+          <div class="dd-row"><span class="dd-idx">02</span><span class="dd-name">AI 渗透测试与 CTF 中 AI 应用的优势、局限与正确学习路线</span><span class="dd-len">1.0 万字</span></div>
+          <div class="dd-row on"><span class="dd-idx">03</span><span class="dd-name">负基础篇——认识操作系统：主流操作系统介绍</span><span class="dd-len">6885 字</span></div>
+          <div class="dd-row"><span class="dd-idx">04</span><span class="dd-name">负基础篇—网络通信核心认识终端、IP、端口、域名、DNS，内外网</span><span class="dd-len">8326 字</span></div>
+          <div class="dd-row"><span class="dd-idx">05</span><span class="dd-name">负基础篇—web安全学习之网站结构与访问流程</span><span class="dd-len">4366 字</span></div>
+          <div class="dd-row"><span class="dd-idx">06</span><span class="dd-name">负基础篇—WEB安全之HTTP协议精讲</span><span class="dd-len">6545 字</span></div>
+          <div class="dd-row dd-full"><span class="dd-idx">—</span><span class="dd-name">全文（8 段合并）</span><span class="dd-len">50912 字</span></div>
+        </div>
+      </div>
+      <div class="pane">
+        <div class="paper-wrap">
+          <div class="paper">
+            <p class="paper-meta">第 3/8 段 · 6885 字 · 约 17 分钟阅读</p>
+            <h1>知识科普提炼：认识主流操作系统分类及其在安全学习中的意义</h1>
+            <p class="lede">从“操作系统像公司行政部门”讲起，把系统分成桌面端、服务器端、移动端、嵌入式四类。</p>
+            <h2>【一句话结论】</h2>
+            <p>操作系统是把底层硬件复杂操作封装成“按钮”、负责协调软硬件资源的中间层；主流系统可按桌面端、服务器端、移动端、嵌入式/专用系统四大类划分。</p>
+            <h2>【前置知识与受众】</h2>
+            <ul>
+              <li>目标受众：零基础小白，或准备转行进入网络安全的人</li>
+              <li>需要的前置知识：无特殊前置，从生活场景讲起</li>
+            </ul>
+            <p>正文宽度与现在一致（无侧栏占用），视觉最接近“一篇文章”。</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+<div class="pros"><b>优点：</b>改动最小、正文最宽、视觉最干净；下拉是 Element Plus 既有控件，与全站表单语言一致（“选一个”在别的页面也都用下拉）。<b>代价：</b>列表要展开才能看到，8 段之间没法一眼扫、不能直接比较字数；连续跳两段要开关两次。</div>
+
+<!-- ══════════ 方案 C ══════════ -->
+<div class="tpl-head"><b>方案 C · 左侧「输出文档」树内嵌套</b><span>分段挂到已有左栏的输出文档下，正文区不动；左栏收起时靠标题行兜底。</span></div>
+<div class="frame">
+  <div class="bar">
+    <div><span class="bar-title">运行结果 #795004</span><span class="bar-sub">网络安全-负基础篇 · 耗时 2362.4s</span></div>
+    <div class="bar-actions"><span class="chip-btn">查看日志</span><span class="chip-btn">复制</span><span class="chip-btn">下载 Markdown</span></div>
+  </div>
+  <div class="body">
+    <div class="side" style="width: 300px;">
+      <div class="side-title">输出文档</div>
+      <div class="tree-row on"><span class="tree-caret">▾</span><span class="tree-name">输出 · 笔记.md</span><span class="tree-len">57643</span></div>
+      <div class="tree-sub-label">分段（8）</div>
+      <div class="tree-row sub"><span class="tree-caret"></span><span class="tree-name">01 负基础篇—网络安全入门基本认知</span><span class="tree-len">8297</span></div>
+      <div class="tree-row sub"><span class="tree-caret"></span><span class="tree-name">02 AI 渗透测试与 CTF 中 AI 应用的优势…</span><span class="tree-len">1.0万</span></div>
+      <div class="tree-row sub on"><span class="tree-caret"></span><span class="tree-name">03 负基础篇——认识操作系统：主流操作…</span><span class="tree-len">6885</span></div>
+      <div class="tree-row sub"><span class="tree-caret"></span><span class="tree-name">04 负基础篇—网络通信核心认识终端、IP…</span><span class="tree-len">8326</span></div>
+      <div class="tree-row sub"><span class="tree-caret"></span><span class="tree-name">05 负基础篇—web安全学习之网站结构与…</span><span class="tree-len">4366</span></div>
+      <div class="tree-row sub"><span class="tree-caret"></span><span class="tree-name">06 负基础篇—WEB安全之HTTP协议精讲</span><span class="tree-len">6545</span></div>
+      <div class="tree-row sub" style="color: var(--color-text-tertiary);"><span class="tree-caret"></span><span class="tree-name">还有 2 段…</span></div>
+      <div class="side-sec">链路输入</div>
+      <div class="row"><span class="dot"></span><div class="row-main"><span class="row-label">转写</span><span class="row-meta">8 个音频 · 111917 字</span></div></div>
+      <div class="row"><span class="dot"></span><div class="row-main"><span class="row-label">AI 加工</span><span class="row-meta">8 个输入 · 57629 字</span></div></div>
+    </div>
+    <div class="main">
+      <div class="toolbar">
+        <div class="tool-group"><span class="icon on">◧</span><span class="divider"></span><span class="icon">−</span><span class="seg-count">100%</span><span class="icon">＋</span><span class="divider"></span><span class="icon">⤢</span><span class="icon">✎</span></div>
+        <div class="tool-group"><span class="icon">≡</span><span>文档目录</span><span class="icon">▾</span></div>
+      </div>
+      <div class="pane">
+        <div class="paper-wrap">
+          <div class="paper">
+            <p class="paper-meta">第 3/8 段 · 8 个音视频 · 6885 字 · 约 17 分钟阅读</p>
+            <h1>知识科普提炼：认识主流操作系统分类及其在安全学习中的意义</h1>
+            <p class="lede">从“操作系统像公司行政部门”讲起，把系统分成桌面端、服务器端、移动端、嵌入式四类。</p>
+            <h2>【一句话结论】</h2>
+            <p>操作系统是把底层硬件复杂操作封装成“按钮”、负责协调软硬件资源的中间层。</p>
+            <p>左栏本就承载“链路输入 / 输出文档”，再塞 8 段会把两件事混在一列；且标题在 300px 里只能截断到十几个字。</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+<div class="pros"><b>优点：</b>零新增浮层，复用左栏树；符合“笔记目录”的心智。<b>代价：</b>左栏常被收起（收起后无法换段）；标题在 300px 内截断严重；与「链路输入」列表争抢同一列；不能一眼看到字数与时长。</div>
+</body>
+</html>

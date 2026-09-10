@@ -15,13 +15,17 @@ import {
 } from "lucide-vue-next";
 import { toast } from "@/lib/toast";
 import { api } from "@/lib/api";
-import type { RunNodeLog, RunNodeLogKind, RunNodeResult } from "@scribe-flow/shared";
+import type { RunNodeInput, RunNodeLog, RunNodeLogKind, RunNodeResult, WorkflowGraph } from "@scribe-flow/shared";
+import { buildSegmentMap, type RunSegment } from "@/utils/run-segments";
 
 const props = defineProps<{
   open: boolean;
   runId: string;
   nodes?: RunNodeResult[];
   initialNodeId?: string;
+  /** 运行输入明细与图快照：用于把多输入节点的日志归到具体某个输入（哪个视频）。 */
+  inputs?: RunNodeInput[];
+  graph?: WorkflowGraph;
 }>();
 
 const emit = defineEmits<{ "update:open": [value: boolean] }>();
@@ -32,10 +36,63 @@ const loadError = ref("");
 const nodeId = ref("");
 const step = ref("");
 const kind = ref<RunNodeLogKind | "all">("all");
+const inputPosition = ref<number | "all">("all");
 const keyword = ref("");
 const expandedIds = ref<Set<string>>(new Set());
 const collapsedIds = ref<Set<string>>(new Set());
 const wrap = ref(true);
+
+/** 每个节点被拆成的输入分段（一个节点处理多个视频时才有），用于日志归属标注与筛选。 */
+const segmentsByNode = computed(() =>
+  buildSegmentMap(
+    props.inputs ?? [],
+    new Map((props.nodes ?? []).map((node) => [node.nodeId, node])),
+    props.graph,
+  ),
+);
+
+/** 当前筛选节点下的分段选项；未选节点或多个节点时不提供输入筛选。 */
+const inputOptions = computed<RunSegment[]>(() => (nodeId.value ? segmentsByNode.value.get(nodeId.value) ?? [] : []));
+
+/**
+ * 旧运行的日志没有写 input_index（该字段随本次改版才落库）。
+ * 同一（节点 / 类型 / 配方步骤）分组内的条数与分段数一致时，按写入顺序推断归属——
+ * 引擎对同一节点的输入是顺序处理的，顺序即输入顺序。
+ */
+const inferredSegments = computed(() => {
+  const map = new Map<string, RunSegment>();
+  const groups = new Map<string, RunNodeLog[]>();
+  for (const log of logs.value) {
+    const key = `${log.nodeId}\u0000${log.kind}\u0000${log.step ?? ""}`;
+    const list = groups.get(key);
+    if (list) list.push(log);
+    else groups.set(key, [log]);
+  }
+  for (const [key, group] of groups) {
+    if (group.length < 2) continue;
+    const groupNodeId = key.split("\u0000")[0] ?? "";
+    const segments = segmentsByNode.value.get(groupNodeId);
+    if (!segments || segments.length !== group.length) continue;
+    group.forEach((log, index) => {
+      const segment = segments[index];
+      if (segment) map.set(log.id, segment);
+    });
+  }
+  return map;
+});
+
+function segmentOf(log: RunNodeLog): RunSegment | null {
+  const segments = segmentsByNode.value.get(log.nodeId);
+  if (!segments) return null;
+  if (log.inputIndex != null) return segments.find((segment) => segment.position === log.inputIndex) ?? null;
+  return inferredSegments.value.get(log.id) ?? null;
+}
+
+function inputLabel(log: RunNodeLog): string {
+  const segment = segmentOf(log);
+  if (!segment) return "";
+  return `${segment.index + 1}. ${segment.label}`;
+}
 
 const kindLabels: Record<RunNodeLogKind, string> = {
   input: "输入文稿",
@@ -105,10 +162,11 @@ const filteredLogs = computed(() => {
   if (nodeId.value) list = list.filter((log) => log.nodeId === nodeId.value);
   if (step.value) list = list.filter((log) => log.step === step.value);
   if (kind.value !== "all") list = list.filter((log) => log.kind === kind.value);
+  if (inputPosition.value !== "all") list = list.filter((log) => segmentOf(log)?.position === inputPosition.value);
   const q = keyword.value.trim().toLowerCase();
   if (q) {
     list = list.filter((log) =>
-      `${log.nodeLabel ?? ""} ${log.nodeId} ${log.step ?? ""} ${log.content}`.toLowerCase().includes(q),
+      `${log.nodeLabel ?? ""} ${log.nodeId} ${log.step ?? ""} ${inputLabel(log)} ${log.content}`.toLowerCase().includes(q),
     );
   }
   return list;
@@ -118,7 +176,21 @@ const summary = computed(() => ({
   total: logs.value.length,
   filtered: filteredLogs.value.length,
   errors: logs.value.filter((log) => log.kind === "error").length,
+  inputs: inputOptions.value.length,
 }));
+
+/** 列表渲染用的「日志 → 所属分段」查表，避免模板里对每条日志重复查找。 */
+const logSegmentMap = computed(() => {
+  const map = new Map<string, RunSegment>();
+  for (const log of logs.value) {
+    const segment = segmentOf(log);
+    if (segment) map.set(log.id, segment);
+  }
+  return map;
+});
+
+/** 只有真的能定位到输入时才提供输入筛选，避免旧数据里筛出空列表。 */
+const hasInputTags = computed(() => logSegmentMap.value.size > 0);
 
 function isCollapsed(log: RunNodeLog): boolean {
   if (expandedIds.value.has(log.id)) return false;
@@ -147,6 +219,18 @@ function collapseAll() {
 }
 
 function logTitle(log: RunNodeLog): string {
+  const parts = [log.nodeLabel || log.nodeId];
+  if (log.step) {
+    const label = stepLabel(log);
+    parts.push(label || log.step);
+  }
+  const input = inputLabel(log);
+  if (input) parts.push(input);
+  return parts.filter(Boolean).join(" · ");
+}
+
+/** 列表头只展示「节点 · 步骤」，输入归属由单独的分段标签承载，避免同一信息出现两次。 */
+function logHeadTitle(log: RunNodeLog): string {
   const parts = [log.nodeLabel || log.nodeId];
   if (log.step) {
     const label = stepLabel(log);
@@ -229,6 +313,7 @@ watch(
       nodeId.value = props.initialNodeId ?? "";
       step.value = "";
       kind.value = "all";
+      inputPosition.value = "all";
       keyword.value = "";
       void fetchLogs();
     }
@@ -249,12 +334,21 @@ watch(
     if (props.open) {
       nodeId.value = value ?? "";
       step.value = "";
+      inputPosition.value = "all";
     }
   },
 );
 
 watch(nodeId, () => {
   step.value = "";
+  inputPosition.value = "all";
+});
+
+// 当前节点的分段随运行数据异步到位；选项消失时回落成「全部输入」。
+watch(inputOptions, (options) => {
+  if (inputPosition.value !== "all" && !options.some((segment) => segment.position === inputPosition.value)) {
+    inputPosition.value = "all";
+  }
 });
 
 onBeforeUnmount(() => {
@@ -279,6 +373,7 @@ onBeforeUnmount(() => {
                   {{ summary.total }} 条记录<template v-if="summary.filtered !== summary.total">
                     · 筛选后 {{ summary.filtered }} 条
                   </template>
+                  <template v-if="summary.inputs > 1"> · 该节点共 {{ summary.inputs }} 个输入</template>
                   <template v-if="summary.errors > 0"> · <span class="rl-error-text">{{ summary.errors }} 条错误</span></template>
                 </p>
               </div>
@@ -298,6 +393,21 @@ onBeforeUnmount(() => {
               </el-select>
               <el-select v-model="step" class="rl-select rl-select--step" size="small" placeholder="全部步骤" clearable :disabled="stepOptions.length === 0">
                 <el-option v-for="opt in stepOptions" :key="opt.value" :label="opt.label" :value="opt.value" />
+              </el-select>
+              <el-select
+                v-if="hasInputTags && inputOptions.length > 1"
+                v-model="inputPosition"
+                class="rl-select rl-select--input"
+                size="small"
+                placeholder="全部输入"
+              >
+                <el-option label="全部输入" :value="'all'" />
+                <el-option
+                  v-for="segment in inputOptions"
+                  :key="segment.inputId"
+                  :label="`${segment.index + 1}. ${segment.label}`"
+                  :value="segment.position"
+                />
               </el-select>
               <el-select v-model="kind" class="rl-select rl-select--kind" size="small">
                 <el-option v-for="opt in kindOptions" :key="opt.value" :label="opt.label" :value="opt.value" />
@@ -338,7 +448,11 @@ onBeforeUnmount(() => {
                 <div class="rl-log-main">
                   <header class="rl-log-head">
                     <span class="rl-kind" :class="`is-${log.kind}`">{{ kindLabels[log.kind] }}</span>
-                    <span class="rl-log-title" :title="logTitle(log)">{{ logTitle(log) }}</span>
+                    <span v-if="logSegmentMap.get(log.id)" class="rl-input-tag" :title="inputLabel(log)">
+                      <span class="tnum">{{ logSegmentMap.get(log.id)!.index + 1 }}</span>
+                      <span class="rl-input-tag-label">{{ logSegmentMap.get(log.id)!.label }}</span>
+                    </span>
+                    <span class="rl-log-title" :title="logTitle(log)">{{ logHeadTitle(log) }}</span>
                     <span class="rl-log-time tnum">{{ formatTime(log.createdAt) }}</span>
                     <button
                       v-if="isLongContent(log.content)"
@@ -504,6 +618,10 @@ onBeforeUnmount(() => {
 
 .rl-select--kind {
   width: 110px;
+}
+
+.rl-select--input {
+  width: 200px;
 }
 
 .rl-toolbar-actions {
@@ -692,6 +810,34 @@ onBeforeUnmount(() => {
   font-size: 12px;
   font-weight: 500;
   color: var(--color-text);
+}
+
+/* 多输入归属标签：日志一多时，靠它一眼看出这条属于哪个视频/文件 */
+.rl-input-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 260px;
+  flex-shrink: 0;
+  padding: 1px 8px;
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  background: var(--color-surface);
+  color: var(--color-text-secondary);
+  font-size: 11px;
+  line-height: 1.6;
+}
+
+.rl-input-tag .tnum {
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.rl-input-tag-label {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 
 .rl-log-time {
