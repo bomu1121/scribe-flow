@@ -65,6 +65,83 @@ const comparingDiff = ref(false);
 const resultRootRef = ref<HTMLElement | null>(null);
 const docScrollRef = ref<HTMLElement | null>(null);
 
+// ---------- 顶部「结果 / 思维导图 / 节点流水」切换：滑动墨条 + 内容淡入 ----------
+type DetailTab = "result" | "nodes" | "mindmap";
+const tabsEl = ref<HTMLElement | null>(null);
+const tabRefs = ref<Partial<Record<DetailTab, HTMLButtonElement | null>>>({});
+/** 墨条位置（相对 tablist 容器），首次测量前隐藏，避免进场时从 0 滑一次。 */
+const tabIndicator = ref({ x: 0, width: 0 });
+const tabIndicatorReady = ref(false);
+/** 切 tab 后给新面板挂一次淡入（用 v-show 保留滚动位置与表格状态，不卸载 DOM）。 */
+const paneEntering = ref(false);
+let paneEnterTimer: ReturnType<typeof setTimeout> | null = null;
+let tabResizeObserver: ResizeObserver | null = null;
+
+const failedNodeCount = computed(() => (run.value?.nodeResults ?? []).filter((node) => node.status === "error").length);
+
+/** tablist 的可见顺序（思维导图只在有导图时才出现）。 */
+const tabOrder = computed<DetailTab[]>(() => {
+  const order: DetailTab[] = ["result"];
+  if (mindMapNodes.value.length > 0) order.push("mindmap");
+  order.push("nodes");
+  return order;
+});
+
+function setTabRef(tab: DetailTab, el: unknown) {
+  tabRefs.value[tab] = (el as HTMLButtonElement | null) ?? null;
+}
+
+function updateTabIndicator() {
+  const container = tabsEl.value;
+  const button = tabRefs.value[activeTab.value];
+  if (!container || !button) {
+    tabIndicatorReady.value = false;
+    return;
+  }
+  const containerBox = container.getBoundingClientRect();
+  const buttonBox = button.getBoundingClientRect();
+  // 墨条比按钮窄一点，视觉上贴着文字而不是撑满按钮
+  const inset = 12;
+  tabIndicator.value = {
+    x: buttonBox.left - containerBox.left + inset,
+    width: Math.max(0, buttonBox.width - inset * 2),
+  };
+  tabIndicatorReady.value = true;
+}
+
+/** 统一切换入口：内容淡入 + 墨条平滑滑动；重复点当前 tab 不做任何动画。 */
+function setActiveTab(tab: DetailTab) {
+  if (activeTab.value === tab) return;
+  activeTab.value = tab;
+  paneEntering.value = false;
+  void nextTick(() => {
+    paneEntering.value = true;
+    if (paneEnterTimer) clearTimeout(paneEnterTimer);
+    paneEnterTimer = setTimeout(() => {
+      paneEntering.value = false;
+      paneEnterTimer = null;
+    }, 220);
+    updateTabIndicator();
+  });
+}
+
+/** ←/→/Home/End 在 tab 之间移动（roving tabindex：只有当前 tab 可被 Tab 键聚焦）。 */
+function onTabKeydown(event: KeyboardEvent, current: DetailTab) {
+  const order = tabOrder.value;
+  const index = order.indexOf(current);
+  if (index < 0) return;
+  let next = -1;
+  if (event.key === "ArrowRight") next = (index + 1) % order.length;
+  else if (event.key === "ArrowLeft") next = (index - 1 + order.length) % order.length;
+  else if (event.key === "Home") next = 0;
+  else if (event.key === "End") next = order.length - 1;
+  if (next < 0) return;
+  event.preventDefault();
+  const target = order[next];
+  setActiveTab(target);
+  void nextTick(() => tabRefs.value[target]?.focus());
+}
+
 /**
  * 结果页在同一路由名下会被复用实例（App.vue 按路由名 key），
  * 所以在左侧运行库切换运行 / 工程时，必须让这两个 id 保持响应式并主动重载。
@@ -265,6 +342,11 @@ const mindMapNodes = computed<OutputDoc[]>(() => {
 });
 
 const currentMindMap = computed(() => mindMapNodes.value[selectedMindMapIndex.value] ?? null);
+
+// 思维导图 tab 的出现/消失由运行数据决定，会改变按钮宽度 → 重新量一次墨条。
+watch([activeTab, () => mindMapNodes.value.length], () => {
+  void nextTick(updateTabIndicator);
+});
 
 const sources = computed<SourceInfo[]>(() => {
   const nodes = graph.value?.nodes ?? [];
@@ -757,14 +839,25 @@ onMounted(() => {
   void loadRun();
   document.addEventListener("fullscreenchange", onFullscreenChange);
   window.addEventListener("pointerdown", onTocOutsidePointerDown, true);
+  window.addEventListener("resize", updateTabIndicator);
+  // 字体加载/缩放/侧栏折叠都会改变按钮宽度，用 ResizeObserver 跟着量
+  if (typeof ResizeObserver !== "undefined" && tabsEl.value) {
+    tabResizeObserver = new ResizeObserver(() => updateTabIndicator());
+    tabResizeObserver.observe(tabsEl.value);
+  }
+  void nextTick(updateTabIndicator);
 });
 
 onBeforeUnmount(() => {
   stopRunEvents?.();
   if (reloadTimer) clearTimeout(reloadTimer);
   if (tocCloseTimer) clearTimeout(tocCloseTimer);
+  if (paneEnterTimer) clearTimeout(paneEnterTimer);
+  tabResizeObserver?.disconnect();
+  tabResizeObserver = null;
   document.removeEventListener("fullscreenchange", onFullscreenChange);
   window.removeEventListener("pointerdown", onTocOutsidePointerDown, true);
+  window.removeEventListener("resize", updateTabIndicator);
 });
 
 async function loadRun(showLoading = true) {
@@ -807,11 +900,11 @@ async function loadRun(showLoading = true) {
     }
     const queryTab = String(route.query.tab ?? "");
     if (queryTab === "mindmap" && mindMapNodes.value.length > 0) {
-      activeTab.value = "mindmap";
+      setActiveTab("mindmap");
       const mindFocusIndex = focusNodeId ? mindMapNodes.value.findIndex((doc) => doc.node.nodeId === focusNodeId) : -1;
       selectedMindMapIndex.value = mindFocusIndex >= 0 ? mindFocusIndex : 0;
     } else if (activeTab.value === "mindmap" && mindMapNodes.value.length === 0) {
-      activeTab.value = "result";
+      setActiveTab("result");
     }
     if (activeTab.value === "mindmap" && mindMapNodes.value.length > 0) {
       const mindIndex = Math.min(selectedMindMapIndex.value, mindMapNodes.value.length - 1);
@@ -932,7 +1025,7 @@ async function loadMindMapContent(index?: number) {
 }
 
 async function openMindMapTab(index = 0) {
-  activeTab.value = "mindmap";
+  setActiveTab("mindmap");
   await loadMindMapContent(index);
 }
 
@@ -1179,18 +1272,71 @@ async function forceStopRun() {
       </div>
     </header>
 
-    <nav class="rv-tabs" aria-label="运行详情视图切换">
-      <button type="button" :class="{ active: activeTab === 'result' }" @click="activeTab = 'result'">结果</button>
-      <button v-if="mindMapNodes.length > 0" type="button" :class="{ active: activeTab === 'mindmap' }" @click="openMindMapTab()">
+    <div ref="tabsEl" class="rv-tabs" role="tablist" aria-label="运行详情视图切换">
+      <button
+        :ref="(el) => setTabRef('result', el)"
+        type="button"
+        role="tab"
+        id="rv-tab-result"
+        aria-controls="rv-panel-result"
+        :aria-selected="activeTab === 'result'"
+        :tabindex="activeTab === 'result' ? 0 : -1"
+        :class="{ active: activeTab === 'result' }"
+        @click="setActiveTab('result')"
+        @keydown="onTabKeydown($event, 'result')"
+      >
+        结果
+      </button>
+      <button
+        v-if="mindMapNodes.length > 0"
+        :ref="(el) => setTabRef('mindmap', el)"
+        type="button"
+        role="tab"
+        id="rv-tab-mindmap"
+        aria-controls="rv-panel-mindmap"
+        :aria-selected="activeTab === 'mindmap'"
+        :tabindex="activeTab === 'mindmap' ? 0 : -1"
+        :class="{ active: activeTab === 'mindmap' }"
+        @click="openMindMapTab()"
+        @keydown="onTabKeydown($event, 'mindmap')"
+      >
         <Network :size="14" /><span>思维导图</span>
       </button>
-      <button type="button" :class="{ active: activeTab === 'nodes' }" @click="activeTab = 'nodes'">节点流水</button>
-    </nav>
+      <button
+        :ref="(el) => setTabRef('nodes', el)"
+        type="button"
+        role="tab"
+        id="rv-tab-nodes"
+        aria-controls="rv-panel-nodes"
+        :aria-selected="activeTab === 'nodes'"
+        :aria-label="failedNodeCount > 0 ? `节点流水，${failedNodeCount} 个节点失败` : undefined"
+        :tabindex="activeTab === 'nodes' ? 0 : -1"
+        :class="{ active: activeTab === 'nodes' }"
+        @click="setActiveTab('nodes')"
+        @keydown="onTabKeydown($event, 'nodes')"
+      >
+        <span>节点流水</span>
+        <span v-if="failedNodeCount > 0" class="rv-tab-dot" aria-hidden="true" />
+      </button>
+      <span
+        class="rv-tabs-ink"
+        :class="{ ready: tabIndicatorReady }"
+        :style="{ transform: `translateX(${tabIndicator.x}px)`, width: `${tabIndicator.width}px` }"
+        aria-hidden="true"
+      />
+    </div>
 
     <div v-if="loading && !run" class="rv-loading"><div class="rv-loading-text">加载中…</div></div>
 
     <template v-else-if="run">
-      <div v-show="activeTab === 'nodes'" class="rv-nodes page-scroll">
+      <div
+        v-show="activeTab === 'nodes'"
+        id="rv-panel-nodes"
+        role="tabpanel"
+        aria-labelledby="rv-tab-nodes"
+        class="rv-nodes page-scroll"
+        :class="{ 'is-entering': paneEntering }"
+      >
         <el-table :data="run.nodeResults" row-key="nodeId" size="small" class="rv-nodes-table">
           <el-table-column label="节点" min-width="160">
             <template #default="{ row }">{{ asNode(row).nodeLabel || asNode(row).nodeType }}</template>
@@ -1233,7 +1379,14 @@ async function forceStopRun() {
         </el-table>
       </div>
 
-      <div v-show="activeTab === 'mindmap'" class="rv-mindmap">
+      <div
+        v-show="activeTab === 'mindmap'"
+        id="rv-panel-mindmap"
+        role="tabpanel"
+        aria-labelledby="rv-tab-mindmap"
+        class="rv-mindmap"
+        :class="{ 'is-entering': paneEntering }"
+      >
         <div v-if="mindMapNodes.length > 1" class="rv-mindmap-tabs">
           <button
             v-for="(doc, index) in mindMapNodes"
@@ -1256,7 +1409,14 @@ async function forceStopRun() {
         </div>
       </div>
 
-      <div v-show="activeTab === 'result'" class="rv-body">
+      <div
+        v-show="activeTab === 'result'"
+        id="rv-panel-result"
+        role="tabpanel"
+        aria-labelledby="rv-tab-result"
+        class="rv-body"
+        :class="{ 'is-entering': paneEntering }"
+      >
         <aside class="rv-side" :class="{ collapsed: sideCollapsed }">
           <div class="rv-side-head">
             <span class="rv-side-title">链路输入</span>
@@ -1898,7 +2058,9 @@ async function forceStopRun() {
 }
 
 .rv-tabs {
+  position: relative;
   display: flex;
+  align-items: stretch;
   gap: 2px;
   height: 40px;
   padding: 0 12px;
@@ -1911,19 +2073,82 @@ async function forceStopRun() {
   display: inline-flex;
   align-items: center;
   gap: 6px;
+  height: 100%;
   padding: 0 14px;
   border: none;
-  border-bottom: 2px solid transparent;
+  border-radius: var(--radius-sm) var(--radius-sm) 0 0;
   background: transparent;
   color: var(--color-text-secondary);
   font-size: 13px;
   font-weight: 500;
   cursor: pointer;
+  transition:
+    color var(--dur-2) var(--ease-out),
+    background-color var(--dur-2) var(--ease-out);
+}
+
+.rv-tabs button:hover:not(.active) {
+  /* 悬停只给很淡的墨色底，避免整条 tab 抢视线 */
+  background: var(--color-ink-soft-glass);
+  color: var(--color-text);
+}
+
+.rv-tabs button:active {
+  background: var(--color-ink-soft);
+}
+
+.rv-tabs button:focus-visible {
+  outline: 2px solid var(--color-border-strong);
+  outline-offset: -3px;
 }
 
 .rv-tabs button.active {
   color: var(--color-text);
-  border-bottom-color: var(--color-text);
+}
+
+/* 滑动墨条：一个元素在 tab 之间平移，切换时不再「跳」 */
+.rv-tabs-ink {
+  position: absolute;
+  left: 0;
+  bottom: -1px;
+  height: 2px;
+  border-radius: 2px 2px 0 0;
+  background: var(--color-text);
+  opacity: 0;
+  pointer-events: none;
+  transition:
+    transform var(--dur-3) var(--ease-out),
+    width var(--dur-3) var(--ease-out),
+    opacity var(--dur-2) linear;
+}
+
+.rv-tabs-ink.ready {
+  opacity: 1;
+}
+
+/* 切 tab 后新面板淡入（v-show 保留滚动位置与表格状态，不卸载 DOM） */
+.rv-nodes.is-entering,
+.rv-mindmap.is-entering,
+.rv-body.is-entering {
+  animation: rv-pane-in var(--dur-3) var(--ease-out) both;
+}
+
+@keyframes rv-pane-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* 节点流水 tab 上的失败提示点：不用打开表格就知道有节点失败 */
+.rv-tab-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--color-error);
+  flex-shrink: 0;
 }
 
 .rv-loading {

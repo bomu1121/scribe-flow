@@ -216,3 +216,18 @@ pnpm dev
 - 自检：`pnpm -r typecheck / test / build`、`pnpm lint`、`pnpm smoke:ui` 全绿（45/45）。
 - 真实数据 DOM 断言（8 视频运行，未改数据）：大纲 9 行默认停第 1 段（8,297 字），点第 4 行 → `4 / 8` 且正文=视频 4 的笔记；`↑`/`↓` 与 `‹`/`›` 正常；「全文」→ 50,912 字整篇；收起/展开正常；1200px 下大纲隐藏、下拉 9 项可用（切到第 7 段生效）；`?focus=n_asr&seg=3` 直达转写节点第 4 段（16,254 字）；段数 > 12 的筛选框与空态提示经临时改动阈值验证通过后已还原；正文滚动与页面滚动互不影响。
 - 文档：`result-viewer-design.md` §3.1 与支持度矩阵同步更新；调研结论与出处落在 `segment-navigation-research.md`。
+
+## 13. 结果页 tab 切换交互重做（2026-09-10）
+
+- 用户反馈：「结果 / 节点流水」切换太生硬。
+- 问题定位：切换是 3 个按钮各自带 `border-bottom` 下划线，激活态由浏览器瞬时切换（下划线「跳」而不是移动）；面板用 `v-show` 直接显隐、无过渡；没有 hover / 按压 / 焦点反馈；语义上是个 tab 控件却只有 `<nav> + button`，键盘不可用。
+- 实现（`RunDetailView.vue`，只动这一处交互）：
+  - **滑动墨条**：单个 `.rv-tabs-ink` 绝对定位元素，按当前按钮实测位置平移（`transform` + `width` 过渡 `--dur-3` / `--ease-out`），首次测量前 `opacity: 0` 避免进场滑一下；窗口 resize、字体加载、`思维导图` tab 出现/消失都通过 `ResizeObserver` + watcher 重新测量。
+  - **内容淡入**：切 tab 后给新面板挂 220ms `rv-pane-in`（只动 opacity）；继续用 `v-show` 而不是 `v-if`，**保留正文滚动位置与表格状态**（实测滚动 600px 来回切换不丢）。
+  - **反馈**：hover 用 `--color-ink-soft-glass` 淡墨底、按压加深、`:focus-visible` 键盘焦点环；颜色全部走令牌。
+  - **语义与键盘**：`role="tablist"/"tab"/"tabpanel"` + `aria-selected` + `aria-controls/labelledby` + roving tabindex；`←/→/Home/End` 在 tab 间移动并同步焦点。
+  - **状态提示**：`节点流水` 在有失败节点时显示红点（`--color-error`）并把数量写进 `aria-label`（如「节点流水，1 个节点失败」）。
+  - `setActiveTab()` 成为唯一入口（含 `?tab=mindmap` 深链与「思维导图」入口），重复点当前 tab 不触发动画；全局 `prefers-reduced-motion` 规则已把动画时长压到 0.01ms。
+- 自检：`pnpm -r typecheck / test / build`、`pnpm lint` 全绿；DOM 断言覆盖 2 tab 与 3 tab 两种形态——墨条中心与激活 tab 中心逐次对齐（39 / 118 / 210 px）、同一时刻只有一个面板可见、动画类按预期出现与消失、键盘 ←/Home 生效且焦点跟随、失败运行显示红点与 aria-label、切换保留滚动位置。
+  说明：本轮视觉预算耗尽，未做截图复核；墨条「渲染位置」在无头标签页里因过渡不推进而滞后，故用「inline style 目标值 + 关闭过渡后的实测几何」两种方式交叉验证。
+- 顺带修掉 smoke 的一处时序抖动：`工程树渲染出工程行（≥1）` 原先只等「任意树行」，文件夹行先渲染时会误判；改为等工程行本身出现（45/45 稳定）。
