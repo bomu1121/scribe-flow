@@ -231,3 +231,17 @@ pnpm dev
 - 自检：`pnpm -r typecheck / test / build`、`pnpm lint` 全绿；DOM 断言覆盖 2 tab 与 3 tab 两种形态——墨条中心与激活 tab 中心逐次对齐（39 / 118 / 210 px）、同一时刻只有一个面板可见、动画类按预期出现与消失、键盘 ←/Home 生效且焦点跟随、失败运行显示红点与 aria-label、切换保留滚动位置。
   说明：本轮视觉预算耗尽，未做截图复核；墨条「渲染位置」在无头标签页里因过渡不推进而滞后，故用「inline style 目标值 + 关闭过渡后的实测几何」两种方式交叉验证。
 - 顺带修掉 smoke 的一处时序抖动：`工程树渲染出工程行（≥1）` 原先只等「任意树行」，文件夹行先渲染时会误判；改为等工程行本身出现（45/45 稳定）。
+
+## 14. 结果页 tab 交互补调研：删掉自加的内容淡入（2026-09-10）
+
+- 用户质疑第 13 节「别人家的 tab 也是这种样式？」。**承认：第 13 节没做调研**，滑动墨条 + 内容淡入是按经验直接改的。本节补上可复现的实测对照（详见 [tab-interaction-research.md](./tab-interaction-research.md)）。
+- 实测（Element Plus 读本地 node_modules CSS；Ant Design 读线上真实 `getComputedStyle`；M3/NN-g 读官方正文）：
+  - Element Plus `el-tabs__active-bar`：2px、品牌色、`width/transform` `0.3s ease-in-out-bezier`，**内容无动画**；
+  - Ant Design `ant-tabs-ink-bar`：2px、`width/left/right` `0.3s ease`、宽度=标签宽度（35px=35px），官方 `animated` 默认 **`{inkBar:true, tabPane:false}`**；
+  - M3：激活态用「下划线 + 文字变色」两条线索；tab 的状态应继承 hover/focus/pressed；**tab 的动效是 lateral 横向滑动，明确「不用 fade」**；
+  - NN/g：下划线是标准指示器，要求「至少两条选中线索（只有两个 tab 时尤其关键）」，别用 1px/低对比线；
+  - 房内既有两处 tablist（`WorkspacePanel .wp-seg`、`SourcePickerDialog .sp-tabs`）用的是**分段滑块**（ink-soft 轨道 + 白底选中块），无滑动动画，hover 洗色。
+- 据此修正：**删除内容淡入**（违主流：Ant 默认关 pane 动画、EP 无、M3 明确不用 fade），`setActiveTab()` 只切面板 + 滑墨条；保留滑动指示器（EP/Ant/M3 都有）、hover/pressed/focus-visible（M3 要求）、`role=tablist/tabpanel` + roving tabindex、失败节点红点。
+- 保留的、与参考不同的两点及理由：① 指示条用**墨色**而非品牌蓝（房内令牌「B 站蓝只用于交互信号，墨色用于导航/强标题」，改造前即为墨色）；② 动效用 `--dur-3`(240ms)+`--ease-out` 房内令牌，而非 EP/Ant 的 0.3s ease-in-out（全站动效由令牌统一驱动，减速曲线更适合指示条抵达）。
+- 验证：DOM 断言——墨条中心与激活 tab 中心逐次精确对齐（2 tab：39↔108；3 tab：39/118/210），同一时刻仅一个面板可见，面板 `animation-name: none` / `transition-duration: 0s`（确认无内容动画），键盘 ←/Home 生效且焦点跟随，切换保留正文滚动位置。
+- 备选（未实施，等用户定）：换成房内分段滑块形态；或按 M3 做横向滑动（正文面板可达数万像素高，横向 transform 有性能与滚动风险，不推荐）。

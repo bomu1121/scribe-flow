@@ -72,9 +72,6 @@ const tabRefs = ref<Partial<Record<DetailTab, HTMLButtonElement | null>>>({});
 /** 墨条位置（相对 tablist 容器），首次测量前隐藏，避免进场时从 0 滑一次。 */
 const tabIndicator = ref({ x: 0, width: 0 });
 const tabIndicatorReady = ref(false);
-/** 切 tab 后给新面板挂一次淡入（用 v-show 保留滚动位置与表格状态，不卸载 DOM）。 */
-const paneEntering = ref(false);
-let paneEnterTimer: ReturnType<typeof setTimeout> | null = null;
 let tabResizeObserver: ResizeObserver | null = null;
 
 const failedNodeCount = computed(() => (run.value?.nodeResults ?? []).filter((node) => node.status === "error").length);
@@ -109,20 +106,15 @@ function updateTabIndicator() {
   tabIndicatorReady.value = true;
 }
 
-/** 统一切换入口：内容淡入 + 墨条平滑滑动；重复点当前 tab 不做任何动画。 */
+/**
+ * 统一切换入口：只做两件事——切面板、把墨条滑到新位置。
+ * 内容**不做淡入**（对齐 Element Plus / Ant Design 的默认行为，M3 对 tab 也明确「lateral 滑动、不用 fade」）；
+ * 用 v-show 保留正文滚动位置与表格状态，不卸载 DOM。
+ */
 function setActiveTab(tab: DetailTab) {
   if (activeTab.value === tab) return;
   activeTab.value = tab;
-  paneEntering.value = false;
-  void nextTick(() => {
-    paneEntering.value = true;
-    if (paneEnterTimer) clearTimeout(paneEnterTimer);
-    paneEnterTimer = setTimeout(() => {
-      paneEntering.value = false;
-      paneEnterTimer = null;
-    }, 220);
-    updateTabIndicator();
-  });
+  void nextTick(updateTabIndicator);
 }
 
 /** ←/→/Home/End 在 tab 之间移动（roving tabindex：只有当前 tab 可被 Tab 键聚焦）。 */
@@ -852,7 +844,6 @@ onBeforeUnmount(() => {
   stopRunEvents?.();
   if (reloadTimer) clearTimeout(reloadTimer);
   if (tocCloseTimer) clearTimeout(tocCloseTimer);
-  if (paneEnterTimer) clearTimeout(paneEnterTimer);
   tabResizeObserver?.disconnect();
   tabResizeObserver = null;
   document.removeEventListener("fullscreenchange", onFullscreenChange);
@@ -1335,7 +1326,6 @@ async function forceStopRun() {
         role="tabpanel"
         aria-labelledby="rv-tab-nodes"
         class="rv-nodes page-scroll"
-        :class="{ 'is-entering': paneEntering }"
       >
         <el-table :data="run.nodeResults" row-key="nodeId" size="small" class="rv-nodes-table">
           <el-table-column label="节点" min-width="160">
@@ -1385,7 +1375,6 @@ async function forceStopRun() {
         role="tabpanel"
         aria-labelledby="rv-tab-mindmap"
         class="rv-mindmap"
-        :class="{ 'is-entering': paneEntering }"
       >
         <div v-if="mindMapNodes.length > 1" class="rv-mindmap-tabs">
           <button
@@ -1415,7 +1404,6 @@ async function forceStopRun() {
         role="tabpanel"
         aria-labelledby="rv-tab-result"
         class="rv-body"
-        :class="{ 'is-entering': paneEntering }"
       >
         <aside class="rv-side" :class="{ collapsed: sideCollapsed }">
           <div class="rv-side-head">
@@ -2124,22 +2112,6 @@ async function forceStopRun() {
 
 .rv-tabs-ink.ready {
   opacity: 1;
-}
-
-/* 切 tab 后新面板淡入（v-show 保留滚动位置与表格状态，不卸载 DOM） */
-.rv-nodes.is-entering,
-.rv-mindmap.is-entering,
-.rv-body.is-entering {
-  animation: rv-pane-in var(--dur-3) var(--ease-out) both;
-}
-
-@keyframes rv-pane-in {
-  from {
-    opacity: 0;
-  }
-  to {
-    opacity: 1;
-  }
 }
 
 /* 节点流水 tab 上的失败提示点：不用打开表格就知道有节点失败 */
