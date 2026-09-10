@@ -99,8 +99,49 @@ export function collectFieldStrings(root: unknown, path: string): string[] {
   return out;
 }
 
+/** 中文引号/破折号写法各异的归一：只消除标点差异，不改动任何正文字符。 */
+function normalizeQuotes(text: string): string {
+  return text
+    .replace(/[\u2018\u2019\u201b\u2032]/g, "'")
+    .replace(/[\u201c\u201d\u201f\u2033]/g, '"')
+    .replace(/[\u2013\u2014]/g, "—");
+}
+
 function normalizeForMatch(text: string): string {
-  return text.replace(/\s/g, "");
+  return normalizeQuotes(text).replace(/\s/g, "");
+}
+
+/**
+ * 引用开头的句内连接词/前导虚词：模型从分句中间起抄时会顺带改写或丢掉它们
+ * （实测把「因为它不需要消灭…」抄成「但它不需要消灭…」），这不改变引用实质，
+ * 但会让严格子串匹配失败。只剥离这些无语义的虚词，正文仍须逐字命中。
+ */
+const LEADING_CONNECTIVES = [
+  "但如果",
+  "甚至",
+  "因此",
+  "所以",
+  "但是",
+  "因为",
+  "而且",
+  "并且",
+  "不过",
+  "而",
+  "但",
+  "它",
+];
+
+/** 引用是否为「仅开头被截断」：剥离最多 4 个前导虚词后能在原文逐字找到。 */
+function matchesAfterTrimmedLead(normInput: string, normQuote: string): boolean {
+  const candidates: string[] = [];
+  let current = normQuote;
+  for (let step = 0; step < 4; step += 1) {
+    const connective = LEADING_CONNECTIVES.find((word) => current.startsWith(word));
+    if (!connective) break;
+    current = current.slice(connective.length);
+    if (current.length >= 6) candidates.push(current);
+  }
+  return candidates.some((candidate) => normInput.includes(candidate));
 }
 
 export interface AssertResult {
@@ -108,7 +149,10 @@ export interface AssertResult {
   errors: string[];
 }
 
-/** 确定性断言门。引用回查的宽容规则：短引用（<6 字）与带省略号结尾的引用不判失败（模型截断常见）。 */
+/**
+ * 确定性断言门。引用回查的宽容规则（均只豁免「不改变实质」的差异）：
+ * 短引用（<6 字）、省略号结尾（模型截断常见）、引用符号写法归一、仅开头虚词被改写的截断引用。
+ */
 export function evaluateAsserts(step: RecipeStep, outputText: string, ctx: StepContext): AssertResult {
   const asserts = step.expects?.asserts;
   if (!asserts || asserts.length === 0) return { ok: true, errors: [] };
@@ -158,7 +202,8 @@ export function evaluateAsserts(step: RecipeStep, outputText: string, ctx: StepC
         for (const quote of quotes) {
           const raw = quote.trim();
           if (!raw || raw.length < 6 || raw.endsWith("…") || raw.endsWith("...") || raw.endsWith("……")) continue;
-          if (!inputNorm.includes(normalizeForMatch(raw))) {
+          const normQuote = normalizeForMatch(raw);
+          if (!inputNorm.includes(normQuote) && !matchesAfterTrimmedLead(inputNorm, normQuote)) {
             misses.push(raw.length > 40 ? `${raw.slice(0, 40)}…` : raw);
           }
         }

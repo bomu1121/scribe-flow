@@ -99,6 +99,45 @@ describe("assertStepOutput", () => {
     expect(() => assertStepOutput(s, '{"items":[{"quote":"短"},{"quote":"被截断…"}]}', ctx)).not.toThrow();
   });
 
+  it("citationsInOriginal 宽容规则：仅开头虚词被改写的截断引用不判失败（实测回归）", () => {
+    const realCtx = {
+      input: "但这绝不代表AI不会严重冲击经济和就业，因为它不需要消灭大部分工作岗位，照样可以改变人们的工作方式，重塑整个劳动市场。",
+      prev: "",
+      all: "",
+    };
+    const s = step({
+      kind: "json",
+      asserts: [{ op: "citationsInOriginal", field: "items[].quote", maxMiss: 0 }],
+    });
+    expect(() =>
+      assertStepOutput(s, '{"items":[{"quote":"但它不需要消灭大部分工作岗位，照样可以改变人们的工作方式，重塑整个劳动市场。"}]}', realCtx),
+    ).not.toThrow();
+  });
+
+  it("citationsInOriginal：开头虚词之外的改写仍判失败", () => {
+    const realCtx = {
+      input: "因为它不需要消灭大部分工作岗位，照样可以改变人们的工作方式，重塑整个劳动市场。",
+      prev: "",
+      all: "",
+    };
+    const s = step({
+      kind: "json",
+      asserts: [{ op: "citationsInOriginal", field: "items[].quote", maxMiss: 0 }],
+    });
+    expect(() =>
+      assertStepOutput(s, '{"items":[{"quote":"但它不需要消灭所有工作岗位，照样可以改变人们的工作方式，重塑整个劳动市场。"}]}', realCtx),
+    ).toThrow(/未在原文找到/);
+  });
+
+  it("citationsInOriginal 宽容规则：引号写法归一（原文直引号 vs 引用弯引号）", () => {
+    const quoteCtx = { input: '作者把这一段叫做"生产力陷阱"，并解释了三层防线。', prev: "", all: "" };
+    const s = step({
+      kind: "json",
+      asserts: [{ op: "citationsInOriginal", field: "items[].quote", maxMiss: 0 }],
+    });
+    expect(() => assertStepOutput(s, '{"items":[{"quote":"作者把这一段叫做“生产力陷阱”，并解释了三层防线。"}]}', quoteCtx)).not.toThrow();
+  });
+
   it("kind=json 输出非 JSON 时先于断言失败", () => {
     const s = step({ kind: "json", asserts: [{ op: "jsonRootKeys", value: ["items"] }] });
     expect(() => assertStepOutput(s, "没有围栏的说明文字", ctx)).toThrow(/不是合法 JSON/);
