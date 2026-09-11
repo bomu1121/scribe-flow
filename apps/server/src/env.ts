@@ -8,6 +8,8 @@ export interface ServerEnv {
   uploadsDir: string;
   maxUploadMb: number;
   staticDir?: string;
+  /** 项目文档目录（仓库根的 docs/），供左侧栏的文档阅读器只读访问。 */
+  docsDir: string;
 }
 
 export function loadEnv(): ServerEnv {
@@ -18,7 +20,9 @@ export function loadEnv(): ServerEnv {
   const uploadsDir = join(dataDir, "uploads");
   const maxUploadMb = Number(process.env.MAX_UPLOAD_MB ?? 2048);
   const staticDir = process.env.STATIC_DIR ? resolve(process.env.STATIC_DIR) : undefined;
+  // 文档目录默认锚定到仓库根的 docs/；镜像里没有 COPY docs 时该目录不存在，接口会优雅降级。
+  const docsDir = resolve(process.env.DOCS_DIR ?? join(serverRoot, "..", "..", "docs"));
   mkdirSync(dataDir, { recursive: true });
   mkdirSync(uploadsDir, { recursive: true });
-  return { port, dataDir, uploadsDir, maxUploadMb, staticDir };
+  return { port, dataDir, uploadsDir, maxUploadMb, staticDir, docsDir };
 }

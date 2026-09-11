@@ -13,6 +13,7 @@ import { nutstoreApi } from "./routes/nutstore";
 import { promptsApi } from "./routes/prompts";
 import { projectRunsApi, runsApi } from "./routes/runs";
 import { mediaApi } from "./routes/media";
+import { docsApi } from "./routes/docs";
 import { RunEngine } from "./lib/engine";
 import type { AppDatabase } from "./db/client";
 
@@ -22,6 +23,8 @@ export interface AppOptions {
   maxUploadMb: number;
   /** 生产部署时的前端 dist 目录；为空表示由 Vite 独立托管。 */
   staticDir?: string;
+  /** 仓库根的 docs/ 目录，供只读的文档阅读器使用。 */
+  docsDir: string;
 }
 
 export function createApp(db: AppDatabase, options: AppOptions) {
@@ -49,6 +52,7 @@ export function createApp(db: AppDatabase, options: AppOptions) {
   app.route("/api/nutstore", nutstoreApi(db, engine, options.dataDir));
   app.route("/api/prompts", promptsApi(db));
   app.route("/api/media", mediaApi(db, options.dataDir));
+  app.route("/api/docs", docsApi(options.docsDir));
 
   app.notFound((c) => c.json({ error: "接口不存在" }, 404));
 

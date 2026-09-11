@@ -6,7 +6,13 @@ import { createDatabase, recoverInterruptedRuns } from "./db/client";
 const env = loadEnv();
 const db = createDatabase(env.dataDir);
 recoverInterruptedRuns(db);
-const app = createApp(db, { dataDir: env.dataDir, uploadsDir: env.uploadsDir, maxUploadMb: env.maxUploadMb, staticDir: env.staticDir });
+const app = createApp(db, {
+  dataDir: env.dataDir,
+  uploadsDir: env.uploadsDir,
+  maxUploadMb: env.maxUploadMb,
+  staticDir: env.staticDir,
+  docsDir: env.docsDir,
+});
 
 serve(
   {

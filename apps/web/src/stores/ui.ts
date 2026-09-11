@@ -33,6 +33,8 @@ export interface NodeAddRequest {
 /** 全局 UI 状态：设置浮层、单面板（活动条 + 唯一侧栏）与节点添加总线。 */
 export const useUiStore = defineStore("ui", () => {
   const settingsOpen = ref(false);
+  /** 项目文档阅读器浮层。 */
+  const docsOpen = ref(false);
   /** 单面板：open=false 时收起为纯活动条。 */
   const panelState = ref<PanelState>(readPanelState());
   const panelOpen = ref(panelState.value.open);
@@ -56,6 +58,14 @@ export const useUiStore = defineStore("ui", () => {
 
   function closeSettings() {
     settingsOpen.value = false;
+  }
+
+  function openDocs() {
+    docsOpen.value = true;
+  }
+
+  function closeDocs() {
+    docsOpen.value = false;
   }
 
   /** 打开/收起面板；切换 tab 时自动打开。 */
@@ -87,11 +97,14 @@ export const useUiStore = defineStore("ui", () => {
 
   return {
     settingsOpen,
+    docsOpen,
     panelOpen,
     panelTab,
     nodeAddRequest,
     openSettings,
     closeSettings,
+    openDocs,
+    closeDocs,
     openPanel,
     closePanel,
     togglePanel,

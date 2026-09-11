@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
-import { History, LayoutGrid, PenLine, Settings, Shapes } from "lucide-vue-next";
+import { BookText, History, LayoutGrid, PenLine, Settings, Shapes } from "lucide-vue-next";
 import { useRunsStore } from "@/stores/runs";
 import { usePromptsStore } from "@/stores/prompts";
 import { useUiStore, type RailTab } from "@/stores/ui";
@@ -64,10 +64,12 @@ onBeforeUnmount(() => {
       </div>
 
       <div class="ws-rail-bottom">
+        <button type="button" class="ws-rail-btn" title="项目文档" aria-label="项目文档" @click="uiStore.openDocs()">
+          <BookText :size="17" />
+        </button>
         <button type="button" class="ws-rail-btn" title="设置" aria-label="设置" @click="uiStore.openSettings()">
           <Settings :size="17" />
         </button>
-        <span class="ws-version tnum">v0.1.0 · M8</span>
       </div>
     </nav>
 
@@ -180,10 +182,6 @@ onBeforeUnmount(() => {
 .ws-rail-btn.active {
   background: var(--color-ink-soft);
   color: var(--color-text);
-}
-
-.ws-version {
-  display: none;
 }
 
 .ws-panel {
