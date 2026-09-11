@@ -3,7 +3,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue"
 import { useRoute, useRouter } from "vue-router";
 import { ElDropdown, ElDropdownItem, ElDropdownMenu, ElMessageBox } from "element-plus";
 import { toast } from "@/lib/toast";
-import { Activity, Check, Copy, Download, History, LayoutPanelTop, Maximize, MoreHorizontal, Play, Redo2, StopCircle, Trash2, Undo2 } from "lucide-vue-next";
+import { Activity, Check, Copy, Download, History, LayoutPanelTop, Maximize, MoreHorizontal, Play, Redo2, StopCircle, Undo2 } from "lucide-vue-next";
 import { emptyGraph, type NodeType, type RunDetail, type RunMeta, type RunNodeResult, type SourceVideoItem, type WorkflowGraph } from "@scribe-flow/shared";
 import FlowCanvas from "@/components/canvas/FlowCanvas.vue";
 import SourcePickerDialog from "@/components/canvas/SourcePickerDialog.vue";
@@ -317,9 +317,6 @@ function onMoreCommand(command: string) {
       break;
     case "export":
       void exportProject();
-      break;
-    case "clear-runs":
-      toast.info("清空运行记录将在 M4 接入");
       break;
     case "force-stop":
       void forceStopRun();
@@ -706,7 +703,6 @@ async function viewOutput(nodeId: string, segmentIndex?: number) {
               <el-dropdown-item command="redo" :disabled="canvasRunning || !historyState.canRedo"><Redo2 :size="14" />重做</el-dropdown-item>
               <el-dropdown-item command="duplicate" divided><Copy :size="14" />复制工程</el-dropdown-item>
               <el-dropdown-item command="export"><Download :size="14" />导出工程</el-dropdown-item>
-              <el-dropdown-item command="clear-runs" disabled class="sf-dropdown-danger"><Trash2 :size="14" />清空运行记录（M4）</el-dropdown-item>
               <el-dropdown-item command="force-stop" :disabled="!running && !projectRunningRun" class="sf-dropdown-danger" divided><StopCircle :size="14" />强制结束运行</el-dropdown-item>
             </el-dropdown-menu>
           </template>

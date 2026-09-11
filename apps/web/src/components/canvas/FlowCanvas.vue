@@ -131,7 +131,6 @@ function ctxFor(nodeId: string) {
     get readonly() {
       return props.running;
     },
-    copyOutput: () => emit("notice", "节点输出将在运行后可用"),
     viewOutput: (segmentIndex?: number) => emit("view-output", nodeId, segmentIndex),
     fetchNodeOutput: () => {
       if (!props.fetchNodeOutput) return Promise.resolve(null);

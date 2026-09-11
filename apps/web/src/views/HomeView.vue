@@ -52,8 +52,8 @@ function showPanel() {
       <div class="sf-home-cards">
         <div class="sf-home-card">
           <span class="sf-home-card-icon"><FolderTree :size="16" /></span>
-          <span class="sf-home-card-title">工程与运行库分开展示</span>
-          <span class="sf-home-card-text">左侧单面板可在「工程 / 运行库 / 节点」间切换；运行库文件夹用于给运行记录分类。</span>
+          <span class="sf-home-card-title">工程与运行记录分开展示</span>
+          <span class="sf-home-card-text">左侧单面板可在「工程 / 运行记录 / 节点」间切换；运行记录里可按文件夹给运行分类。</span>
           <button type="button" class="sf-home-card-btn" @click="showPanel">打开工程面板</button>
         </div>
         <div class="sf-home-card">

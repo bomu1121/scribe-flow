@@ -92,9 +92,9 @@ async function refresh() {
 
     <div class="wp-runs-head">
       <span v-if="selectedProject" class="wp-runs-title" :title="selectedProject.description || selectedProject.name">
-        {{ selectedProject.name }} 的运行库
+        {{ selectedProject.name }} 的运行记录
       </span>
-      <span v-else class="wp-runs-title">运行库</span>
+      <span v-else class="wp-runs-title">运行记录</span>
       <span v-if="runs.length > 0" class="wp-count tnum">{{ runs.length }}</span>
     </div>
 

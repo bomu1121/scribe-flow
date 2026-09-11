@@ -23,7 +23,6 @@ const groups = [
   { key: "obsidian", label: "Obsidian" },
   { key: "nutstore", label: "坚果云" },
   { key: "prompts", label: "提示词块库" },
-  { key: "bili", label: "B 站账号" },
   { key: "data", label: "数据与工程" },
 ] as const;
 
@@ -1053,8 +1052,7 @@ async function restoreNutstoreBackup(backup: { path: string; name: string }) {
 
       <template v-else>
         <h2 class="sf-settings-title">{{ groups.find((g) => g.key === active)?.label }}</h2>
-        <p class="sf-settings-desc">该分组将在后续里程碑接入。</p>
-        <div class="sf-settings-placeholder">规划中</div>
+        <p class="sf-settings-desc">这个分组还没有对应的视图分支（开发提示：请在此处补 <code>template</code> 分支）。</p>
       </template>
     </section>
 
@@ -1314,16 +1312,6 @@ async function restoreNutstoreBackup(backup: { path: string; name: string }) {
 .sf-text-btn--danger:hover {
   background: var(--color-error-soft);
   color: var(--color-error);
-}
-
-.sf-settings-placeholder {
-  padding: 32px;
-  border: 1px dashed var(--color-border);
-  border-radius: var(--radius-lg);
-  background: var(--color-surface);
-  color: var(--color-text-tertiary);
-  font-size: 13px;
-  text-align: center;
 }
 
 .sf-block-toolbar {

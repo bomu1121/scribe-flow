@@ -30,12 +30,6 @@ const routes = [
     component: () => import("@/views/SettingsView.vue"),
     meta: { title: "设置" },
   },
-  {
-    path: "/settings/prompts/:id?",
-    name: "prompt-editor",
-    component: () => import("@/views/PromptEditorView.vue"),
-    meta: { title: "提示词块" },
-  },
   { path: "/:pathMatch(.*)*", redirect: "/" },
 ];
 

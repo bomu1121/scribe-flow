@@ -2,6 +2,19 @@
  * M4 API 自检：提示词块库 CRUD、运行日志、设置数据信息。
  * 前置：pnpm dev。用法：node scripts/m4-api-check.mjs
  */
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+
+/**
+ * 内置块数量从源码推导，不写死。
+ * 这里原先把断言写成「等于 8」，新增内置块后脚本就静默变红了很久——
+ * 那种断言只是在记录过去的事实，不是在检查现在。
+ */
+function builtinBlockCount() {
+  const source = readFileSync(join(process.cwd(), "packages/shared/src/prompt.ts"), "utf8");
+  return (source.match(/id: "builtin\./g) ?? []).length;
+}
+
 const BASE = process.env.API_URL ?? "http://localhost:8787";
 const results = [];
 
@@ -54,8 +67,14 @@ async function waitRun(runId) {
 async function run() {
   // 1. 提示词块库
   const initial = await j("GET", "/api/prompts");
-  // 内置块数量与 packages/shared/src/prompt.ts 的 BUILTIN_PROMPT_BLOCKS 保持一致（新增内置块时同步更新）
-  check("GET /api/prompts 返回内置 8 块", initial.status === 200 && initial.data?.items?.filter((b) => b.builtin).length === 8);
+  // 数量从 BUILTIN_PROMPT_BLOCKS 推导，新增内置块时无需改这里
+  const expectedBuiltin = builtinBlockCount();
+  const actualBuiltin = initial.data?.items?.filter((b) => b.builtin).length ?? -1;
+  check(
+    `GET /api/prompts 返回全部内置块（${expectedBuiltin} 个）`,
+    initial.status === 200 && actualBuiltin === expectedBuiltin,
+    `实际 ${actualBuiltin}`,
+  );
 
   const created = await j("POST", "/api/prompts", { name: "M4 验收块", prompt: "这是验收提示词。" });
   check("POST /api/prompts 创建自定义块", created.status === 201 && created.data?.id?.startsWith("custom."), created.data?.id ?? "");

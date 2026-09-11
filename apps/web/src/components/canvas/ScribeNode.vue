@@ -805,7 +805,6 @@ const themeOptions = [
                 <DropdownMenuSeparator class="sf-node-menu-sep" />
                 <DropdownMenuItem class="sf-node-menu-item" :disabled="readonly" title="运行中不可编辑" @select="renameNode">重命名</DropdownMenuItem>
                 <DropdownMenuItem class="sf-node-menu-item" :disabled="readonly" title="运行中不可编辑" @select="props.data.ctx?.duplicate()">复制</DropdownMenuItem>
-                <DropdownMenuItem class="sf-node-menu-item" :disabled="true" title="M4 接入">复制输出</DropdownMenuItem>
                 <DropdownMenuSeparator class="sf-node-menu-sep" />
                 <DropdownMenuItem class="sf-node-menu-item sf-node-menu-item--danger" :disabled="readonly" title="运行中不可编辑" @select="props.data.ctx?.remove()">删除</DropdownMenuItem>
               </DropdownMenuContent>
@@ -1285,7 +1284,6 @@ const themeOptions = [
         <ContextMenuSeparator class="sf-node-menu-sep" />
         <ContextMenuItem class="sf-node-menu-item" :disabled="readonly" title="运行中不可编辑" @select="renameNode">重命名</ContextMenuItem>
         <ContextMenuItem class="sf-node-menu-item" :disabled="readonly" title="运行中不可编辑" @select="props.data.ctx?.duplicate()">复制</ContextMenuItem>
-        <ContextMenuItem class="sf-node-menu-item" :disabled="true" title="M4 接入">复制输出</ContextMenuItem>
         <ContextMenuSeparator class="sf-node-menu-sep" />
         <ContextMenuItem class="sf-node-menu-item sf-node-menu-item--danger" :disabled="readonly" title="运行中不可编辑" @select="props.data.ctx?.remove()">删除</ContextMenuItem>
       </ContextMenuContent>

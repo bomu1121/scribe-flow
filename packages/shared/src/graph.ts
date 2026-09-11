@@ -239,7 +239,7 @@ export const NODE_TYPE_LABELS: Record<NodeType, string> = {
   "source.text": "文本",
   "process.transcribe": "转写",
   "process.refine": "AI 校对",
-  "process.prompt": "AI 提示词",
+  "process.prompt": "AI 加工",
   "process.merge": "合并",
   "process.output": "输出",
   "flow.if": "条件分支",

@@ -10,7 +10,7 @@ const ui = useUiStore();
 
 const tabs: { key: RailTab; label: string }[] = [
   { key: "projects", label: "工程" },
-  { key: "runs", label: "运行库" },
+  { key: "runs", label: "运行记录" },
   { key: "nodes", label: "节点" },
 ];
 

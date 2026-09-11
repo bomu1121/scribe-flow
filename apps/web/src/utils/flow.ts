@@ -30,7 +30,6 @@ export interface NodeContextActions {
   running?: boolean;
   /** 运行进行中画布应只读：当前编辑不会影响正在进行的运行，禁止改动节点数据/结构。 */
   readonly?: boolean;
-  copyOutput: () => void;
   /** 打开该节点在最近一次运行中的输出结果页；传入段序号可直达对应分段。 */
   viewOutput: (segmentIndex?: number) => void;
   /** 拉取该节点最近一次运行的完整文本（画布悬停预览用）；无匹配运行或无输出时返回 null。 */
