@@ -546,7 +546,7 @@ const RECIPE_INSIGHT_V3: Recipe = {
  * - 该常量是 v4 的单次调用形态：版式母版 + 排版铁律完整内化，
  *   作为 v4 配方块的 prompt 字段（块被复制/对比/预览时展示的是新版式，
  *   与配方步骤的版式规则同源；引擎侧 v4 走下方 RECIPE_INSIGHT_V4 配方）。
- * - 排版设计依据：docs/insight-v4-note-layout.md（同类笔记产品排版调研 + 用户确认）。
+ * - 排版设计依据：docs/decisions/insight-v4-note-layout.md（同类笔记产品排版调研 + 用户确认）。
  */
 const PROMPT_GUANDIAN_V4 = [
   "你是一位深度内容编辑兼版式编辑，专门将口语化的视频文稿提炼为信息不缩水、可直接阅读与复用的观点笔记。输出采用「期刊式」轻排版：标题层级少、观点用加粗主张句、引用就地呈现、空槽不占位，观感干净而信息完整。",

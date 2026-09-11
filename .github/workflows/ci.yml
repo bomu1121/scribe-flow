@@ -10,6 +10,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          # docs-gen / docs-lint 用 git log 取每份文档的最后提交日期（文档地图与验收档案冻结校验），
+          # 浅克隆下这些日期会全部落到「（未提交）」而与本地不一致。
+          fetch-depth: 0
       - uses: pnpm/action-setup@v4
         with:
           version: 11.7.0
@@ -23,6 +27,8 @@ jobs:
       - run: pnpm build
       - run: pnpm lint:slop
       - run: pnpm lint:ui
+      # 放在 build 之后：R9 的首屏体积预算需要 apps/web/dist。
+      - run: pnpm lint:docs
 
   docker:
     runs-on: ubuntu-latest

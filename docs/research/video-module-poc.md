@@ -1,7 +1,14 @@
+---
+title: 视频模块 P0 真实视频验证记录
+class: research
+owner: 念前
+last_reviewed: 2026-09-10
+---
+
 # 视频模块 P0 真实视频验证记录
 
 > 状态：✅ 已完成（2026-09-09，本机 Windows + 真实 B站公网）
-> 目的：验证 `docs/video-module-research.md` §6 P0 的风险点——DASH 视频流可得性/编解码、m4s 双流 ffmpeg copy 合成、`+faststart` 后 HTTP Range 播放与 Chrome 真实起播/拖动。
+> 目的：验证 `docs/research/video-module-research.md` §6 P0 的风险点——DASH 视频流可得性/编解码、m4s 双流 ffmpeg copy 合成、`+faststart` 后 HTTP Range 播放与 Chrome 真实起播/拖动。
 > 脚本：`apps/server/video-poc.mjs`（开发期工具；Cookie 只从本机 SQLite 读取、不打印本体）。
 
 ## 1. 环境

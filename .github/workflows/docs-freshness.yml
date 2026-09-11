@@ -1,0 +1,23 @@
+name: Docs freshness
+
+# 文档新鲜度定时扫描。刻意不做成 PR 门禁：PR 上只拦结构性错误（缺 front matter、死链、生成块过期、
+# 手写漂移数字），「某份文档太久没复核」这类问题在 PR 里拦住会阻塞无关改动，适合按周提醒。
+# 需要人工复核时跑 pnpm docs:lint（非 strict 只告警），这里用 --strict 把它升级为失败。
+on:
+  schedule:
+    - cron: "0 9 * * 1"
+  workflow_dispatch:
+
+jobs:
+  freshness:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # 需要完整历史：验收档案的冻结校验要对比文件的最后提交日期。
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      # docs-lint 只用 Node 内置模块（fs / path / child_process / zlib），无需 pnpm install。
+      - run: node scripts/docs-lint.mjs --strict

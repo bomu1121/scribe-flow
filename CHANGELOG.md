@@ -1,0 +1,170 @@
+# Changelog
+
+本项目所有值得记录的变更都写在这里。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
+
+**维护约定（重要）**：条目在**引入变更的同一次提交里**追加到 `## [Unreleased]` 下，不要等到发版时
+回顾补写——那样会把写 changelog 变成考古，也必然漏。现状与进度看 [docs/status.md](./docs/status.md)，
+本文件只记录「什么时候改了什么」。
+
+**格式说明**：本项目尚未发布任何版本（无 git tag），因此所有条目都在 `## [Unreleased]` 下，
+按日期分组——这是对 Keep a Changelog 的务实调整，等第一次打 tag 时再收进版本号。分类固定为：
+`新增` / `变更` / `废弃` / `移除` / `修复` / `安全`。
+
+## [Unreleased]
+
+### 2026-09-11
+
+#### 新增
+
+- 文档门禁：`pnpm docs:lint` 十二条规则——front matter 合法性、supersede 双向链接、生成块同步、
+  文档地图覆盖、废弃文档的祈使句、验收档案内容指纹、漂移数字、markdown 死链、
+  源码注释里的文档路径、前端首屏体积预算、class 与目录一致、代码位置引用可解析；
+  配 `--strict` 供定时任务用。
+- `pnpm docs:gen`：从源码静态推导后注入 README / status 的数字块与文档地图，取代此前的数字手写。
+- `pnpm docs:freeze`：显式重新冻结验收档案的内容指纹（lint 不自动修复，避免"改了验收结论"被静默合法化）。
+- 现状权威来源 [docs/status.md](./docs/status.md)：里程碑进度、已知缺口清单与完整文档地图。
+- [AGENTS.md](./AGENTS.md)：项目约定与文档生命周期规则（取代此前散落的说明）。
+- 左侧栏底部（设置按钮上方）新增「项目文档」入口，打开一个只读的文档阅读器：左栏按目录分组
+  并支持搜索，右栏渲染正文，头部单独呈现 front matter（class / status / 责任人 / 最后复核 /
+  冻结日期 / 内容指纹）；缺 front matter 的文档在列表里标出——那正是门禁会报 R1 的情况。
+- `GET /api/docs` 与 `GET /api/docs/file`：只读，仅允许读取 `docs/` 下的 markdown。
+  路径包含性用 `path.relative` + `realpath` 双重校验，并强制 `docs/` 前缀，使仓库根文件不可达。
+- 门禁补三条盲区：`R11` class 必须与所在目录一致；`R12` 文档里 `路径:行号` 形式的代码引用必须可解析
+  （文件存在、行号不越界）；`R3` 增加计数口径守卫——测试出现 `.each(` 时静态数 `it(` 的口径失效，直接失败。
+- 每周一的文档新鲜度定时扫描 workflow。
+
+#### 变更
+
+- `docs/` 按生命周期重排目录，目录名即分类信号：`docs/decisions/`（方案 / 选型 / 架构）、
+  `docs/plans/`（实施清单 / 路线图）、`docs/evidence/`（冻结快照，文件名带冻结日期）、
+  `docs/research/`（调研）。28 份文档迁移，全仓引用（含源码注释）同步重写。
+- 全部历史文档补齐 front matter 并归类。`supersedes` / `superseded_by` 改用仓库相对路径。
+- 拆分 `development-log.md`：决策流水 → [early-decisions.md](./docs/decisions/early-decisions.md)，
+  交付清单 → [2026-08-28-m0-m5-delivery.md](./docs/evidence/2026-08-28-m0-m5-delivery.md)，
+  逐日流水 → 本文件；原文件改为指向这三处的存根。
+- 文档阅读器正文复用结果页的 `.markdown-body` 排版，保证两处阅读体验一致；正文里的相对链接在
+  阅读器内跳转，不把浏览器带去一个必然 404 的路径。部署镜像未包含 `docs/` 时接口返回
+  `available: false` 并给出明确提示，而不是报错。
+- `docs-gen` / `docs-lint` 与阅读器共用的 front matter 解析在两侧各有一份（门禁脚本必须能
+  不依赖构建直接运行），新增对拍测试锁住两者行为一致。
+- 两份提示词模板文档从仓库根移入 `docs/decisions/`（`history-cognition-template.md`、
+  `cascade-video-summary-template.md`），并标注提示词正文以 `packages/shared/src/prompt.ts` 为准
+  ——它们此前是根目录的第二真相源，内嵌提示词已与源码分叉。
+- 修正 `development-log.md` 与 [node-result-preview-research.md](./docs/research/node-result-preview-research.md)
+  中「2026-10 用户方向确认」的日期笔误（该内容在 2026-09-06 之前已提交，应为 2026-09）。
+- 清理一批已过期的内容陈述：10 余份文档的「待评审 / 不写代码」现在时状态行改为已实施，
+  `scribe-flow-proposal.md` 里已被 Element Plus 取代的 UI 路线与 `CLAUDE.md` 引用改为指向现行文档。
+
+#### 修复
+
+- `scripts/m4-api-check.mjs` 的内置块断言原先硬编码「等于 8」，新增内置块后长期静默失败；
+  改为从 `packages/shared/src/prompt.ts` 推导数量（现 12/12 通过）。
+
+
+### 2026-09-10 — 结果页阅读体验与知识巩固
+
+#### 新增
+
+- 视频下载与结果页播放（M9）：`media_assets` / `run_media` 表与幂等迁移、内容寻址去重与 GC、
+  Range 流式与缺失重下、自研 `MediaPlayer`、来源节点高级设置里的 keepVideo 开关与清晰度段选。
+  验收见 [2026-09-10-video-module-acceptance.md](./docs/evidence/2026-09-10-video-module-acceptance.md)。
+- 知识巩固节点 `process.drill`「练一练」：文字 → 知识点 + 题目 + 延伸，结果页可直接答题。
+- 多输入分段阅读：`utils/run-segments.ts` 作为唯一分段来源，结果页输出、结果页链路输入、
+  画布结果预览浮层、运行日志弹窗四处入口全覆盖；`run_node_logs` 新增 `input_index` / `input_total`。
+- 结果页右侧分段大纲：序号 + 两行标题 + 字数 / 时长，当前段墨色标记，顶部「全文（N 段合并）」，
+  段数 > 12 出筛选框，底部翻页与 `↑↓` 提示，支持键盘 `↑↓` / `jk` / `Home` / `End`。
+- 结果页 tab 语义化：`role=tablist/tab`、`roving tabindex`、`←/→/Home/End` 键盘支持，
+  失败节点红点并写进 `aria-label`。
+- 观点提炼 v4（期刊式轻排版）：新增 `PROMPT_GUANDIAN_V4` 与 `RECIPE_INSIGHT_V4`（四步核对版，
+  含禁 `###` 硬门），`builtin.insight.v4` 接管推荐位。
+
+#### 变更
+
+- 分段导航控件类型纠错：第一版的「8 个横向胶囊」实为标签页控件，不适用于**顺序**内容
+  （Apple HIG 段数上限、Material 3「标签只用于并列内容」、NN/g 横排退化为轮播）；
+  结果页改用右侧大纲栏，窄屏与画布浮层改用单行标题 + 下拉。依据见
+  [segment-navigation-research.md](./docs/research/segment-navigation-research.md)。
+- tab 切换改为单个绝对定位的滑动墨条（`transform` + `width` 过渡走 `--dur-3` / `--ease-out`），
+  用 `ResizeObserver` 在窗口缩放、字体加载、tab 增删时重新测量。
+
+#### 移除
+
+- 结果页 tab 的内容淡入动画——实测 Element Plus 无、Ant Design 默认
+  `{inkBar:true, tabPane:false}`、Material 3 明确不用 fade，属自加行为。依据见
+  [tab-interaction-research.md](./docs/research/tab-interaction-research.md)。
+- 被右侧大纲取代的横向胶囊组件 `SegmentTabs.vue`。
+
+#### 修复
+
+- 画布空内容保存前二次确认，避免误触清空工程。
+- 配方引用的回查宽容规则与 `quotes` 整句照抄要求。
+- 冒烟脚本「工程树渲染出工程行」改为等待工程行本身出现（原先只等任意树行，文件夹行先渲染时误判）。
+
+### 2026-09-09 — 配方运行时、攻略加工、溯源核对与日志查看器
+
+#### 新增
+
+- AI 加工节点配方化（M8-1 阶段 A）：Recipe 原语、确定性断言门、步骤级日志；以观点提炼 v3 试点。
+- 阴阳师攻略视频文稿加工模块。
+- 溯源模块结构化外部核对（结构化产物 + 报告阅读器）。
+- 提示词块库支持全文查看与版本对比。
+- 运行日志查看器重构：多维筛选、折叠、复制与下载。
+
+#### 变更
+
+- 运行详情章节目录改为半透明常驻浮层；链路输入与输出列表样式重做。
+- B 站视频快捷选择器交互重做，统一交互颜色。
+
+#### 修复
+
+- 画布小卡文本框滚轮与下拉取消选中问题；toast 离场改为原地淡出并同步补位。
+- 工程重命名后标题同步；运行期间锁定画布。
+
+### 2026-09-07 ~ 09-08 — 工作台与坚果云
+
+#### 新增
+
+- 单面板工作台与文件夹 / 运行库重构，含自研拖拽；工程树支持框选多选、移动对话框内新建文件夹。
+- 坚果云 WebDAV 同步 / 读取 / 备份模块，以及从云端备份一键热恢复。
+
+#### 变更
+
+- 左侧面板改为平滑抽屉式收起 / 展开；排序下拉收进图标菜单。
+
+#### 修复
+
+- 空文件夹去掉虚线占位，行内编辑支持点击外部失焦；设置页弹层被画布浮动操作遮挡；对话框挂到 body
+  避免位置被裁切。
+
+### 2026-08-31 ~ 09-06 — M5 之后的画布与结果页迭代
+
+#### 新增
+
+- 节点结果预览：以摘要栏 delta 徽标为热区的悬停 / 点击弹出全内容预览浮层（懒加载最近运行文本）。
+- 思维导图节点与预览；节点结果 diff。
+- Obsidian 笔记输出、人物 / 事件 / 时期提取与自动关联。
+- 历史认知加工与 CASCADE 概念演进摘要两个内置提示词块。
+- 画布浮动操作栏；错误节点顶部圆形提示。
+
+#### 变更
+
+- 节点库从左侧常驻栏改为单按钮 + 覆盖层面板；节点操作入口统一进卡片。
+- 自研右下角通知栈取代 `ElMessage`。
+
+#### 修复
+
+- B 站下载网络错误自动重试、展开错误 `cause`；部分上游失败时下游用可用输入继续。
+- 不过滤默认私密收藏夹；修复收藏夹多选视频缺少 `cid` 导致运行失败。
+
+### 2026-08-27 ~ 08-28 — M0–M5
+
+M0–M5 六个里程碑的开发、验收与发布过程。交付内容与当时的验证记录见
+[2026-08-28-m0-m5-delivery.md](./docs/evidence/2026-08-28-m0-m5-delivery.md)，
+分层验收标准见 `docs/evidence/2026-08-28-m{2,3,4,5}-acceptance.md`。
+其中的关键决策（含一次 UI 路线反转）见 [early-decisions.md](./docs/decisions/early-decisions.md)。
+
+## 更早的历史
+
+本文件自 2026-09-11 启用。此前没有 changelog，变更流水记在 `docs/research/development-log.md` 里，
+与该文件的「现状快照」混在一起。2026-09-11 已按上表完成拆分，原文件只留存根。
+完整原文可在 git 历史里找到（拆分提交之前的那一版）。

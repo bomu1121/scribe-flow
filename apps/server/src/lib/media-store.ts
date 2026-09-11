@@ -1,5 +1,5 @@
 // 媒体资产库：media_assets / run_media 的读写、去重、GC 与缺失恢复（引擎与 REST 共用）。
-// 设计见 docs/video-module-research.md §4–5。
+// 设计见 docs/research/video-module-research.md §4–5。
 import { createHash, randomUUID } from "node:crypto";
 import { closeSync, openSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, rename, rm, stat } from "node:fs/promises";

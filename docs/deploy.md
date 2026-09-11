@@ -1,3 +1,10 @@
+---
+title: ScribeFlow 部署说明
+class: status
+owner: 念前
+last_reviewed: 2026-09-10
+---
+
 # ScribeFlow 部署说明
 
 ## 方式一：Docker 单容器（推荐）

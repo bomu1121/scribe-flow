@@ -1,10 +1,17 @@
+---
+title: AI 加工节点内部多步链：收益调研与进阶实现方案
+class: research
+owner: 念前
+last_reviewed: 2026-09-09
+---
+
 # AI 加工节点内部多步链：收益调研与进阶实现方案
 
-> 状态：**调研稿，待评审**（评审通过后按阶段 A/B/C 立实施文档）
+> 状态：**阶段 A 已立项并实施完毕；阶段 B/C 未做**（见 [early-decisions.md](../decisions/early-decisions.md) 的「AI 节点配方化的决策边界」）
 > 日期：2026-09-08
 > 范围口径（已与用户对齐）：把 `AI 加工` 节点族（`process.refine / process.prompt / process.chapter / process.mindmap`）的**节点内执行**从「一次 LLM 调用」升级为「内部多步骤的小编排流程」，图上仍是单个节点。**排除**画布级子流程、提示词块库重设计、引擎 durable 化——它们属于路线图 M8 P2 的另外立项。
 > 动机（已与用户对齐）：探索更先进形态；把验证有效的多步加工方法沉淀为可复用资产。
-> 关联文档：[scribe-flow-proposal.md](../scribe-flow-proposal.md)、[workflow-module-roadmap.md](../workflow-module-roadmap.md)、[r1-desktop-research.md](./r1-desktop-research.md)、[node-result-preview-research.md](../node-result-preview-research.md)
+> 关联文档：[scribe-flow-proposal.md](../decisions/scribe-flow-proposal.md)、[workflow-module-roadmap.md](../plans/workflow-module-roadmap.md)、[r1-desktop-research.md](./r1-desktop-research.md)、[node-result-preview-research.md](./node-result-preview-research.md)
 
 ---
 
@@ -22,7 +29,7 @@
 
 | 事实 | 锚点 | 含义 |
 |---|---|---|
-| `process.refine` / `process.prompt` 执行器：逐输入一次 `chatCompletion(system=提示词块/覆盖/兜底, user=输入文本)` | `apps/server/src/lib/engine.ts` L953-988 | 节点内没有任何子步骤、没有中间产物 |
+| `process.refine` / `process.prompt` 执行器：逐输入一次 `chatCompletion(system=提示词块/覆盖/兜底, user=输入文本)` | `apps/server/src/lib/engine.ts` 中 `runNode` 的 `process.prompt` 分支 | 节点内没有任何子步骤、没有中间产物 |
 | AI 调用层：固定 `system+user`、`temperature 0.3`、单请求 300s 超时、无多轮/无流式 | `apps/server/src/lib/ai.ts` L24-41 | 「步骤化」需要在这一层之上加编排，而不是改模型接口 |
 | `process.chapter` / `process.mindmap`：一次调用要求纯 JSON，随后解析并做**上限/结构约束**（章节数、分支数、深度、节点文本长度） | `engine.ts` L1059-1119 | 已存在「输出契约 + 解析 + 约束」雏形，是校验门的最自然前身 |
 | 节点级重试已存在：attempts、`node.retry` 事件、可重试错误类型集合 | `engine.ts` L796-839、L31 | 步骤级失败可直接复用同一套重试语义 |
@@ -181,6 +188,6 @@ steps:
 
 ## 7. 待决策点
 
-1. 是否批准**阶段 A**（运行时原语 + 观点提炼试点配方、默认关闭）作为实施立项？
+1. 是否批准**阶段 A**（运行时原语 + 观点提炼试点配方、默认关闭）作为实施立项？——**已批准并实施完毕。**
 2. 阶段 B 评测集素材来源：真实 B 站转写稿归档 / 现有人工样例？
 3. 配方归属：`prompt_blocks` 加可选列（轻）还是独立 `recipes` 表（重，支持步骤级版本与引用）？

@@ -4,21 +4,21 @@
 
 ## 项目状态
 
-- 当前里程碑：**M0–M5 全部完成** 🎉
-- M5 分层验收：[docs/m5-acceptance.md](docs/m5-acceptance.md)（主包 1130KB→124.6KB · smoke 37/37 · Docker 构建通过）
-- 结果展示页方案：[docs/result-viewer-design.md](docs/result-viewer-design.md)（多输入/多输出、缩放/编辑/全屏、返回工作流）
-- M4 分层验收：[docs/m4-acceptance.md](docs/m4-acceptance.md)（L0 9 用例 · L1 12/12 · L2 34/34 · L3 bsk 真实浏览器）
-- M3 分层验收：[docs/m3-acceptance.md](docs/m3-acceptance.md)（模板一「B站视频→观点笔记」真实端到端跑通）
-- 部署说明：[docs/deploy.md](docs/deploy.md)（Docker 单容器 + 环境变量 + 备份迁移）
-- M2 分层验收：[docs/m2-acceptance.md](docs/m2-acceptance.md)
-- 阴阳师攻略视频文稿加工模块：[docs/onmyoji-guide-processing.md](docs/onmyoji-guide-processing.md)
-- 知识巩固节点方案（`process.drill`「练一练」：文字→知识点+题+延伸，结果页答题；含 2026-09 市面调研）：[docs/knowledge-consolidation-module.md](docs/knowledge-consolidation-module.md)
-  - 实施清单与验收记录：[docs/scribe-flow-m-drill.md](docs/scribe-flow-m-drill.md)（**T1–T5 已实施** · 154 项自动化用例全绿 · L3 真实浏览器答题验收通过）
-- 产品方案：[docs/scribe-flow-proposal.md](docs/scribe-flow-proposal.md)
-- 实施清单：[docs/scribe-flow-m0-m1.md](docs/scribe-flow-m0-m1.md)
-- UI 组件库替换调研：[docs/ui-library-replacement-research.md](docs/ui-library-replacement-research.md)
-- UI 框架选型历史（已由 Element Plus 路线替代）：[docs/ui-framework-selection.md](docs/ui-framework-selection.md)
-- 开发记录与完整项目文档：[docs/development-log.md](docs/development-log.md)
+**现状权威来源：[docs/status.md](docs/status.md)** —— 里程碑进度、已知缺口、完整文档地图都在那里。
+
+`docs/` 下的方案与验收档案是历史快照，**不代表现状**。下面的数字由 `pnpm docs:gen` 从源码生成，请勿手改。
+
+<!-- docs-gen:numbers:start -->
+<!-- 由 `pnpm docs:gen` 生成，请勿手改；改动源码后重新生成即可 -->
+
+| 指标 | 当前值 |
+| --- | --- |
+| 测试用例（`it(` 声明数） | **172**（shared 65 · server 93 · web 14） |
+| UI 冒烟检查项（`pnpm smoke:ui`） | **50**（其中 3 项为恒真占位，净 47） |
+| API 自检项 | m2 7 · m3 14 · m4 12 · m6 9 · drill 22 |
+| 内置提示词块（`BUILTIN_PROMPT_BLOCKS`） | **13** |
+| 文档数（`docs/` 下 `.md`，不含调研原文） | 37 |
+<!-- docs-gen:numbers:end -->
 
 ## 技术栈
 
@@ -37,8 +37,8 @@ scribe-flow/
 │  └─ server/         # 后端 API（Hono）
 ├─ packages/
 │  └─ shared/         # 类型、图模型、API 契约、内置模板
-├─ docs/              # 产品方案与实施清单
-└─ scripts/           # 反 slop 自检等工具脚本
+├─ docs/              # 按生命周期分目录，见下节「文档」
+└─ scripts/           # 自研门禁：反 slop / UI 铁律 / 文档 / 冒烟 / API 自检
 ```
 
 ## 本地开发
@@ -62,13 +62,39 @@ pnpm dev            # 同时启动前后端
 pnpm typecheck      # 全仓类型检查
 pnpm test           # 单元测试
 pnpm build          # 构建
+pnpm lint           # 全部门禁（反 slop + UI 铁律 + 文档）
 pnpm lint:slop      # 去 AI 味自检（渐变/玻璃拟态/emoji/辉光等反模式扫描）
 pnpm lint:ui        # UI 铁律自检（Portal 全局样式/z-index 令牌/颜色单一来源）
+pnpm docs:gen       # 重新生成 README/status.md 里的数字与文档地图
+pnpm docs:lint      # 文档门禁（front matter/死链/漂移数字/验收档案冻结/体积预算）
+pnpm docs:freeze    # 显式重新冻结验收档案的内容指纹
 pnpm smoke:ui       # CDP + 真实 Chrome 的 UI 冒烟（需先 pnpm dev）
 pnpm check:api:m2   # M2 API 自检（登录/选择器/上传）
 pnpm check:api:m3   # M3 引擎 API 自检（文本链路/SSE/重跑）
 pnpm check:api:m4   # M4 API 自检（提示词块 CRUD/运行日志）
+pnpm check:api:m6   # M6 API 自检（重试/条件分支/文本工具/章节切分）
+pnpm check:api:drill # 知识巩固 API 自检（需真实 AI 密钥）
 ```
+
+> 改动源码后如果动了用例数、冒烟项数或内置提示词块，请跑一次 `pnpm docs:gen` 并一并提交。
+
+## 文档
+
+文档分类与维护规则见 [AGENTS.md](./AGENTS.md)；现状看 [docs/status.md](./docs/status.md)，完整文档地图在
+[status.md 的末尾](./docs/status.md#4-文档地图)。
+
+`docs/` 按生命周期分目录，**目录名就是分类信号，不要混用**：
+
+| 目录 | 类 | 代表文件 | 规则 |
+| --- | --- | --- | --- |
+| `docs/` 根 | `status` | `status.md`、`deploy.md` | 必须反映今天；数字只能来自生成块 |
+| `docs/decisions/` | `decision` | 方案、选型、架构 | 日期不可变；只靠 supersede/deprecate，永不删除 |
+| `docs/plans/` | `plan` | 实施清单、路线图 | 落地时把 `status` 改为 `done`，并补验收档案 |
+| `docs/evidence/` | `evidence` | `2026-08-28-m2-acceptance.md` 等 | 冻结快照（验收档案 / 竣工清单），**永不修改**（内容指纹由 CI 校验） |
+| `docs/research/` | `research` | 调研、抓取原文 | 只追加 |
+| `docs/samples/` | — | 样例稿 | 产物存档，不需要 front matter |
+
+验收档案的文件名带冻结日期前缀，读文件名就知道它代表哪一天，**不要把它当现状引用**。
 
 ## 设计约定
 

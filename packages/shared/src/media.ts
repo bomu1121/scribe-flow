@@ -1,4 +1,4 @@
-/** 运行附着的可播放媒体（视频下载/归一化产物），见 docs/video-module-research.md §4–5。 */
+/** 运行附着的可播放媒体（视频下载/归一化产物），见 docs/research/video-module-research.md §4–5。 */
 
 export type RunMediaKind = "bili" | "file";
 export type RunMediaStatus = "ready" | "error" | "restoring";

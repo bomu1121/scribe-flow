@@ -1,7 +1,7 @@
 <script setup lang="ts">
 /**
  * 可播放视频（MP4/H.264）轻量播放器：原生 <video> + 自研控件层。
- * 设计（docs/video-module-research.md §2.4 的样式细化）：
+ * 设计（docs/research/video-module-research.md §2.4 的样式细化）：
  * - 内嵌态与结果页“纸面”一体：浅色控件条在画面下方，舞台黑只包住视频本身；
  *   舞台按真实宽高比自适应（超高/超宽受 max-height 夹持时才出现信箱黑边）。
  * - 全屏态才切换到暗色悬浮控件（常见播放器惯例）。
