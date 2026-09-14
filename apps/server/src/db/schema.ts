@@ -104,6 +104,10 @@ export const runNodeInputs = sqliteTable("run_node_inputs", {
   path: text("path"),
   size: integer("size"),
   position: integer("position").notNull().default(0),
+  /** 该输入承载的素材段标识（见 shared/segment.ts 的 segmentKey）。 */
+  itemKey: text("item_key"),
+  /** 素材挑选把它排除了（记录在案只为说明「共几段、本次用了几段」）。 */
+  excluded: integer("excluded", { mode: "boolean" }).notNull().default(false),
   createdAt: integer("created_at").notNull(),
 });
 

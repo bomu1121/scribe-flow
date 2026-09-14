@@ -151,8 +151,6 @@ superseded_by: <仓库相对路径>         # 可选，必须与对方双向对�
 - **数据库没有迁移工具**，`apps/server/src/db/client.ts` 里是手写幂等补列，只能加列。
 - **`engine.ts` 里有多处未捕获的 Promise**，改动运行链路时留意 `runLoop` 的收尾与
   `executeNode` 的 `resolveInputs`/`persistInputs`。
-- **`scripts/m4-api-check.mjs` 的断言与内置提示词块数量硬绑定**，新增内置块后该脚本会失败。
-  正确的做法是让它从 `BUILTIN_PROMPT_BLOCKS` 推导数量，而不是改那个字面量。
 - 文档门禁是**全量强制**的：`docs/` 下所有 markdown 都必须有合法 front matter，只有
   `docs/samples/` 与 `docs/research/raw/` 作为产物存档豁免。新建文档请照上面的 schema 写。
 - **文档地图里刻意没有「最后修改日期」**：有日期的话任何一份文档被改动都会让生成块过期，从而每次

@@ -13,7 +13,7 @@
 
 | 指标 | 当前值 |
 | --- | --- |
-| 测试用例（`it(` 声明数） | **172**（shared 65 · server 93 · web 14） |
+| 测试用例（`it(` 声明数） | **189**（shared 71 · server 104 · web 14） |
 | UI 冒烟检查项（`pnpm smoke:ui`） | **50**（其中 3 项为恒真占位，净 47） |
 | API 自检项 | m2 7 · m3 14 · m4 12 · m6 9 · drill 22 |
 | 内置提示词块（`BUILTIN_PROMPT_BLOCKS`） | **13** |

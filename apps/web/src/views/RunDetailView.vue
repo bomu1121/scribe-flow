@@ -615,6 +615,38 @@ const chainStages = computed(() => {
 
 const selectedInput = computed(() => inputItems.value.find((i) => i.key === selectedInputKey.value) ?? null);
 
+/**
+ * 当前输出文档因「素材挑选」少加工了多少段素材。
+ *
+ * 挑选可能配在链路的任何一层（例如合并节点只取 2/3 份文稿），所以从输出节点沿链路
+ * 向上回溯，汇总所有被排除的输入行；只要链路上挑过，这份文档就是「部分素材」的产物。
+ */
+const outputPickScope = computed(() => {
+  const start = currentOutput.value?.node.nodeId;
+  if (!start) return { excluded: 0, total: 0 };
+  const rows = run.value?.inputs ?? [];
+  const edges = graph.value?.edges ?? [];
+  const seen = new Set<string>([start]);
+  const queue = [start];
+  let excluded = 0;
+  let total = 0;
+  while (queue.length > 0) {
+    const nodeId = queue.shift()!;
+    for (const row of rows) {
+      if (row.targetNodeId !== nodeId) continue;
+      // 「素材数」只算真正的素材输入（带段标识或正文），避免把空占位行算进去。
+      if (row.itemKey || (row.text ?? "").trim()) total += 1;
+      if (row.excluded === true) excluded += 1;
+    }
+    for (const edge of edges) {
+      if (edge.target !== nodeId || seen.has(edge.source)) continue;
+      seen.add(edge.source);
+      queue.push(edge.source);
+    }
+  }
+  return { excluded, total };
+});
+
 // ---------- 可播放视频附件（keepVideo 产物） ----------
 const runMediaList = computed(() => run.value?.media ?? []);
 /** 当前选中的链路输入（来源节点）对应的可播放视频；多选/分P 时按 sourceIndex 逐项对应。 */
@@ -1811,6 +1843,9 @@ async function forceStopRun() {
               <article v-if="currentMarkdown || fallbackMediaList.length === 0" class="rv-paper" :style="paperStyle">
                 <header class="rv-paper-head">
                   <h1 class="rv-paper-title">{{ currentOutput?.title || "输出文档" }}</h1>
+                  <p v-if="outputPickScope.excluded > 0" class="rv-paper-pick-note">
+                    这份文档只加工了选中的素材：共 {{ outputPickScope.total }} 段，另有 {{ outputPickScope.excluded }} 段未选中、本次未加工
+                  </p>
                   <p class="rv-paper-meta">
                     <template v-if="selectedSegment">第 {{ selectedSegment.index + 1 }}/{{ activeSegments.length }} 段 · </template>
                     {{ sourceSummary }} · {{ wordCount }} 字 · 约 {{ readingTime }} 分钟阅读
@@ -2867,6 +2902,13 @@ async function forceStopRun() {
   margin: 8px 0 0;
   font-size: 0.8em;
   color: var(--color-text-tertiary);
+}
+
+/* 素材挑选留下的说明：这段内容只是素材的一部分，避免被误读成「笔记丢了内容」 */
+.rv-paper-pick-note {
+  margin: 6px 0 0;
+  font-size: 0.8em;
+  color: var(--color-warning, var(--color-text-tertiary));
 }
 
 .rv-preview {

@@ -37,6 +37,8 @@ const baseDataSchema = z.object({
   status: z.enum(["idle", "queued", "running", "done", "error", "cancelled", "skipped"]).optional(),
   summary: z.string().optional(),
   retry: retrySchema,
+  /** 素材挑选：来源节点 id → 选中的素材段标识。 */
+  pick: z.record(z.string(), z.array(z.string())).optional(),
 });
 
 const nodeDataByType = {
@@ -120,6 +122,9 @@ const nodeDataByType = {
     withExtensions: z.boolean().optional(),
     focus: z.string().max(200).optional(),
   }),
+  pickNode: baseDataSchema.extend({
+    mode: z.enum(["only"]).optional(),
+  }),
 };
 
 function nodeOf(type: string, data: z.ZodTypeAny) {
@@ -141,6 +146,7 @@ export const graphNodeSchema = z.discriminatedUnion("type", [
   nodeOf("process.merge", nodeDataByType.merge),
   nodeOf("process.output", nodeDataByType.output),
   nodeOf("flow.if", nodeDataByType.ifData),
+  nodeOf("flow.pick", nodeDataByType.pickNode),
   nodeOf("process.text", nodeDataByType.textTool),
   nodeOf("process.chapter", nodeDataByType.chapter),
   nodeOf("process.gameguide", nodeDataByType.gameGuide),

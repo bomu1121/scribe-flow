@@ -2,7 +2,7 @@
 title: 项目现状
 class: status
 owner: 念前
-last_reviewed: 2026-09-11
+last_reviewed: 2026-09-14
 review_days: 30
 ---
 
@@ -28,6 +28,7 @@ review_days: 30
 | M9 视频下载与结果页播放 | ✅ MVP（P0–P2 验收通过） | 内容寻址媒体库 + 引用、Range 流式、缺失重下、自研播放器 | `docs/evidence/2026-09-10-video-module-acceptance.md` |
 | 知识巩固节点 `process.drill` | ✅ 完成（T1–T5） | 文字 → 知识点 + 题目 + 延伸，结果页答题 | `docs/plans/scribe-flow-m-drill.md` §10 |
 | 结果页阅读体验 | ✅ 完成 | 多输入分段阅读、右侧分段大纲、tab 滑动墨条与语义化 | `docs/decisions/result-viewer-design.md`、`docs/research/segment-navigation-research.md` |
+| 素材挑选 `flow.pick` | ✅ 完成 | 多素材链路只加工 / 放行其中几段；段标识穿过「一个输入一份结果」的中间模块，未选中的素材连同其下游一并跳过 | 契约见 `packages/shared/src/segment.ts`；决策记录见 [early-decisions.md](./decisions/early-decisions.md) |
 | M7 运行体验与自动化 | ⏳ 未开工 | 节点级缓存/断点续跑、定时触发、结构化抽取、第三方导出、运行 diff、来源扩展 | `docs/plans/workflow-module-roadmap.md` §4 |
 | M8 其余高级差异化 | ⏳ 未立项 | 子流程、多模型矩阵、人工确认、RAG、自然语言生成流程、webhook、MCP | `docs/plans/workflow-module-roadmap.md` §5 |
 
@@ -38,7 +39,7 @@ review_days: 30
 
 | 指标 | 当前值 |
 | --- | --- |
-| 测试用例（`it(` 声明数） | **172**（shared 65 · server 93 · web 14） |
+| 测试用例（`it(` 声明数） | **189**（shared 71 · server 104 · web 14） |
 | UI 冒烟检查项（`pnpm smoke:ui`） | **50**（其中 3 项为恒真占位，净 47） |
 | API 自检项 | m2 7 · m3 14 · m4 12 · m6 9 · drill 22 |
 | 内置提示词块（`BUILTIN_PROMPT_BLOCKS`） | **13** |
@@ -53,24 +54,24 @@ review_days: 30
 
 - **后端没有应用层认证，CORS 默认 `*`**：`apps/server/src/app.ts:31-37` 是唯一的全局中间件。组合 `PUT /api/settings`（改 `ai.baseUrl`）与 `POST /api/settings/test/ai`（会把已保存的真实 apiKey 发往该 baseUrl）即可外泄密钥。`apps/server/src/routes/settings.ts:84-92`、`apps/server/src/lib/ai.ts:25-30`。修法：加 `AUTH_TOKEN` 环境变量 + 校验 `Authorization` 的全局中间件，`CORS_ORIGIN` 默认收敛为前端源。
 - **盲 SSRF**：`apps/server/src/routes/videos.ts:44-55` 对用户传入的任意 URL 直接 `fetch(redirect: "follow")`，无主机白名单、无内网地址拦截。修法：解析后校验 host，拒绝回环与私网段。
-- **路径校验可绕过或缺失**：`apps/server/src/routes/media.ts:31-36` 用纯字符串前缀比较（Windows 下 `data-evil\` 能通过）；`apps/server/src/routes/runs.ts:312`、`:325` 完全无校验；`general.outputDir` 只剥尾部斜杠（`apps/server/src/lib/settings.ts:193`），配 `apps/server/src/lib/engine.ts:1314` 的 `join` 可写出数据目录之外。修法：统一改用 `path.relative` 判包含性，`outputDir` 拒绝 `..`。
-- **用户可控正则可 DoS**：`apps/server/src/lib/engine.ts:295-304` 用节点数据里的 `pattern`/`flags` 直接 `new RegExp()`，灾难性回溯会挂死事件循环且 cancel 不响应。根因是 `packages/shared/src/schema.ts` 的 `graphNodeSchema.data` 没有字段级校验。修法：补 `data` 的按节点类型判别校验 + pattern 长度与 flags 白名单。
+- **路径校验可绕过或缺失**：`apps/server/src/routes/media.ts:31-36` 用纯字符串前缀比较（Windows 下 `data-evil\` 能通过）；`apps/server/src/routes/runs.ts:312`、`:325` 完全无校验；`general.outputDir` 只剥尾部斜杠（`apps/server/src/lib/settings.ts:193`），配 `apps/server/src/lib/engine.ts:1501` 的 `join` 可写出数据目录之外。修法：统一改用 `path.relative` 判包含性，`outputDir` 拒绝 `..`。
+- **用户可控正则可 DoS**：`apps/server/src/lib/engine.ts:377` 用节点数据里的 `pattern`/`flags` 直接 `new RegExp()`，灾难性回溯会挂死事件循环且 cancel 不响应。根因是 `packages/shared/src/schema.ts` 的 `graphNodeSchema.data` 没有字段级校验。修法：补 `data` 的按节点类型判别校验 + pattern 长度与 flags 白名单。
 - **错误信息泄漏**：`apps/server/src/app.ts` 的 `app.onError`（约 `:64-67`）把 `err.message` 原样回传，含服务器绝对路径与上游响应片段。
 - **密钥明文入库且无法清除**：`apps/server/src/db/schema.ts:113-117`、`:44-51`；`apps/server/src/lib/settings.ts:168-171` 的 `if (!value) return` 使传空串无法清除已保存的密钥。
 
 ### P0 · 稳定性
 
-- **未处理的 Promise rejection 会终结进程**：`apps/server/src/lib/engine.ts:424` 是 `void this.runLoop(active)` 且无 `.catch()`，而收尾的三次 `await this.finishRun(...)`（`:581`、`:586`、`:592`）在 try/catch 之外。收尾时 DB 写失败即进程退出，所有在跑的 run 一并丢失。
-- **单个节点的基础设施错误会终止整个 run**：`apps/server/src/lib/engine.ts:555-566` 的 `Promise.race` 会把 `executeNode` 里 `resolveInputs`/`persistInputs`（`:988-989`，只有 `finally` 没有 `catch`）的 DB 错误升级成整运行失败，绕过同文件 `:548-554` 的部分成功降级语义。
+- **未处理的 Promise rejection 会终结进程**：`apps/server/src/lib/engine.ts:501` 是 `void this.runLoop(active)` 且无 `.catch()`，而收尾的三次 `await this.finishRun(...)`（`:654`、`:659`、`:669`）在 try/catch 之外。收尾时 DB 写失败即进程退出，所有在跑的 run 一并丢失。
+- **单个节点的基础设施错误会终止整个 run**：`apps/server/src/lib/engine.ts:635` 的 `Promise.race` 会把 `executeNode` 里 `persistInputs`（`:1155`，只有 `finally` 没有 `catch`）的 DB 错误升级成整运行失败（`:652-656`），绕过同文件 `:625-631` 的部分成功降级语义。`resolveInputs` 已在 `:1144-1154` 就地捕获并落节点失败状态。
 - **坚果云请求无超时**：`apps/server/src/lib/nutstore.ts:120-159` 的 `davFetch` 没有 `signal`，服务端挂住即永久占用连接。对照 `lib/ai.ts`、`lib/media.ts`、`lib/bilibili.ts` 均有超时。
-- **`forceStop` 会篡改已结束的运行**：`apps/server/src/lib/engine.ts:436-459` 只检查存在性，对 success/error 的 run 也照改 status。
+- **`forceStop` 会篡改已结束的运行**：`apps/server/src/lib/engine.ts:513` 只检查存在性，对 success/error 的 run 也照改 status。
 - **SSE 建连竞态**：`apps/server/src/routes/runs.ts:180-231` 在快照与订阅之间 run 若结束，该连接永不 resolve。
 
 ### P1 · 工程化
 
-- **CI 不跑冒烟与 API 自检**：`.github/workflows/ci.yml` 只做 typecheck / test / build / lint / `docker build`。代价已显现：`scripts/m4-api-check.mjs:58` 断言内置块数量为硬编码的 8，而源码现为 13，**该脚本当前必然失败**。
+- **CI 不跑冒烟与 API 自检**：`.github/workflows/ci.yml` 只做 typecheck / test / build / lint / `docker build`，`pnpm smoke:ui` 与 `pnpm check:api:*` 仍靠人手跑。代价已经显现过一次：`scripts/m4-api-check.mjs` 的内置块断言曾硬编码为 8，而源码已增到 13，于是长期静默失败——已改为从 `packages/shared/src/prompt.ts` 推导（见 [CHANGELOG.md](../CHANGELOG.md) 2026-09-11）。
 - **前端组件、路由层、store 无测试**：`apps/web` 只有两个纯逻辑测试文件；`apps/server/src/routes/` 约 1800 行零测试；`engine.ts` 中 `source.bili`、`process.transcribe`、`process.refine`、`process.chapter`、`process.gameguide`、`process.mindmap`、`process.obsidian`、`process.text`、`flow.if` 被任何测试执行到的次数为零。仓库内不存在 `vitest.config.*`，未装 `@vue/test-utils` / `happy-dom`。
-- **没有 ESLint / Prettier**：全仓无相关依赖与配置；`scripts/slop-lint.mjs:11` 的扫描范围不含 `apps/server/src`。缺的是能拦住真实缺陷的规则，最典型的是 `no-floating-promises`（`apps/server/src/lib/engine.ts:424` 那类未捕获的 Promise 本可被它拦住）与 `vue/no-unused-vars`。属**待决策事项**（不是禁止引入），动因见 [AGENTS.md](../AGENTS.md) 硬规则第 8 条。
+- **没有 ESLint / Prettier**：全仓无相关依赖与配置；`scripts/slop-lint.mjs:11` 的扫描范围不含 `apps/server/src`。缺的是能拦住真实缺陷的规则，最典型的是 `no-floating-promises`（`apps/server/src/lib/engine.ts:501` 那类未捕获的 Promise 本可被它拦住）与 `vue/no-unused-vars`。属**待决策事项**（不是禁止引入），动因见 [AGENTS.md](../AGENTS.md) 硬规则第 8 条。
 - **`apps/server` 没有真实构建产物**：`apps/server/package.json` 的 `build` 是 `tsc --noEmit`，`Dockerfile` 用 devDependency `tsx` 转译源码跑生产；单阶段、root 运行、无 `HEALTHCHECK`。
 - **没有数据库迁移机制**：无 `drizzle.config.ts`、无 `drizzle-kit`，`apps/server/src/db/client.ts:178-262` 靠手写幂等补列，只能加列。
 - **缺索引**：`runs(project_id)`、`runs(status)`、`run_node_results(run_id)`、`run_node_logs(run_id)`、`run_node_inputs(run_id)` 均缺失，而 `apps/server/src/routes/runs.ts:269`、`:288` 是先全量取再在 JS 里过滤。

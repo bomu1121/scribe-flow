@@ -231,6 +231,14 @@ export function ensureSchema(sqlite: Database.Database) {
   if (!inputColumns.some((col) => col.name === "result_text")) {
     sqlite.exec("ALTER TABLE run_node_inputs ADD COLUMN result_text TEXT");
   }
+  // 素材挑选：被排除的素材也记一行，结果页据此说明「共 8 段、本次只加工 2 段」。
+  if (!inputColumns.some((col) => col.name === "excluded")) {
+    sqlite.exec("ALTER TABLE run_node_inputs ADD COLUMN excluded INTEGER NOT NULL DEFAULT 0");
+  }
+  // 素材挑选：输入行记录段标识，重跑单个节点时仍能按挑选过滤。
+  if (!inputColumns.some((col) => col.name === "item_key")) {
+    sqlite.exec("ALTER TABLE run_node_inputs ADD COLUMN item_key TEXT");
+  }
 
   // M6：run_node_results 增加 attempts 列（失败重试次数记录）。
   const resultColumns = sqlite.prepare("PRAGMA table_info(run_node_results)").all() as Array<{ name: string }>;
