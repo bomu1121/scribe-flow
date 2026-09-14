@@ -55,6 +55,11 @@ const data = computed(() => props.data);
 const selectedPages = ref<number[]>([]);
 /** UGC 合集（多独立稿件）里勾选的集，用各集 bvid 标识。 */
 const seasonSelected = ref<string[]>([]);
+/**
+ * 多选卡片上的「改选集」：在链接/选集界面重新编辑这张卡片，但不改 data.items，
+ * 因此解析失败或用户反悔时已合并的选集都还在（纯本地视图开关）。
+ */
+const editingCollection = ref(false);
 
 const biliItems = computed(() => (Array.isArray(data.value.items) ? data.value.items : []));
 const distinctBvids = computed(() => new Set(biliItems.value.map((item) => item.bvid)).size);
@@ -122,11 +127,13 @@ function schedulePreview(url: string) {
       } else {
         selectedPages.value = [];
       }
-      // UGC 合集：默认勾选当前链接所在的这一集，供用户扩展选择其他集。
+      // UGC 合集：优先还原卡片里已合并的选集（与上面的分P还原对称），否则默认勾选当前链接所在的这一集。
       seasonSelected.value = [];
       if (result.ugcSeason && result.ugcSeason.episodes.length > 0) {
+        const savedBvids = (data.value.items ?? []).map((item) => item.bvid);
+        const restored = result.ugcSeason.episodes.filter((ep) => savedBvids.includes(ep.bvid)).map((ep) => ep.bvid);
         const own = result.ugcSeason.episodes.find((ep) => ep.bvid === result.bvid);
-        if (own) seasonSelected.value = [own.bvid];
+        seasonSelected.value = restored.length > 0 ? restored : own ? [own.bvid] : [];
       }
     } catch (err) {
       previewError.value = err instanceof Error ? err.message : "解析失败，请检查链接";
@@ -136,17 +143,43 @@ function schedulePreview(url: string) {
   }, 500);
 }
 
+// —— 选择器：分两条互不重叠的轨道，避免「同一颗按钮按选中数量做两件事」——
+//   单选 = 点行：这一行变成节点的当前来源，当前项用墨色底 + 加粗标出；
+//   多选 = 勾选框 + 底部「合并为一张卡片」：至少 2 项才可用。
+
 function togglePage(page: number) {
   selectedPages.value = selectedPages.value.includes(page)
     ? selectedPages.value.filter((p) => p !== page)
     : [...selectedPages.value, page];
 }
 
-function confirmPageSelection() {
+/** 单选：切换到该分P（节点回到单链接形态，清掉多选 items）。 */
+function switchToPage(page: number) {
   const current = preview.value;
-  if (!current || selectedPages.value.length === 0) return;
+  const target = current?.pages.find((p) => p.page === page);
+  if (!current || !target) return;
+  if (target.page === Number(data.value.pageInfo?.page ?? 0)) return;
+  selectedPages.value = [target.page];
+  editingCollection.value = false;
+  patch({
+    items: [],
+    url: `https://www.bilibili.com/video/${current.bvid}`,
+    bvid: current.bvid,
+    title: current.title,
+    cover: current.cover,
+    uploader: current.uploader,
+    duration: target.duration,
+    pageInfo: { cid: target.cid, page: target.page, part: target.part, duration: target.duration },
+  });
+  commit();
+}
+
+/** 多选：把勾选的多个分P合并成一张卡片。 */
+function mergePages() {
+  const current = preview.value;
+  if (!current) return;
   const pages = current.pages.filter((p) => selectedPages.value.includes(p.page));
-  if (pages.length === 0) return;
+  if (pages.length < 2) return;
   const items = pages.map((page) => ({
     bvid: current.bvid,
     cid: page.cid,
@@ -158,6 +191,7 @@ function confirmPageSelection() {
     duration: page.duration,
   }));
   const first = items[0];
+  editingCollection.value = false;
   patch({
     items,
     url: `https://www.bilibili.com/video/${current.bvid}`,
@@ -168,8 +202,8 @@ function confirmPageSelection() {
     duration: first.duration,
     pageInfo: { cid: first.cid, page: first.page, part: first.part, duration: first.duration },
   });
-  props.data.ctx?.commit();
-  toast.success(items.length > 1 ? `已选择 ${items.length} 个分P，合并为一张卡片` : `已选择 P${first.page}`);
+  commit();
+  toast.success(`已合并 ${items.length} 个分P为一张卡片`);
 }
 
 function toggleSeasonEpisode(bvid: string) {
@@ -178,63 +212,100 @@ function toggleSeasonEpisode(bvid: string) {
     : [...seasonSelected.value, bvid];
 }
 
-function confirmSeasonSelection() {
+/** 单选：切换到合集里的这一集（合集各集是不同的 BV，切过去就是一条独立链接）。 */
+function switchToSeasonEpisode(bvid: string) {
+  const current = preview.value;
+  const target = current?.ugcSeason?.episodes.find((ep) => ep.bvid === bvid);
+  if (!current || !target) return;
+  if (target.bvid === String(data.value.bvid ?? "")) return;
+  preview.value = {
+    ...current,
+    bvid: target.bvid,
+    cid: target.cid,
+    title: target.part,
+    duration: target.duration,
+    cover: target.cover || current.cover,
+    pages: [{ page: 1, cid: target.cid, part: target.part, duration: target.duration }],
+  };
+  selectedPages.value = [1];
+  seasonSelected.value = [target.bvid];
+  editingCollection.value = false;
+  patch({
+    items: [],
+    url: `https://www.bilibili.com/video/${target.bvid}`,
+    bvid: target.bvid,
+    title: target.part,
+    cover: target.cover || current.cover,
+    uploader: current.uploader,
+    duration: target.duration,
+    pageInfo: { cid: target.cid, page: 1, part: target.part, duration: target.duration },
+  });
+  commit();
+}
+
+/** 多选：把勾选的集数合并成一张卡片。 */
+function mergeSeasonEpisodes() {
   const current = preview.value;
   const season = current?.ugcSeason;
   if (!current || !season) return;
   const picked = season.episodes.filter((ep) => seasonSelected.value.includes(ep.bvid));
-  if (picked.length === 0) return;
-  const first = picked[0];
-  const single = picked.length === 1;
-  if (single) {
-    // 只选当前集：切换到该集的独立稿件链接（合集各集是不同的 BV）。
-    const next = {
-      ...current,
-      bvid: first.bvid,
-      cid: first.cid,
-      title: first.part,
-      duration: first.duration,
-      cover: first.cover || current.cover,
-      pages: [{ page: 1, cid: first.cid, part: first.part, duration: first.duration }],
-    };
-    preview.value = next;
-    selectedPages.value = [1];
-    seasonSelected.value = [first.bvid];
-    patch({
-      items: [],
-      url: `https://www.bilibili.com/video/${first.bvid}`,
-      bvid: first.bvid,
-      title: first.part,
-      cover: first.cover || current.cover,
-      uploader: current.uploader,
-      duration: first.duration,
-      pageInfo: { cid: first.cid, page: 1, part: first.part, duration: first.duration },
-    });
-  } else {
-    const items = picked.map((ep) => ({
-      bvid: ep.bvid,
-      cid: ep.cid,
-      page: 1,
-      part: ep.part,
-      title: ep.part,
-      cover: ep.cover || current.cover,
-      uploader: current.uploader,
-      duration: ep.duration,
-    }));
-    patch({
-      items,
-      url: String(data.value.url ?? "") || `https://www.bilibili.com/video/${current.bvid}`,
-      bvid: current.bvid,
-      title: current.title,
-      cover: current.cover,
-      uploader: current.uploader,
-      duration: first.duration,
-      pageInfo: { cid: first.cid, page: 1, part: first.part, duration: first.duration },
-    });
-  }
-  props.data.ctx?.commit();
-  toast.success(single ? `已切换到第 ${first.index} 集` : `已选择 ${picked.length} 集，合并为一张卡片`);
+  if (picked.length < 2) return;
+  const items = picked.map((ep) => ({
+    bvid: ep.bvid,
+    cid: ep.cid,
+    page: 1,
+    part: ep.part,
+    title: ep.part,
+    cover: ep.cover || current.cover,
+    uploader: current.uploader,
+    duration: ep.duration,
+  }));
+  const first = items[0];
+  editingCollection.value = false;
+  patch({
+    items,
+    url: String(data.value.url ?? "") || `https://www.bilibili.com/video/${current.bvid}`,
+    bvid: current.bvid,
+    title: current.title,
+    cover: current.cover,
+    uploader: current.uploader,
+    duration: first.duration,
+    pageInfo: { cid: first.cid, page: 1, part: first.part, duration: first.duration },
+  });
+  commit();
+  toast.success(`已合并 ${picked.length} 集为一张卡片`);
 }
+
+/** 多选卡片 → 回到选集界面。「切换」与「合并」都能从多选卡片里重新到达。 */
+function editCollection() {
+  editingCollection.value = true;
+  schedulePreview(String(data.value.url ?? ""));
+}
+
+function cancelEditCollection() {
+  editingCollection.value = false;
+}
+
+const pageMergeReady = computed(() => selectedPages.value.length >= 2);
+const seasonMergeReady = computed(() => seasonSelected.value.length >= 2);
+
+/** 合并按钮不可用时说明原因——「为什么点不动」不该靠猜。 */
+const pageMergeHint = computed(() => {
+  if (pageMergeReady.value) return "";
+  return selectedPages.value.length === 0 ? "勾选 2 个分P及以上才能合并" : "已勾选 1 个分P · 再勾 1 个才能合并";
+});
+
+const seasonMergeHint = computed(() => {
+  if (seasonMergeReady.value) return "";
+  return seasonSelected.value.length === 0 ? "勾选 2 集及以上才能合并" : "已勾选 1 集 · 再勾 1 集才能合并";
+});
+
+/** 改选集时，当前链接是否提供了可调整的列表（分P 或 合集）。 */
+const hasBiliPicker = computed(() => {
+  const current = preview.value;
+  if (!current) return false;
+  return current.pages.length > 1 || (current.ugcSeason?.episodes.length ?? 0) > 0;
+});
 
 /**
  * 节点内部滚动列表的滚轮守卫：
@@ -862,11 +933,16 @@ const themeOptions = [
         <div v-if="hasBodyContent" class="sf-node-body nodrag" :inert="readonly ? true : undefined" @wheel="onNodeBodyWheel">
           <!-- 来源：B 站链接 / B 站多选收藏。多选时使用“平等列表”卡片，不再强调第一个视频。 -->
           <template v-if="nodeType === 'source.bili'">
-            <template v-if="isCollection">
+            <template v-if="isCollection && !editingCollection">
               <div class="sf-node-collection">
                 <div class="sf-node-collection-head">
-                  <span class="sf-node-collection-count tnum">{{ biliItems.length }} 项</span>
-                  <span class="sf-node-collection-tag">{{ distinctBvids > 1 ? "多视频" : "多P" }}</span>
+                  <div class="sf-node-collection-meta">
+                    <span class="sf-node-collection-count tnum">{{ biliItems.length }} 项</span>
+                    <span class="sf-node-collection-tag">{{ distinctBvids > 1 ? "多视频" : "多P" }}</span>
+                  </div>
+                  <button type="button" class="sf-node-collection-edit" title="回到选集界面：可把某一集切成单独一条链接，或调整合并哪些集" @click="editCollection">
+                    改选集
+                  </button>
                 </div>
                 <div v-if="distinctBvids === 1 && (data.title || biliItems[0]?.title)" class="sf-node-collection-main" :title="data.title || biliItems[0]?.title">
                   {{ data.title || biliItems[0]?.title }}
@@ -889,7 +965,12 @@ const themeOptions = [
               </div>
             </template>
             <template v-else>
-              <div class="sf-node-field">
+              <!-- 多选卡片上的「改选集」回到这里：只露出选集列表，不露出链接输入（改链接等于改这个节点的身份）。 -->
+              <div v-if="editingCollection" class="sf-node-collection-editing">
+                <span class="sf-node-collection-editing-text">改选集中 · 卡片现有 {{ biliItems.length }} 项</span>
+                <button type="button" class="sf-node-collection-edit" @click="cancelEditCollection">返回卡片</button>
+              </div>
+              <div v-if="!editingCollection" class="sf-node-field">
                 <NodeFieldLabel label="链接" hint="粘贴 B 站视频链接（支持分 P）；输入后自动解析封面、UP 主与分 P 信息" />
                 <el-input
                   class="sf-node-control"
@@ -917,43 +998,92 @@ const themeOptions = [
                 </div>
               </div>
               <div v-else-if="previewError" class="sf-node-preview sf-node-preview--error">{{ previewError }}</div>
+              <!-- 分P：点行即把节点切到这个分P（当前项墨色底标出）；勾选框 + 「合并为一张卡片」才是多选。 -->
               <div v-if="preview && preview.pages.length > 1" class="sf-node-picker">
                 <div class="sf-node-picker-head">
                   <span class="sf-node-picker-title">选择分P</span>
-                  <span class="sf-node-picker-count tnum">共 {{ preview.pages.length }} P · 已选 {{ selectedPages.length }}</span>
+                  <span class="sf-node-picker-count tnum">共 {{ preview.pages.length }} P</span>
                 </div>
-                <div class="sf-node-picker-list">
-                  <label v-for="page in preview.pages" :key="page.page" class="sf-node-picker-row">
-                    <input type="checkbox" class="sf-node-picker-check" :checked="selectedPages.includes(page.page)" @change="togglePage(page.page)" />
-                    <span class="sf-node-picker-name">P{{ page.page }} · {{ page.part || `第 ${page.page} 集` }}</span>
+                <div class="sf-node-picker-list" @wheel="onInnerListWheel">
+                  <div
+                    v-for="page in preview.pages"
+                    :key="page.page"
+                    class="sf-node-picker-row"
+                    :class="{ 'is-current': page.page === data.pageInfo?.page }"
+                    :title="page.page === data.pageInfo?.page ? undefined : `切换到 P${page.page}（单条链接，不合并）`"
+                    @click="switchToPage(page.page)"
+                  >
+                    <input
+                      type="checkbox"
+                      class="sf-node-picker-check"
+                      :checked="selectedPages.includes(page.page)"
+                      :aria-label="`勾选以合并：P${page.page}`"
+                      title="勾选：与其它项合并为一张卡片"
+                      @click.stop
+                      @change="togglePage(page.page)"
+                    />
+                    <span class="sf-node-picker-name" :title="page.page === data.pageInfo?.page ? undefined : `P${page.page} · ${page.part || `第 ${page.page} 集`}`">P{{ page.page }} · {{ page.part || `第 ${page.page} 集` }}</span>
                     <span class="sf-node-picker-duration tnum">{{ fmtDuration(page.duration) }}</span>
-                  </label>
+                  </div>
                 </div>
+                <div v-if="pageMergeHint" class="sf-node-picker-hint">{{ pageMergeHint }}</div>
                 <div class="sf-node-picker-foot">
-                  <span class="sf-node-picker-count tnum">{{ selectedPages.length > 0 ? `已选 ${selectedPages.length} 项` : "可多选" }}</span>
-                  <button type="button" class="sf-node-picker-confirm" :disabled="selectedPages.length === 0" @click="confirmPageSelection">
-                    生成所选分P
+                  <span class="sf-node-picker-count tnum">{{ selectedPages.length > 0 ? `勾选 ${selectedPages.length} 项` : "未勾选" }}</span>
+                  <button
+                    type="button"
+                    class="sf-node-picker-confirm"
+                    :disabled="!pageMergeReady"
+                    :title="pageMergeReady ? '把勾选的多个分P合并成一张卡片' : pageMergeHint"
+                    @click="mergePages"
+                  >
+                    合并为一张卡片
                   </button>
                 </div>
               </div>
+              <!-- 合集选集：同样是「点行切单集」+「勾选后合并」两条轨道。 -->
               <div v-if="preview && preview.ugcSeason && preview.ugcSeason.episodes.length > 0" class="sf-node-picker">
                 <div class="sf-node-picker-head">
                   <span class="sf-node-picker-title" :title="preview.ugcSeason.title">合集《{{ preview.ugcSeason.title || "未命名合集" }}》</span>
                   <span class="sf-node-picker-count tnum">共 {{ preview.ugcSeason.episodes.length }} 集</span>
                 </div>
                 <div class="sf-node-picker-list" @wheel="onInnerListWheel">
-                  <label v-for="ep in preview.ugcSeason.episodes" :key="ep.bvid" class="sf-node-picker-row">
-                    <input type="checkbox" class="sf-node-picker-check" :checked="seasonSelected.includes(ep.bvid)" @change="toggleSeasonEpisode(ep.bvid)" />
-                    <span class="sf-node-picker-name" :title="ep.part">{{ ep.part }}</span>
+                  <div
+                    v-for="ep in preview.ugcSeason.episodes"
+                    :key="ep.bvid"
+                    class="sf-node-picker-row"
+                    :class="{ 'is-current': ep.bvid === data.bvid }"
+                    :title="ep.bvid === data.bvid ? undefined : '切换到这一集（换成它自己的链接，不合并）'"
+                    @click="switchToSeasonEpisode(ep.bvid)"
+                  >
+                    <input
+                      type="checkbox"
+                      class="sf-node-picker-check"
+                      :checked="seasonSelected.includes(ep.bvid)"
+                      :aria-label="`勾选以合并：${ep.part}`"
+                      title="勾选：与其它集合并为一张卡片"
+                      @click.stop
+                      @change="toggleSeasonEpisode(ep.bvid)"
+                    />
+                    <span class="sf-node-picker-name" :title="ep.bvid === data.bvid ? undefined : ep.part">{{ ep.part }}</span>
                     <span class="sf-node-picker-duration tnum">{{ fmtDuration(ep.duration) }}</span>
-                  </label>
+                  </div>
                 </div>
+                <div v-if="seasonMergeHint" class="sf-node-picker-hint">{{ seasonMergeHint }}</div>
                 <div class="sf-node-picker-foot">
-                  <span class="sf-node-picker-count tnum">{{ seasonSelected.length > 0 ? `已选 ${seasonSelected.length} 集` : "可多选" }}</span>
-                  <button type="button" class="sf-node-picker-confirm" :disabled="seasonSelected.length === 0" @click="confirmSeasonSelection">
-                    生成所选集数
+                  <span class="sf-node-picker-count tnum">{{ seasonSelected.length > 0 ? `勾选 ${seasonSelected.length} 集` : "未勾选" }}</span>
+                  <button
+                    type="button"
+                    class="sf-node-picker-confirm"
+                    :disabled="!seasonMergeReady"
+                    :title="seasonMergeReady ? '把勾选的集数合并成一张卡片' : seasonMergeHint"
+                    @click="mergeSeasonEpisodes"
+                  >
+                    合并为一张卡片
                   </button>
                 </div>
+              </div>
+              <div v-if="editingCollection && preview && !previewError && !hasBiliPicker" class="sf-node-picker-hint">
+                这个视频没有分P或合集列表，没有可调整的选集。
               </div>
             </template>
           </template>
@@ -1861,6 +1991,51 @@ const themeOptions = [
   gap: 8px;
 }
 
+.sf-node-collection-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+/* 低权重的文字按钮：卡片头部的「改选集」与改选集态里的「返回卡片」共用（同 .sf-pick-all 的写法） */
+.sf-node-collection-edit {
+  flex: none;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--color-text-tertiary);
+  font-family: inherit;
+  font-size: 11px;
+  line-height: 1.4;
+  cursor: pointer;
+  transition: color var(--dur-1) var(--ease-out);
+}
+
+.sf-node-collection-edit:hover {
+  color: var(--color-text-secondary);
+}
+
+.sf-node-collection-editing {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 10px;
+  padding: 6px 8px;
+  border-radius: var(--radius-sm);
+  background: var(--color-ink-soft);
+}
+
+.sf-node-collection-editing-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  color: var(--color-text-secondary);
+}
+
 .sf-node-collection-count {
   font-size: 11px;
   font-weight: 600;
@@ -1936,11 +2111,22 @@ const themeOptions = [
   border-radius: var(--radius-sm);
   font-size: 12px;
   color: var(--color-text);
+  /* 整行可点＝切到这一项；多选只归勾选框（勾选框自己 stop 掉行点击） */
   cursor: pointer;
 }
 
 .sf-node-picker-row:hover {
+  background: var(--color-ink-soft-glass);
+}
+
+/* 当前项：与下拉选中项、文档列表同款——墨色底 + 加粗，不用品牌色 */
+.sf-node-picker-row.is-current {
   background: var(--color-ink-soft);
+  cursor: default;
+}
+
+.sf-node-picker-row.is-current .sf-node-picker-name {
+  font-weight: 600;
 }
 
 .sf-node-picker-check {
@@ -1998,6 +2184,13 @@ const themeOptions = [
   white-space: nowrap;
 }
 
+.sf-node-picker-hint {
+  margin-top: 8px;
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--color-text-tertiary);
+}
+
 .sf-node-picker-foot {
   display: flex;
   align-items: center;
@@ -2006,7 +2199,14 @@ const themeOptions = [
   margin-top: 8px;
 }
 
+.sf-node-picker-foot .sf-node-picker-count {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .sf-node-picker-confirm {
+  flex: none;
   height: 26px;
   padding: 0 12px;
   border: 1px solid var(--color-border-strong);
@@ -2015,6 +2215,7 @@ const themeOptions = [
   color: var(--color-text);
   font-family: inherit;
   font-size: 12px;
+  white-space: nowrap;
   cursor: pointer;
   transition: background-color var(--dur-1) var(--ease-out), border-color var(--dur-1) var(--ease-out);
 }
