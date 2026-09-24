@@ -2,7 +2,7 @@
 title: 项目现状
 class: status
 owner: 念前
-last_reviewed: 2026-09-14
+last_reviewed: 2026-09-24
 review_days: 30
 ---
 
@@ -29,6 +29,8 @@ review_days: 30
 | 知识巩固节点 `process.drill` | ✅ 完成（T1–T5） | 文字 → 知识点 + 题目 + 延伸，结果页答题 | `docs/plans/scribe-flow-m-drill.md` §10 |
 | 结果页阅读体验 | ✅ 完成 | 多输入分段阅读、右侧分段大纲、tab 滑动墨条与语义化 | `docs/decisions/result-viewer-design.md`、`docs/research/segment-navigation-research.md` |
 | 素材挑选 `flow.pick` | ✅ 完成 | 多素材链路只加工 / 放行其中几段；段标识穿过「一个输入一份结果」的中间模块，未选中的素材连同其下游一并跳过 | 契约见 `packages/shared/src/segment.ts`；决策记录见 [early-decisions.md](./decisions/early-decisions.md) |
+| 快捷新建「粘贴链接建工程」 | ✅ 完成 | 粘一条 B 站链接（或 App 分享文案）即建好工程：工程名=视频标题、来源节点连链接与封面/UP 主/分 P 一起写好、AI 加工预绑提示词块、输出文件名同标题；模版与提示词块记住上次选择，回车即建 | 实例化逻辑 `packages/shared/src/templates.ts`；对话框 `apps/web/src/components/workspace/QuickCreateDialog.vue` |
+| 信息溯源 | ✅ 完成 | 三步骤配方产出结构化证据清单 + 结果页溯源阅读器；外部联网核查的检索渠道可切换（智谱 BigModel / Tavily，模版用 `externalCheck` 声明），检索结果按来源权威度分档重排并给出「外部可印证 / 仅非权威来源 / 有反证 / 未找到出处」，设置页可「测试连接」自检 | 联网核查方案见 [trace-external-authority.md](./decisions/trace-external-authority.md)，报告与阅读器见 [trace-report-design.md](./decisions/trace-report-design.md)；渠道适配层在 `apps/server/src/lib/traceExternal.ts`，权威度分档在 `apps/server/src/lib/sourceAuthority.ts` |
 | M7 运行体验与自动化 | ⏳ 未开工 | 节点级缓存/断点续跑、定时触发、结构化抽取、第三方导出、运行 diff、来源扩展 | `docs/plans/workflow-module-roadmap.md` §4 |
 | M8 其余高级差异化 | ⏳ 未立项 | 子流程、多模型矩阵、人工确认、RAG、自然语言生成流程、webhook、MCP | `docs/plans/workflow-module-roadmap.md` §5 |
 
@@ -39,11 +41,11 @@ review_days: 30
 
 | 指标 | 当前值 |
 | --- | --- |
-| 测试用例（`it(` 声明数） | **189**（shared 71 · server 104 · web 14） |
-| UI 冒烟检查项（`pnpm smoke:ui`） | **50**（其中 3 项为恒真占位，净 47） |
+| 测试用例（`it(` 声明数） | **264**（shared 96 · server 148 · web 20） |
+| UI 冒烟检查项（`pnpm smoke:ui`） | **55**（其中 3 项为恒真占位，净 52） |
 | API 自检项 | m2 7 · m3 14 · m4 12 · m6 9 · drill 22 |
-| 内置提示词块（`BUILTIN_PROMPT_BLOCKS`） | **13** |
-| 文档数（`docs/` 下 `.md`，不含调研原文） | 37 |
+| 内置提示词块（`BUILTIN_PROMPT_BLOCKS`） | **14** |
+| 文档数（`docs/` 下 `.md`，不含调研原文） | 38 |
 <!-- docs-gen:numbers:end -->
 
 ## 3. 已知缺口
@@ -76,6 +78,7 @@ review_days: 30
 - **没有数据库迁移机制**：无 `drizzle.config.ts`、无 `drizzle-kit`，`apps/server/src/db/client.ts:178-262` 靠手写幂等补列，只能加列。
 - **缺索引**：`runs(project_id)`、`runs(status)`、`run_node_results(run_id)`、`run_node_logs(run_id)`、`run_node_inputs(run_id)` 均缺失，而 `apps/server/src/routes/runs.ts:269`、`:288` 是先全量取再在 JS 里过滤。
 - **前端首屏关键路径偏大**：以 Element Plus 全量 import 为主因（`apps/web/src/main.ts:18`）；`pnpm docs:lint` 的 R9 已加上体积预算断言防止继续恶化，根治办法是改按需引入。
+- **本机 `pnpm dev`（`pnpm --parallel`）起不动后端**：实测（中文 Windows + pnpm 11.7 + Node 22）`pnpm --parallel` 下 `apps/server` 的 `tsx watch` 子进程会静默卡在启动前——既不打印「后端已启动」，也不监听 8787；而同一个脚本用 `pnpm --filter @scribe-flow/server dev` 单独跑就正常（web 侧亦然）。所以根目录 `start-dev.cmd` 与 `scripts/start-dev.mjs` 是**分别**拉起两个包来绕开并行器的，root 的 `dev` 脚本尚未改动，`pnpm dev` 在本机仍不可用。是否改 root 脚本待定：换台机器或换个 pnpm 版本可能不复现，要先定位根因。
 
 ### P2 · 清理
 
@@ -107,6 +110,7 @@ review_days: 30
 - [运行结果展示页设计方案](./decisions/result-viewer-design.md)
 - [ScribeFlow 方案（v3）：笔记处理画布流](./decisions/scribe-flow-proposal.md)
 - [shadcn-vue 官方使用规则（历史，不再执行）](./decisions/shadcn-vue-rules.md)
+- [信息溯源联网核查：来源权威度分级与 v3 模版](./decisions/trace-external-authority.md)
 - [信息溯源模块优化方案（结构化核对版 + 报告阅读器）](./decisions/trace-report-design.md)
 - [UI 样式框架选型与组件实现调研（代码级，历史，已被 Element Plus 路线取代）](./decisions/ui-framework-selection.md)
 - [UI 组件库替换调研（成熟库路线）](./decisions/ui-library-replacement-research.md)

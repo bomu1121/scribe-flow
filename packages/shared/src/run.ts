@@ -147,9 +147,18 @@ export interface AsrSettings {
   hasKey: boolean;
 }
 
-/** 外部溯源检索服务配置。当前支持 Tavily Search API。 */
+/** 外部溯源检索渠道：智谱 BigModel 联网搜索、Tavily Search API。 */
+export type SearchProvider = "zhipu" | "tavily";
+
+/** 渠道展示名，服务端错误信息与设置页共用一份。 */
+export const SEARCH_PROVIDER_LABELS: Record<SearchProvider, string> = {
+  zhipu: "智谱",
+  tavily: "Tavily",
+};
+
+/** 外部溯源检索服务配置。 */
 export interface SearchSettings {
-  provider: "tavily";
+  provider: SearchProvider;
   hasKey: boolean;
   maxResults: number;
 }
@@ -201,7 +210,7 @@ export interface UpdateSettingsRequest {
     apiKey?: string;
   };
   search?: {
-    provider?: "tavily";
+    provider?: SearchProvider;
     apiKey?: string;
     maxResults?: number;
   };

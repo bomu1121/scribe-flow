@@ -5,6 +5,7 @@ import { ElMessageBox } from "element-plus";
 import { toast } from "@/lib/toast";
 import {
   ArrowUpDown,
+  ClipboardPaste,
   Folder as FolderIcon,
   FolderPlus,
   Plus,
@@ -18,6 +19,7 @@ import {
 import type { ProjectListItem } from "@scribe-flow/shared";
 import { useProjectsStore } from "@/stores/projects";
 import { useRunsStore } from "@/stores/runs";
+import { useUiStore } from "@/stores/ui";
 import NewProjectDialog from "./NewProjectDialog.vue";
 import ProjectFolderNode from "./ProjectFolderNode.vue";
 import ProjectItem from "./ProjectItem.vue";
@@ -40,6 +42,7 @@ const route = useRoute();
 const router = useRouter();
 const store = useProjectsStore();
 const runsStore = useRunsStore();
+const uiStore = useUiStore();
 
 /* ---------- 搜索 / 排序 / 多选 / 展开状态 ---------- */
 
@@ -435,6 +438,7 @@ function openRootContextMenu(event: MouseEvent) {
   clearSelection();
   rootMenuItems.value = [
     { key: "new-project", label: "新建工程", icon: Plus },
+    { key: "new-from-link", label: "粘贴链接建工程", icon: ClipboardPaste },
     { key: "new-folder", label: "新建文件夹", icon: FolderPlus },
     { key: "import", label: "导入工程…", icon: Upload },
     { key: "refresh", label: "刷新", icon: RefreshCw },
@@ -446,6 +450,9 @@ function onRootMenuSelect(key: string) {
   switch (key) {
     case "new-project":
       newOpen.value = true;
+      break;
+    case "new-from-link":
+      uiStore.openQuickCreate(activeProjectFolderId.value);
       break;
     case "new-folder":
       startCreateRootFolder();
@@ -1027,6 +1034,15 @@ onBeforeUnmount(() => {
   <div class="wp-view wp-projects">
     <div class="wp-toolbar">
       <button type="button" class="wp-ibtn" title="新建工程" aria-label="新建工程" @click="newOpen = true"><Plus :size="15" /></button>
+      <button
+        type="button"
+        class="wp-ibtn"
+        title="粘贴链接建工程"
+        aria-label="粘贴链接建工程"
+        @click="uiStore.openQuickCreate(activeProjectFolderId)"
+      >
+        <ClipboardPaste :size="14" />
+      </button>
       <button type="button" class="wp-ibtn" title="新建文件夹" aria-label="新建文件夹" @click="startCreateFolderAtContext"><FolderPlus :size="14" /></button>
       <button type="button" class="wp-ibtn" title="导入工程" aria-label="导入工程" @click="fileInput?.click()"><Upload :size="15" /></button>
       <button type="button" class="wp-ibtn" title="刷新" aria-label="刷新" @click="refresh"><RefreshCw :size="14" /></button>
@@ -1156,6 +1172,7 @@ onBeforeUnmount(() => {
         <p class="wp-empty-desc">新建一个工程开始编排加工流；也可以先建文件夹，把工程分门别类。</p>
         <div class="wp-empty-actions">
           <button type="button" class="wp-btn wp-btn--primary" @click="newOpen = true"><Plus :size="13" />新建工程</button>
+          <button type="button" class="wp-btn" @click="uiStore.openQuickCreate(null)"><ClipboardPaste :size="13" />粘贴链接建工程</button>
           <button type="button" class="wp-btn" @click="startCreateRootFolder"><FolderPlus :size="13" />新建文件夹</button>
           <button type="button" class="wp-btn" @click="fileInput?.click()"><Upload :size="13" />导入</button>
         </div>

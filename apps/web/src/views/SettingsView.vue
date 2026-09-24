@@ -1,11 +1,13 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from "vue";
+import { useRoute } from "vue-router";
 import { ElInput, ElInputNumber, ElMessageBox, ElOption, ElSelect, ElSwitch } from "element-plus";
 import { Cloud, Download, FolderOpen, Mic, PlugZap, RefreshCw, RotateCcw, Save, Trash2, Upload } from "lucide-vue-next";
 import { toast } from "@/lib/toast";
 import ModelSelect from "../components/ModelSelect.vue";
 import PromptBlockDiffDialog from "../components/PromptBlockDiffDialog.vue";
-import type { AiProvider, AsrEngine, PromptBlock } from "@scribe-flow/shared";
+import type { AiProvider, AsrEngine, PromptBlock, SearchProvider } from "@scribe-flow/shared";
+import { TRACE_SOURCE_AUTHORITY_LABELS } from "@scribe-flow/shared";
 import { api } from "@/lib/api";
 import { useSettingsStore } from "@/stores/settings";
 import { usePromptsStore } from "@/stores/prompts";
@@ -14,6 +16,7 @@ import { useRunsStore } from "@/stores/runs";
 const store = useSettingsStore();
 const promptsStore = usePromptsStore();
 const runsStore = useRunsStore();
+const route = useRoute();
 
 const groups = [
   { key: "ai", label: "AI 模型" },
@@ -38,6 +41,7 @@ const form = reactive({
   asrBaseUrl: "",
   asrModel: "",
   asrKey: "",
+  searchProvider: "zhipu" as SearchProvider,
   searchKey: "",
   searchMaxResults: 5,
   concurrency: 2,
@@ -64,6 +68,7 @@ const aiModelOptions = ref<string[]>([...DEEPSEEK_DEFAULT_MODELS]);
 const aiModelLoading = ref(false);
 const aiTesting = ref(false);
 const asrTesting = ref(false);
+const searchTesting = ref(false);
 const nutstoreTesting = ref(false);
 
 watch(
@@ -89,6 +94,15 @@ const asrOptions = [
   { label: "MiMo-V2.5（小米）", value: "mimo", icon: Mic },
   { label: "OpenAI 兼容", value: "openai-compatible", icon: Cloud },
 ];
+
+const searchProviderOptions: { label: string; value: SearchProvider; keyPlaceholder: string }[] = [
+  { label: "智谱 BigModel", value: "zhipu", keyPlaceholder: "在 open.bigmodel.cn 的 API Keys 页创建" },
+  { label: "Tavily", value: "tavily", keyPlaceholder: "tvly-…" },
+];
+
+const searchKeyPlaceholder = computed(
+  () => searchProviderOptions.find((opt) => opt.value === form.searchProvider)?.keyPlaceholder ?? "API Key",
+);
 
 const blockForm = reactive({ id: "", name: "", prompt: "" });
 const expandedBlockId = ref<string | null>(null);
@@ -298,6 +312,7 @@ function fillForm() {
   form.asrEngine = store.settings.asr.engine;
   form.asrBaseUrl = store.settings.asr.baseUrl;
   form.asrModel = store.settings.asr.model;
+  form.searchProvider = store.settings.search.provider;
   form.searchMaxResults = store.settings.search.maxResults;
   form.concurrency = store.settings.general.concurrency;
   form.outputDir = store.settings.general.outputDir;
@@ -326,6 +341,9 @@ function fillForm() {
 }
 
 onMounted(async () => {
+  // 支持 ?group=search 这类深链：画布节点上的「去配置」按钮需要直接落到对应分组。
+  const group = String(route.query.group ?? "");
+  if (groups.some((item) => item.key === group)) active.value = group as GroupKey;
   await store.load();
   fillForm();
   await store.loadObsidianFolders();
@@ -374,7 +392,7 @@ async function saveAll() {
     await store.save({
       ai: { provider: form.aiProvider, baseUrl: form.aiBaseUrl, model: form.aiModel, apiKey: form.aiKey || undefined },
       asr: { engine: form.asrEngine, baseUrl: form.asrBaseUrl, model: form.asrModel, apiKey: form.asrKey || undefined },
-      search: { provider: "tavily", apiKey: form.searchKey || undefined, maxResults: form.searchMaxResults },
+      search: { provider: form.searchProvider, apiKey: form.searchKey || undefined, maxResults: form.searchMaxResults },
       general: { concurrency: form.concurrency, outputDir: form.outputDir },
       obsidian: {
         vaultPath: form.obsidianVaultPath,
@@ -443,6 +461,27 @@ async function testAsr() {
     toast.error(err instanceof Error ? err.message : "ASR 连接失败");
   } finally {
     asrTesting.value = false;
+  }
+}
+
+async function testSearch() {
+  searchTesting.value = true;
+  try {
+    const result = await store.testSearch({
+      provider: form.searchProvider,
+      apiKey: form.searchKey || undefined,
+      maxResults: form.searchMaxResults,
+    });
+    const authority = Object.entries(result.authorityCounts ?? {});
+    const authorityText = authority.length > 0
+      ? `，其中 ${authority.map(([tier, count]) => `${TRACE_SOURCE_AUTHORITY_LABELS[tier as keyof typeof TRACE_SOURCE_AUTHORITY_LABELS]} ${count} 条`).join("、")}`
+      : "";
+    const sample = result.sample ? `，示例：${result.sample.slice(0, 30)}` : "";
+    toast.success(`检索连通，可用来源 ${result.count} 条${authorityText}${sample}`);
+  } catch (err) {
+    toast.error(err instanceof Error ? err.message : "检索失败");
+  } finally {
+    searchTesting.value = false;
   }
 }
 
@@ -739,21 +778,36 @@ async function restoreNutstoreBackup(backup: { path: string; name: string }) {
 
       <template v-else-if="active === 'search'">
         <h2 class="sf-settings-title">外部溯源</h2>
-        <p class="sf-settings-desc">用于“信息溯源（结构化核对版）”对外部人物/机构/研究/新闻做联网核查。当前接入 Tavily Search API。</p>
+        <p class="sf-settings-desc">信息溯源模块专用的「搜索服务」密钥：用于对外部人物/机构/研究/新闻做联网核查，并按来源权威度给出结论。</p>
+        <p class="sf-settings-desc">
+          注意：它和「AI 模型」页里那个跑模型的密钥不是同一个。即使两边都用智谱，也各自需要一个单独的 Key——
+          模型 Key 用来生成内容，这里的 Key 只用来检索网页。两边都不用填对方的值。
+        </p>
         <div class="sf-settings-form">
           <label class="sf-field">
+            <span class="sf-field-label">检索渠道</span>
+            <el-select v-model="form.searchProvider" class="sf-field-control">
+              <el-option v-for="opt in searchProviderOptions" :key="opt.value" :label="opt.label" :value="opt.value" />
+            </el-select>
+          </label>
+          <p class="sf-settings-desc">
+            智谱 BigModel 为国内渠道（支付宝/微信充值），密钥在 open.bigmodel.cn 的「API Keys」页创建；Tavily 需要国外支付方式。
+            切换渠道后请重新填写该渠道的密钥。
+          </p>
+          <label class="sf-field">
             <span class="sf-field-label">
-              Tavily API Key
+              API Key
               <span v-if="store.settings?.search.hasKey" class="sf-chip sf-chip--success">已保存</span>
               <span v-else class="sf-chip sf-chip--warning">未配置</span>
             </span>
-            <el-input v-model="form.searchKey" type="password" show-password class="sf-field-control" :placeholder="store.settings?.search.hasKey ? '已保存，留空则不修改' : 'tvly-…'" />
+            <el-input v-model="form.searchKey" type="password" show-password class="sf-field-control" :placeholder="store.settings?.search.hasKey ? '已保存，留空则不修改' : searchKeyPlaceholder" />
           </label>
           <label class="sf-field">
             <span class="sf-field-label">每条最多返回结果数</span>
             <el-input-number v-model="form.searchMaxResults" :min="1" :max="10" class="sf-field-control" />
           </label>
           <div class="sf-settings-actions">
+            <button type="button" class="sf-btn" :disabled="searchTesting" @click="testSearch"><PlugZap :size="14" /><span>{{ searchTesting ? "测试中…" : "测试连接" }}</span></button>
             <button type="button" class="sf-btn sf-btn--primary" @click="saveAll"><span>保存设置</span></button>
           </div>
         </div>

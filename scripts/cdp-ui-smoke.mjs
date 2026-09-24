@@ -5,7 +5,7 @@
  * 背景：UI 已重构为单壳工作台 —— 没有独立的工程列表页/运行记录页；
  * 工程与运行记录都在左侧探索器（工作台面板）树里（见 apps/web/src/router.ts 顶部注释）。
  * 本脚本断言全部对齐当前真实 DOM（类名均在 apps/web/src 源码中核实过）：
- *   - .ws-rail / .ws-rail-btn / .wp-projects / .wp-item / .np-tpl / .el-dialog / .sf-account 等
+ *   - .ws-rail / .ws-rail-btn / .wp-projects / .wp-item / .np-tpl / .qc-link / .el-dialog / .sf-account 等
  *   - 节点添加从画布侧栏 palette 改为工作台「节点」面板（NodesPanel .wp-node-item）
  *   - 运行按钮为画布浮动按钮 .sf-float-run；运行结果状态类 .sf-node.is-done
  *   - 运行详情与日志为 RunDetailView 的 .rv-preview / RunLogDialog 的 .rl-log-item
@@ -228,8 +228,8 @@ async function run() {
     };
   })()`)) ?? { logo: 0, btns: 0, labels: "", version: "" };
   check(
-    "活动条入口齐全（工程/运行记录/节点/设置）",
-    rail.logo === 1 && rail.btns === 4 && rail.labels === "工程/运行记录/节点/设置",
+    "活动条入口齐全（工程/运行记录/节点/项目文档/设置）",
+    rail.logo === 1 && rail.btns === 5 && rail.labels === "工程/运行记录/节点/项目文档/设置",
     `logo=${rail.logo} btns=${rail.btns} [${rail.labels}] ${rail.version}`,
   );
 
@@ -245,8 +245,8 @@ async function run() {
     };
   })()`)) ?? null;
   check(
-    "工程面板工具栏渲染（新建工程/文件夹/导入/刷新/排序 + 筛选 + 收起）",
-    toolbar?.ibtn === 5 && toolbar.search && toolbar.close,
+    "工程面板工具栏渲染（新建工程/粘贴链接建工程/文件夹/导入/刷新/排序 + 筛选 + 收起）",
+    toolbar?.ibtn === 6 && toolbar.search && toolbar.close,
     toolbar ? `ibtn=${toolbar.ibtn} [${toolbar.labels}] search=${toolbar.search} close=${toolbar.close}` : "面板未就绪",
   );
 
@@ -336,6 +336,58 @@ async function run() {
   await pressEscape();
   await waitFor(`(() => { const i = ${VISIBLE_DIALOG_JS}; return i === null; })()`, 4000);
   check("Esc 关闭对话框", await noVisibleDialog());
+
+  // 同一工具栏的「粘贴链接建工程」（QuickCreateDialog）：字段齐全 + 粘贴内容里没有
+  // B 站链接时应被拦下、不留下空工程。解析真实视频要走外网，这里只覆盖不依赖网络的部分。
+  const projectsBefore = (await evalJs("document.querySelectorAll('.wp-projects [data-project-id]').length")) ?? 0;
+  await evalJs("document.querySelector('.wp-projects .wp-toolbar .wp-ibtn[aria-label=\"粘贴链接建工程\"]')?.click(); true");
+  const quickOpen = await waitFor(`(() => { const i = ${VISIBLE_DIALOG_JS}; return !!i && i.title.includes('粘贴链接建工程'); })()`, 5000);
+  check("快捷新建对话框打开（粘贴链接建工程）", quickOpen, JSON.stringify(await visibleDialogInfo()));
+  const quickFields = await evalJs(`(() => {
+    const ov = [...document.querySelectorAll('.el-overlay')].find((o) => getComputedStyle(o).display !== 'none');
+    const d = ov?.querySelector('.el-dialog');
+    if (!d) return null;
+    return {
+      textarea: !!d.querySelector('.qc-link .el-textarea__inner'),
+      values: [...d.querySelectorAll('.qc-field .el-select .el-select__wrapper')].map((w) => w.textContent.trim()),
+      fields: [...d.querySelectorAll('.qc-field-label')].map((e) => e.textContent.trim()),
+    };
+  })()`);
+  check(
+    "快捷新建字段齐全（链接输入 + 加工模版/AI 加工提示词下拉）",
+    Boolean(quickFields?.textarea) && quickFields.fields.length === 2 && quickFields.values.length === 2,
+    JSON.stringify(quickFields),
+  );
+  check(
+    "快捷新建默认值：单线模版 + 推荐提示词块",
+    Boolean(quickFields?.values?.some((v) => v.includes("视频转笔记"))) &&
+      Boolean(quickFields?.values?.some((v) => v.includes("观点提炼"))),
+    (quickFields?.values ?? []).join(" / "),
+  );
+  await evalJs(`(() => {
+    const ta = document.querySelector('.el-overlay .qc-link .el-textarea__inner');
+    if (!ta) return false;
+    ta.value = '随手记的一句笔记';
+    ta.dispatchEvent(new Event('input', { bubbles: true }));
+    return true;
+  })()`);
+  await evalJs(`[...document.querySelectorAll('.el-overlay .el-dialog .el-button')].find((b) => b.textContent.includes('创建并打开'))?.click(); true`);
+  const blocked = await waitFor(
+    "(() => [...document.querySelectorAll('.sf-toast--error .sf-toast-message')].some((e) => e.textContent.includes('没识别到 B 站链接')))()",
+    4000,
+  );
+  await sleep(300);
+  const projectsAfter = (await evalJs("document.querySelectorAll('.wp-projects [data-project-id]').length")) ?? 0;
+  check(
+    "粘贴内容里没有 B 站链接时被拦下（不留空工程）",
+    blocked && projectsAfter === projectsBefore,
+    `错误提示=${blocked}，工程行 ${projectsBefore} → ${projectsAfter}`,
+  );
+  // 错误 toast 常驻（duration 0），点掉以免影响后续截图与断言。
+  await evalJs("[...document.querySelectorAll('.sf-toast-close')].forEach((b) => b.click()); true");
+  await pressEscape();
+  await waitFor(`(() => { const i = ${VISIBLE_DIALOG_JS}; return i === null; })()`, 4000);
+  check("Esc 关闭快捷新建对话框", await noVisibleDialog());
 
   // ---------------------------------------------------------------
   // 3. M2：登录入口与扫码弹窗（入口现位于工程编辑器顶栏 BiliAccountButton .sf-account）

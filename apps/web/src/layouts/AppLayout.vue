@@ -5,6 +5,7 @@ import { useRunsStore } from "@/stores/runs";
 import { usePromptsStore } from "@/stores/prompts";
 import { useUiStore, type RailTab } from "@/stores/ui";
 import WorkspacePanel from "@/components/workspace/WorkspacePanel.vue";
+import QuickCreateDialog from "@/components/workspace/QuickCreateDialog.vue";
 
 const runsStore = useRunsStore();
 const promptsStore = usePromptsStore();
@@ -94,6 +95,9 @@ onBeforeUnmount(() => {
       </Transition>
       <slot />
     </main>
+
+    <!-- 快捷新建挂在工作台外壳上：工程面板与首页的入口都走 uiStore，画布上也能随时打开。 -->
+    <QuickCreateDialog v-model:open="uiStore.quickCreateOpen" :default-folder-id="uiStore.quickCreateFolderId" />
   </div>
 </template>
 

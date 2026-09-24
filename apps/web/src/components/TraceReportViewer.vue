@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
 import { Search } from "lucide-vue-next";
-import type { TraceCategory, TraceConfidence, TraceEvidence, TraceItem, TraceReport } from "@scribe-flow/shared";
-import { TRACE_CATEGORY_LABELS, TRACE_CONFIDENCE_LABELS, TRACE_EXTERNAL_STATUS_LABELS } from "@scribe-flow/shared";
+import type { TraceCategory, TraceConfidence, TraceEvidence, TraceExternalCheck, TraceItem, TraceReport } from "@scribe-flow/shared";
+import { FLAGGED_EXTERNAL_STATUSES, TRACE_CATEGORY_LABELS, TRACE_CONFIDENCE_LABELS, TRACE_EXTERNAL_STATUS_LABELS, TRACE_SOURCE_AUTHORITY_LABELS } from "@scribe-flow/shared";
 
 interface TraceSource {
   key: string;
@@ -41,6 +41,19 @@ const stats = computed(() => {
   return { total: items.length, confirmed, likely, uncertain, uncertainties, warnings };
 });
 
+const externalStats = computed(() => {
+  const checked = allItems.value.filter(
+    (entry) => entry.item.external && entry.item.external.status !== "not_applicable",
+  );
+  const authoritative = checked.filter((entry) =>
+    (entry.item.external?.sources ?? []).some((source) => source.authority === "authoritative"),
+  );
+  const flagged = checked.filter((entry) =>
+    entry.item.external ? FLAGGED_EXTERNAL_STATUSES.includes(entry.item.external.status) : false,
+  );
+  return { checked: checked.length, authoritative: authoritative.length, flagged: flagged.length };
+});
+
 const categoryCounts = computed(() => {
   const counts = new Map<TraceCategory, number>();
   for (const entry of allItems.value) {
@@ -56,6 +69,13 @@ const confidenceCounts = computed(() => {
   }
   return counts;
 });
+
+/** 本次核查用过的检索词：优先读新的 queries 数组，旧数据回落到单个 query。 */
+function externalQueries(external: TraceExternalCheck): string[] {
+  const queries = (external.queries ?? []).map((query) => query.trim()).filter(Boolean);
+  if (queries.length > 0) return queries;
+  return external.query?.trim() ? [external.query.trim()] : [];
+}
 
 function normalize(text: string): string {
   return text.trim().toLocaleLowerCase();
@@ -166,16 +186,24 @@ function resetFilters(): void {
     </template>
 
     <header v-if="reports.length > 0" class="trv-head">
-      <div>
+      <div class="trv-head-main">
         <h2 class="trv-title">{{ reports.length === 1 ? reportTitle(0) : "信息溯源报告" }}</h2>
         <p v-if="reports[0]?.summary" class="trv-summary">{{ reports[0].summary }}</p>
       </div>
-      <div class="trv-stats">
-        <span class="trv-stat"><b class="tnum">{{ stats.total }}</b> 条</span>
-        <span class="trv-stat"><b class="tnum">{{ stats.confirmed }}</b> 原文可见</span>
-        <span class="trv-stat"><b class="tnum">{{ stats.likely }}</b> 间接推断</span>
-        <span class="trv-stat"><b class="tnum">{{ stats.uncertain + stats.uncertainties }}</b> 待核实</span>
-        <span v-if="stats.warnings > 0" class="trv-stat"><b class="tnum">{{ stats.warnings }}</b> 提醒</span>
+      <div class="trv-head-side">
+        <div class="trv-stats">
+          <span class="trv-stat"><b class="tnum">{{ stats.total }}</b> 条</span>
+          <span class="trv-stat"><b class="tnum">{{ stats.confirmed }}</b> 原文可见</span>
+          <span class="trv-stat"><b class="tnum">{{ stats.likely }}</b> 间接推断</span>
+          <span class="trv-stat"><b class="tnum">{{ stats.uncertain + stats.uncertainties }}</b> 待核实</span>
+          <span v-if="stats.warnings > 0" class="trv-stat"><b class="tnum">{{ stats.warnings }}</b> 提醒</span>
+        </div>
+        <div v-if="externalStats.checked > 0" class="trv-stats trv-stats--external">
+          <span class="trv-stat"><b class="tnum">{{ externalStats.checked }}</b> 条进入联网核查</span>
+          <span v-if="externalStats.authoritative > 0" class="trv-stat"><b class="tnum">{{ externalStats.authoritative }}</b> 条有权威来源</span>
+          <span v-if="externalStats.flagged > 0" class="trv-stat trv-stat--flagged"><b class="tnum">{{ externalStats.flagged }}</b> 条需要留意</span>
+          <span v-else class="trv-stat">未发现需要留意的条目</span>
+        </div>
       </div>
     </header>
 
@@ -251,25 +279,38 @@ function resetFilters(): void {
           </div>
         </header>
 
-        <p v-if="entry.item.basis" class="trv-basis">判断依据：{{ entry.item.basis }}</p>
-        <p v-if="entry.item.attribution" class="trv-basis">{{ attributionText(entry.item) }}</p>
-        <p v-if="entry.item.note" class="trv-note">{{ entry.item.note }}</p>
-
         <div v-if="entry.item.external" class="trv-external">
           <div class="trv-external-head">
-            <span class="trv-external-status">外部核查：{{ TRACE_EXTERNAL_STATUS_LABELS[entry.item.external.status] }}</span>
-            <span v-if="entry.item.external.query" class="trv-external-query tnum">检索：{{ entry.item.external.query }}</span>
+            <span class="trv-external-status">{{ TRACE_EXTERNAL_STATUS_LABELS[entry.item.external.status] }}</span>
+            <span v-if="externalQueries(entry.item.external).length > 0" class="trv-external-query tnum">
+              检索：{{ externalQueries(entry.item.external).join(" / ") }}
+            </span>
           </div>
+          <p v-if="entry.item.external.status === 'weak_source'" class="trv-external-hint">
+            只找到自媒体或未判定来源，没有权威出处；引用前建议自行核对。
+          </p>
+          <p v-if="entry.item.external.status === 'contradicted'" class="trv-external-hint">
+            外部权威来源与这句话矛盾，引用前请核实。
+          </p>
           <p v-if="entry.item.external.summary" class="trv-external-summary">{{ entry.item.external.summary }}</p>
           <ul v-if="(entry.item.external.sources ?? []).length > 0" class="trv-external-sources">
             <li v-for="(source, sourceIndex) in entry.item.external.sources ?? []" :key="sourceIndex">
+              <span v-if="source.authority" class="trv-external-authority" :class="`trv-external-authority--${source.authority}`">
+                {{ TRACE_SOURCE_AUTHORITY_LABELS[source.authority] }}
+              </span>
+              <span v-if="source.publisher" class="trv-external-publisher">{{ source.publisher }}</span>
               <a v-if="source.url" :href="source.url" target="_blank" rel="noreferrer">{{ source.title || source.url }}</a>
-              <span v-else>{{ source.title || source.url }}</span>
+              <span v-else>{{ source.title || "（本次检索未返回链接）" }}</span>
+              <span v-if="!source.url" class="trv-external-nolink">无链接</span>
               <span v-if="source.snippet" class="trv-external-snippet">{{ source.snippet }}</span>
             </li>
           </ul>
           <p v-if="entry.item.external.note" class="trv-external-note">{{ entry.item.external.note }}</p>
         </div>
+
+        <p v-if="entry.item.basis" class="trv-basis">判断依据：{{ entry.item.basis }}</p>
+        <p v-if="entry.item.attribution" class="trv-basis">{{ attributionText(entry.item) }}</p>
+        <p v-if="entry.item.note" class="trv-note">{{ entry.item.note }}</p>
 
         <div v-if="entry.item.evidence.length > 0" class="trv-evidence-list">
           <section
@@ -372,6 +413,22 @@ function resetFilters(): void {
   border-bottom: 1px solid var(--color-border);
 }
 
+/* 标题与摘要占满剩余宽度；右侧统计单独成列。
+   两处都别省：摘要那侧没有 flex/min-width 就会被统计挤成一列一个字。 */
+.trv-head-main {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.trv-head-side {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
+  max-width: 48%;
+}
+
 .trv-title {
   margin: 0;
   font-size: 20px;
@@ -397,6 +454,18 @@ function resetFilters(): void {
   flex-shrink: 0;
   color: var(--color-text-secondary);
   font-size: 12px;
+}
+
+.trv-stats--external {
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px solid var(--color-border);
+  color: var(--color-text-secondary);
+}
+
+.trv-stat--flagged {
+  color: var(--color-warning);
+  font-weight: 600;
 }
 
 .trv-stat b {
@@ -724,6 +793,44 @@ function resetFilters(): void {
   font-size: 11px;
 }
 
+.trv-external-hint {
+  margin: 6px 0 0;
+  color: var(--color-text-tertiary);
+  line-height: 1.7;
+}
+
+.trv-external-authority {
+  display: inline-block;
+  margin-right: 6px;
+  padding: 0 5px;
+  border: 1px solid var(--color-border);
+  border-radius: 3px;
+  color: var(--color-text-tertiary);
+  font-size: 11px;
+  line-height: 16px;
+  vertical-align: 1px;
+}
+
+.trv-external-authority--authoritative {
+  border-color: var(--color-accent-indigo);
+  color: var(--color-accent-indigo);
+}
+
+.trv-external-publisher {
+  margin-right: 4px;
+  color: var(--color-text-secondary);
+  font-size: 11px;
+}
+
+.trv-external-nolink {
+  margin-left: 5px;
+  padding: 0 4px;
+  border: 1px solid var(--color-border);
+  border-radius: 3px;
+  color: var(--color-text-tertiary);
+  font-size: 10px;
+}
+
 .trv-external-summary {
   margin: 6px 0 0;
   color: var(--color-text-secondary);
@@ -866,6 +973,11 @@ function resetFilters(): void {
   .trv-head {
     flex-direction: column;
     gap: 10px;
+  }
+
+  .trv-head-side {
+    align-items: flex-start;
+    max-width: none;
   }
 
   .trv-stats {

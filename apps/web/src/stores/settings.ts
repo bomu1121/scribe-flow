@@ -9,6 +9,8 @@ import type {
   NutstoreReadResult,
   NutstoreRestoreResult,
   NutstoreSyncResult,
+  SearchProvider,
+  TraceSourceAuthority,
   UpdateSettingsRequest,
 } from "@scribe-flow/shared";
 import { api } from "@/lib/api";
@@ -47,6 +49,19 @@ export interface AsrTestPayload {
   apiKey?: string;
 }
 
+export interface SearchTestPayload {
+  provider?: SearchProvider;
+  apiKey?: string;
+  maxResults?: number;
+}
+
+export interface SearchTestResult {
+  count: number;
+  sample?: string;
+  sampleUrl?: string;
+  authorityCounts?: Partial<Record<TraceSourceAuthority, number>>;
+}
+
 export interface AiTestResult {
   content: string;
   models: string[];
@@ -79,6 +94,15 @@ export const useSettingsStore = defineStore("settings", () => {
     settings.value = await api.put<AppSettings>("/api/settings", patch);
   }
 
+  /**
+   * 确保设置已加载。
+   * 画布节点、快捷新建等地方要读「有没有配检索密钥」之类的状态，但它们不保证用户进过设置页。
+   */
+  async function ensureLoaded() {
+    if (settings.value || loading.value) return;
+    await load().catch(() => undefined);
+  }
+
   async function loadObsidianFolders() {
     try {
       const data = await api.get<{ items: string[] }>("/api/settings/obsidian/folders");
@@ -102,6 +126,14 @@ export const useSettingsStore = defineStore("settings", () => {
   async function testAsr(payload?: AsrTestPayload): Promise<string> {
     const result = await api.post<{ ok: boolean; content?: string }>("/api/settings/test/asr", payload);
     return result.content ?? "连接正常";
+  }
+
+  async function testSearch(payload?: SearchTestPayload): Promise<SearchTestResult> {
+    const result = await api.post<{ ok: boolean; count?: number; sample?: string; sampleUrl?: string; authorityCounts?: Partial<Record<TraceSourceAuthority, number>> }>(
+      "/api/settings/test/search",
+      payload,
+    );
+    return { count: result.count ?? 0, sample: result.sample, sampleUrl: result.sampleUrl, authorityCounts: result.authorityCounts };
   }
 
   async function testNutstore(payload?: { serverUrl?: string; account?: string; password?: string; remotePath?: string }) {
@@ -147,5 +179,5 @@ export const useSettingsStore = defineStore("settings", () => {
     return result.items ?? [];
   }
 
-  return { settings, loading, obsidianFolders, aiKeyDraft, asrKeyDraft, load, save, loadObsidianFolders, testAi, testAsr, fetchAiModels, testNutstore, listNutstore, listNutstoreFolders, readNutstore, pushNutstore, pullNutstore, backupNutstore, restoreNutstore, listNutstoreBackups };
+  return { settings, loading, obsidianFolders, aiKeyDraft, asrKeyDraft, load, ensureLoaded, save, loadObsidianFolders, testAi, testAsr, testSearch, fetchAiModels, testNutstore, listNutstore, listNutstoreFolders, readNutstore, pushNutstore, pullNutstore, backupNutstore, restoreNutstore, listNutstoreBackups };
 });

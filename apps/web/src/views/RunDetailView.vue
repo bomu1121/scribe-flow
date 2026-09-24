@@ -28,7 +28,7 @@ import {
   ZoomOut,
 } from "lucide-vue-next";
 import type { ProjectMeta, RunDetail, RunNodeInput, RunNodeResult, RunMediaView, TraceReport, WorkflowGraph } from "@scribe-flow/shared";
-import { NODE_TYPE_LABELS, parseTraceReports, traceReportToMarkdown } from "@scribe-flow/shared";
+import { BUILTIN_PROMPT_BLOCKS, NODE_TYPE_LABELS, parseTraceReports, traceReportToMarkdown } from "@scribe-flow/shared";
 import { api } from "@/lib/api";
 import { renderMarkdown } from "@/lib/markdown";
 import { buildNodeSegments, type RunSegment } from "@/utils/run-segments";
@@ -300,10 +300,13 @@ const nodeResultMap = computed(() => new Map((run.value?.nodeResults ?? []).map(
 /** 画布中配置了信息溯源块的 AI 节点；它们的结构化报告需要作为独立输出展示。 */
 const traceNodeIds = computed(() => {
   const ids = new Set<string>();
+  const traceBlockIds = new Set(
+    BUILTIN_PROMPT_BLOCKS.filter((block) => block.series === "信息溯源").map((block) => block.id),
+  );
   for (const node of graph.value?.nodes ?? []) {
     const data = asRecord(node.data);
     const blockId = String(data.promptBlockId ?? "");
-    if (node.type === "process.prompt" && (blockId === "builtin.trace" || blockId === "builtin.trace.v2")) ids.add(node.id);
+    if (node.type === "process.prompt" && traceBlockIds.has(blockId)) ids.add(node.id);
   }
   return ids;
 });

@@ -89,6 +89,21 @@ export const useProjectsStore = defineStore("projects", () => {
     return project;
   }
 
+  /**
+   * 用一份现成的图建工程（快捷新建把链接解析结果预填进模板图后走这里）。
+   * 复用导入接口：它同样是「给一份图，建一个工程」，服务端会照常做图校验。
+   */
+  async function createProjectFromGraph(options: {
+    name: string;
+    description?: string;
+    folderId?: string | null;
+    graph: WorkflowGraph;
+  }): Promise<ProjectMeta> {
+    const project = await api.post<ProjectMeta>("/api/projects/import", options);
+    await loadList();
+    return project;
+  }
+
   async function getProject(id: string): Promise<ProjectMeta> {
     current.value = await api.get<ProjectMeta>(`/api/projects/${id}`);
     rememberLastProject(id);
@@ -236,6 +251,7 @@ export const useProjectsStore = defineStore("projects", () => {
     loadFolders,
     rememberLastProject,
     createProject,
+    createProjectFromGraph,
     getProject,
     renameProject,
     moveProject,

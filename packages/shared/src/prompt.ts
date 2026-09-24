@@ -14,6 +14,14 @@ export interface PromptBlock {
   recommended?: boolean;
   /** M8-1：节点内多步链配方（可选）。无 recipe 的块走原有单次调用路径。 */
   recipe?: Recipe;
+  /**
+   * 该模版需要外部联网核查：配方跑完后，服务端会按条目里的 `verify.queries`
+   * （没有则退回规划步）发起检索并回填 `items[].external`。
+   *
+   * - `required`：联网核查就是该模版的核心价值，没配检索密钥时不提供它（见 `availablePromptBlocks`）；
+   * - `optional`：主要价值在原文核对与结构化报告，联网核查是加分项，始终提供。
+   */
+  externalCheck?: "required" | "optional";
 }
 
 const PROMPT_GUANDIAN_V1 = [
@@ -276,6 +284,30 @@ const PROMPT_TRACE = [
  * 通过 scan → audit → finalize 三步把“抽取 → 回原文核对 → 成稿”分开，
  * 让溯源结果可以被前端以卡片/原文定位的方式展示，也能直接复制为 Markdown。
  */
+/**
+ * 溯源模版抽取步共用的字段约束（v2/v3）。
+ * 抽出来共用是为了让两版在「不许编造引用」「事实与观点不许混」这些铁律上不会各自漂移。
+ */
+const TRACE_EXTRACT_RULES: string[] = [
+  "字段约束：",
+  "1. category 只允许 fact/data/viewpoint/conclusion/term/step/caveat/other：fact/data 必须是原文明确给出的客观信息；作者个人判断用 viewpoint，不要因为作者语气肯定就写成 fact；",
+  "2. confidence 只允许 confirmed/likely/uncertain：有逐字原文直接支持的用 confirmed；依据上下文间接推断的用 likely；原文确实没讲清、容易误读的放进 uncertainties 或给 uncertain；",
+  "3. 每一条 item 必须写 basis：说清“凭什么这样归类/凭什么这样定置信度”，例如“第2段明确陈述，第5段再次出现同一数据”“仅作者在结尾表态，属个人观点”；禁止用“AI判断”当理由；",
+  "4. evidence[].quote 必须逐字摘自原文，禁止改写、拼接、脑补；长句只截取连续短句；",
+  "5. evidence[].source 必须写具体来源：优先使用 {{source}} 中的标题/UP主/链接；{{source}} 为空时 name 写“当前输入素材”；不要编造来源名称/链接；",
+  "6. attribution 用于区分“这句话是视频作者自己说的”还是“作者转述外部人物/机构/研究/书/新闻”：如果视频里明确说“据 XX”“XX 研究/论文/书指出”“XX 说过”，attribution.kind 必须为 external，name 写视频里提到的外部对象；如果只是作者自己的分析/观点，attribution.kind 为 self；无法判断写 unknown；禁止把作者自己的观点伪装成外部来源，也禁止把外部引用说成作者原创；",
+  "7. 同一主张如果在原文其他段落或其他来源再次出现，必须放入 mentions，不要只贴第一处引用；",
+  "8. 每条 claim 保持信息完整：专名、数字、结论不能因为精简而丢；",
+  "9. 这是溯源清单，不是笔记：不要归纳成章节式笔记，不要写教程式总结；只输出 JSON，不要解释，不要 Markdown 围栏。",
+];
+
+/** 联网核查版的检索计划约束（v3 抽取步追加）。 */
+const TRACE_VERIFY_RULES: string[] = [
+  "10. verify 是给搜索引擎用的核查计划：凡是在外部世界有真假可言的条目——外部归因、论文/研究/报告/统计数字/年份/事件/人物/机构/产品参数，以及 category 为 fact/data 的全部条目——都要 needed=true 并给出 1-2 个 queries；作者本人的观点、偏好、经验、感受与纯推测给 needed=false 并省略 queries；拿不准时选 true；",
+  "11. queries 要能直接粘进搜索引擎：写清专名、机构、数字、年份，每条不超过 30 字，不要出现“是否”“真的吗”“求证”这类主观问法；第二条用另一个角度或补上关键限定（更正式的名称、加上年份或机构）；不要照抄视频里的口语说法；",
+  "12. 只要原文或常识里能确定唯一标识，就把标识写进检索词——论文编号/DOI、标准号、专利号、准确的年月日、机构全称、作品原名。实测这类标识是能否召回到权威页面的关键：只用泛化措辞时，搜索结果会被自媒体解读文章淹没；",
+];
+
 const RECIPE_TRACE_V2: Recipe = {
   schema: 1,
   steps: [
@@ -287,16 +319,7 @@ const RECIPE_TRACE_V2: Recipe = {
         "先通读全文，不写正文，只抽取“值得溯源的信息”，输出 JSON。",
         "格式：",
         '{"items":[{"id":"item-1","category":"fact","claim":"可独立阅读的一句话信息主张","confidence":"confirmed","basis":"为什么这样归类/定级：原文哪里明确陈述、是否多处提及","attribution":{"kind":"external","name":"视频中提到的论文/人物/机构/书名","detail":"视频里是如何引述的"},"evidence":[{"quote":"逐字摘自原文，不超过80字","source":{"type":"bili","name":"《视频标题》或文件名","author":"UP主/作者（有则写）","url":"原始链接（有则写）","locator":"00:12:34 或 P2/第3段"},"note":"可选的补充说明"}],"mentions":[{"quote":"同一主张在其他位置/其他来源的逐字提及","source":{"name":"...","locator":"..."},"note":"可选"}],"note":"可选备注"}],"uncertainties":[{"claim":"原文没讲清的点","reason":"为什么需要核实"}]}',
-        "字段约束：",
-        "1. category 只允许 fact/data/viewpoint/conclusion/term/step/caveat/other：fact/data 必须是原文明确给出的客观信息；作者个人判断用 viewpoint，不要因为作者语气肯定就写成 fact；",
-        "2. confidence 只允许 confirmed/likely/uncertain：有逐字原文直接支持的用 confirmed；依据上下文间接推断的用 likely；原文确实没讲清、容易误读的放进 uncertainties 或给 uncertain；",
-        "3. 每一条 item 必须写 basis：说清“凭什么这样归类/凭什么这样定置信度”，例如“第2段明确陈述，第5段再次出现同一数据”“仅作者在结尾表态，属个人观点”；禁止用“AI判断”当理由；",
-        "4. evidence[].quote 必须逐字摘自原文，禁止改写、拼接、脑补；长句只截取连续短句；",
-        "5. evidence[].source 必须写具体来源：优先使用 {{source}} 中的标题/UP主/链接；{{source}} 为空时 name 写“当前输入素材”；不要编造来源名称/链接；",
-        "6. attribution 用于区分“这句话是视频作者自己说的”还是“作者转述外部人物/机构/研究/书/新闻”：如果视频里明确说“据 XX”“XX 研究/论文/书指出”“XX 说过”，attribution.kind 必须为 external，name 写视频里提到的外部对象；如果只是作者自己的分析/观点，attribution.kind 为 self；无法判断写 unknown；禁止把作者自己的观点伪装成外部来源，也禁止把外部引用说成作者原创；",
-        "7. 同一主张如果在原文其他段落或其他来源再次出现，必须放入 mentions，不要只贴第一处引用；",
-        "8. 每条 claim 保持信息完整：专名、数字、结论不能因为精简而丢；",
-        "9. 这是溯源清单，不是笔记：不要归纳成章节式笔记，不要写教程式总结；只输出 JSON，不要解释，不要 Markdown 围栏。",
+        ...TRACE_EXTRACT_RULES,
       ].join("\n"),
       expects: {
         kind: "json",
@@ -344,6 +367,80 @@ const RECIPE_TRACE_V2: Recipe = {
         "5. attribution 必须保留：区分作者原创观点与外部归因；",
         "6. 这是溯源报告不是笔记：不要输出章节式讲解，不要添加个人总结/行动建议；",
         "7. 只输出 JSON，不要解释，不要 Markdown 围栏。",
+      ].join("\n"),
+      expects: {
+        kind: "json",
+        asserts: [
+          { op: "jsonRootKeys", value: ["schema", "items"] },
+          { op: "citationsInOriginal", field: "items[].evidence[].quote[]", maxMiss: 0 },
+        ],
+      },
+    },
+  ],
+};
+
+const RECIPE_TRACE_V3: Recipe = {
+  schema: 1,
+  steps: [
+    {
+      id: "scan",
+      label: "通读抽取并规划核查",
+      system: [
+        "你是视频/文稿信息溯源编辑。用户消息是一篇转写稿/文稿；系统消息中的 {{source}} 是当前输入对应的具体来源元信息（可能包含《标题》、UP主/作者、链接、P数等，多个来源用“；”分隔）。",
+        "先通读全文，不写正文，只做两件事：抽取“值得溯源的信息”，并为每条写出联网核查计划。输出 JSON。",
+        "格式：",
+        '{"items":[{"id":"item-1","category":"fact","claim":"可独立阅读的一句话信息主张","confidence":"confirmed","basis":"为什么这样归类/定级：原文哪里明确陈述、是否多处提及","attribution":{"kind":"external","name":"视频中提到的论文/人物/机构/书名","detail":"视频里是如何引述的"},"verify":{"needed":true,"queries":["含专名与要点的检索词","换角度的第二条检索词"]},"evidence":[{"quote":"逐字摘自原文，不超过80字","source":{"type":"bili","name":"《视频标题》或文件名","author":"UP主/作者（有则写）","url":"原始链接（有则写）","locator":"00:12:34 或 P2/第3段"},"note":"可选的补充说明"}],"mentions":[{"quote":"同一主张在其他位置/其他来源的逐字提及","source":{"name":"...","locator":"..."},"note":"可选"}],"note":"可选备注"}],"uncertainties":[{"claim":"原文没讲清的点","reason":"为什么需要核实"}]}',
+        ...TRACE_EXTRACT_RULES,
+        ...TRACE_VERIFY_RULES,
+      ].join("\n"),
+      expects: {
+        kind: "json",
+        asserts: [
+          { op: "jsonRootKeys", value: ["items"] },
+          { op: "citationsInOriginal", field: "items[].evidence[].quote[]", maxMiss: 0 },
+        ],
+      },
+    },
+    {
+      id: "audit",
+      label: "回文核对并校核查计划",
+      system: [
+        "你是溯源审校员。上一条用户消息是「抽取清单」JSON，系统消息末尾附有原文全文（{{input}}），系统消息中的 {{source}} 是具体来源元信息。",
+        "逐条核对抽取清单：",
+        "1. claim 是否忠于原文，有没有把作者观点写成客观事实；",
+        "2. basis 是否充分：只说“原文有”不够，要能指出原文哪个位置、是否多处提及；",
+        "3. evidence[].quote 是否与原文逐字一致、是否足以支撑 claim；",
+        "4. evidence[].source.name/locator 是否与 {{source}} 和原文定位一致，有没有编造；",
+        "5. attribution 是否准确：作者自己观点不能写成外部归因；外部归因必须与原文引述一致，不能把视频里没提到的对象写成出处；",
+        "6. category/confidence 是否恰当；",
+        "7. 原文没有依据却仍被写成 confirmed 的条目，应改为 likely/uncertain 或移入 uncertainties；",
+        "8. 同一主张在其他位置/其他来源有提及但 scan 漏掉的，在 suggestion 中补上；",
+        "9. verify 是否恰当：该查的（外部归因、数字、年份、事件、人物、机构，以及 fact/data 条目）有没有漏标 needed=true；queries 能不能定位到外部来源（专名/数字/年份是否齐全、有没有写成主观问法）；有没有把作者自述标成 needed=true。有问题就在该条的 verify 字段里给出修正后的完整计划。",
+        "只输出 JSON 核对表：",
+        '{"items":[{"id":"item-1","ok":true,"issue":"问题说明","suggestion":"修正建议","verify":{"needed":true,"queries":["修正后的检索词一","检索词二"]}}],"uncertainties":[{"claim":"...","reason":"..."}]}',
+        "要求：items 覆盖扫描清单中的全部条目；ok=false 的条目必须给出可执行的 suggestion；verify 只在需要修正时才写，写就必须是完整可用的计划；不要输出其他内容，不要 Markdown 围栏。",
+      ].join("\n"),
+      expects: {
+        kind: "json",
+        asserts: [{ op: "jsonRootKeys", value: ["items"] }],
+      },
+    },
+    {
+      id: "finalize",
+      label: "结构化成稿",
+      system: [
+        "你是溯源报告终稿编辑。系统消息中的 {{all}} 依次包含「抽取清单、核对表」（每段有标记），系统消息末尾是原文（{{input}}），系统消息中的 {{source}} 是具体来源元信息。",
+        "依据核对表生成最终结构化溯源报告 JSON：",
+        '{"schema":1,"title":"信息溯源报告","summary":"一句话概括本次溯源范围和结论","items":[{"id":"item-1","category":"fact","claim":"...","confidence":"confirmed","basis":"...","attribution":{"kind":"external","name":"外部人物/机构/研究/书","detail":"视频中的引述方式"},"verify":{"needed":true,"queries":["检索词一","检索词二"]},"evidence":[{"quote":"逐字原文","source":{"type":"bili","name":"《视频标题》或文件名","author":"UP主/作者","url":"原始链接","locator":"00:12:34"},"note":"..."}],"mentions":[{"quote":"其他位置/来源的逐字提及","source":{"name":"...","locator":"..."},"note":"..."}],"note":"..."}],"uncertainties":[{"claim":"...","reason":"..."}],"warnings":["..."]}',
+        "要求：",
+        "1. 只保留核对表中 ok=true 的条目；ok=false 能按 suggestion 修正则修正后保留，无法修正的删除或降级为 uncertainties；",
+        "2. evidence[].quote 和 mentions[].quote 必须逐字来自原文，不得新增原文没有的引用；",
+        "3. evidence[].source / mentions[].source 必须写具体来源与定位，优先使用 {{source}}，不得编造；",
+        "4. 每条 item 必须保留 basis，说明该条为何是 fact/data/viewpoint 以及为何是这个置信度；",
+        "5. attribution 必须保留：区分作者原创观点与外部归因；",
+        "6. verify 必须逐条保留：核对表里给了修正计划的用修正后的，没给的就用抽取清单里的原计划；不得整段省略 verify 字段；",
+        "7. 这是溯源报告不是笔记：不要输出章节式讲解，不要添加个人总结/行动建议；",
+        "8. 只输出 JSON，不要解释，不要 Markdown 围栏。",
       ].join("\n"),
       expects: {
         kind: "json",
@@ -1079,9 +1176,23 @@ export const BUILTIN_PROMPT_BLOCKS: PromptBlock[] = [
     builtin: true,
     series: "信息溯源",
     version: "v2",
-    recommended: true,
     description: "多步核对版：通读抽取 → 回文核对 → 结构化成稿，输出可直接以卡片/原文定位展示的证据清单 JSON。约 3 次调用且每步携带原文。",
     recipe: RECIPE_TRACE_V2,
+    /** 联网核查需要检索密钥，但该模版没有密钥也照样能出结构化报告。 */
+    externalCheck: "optional",
+  },
+  {
+    id: "builtin.trace.v3",
+    name: "信息溯源（联网核查版）",
+    prompt: PROMPT_TRACE,
+    builtin: true,
+    series: "信息溯源",
+    version: "v3",
+    recommended: true,
+    description: "联网核查版：抽取时就为每条可核查信息写好检索词，跑完自动联网核对，按来源权威度给出「外部可印证 / 仅非权威来源 / 有反证 / 未找到出处」。需要先在设置页「外部溯源」配置检索渠道。",
+    recipe: RECIPE_TRACE_V3,
+    /** 价值全在联网核查上：没配检索密钥时不提供该模版。 */
+    externalCheck: "required",
   },
   {
     id: "builtin.cascade",
@@ -1134,3 +1245,32 @@ export const BUILTIN_PROMPT_BLOCKS: PromptBlock[] = [
     recipe: RECIPE_DRILL,
   },
 ];
+
+/** 不参与预绑的块：知识巩固由 `process.drill` 节点承载，不是「AI 加工」的提示词。 */
+const NOT_BINDABLE_BLOCK_IDS = new Set(["builtin.drill"]);
+
+/**
+ * 预绑用的提示词块候选（快捷新建的「AI 加工提示词」下拉）：
+ * 同一系列只留当前推荐版本（没有 `recommended` 就取该系列首个），版本差异不铺在这里；
+ * 用户自定义块按传入顺序追加在前面之后。
+ */
+export function bindablePromptBlocks(custom: PromptBlock[] = []): PromptBlock[] {
+  const bySeries = new Map<string, PromptBlock>();
+  for (const block of BUILTIN_PROMPT_BLOCKS) {
+    if (NOT_BINDABLE_BLOCK_IDS.has(block.id)) continue;
+    const series = block.series ?? block.id;
+    const current = bySeries.get(series);
+    if (!current || (block.recommended && !current.recommended)) bySeries.set(series, block);
+  }
+  return [...bySeries.values(), ...custom];
+}
+
+/**
+ * 过滤掉「当前用不了」的提示词块：把联网核查当核心价值的模版（`externalCheck: "required"`）
+ * 在没配检索密钥时不出现在可选列表里——它的价值全在核查上，摆在下拉里只会让人以为能用。
+ * `optional` 的模版不受影响：它们没有密钥也能产出结构化报告，只是少了外部核查。
+ */
+export function availablePromptBlocks(blocks: PromptBlock[], searchReady: boolean): PromptBlock[] {
+  if (searchReady) return blocks;
+  return blocks.filter((block) => block.externalCheck !== "required");
+}

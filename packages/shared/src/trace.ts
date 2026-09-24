@@ -46,21 +46,36 @@ export type TraceExternalStatus =
   | "not_applicable"
   | "unchecked"
   | "verified"
+  | "weak_source"
   | "contradicted"
   | "not_found"
   | "ambiguous";
+
+/** 来源权威度分级：权威机构/学术/官方一档，百科与文档一档，自媒体与聚合站一档。 */
+export type TraceSourceAuthority = "authoritative" | "reference" | "self-media" | "unknown";
 
 /** 外部事实核查命中的参考来源。 */
 export interface TraceExternalSource {
   title?: string;
   url?: string;
   snippet?: string;
+  /**
+   * 站点名（检索接口给出的 media）。相当一部分查询拿不到域名，只给标题+正文；
+   * 有站点名时用它兜底判权威度，都没有就只能是未判定。
+   */
+  publisher?: string;
+  /** 该来源的权威度分级；由服务端按域名判定。 */
+  authority?: TraceSourceAuthority;
 }
 
 export interface TraceExternalCheck {
   status: TraceExternalStatus;
-  /** 实际用于联网检索的查询词。 */
+  /** 主检索词（多条检索时取第一条），便于旧数据与单条展示。 */
   query?: string;
+  /** 本次核查实际用过的全部检索词。 */
+  queries?: string[];
+  /** 本次核查拿到的来源里，各权威度档位的数量。 */
+  authorityCounts?: Partial<Record<TraceSourceAuthority, number>>;
   /** 核查结论：外部来源是否支持/反对/无法确认视频里的说法。 */
   summary?: string;
   sources?: TraceExternalSource[];
@@ -75,6 +90,13 @@ export interface TraceAttribution {
   detail?: string;
 }
 
+/** 联网核查计划：这条信息要不要查、用什么检索词查。 */
+export interface TraceVerifyPlan {
+  needed?: boolean;
+  /** 检索词，建议 1-2 条，含专名/数字/时间，不带主观问法。 */
+  queries?: string[];
+}
+
 export interface TraceItem {
   /** 条目 id，建议形如 item-1。 */
   id?: string;
@@ -87,7 +109,9 @@ export interface TraceItem {
   basis?: string;
   /** 视频内归属：这句话是作者自己说的，还是转述/引用外部来源。 */
   attribution?: TraceAttribution;
-  /** 外部事实核查结果（由 Tavily/联网检索与 AI 比对生成；未配置检索时可为 undefined）。 */
+  /** 联网核查计划；由溯源模版的抽取步产出，服务端据此发起检索。 */
+  verify?: TraceVerifyPlan;
+  /** 外部事实核查结果（由联网检索与 AI 比对生成；未配置检索渠道时可为 undefined）。 */
   external?: TraceExternalCheck;
   /** 原文证据，逐字引用。存疑条目允许为空数组。 */
   evidence: TraceEvidence[];
@@ -164,7 +188,18 @@ function parseAttribution(value: unknown): TraceAttribution | undefined {
   return { kind: normalizedKind, name, detail };
 }
 
-const EXTERNAL_STATUSES: TraceExternalStatus[] = ["not_applicable", "unchecked", "verified", "contradicted", "not_found", "ambiguous"];
+const EXTERNAL_STATUSES: TraceExternalStatus[] = ["not_applicable", "unchecked", "verified", "weak_source", "contradicted", "not_found", "ambiguous"];
+const SOURCE_AUTHORITIES: TraceSourceAuthority[] = ["authoritative", "reference", "self-media", "unknown"];
+
+function parseAuthorityCounts(value: unknown): Partial<Record<TraceSourceAuthority, number>> | undefined {
+  if (!isRecord(value)) return undefined;
+  const counts: Partial<Record<TraceSourceAuthority, number>> = {};
+  for (const authority of SOURCE_AUTHORITIES) {
+    const count = value[authority];
+    if (typeof count === "number" && Number.isFinite(count) && count > 0) counts[authority] = count;
+  }
+  return Object.keys(counts).length > 0 ? counts : undefined;
+}
 
 function parseExternalCheck(value: unknown): TraceExternalCheck | undefined {
   if (!isRecord(value)) return undefined;
@@ -174,22 +209,40 @@ function parseExternalCheck(value: unknown): TraceExternalCheck | undefined {
     ? value.sources
         .map((source) => {
           if (!isRecord(source)) return null;
+          const authority = asString(source.authority) as TraceSourceAuthority | undefined;
           const parsed: TraceExternalSource = {
             title: asString(source.title),
             url: asString(source.url),
             snippet: asString(source.snippet),
+            publisher: asString(source.publisher),
+            authority: authority && SOURCE_AUTHORITIES.includes(authority) ? authority : undefined,
           };
           return parsed;
         })
         .filter((source): source is TraceExternalSource => source !== null)
     : [];
+  const queries = Array.isArray(value.queries)
+    ? value.queries.map((item) => asString(item)).filter((item): item is string => Boolean(item))
+    : [];
   return {
     status,
-    query: asString(value.query),
+    query: asString(value.query) ?? queries[0],
+    queries: queries.length > 0 ? queries : undefined,
+    authorityCounts: parseAuthorityCounts(value.authorityCounts),
     summary: asString(value.summary),
     sources,
     note: asString(value.note),
   };
+}
+
+function parseVerifyPlan(value: unknown): TraceVerifyPlan | undefined {
+  if (!isRecord(value)) return undefined;
+  const queries = Array.isArray(value.queries)
+    ? value.queries.map((item) => asString(item)).filter((item): item is string => Boolean(item))
+    : [];
+  const needed = typeof value.needed === "boolean" ? value.needed : undefined;
+  if (needed === undefined && queries.length === 0) return undefined;
+  return { needed, queries: queries.length > 0 ? queries : undefined };
 }
 
 function parseItem(value: unknown): TraceItem | null {
@@ -211,6 +264,7 @@ function parseItem(value: unknown): TraceItem | null {
     confidence: confidence && TRACE_CONFIDENCES.includes(confidence) ? confidence : evidence.length > 0 ? "likely" : "uncertain",
     basis: asString(value.basis),
     attribution: parseAttribution(value.attribution),
+    verify: parseVerifyPlan(value.verify),
     external: parseExternalCheck(value.external),
     evidence,
     mentions,
@@ -301,9 +355,17 @@ export const TRACE_EXTERNAL_STATUS_LABELS: Record<TraceExternalStatus, string> =
   not_applicable: "不适用",
   unchecked: "未联网核查",
   verified: "外部可印证",
+  weak_source: "仅非权威来源",
   contradicted: "外部有矛盾/反证",
   not_found: "未找到外部出处",
   ambiguous: "存在争议/不明确",
+};
+
+export const TRACE_SOURCE_AUTHORITY_LABELS: Record<TraceSourceAuthority, string> = {
+  authoritative: "权威",
+  reference: "参考",
+  "self-media": "自媒体",
+  unknown: "未判定",
 };
 
 function formatEvidenceLine(evidence: TraceEvidence): string {
@@ -313,6 +375,44 @@ function formatEvidenceLine(evidence: TraceEvidence): string {
   const location = sourcePart ? `（${sourcePart}）` : "";
   const note = evidence.note?.trim() ? ` — ${evidence.note.trim()}` : "";
   return `- ${location}“${evidence.quote.trim()}”${note}`;
+}
+
+/**
+ * 认定「需要留意」的核查结论：外部资料反证、只有非权威来源、没找到出处。
+ * 「未联网核查」不算在内，但会计入速览的数量统计（见 traceReportToMarkdown）。
+ */
+export const FLAGGED_EXTERNAL_STATUSES: TraceExternalStatus[] = ["contradicted", "weak_source", "not_found"];
+
+/** 核查结论速览：先回答「哪些说法站不住、有没有权威出处」，细节留给下面的条目。 */
+function appendExternalOverview(report: TraceReport, lines: string[]): void {
+  const checked = report.items.filter(
+    (item): item is TraceItem & { external: TraceExternalCheck } => Boolean(item.external) && item.external?.status !== "not_applicable",
+  );
+  if (checked.length === 0) return;
+
+  const counts = new Map<TraceExternalStatus, number>();
+  for (const item of checked) counts.set(item.external.status, (counts.get(item.external.status) ?? 0) + 1);
+  const tally = (Object.keys(TRACE_EXTERNAL_STATUS_LABELS) as TraceExternalStatus[])
+    .filter((status) => counts.has(status))
+    .map((status) => `${TRACE_EXTERNAL_STATUS_LABELS[status]} ${counts.get(status)}`)
+    .join(" · ");
+
+  lines.push("## 联网核查速览");
+  lines.push("");
+  lines.push(`- 进入核查的条目 ${checked.length} 条：${tally}`);
+  const authoritative = checked.filter((item) => (item.external.sources ?? []).some((source) => source.authority === "authoritative")).length;
+  lines.push(`- 其中 ${authoritative} 条拿到了权威来源（政府/学术/官方机构/官方媒体）`);
+
+  const flagged = checked.filter((item) => FLAGGED_EXTERNAL_STATUSES.includes(item.external.status));
+  if (flagged.length > 0) {
+    lines.push("");
+    lines.push("**需要留意的条目**");
+    for (const item of flagged) {
+      const reason = item.external.summary?.trim() || item.external.note?.trim() || "";
+      lines.push(`- ${TRACE_EXTERNAL_STATUS_LABELS[item.external.status]}：${item.claim}${reason ? ` —— ${reason}` : ""}`);
+    }
+  }
+  lines.push("");
 }
 
 /** 把结构化溯源报告转成可读 Markdown，供“复制/下载”与不支持结构化视图的场合使用。 */
@@ -325,16 +425,33 @@ export function traceReportToMarkdown(report: TraceReport): string {
     lines.push(report.summary.trim());
     lines.push("");
   }
+  appendExternalOverview(report, lines);
   if (report.items.length > 0) {
-    lines.push(`## 可溯源信息（${report.items.length} 条）`);
+    lines.push(`## 条目明细（${report.items.length} 条）`);
     lines.push("");
     report.items.forEach((item, index) => {
       const confidence = TRACE_CONFIDENCE_LABELS[item.confidence] ?? item.confidence;
       const category = TRACE_CATEGORY_LABELS[item.category] ?? item.category;
       lines.push(`### ${index + 1}. [${category} · ${confidence}] ${item.claim}`);
-      if (item.basis?.trim()) {
+      // 核查结论紧挨主张：报告要回答的是「这句话有没有权威出处」，原文定位只是支撑材料。
+      if (item.external) {
         lines.push("");
-        lines.push(`- 判断依据：${item.basis.trim()}`);
+        const statusLabel = TRACE_EXTERNAL_STATUS_LABELS[item.external.status] ?? item.external.status;
+        const queries = (item.external.queries ?? (item.external.query ? [item.external.query] : []))
+          .map((query) => query.trim())
+          .filter(Boolean);
+        const query = queries.length > 0 ? `；检索词：${queries.join(" / ")}` : "";
+        const summary = item.external.summary?.trim() ? `；结论：${item.external.summary.trim()}` : "";
+        lines.push(`- **外部核查：${statusLabel}**${summary}`);
+        for (const source of item.external.sources ?? []) {
+          const title = source.title?.trim() ?? source.url?.trim() ?? "";
+          const url = source.url?.trim() ? ` <${source.url.trim()}>` : "（本次检索未返回链接）";
+          const authority = source.authority ? `[${TRACE_SOURCE_AUTHORITY_LABELS[source.authority]}] ` : "";
+          const publisher = source.publisher?.trim() ? `${source.publisher.trim()} · ` : "";
+          if (title || url) lines.push(`  - ${authority}${publisher}${title}${url}`);
+        }
+        if (item.external.note?.trim()) lines.push(`  - 说明：${item.external.note.trim()}`);
+        if (query) lines.push(`  - ${query.replace(/^；/, "")}`);
       }
       if (item.attribution) {
         lines.push("");
@@ -345,17 +462,9 @@ export function traceReportToMarkdown(report: TraceReport): string {
             : "归属不明：无法判断是作者原创还是转述外部来源";
         lines.push(`- ${attribution}`);
       }
-      if (item.external) {
+      if (item.basis?.trim()) {
         lines.push("");
-        const statusLabel = TRACE_EXTERNAL_STATUS_LABELS[item.external.status] ?? item.external.status;
-        const query = item.external.query?.trim() ? `；检索词：${item.external.query.trim()}` : "";
-        const summary = item.external.summary?.trim() ? `；结论：${item.external.summary.trim()}` : "";
-        lines.push(`- 外部核查：${statusLabel}${query}${summary}`);
-        for (const source of item.external.sources ?? []) {
-          const title = source.title?.trim() ?? source.url?.trim() ?? "";
-          const url = source.url?.trim() ? ` <${source.url.trim()}>` : "";
-          if (title || url) lines.push(`  - ${title}${url}`);
-        }
+        lines.push(`- 判断依据：${item.basis.trim()}`);
       }
       if (item.note?.trim()) {
         lines.push("");

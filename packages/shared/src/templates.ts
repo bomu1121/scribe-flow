@@ -1,4 +1,4 @@
-import { NODE_CARD_WIDTH, type GraphEdge, type GraphNode, type NodeType, type WorkflowGraph } from "./graph";
+import { NODE_CARD_WIDTH, type GraphEdge, type GraphNode, type NodeType, type PageRef, type WorkflowGraph } from "./graph";
 import type { WorkflowTemplate } from "./project";
 
 function node(type: NodeType, id: string, x: number, y: number, data: GraphNode["data"]): GraphNode {
@@ -404,3 +404,69 @@ export const WORKFLOW_TEMPLATES: WorkflowTemplate[] = [
     graph: videoDrillGraph(),
   },
 ];
+
+/** 写入来源节点的 B 站解析结果（快捷新建用 `POST /api/videos/preview` 的结果填充）。 */
+export interface BiliLinkSource {
+  /** 节点里保存的链接；解析成功时写规范化后的稿件地址。 */
+  url: string;
+  page?: number;
+  pageInfo?: PageRef;
+  bvid?: string;
+  title?: string;
+  cover?: string;
+  uploader?: string;
+  duration?: number;
+}
+
+export interface InstantiateOptions {
+  /** 写进来源节点的 B 站解析结果；模板没有 source.bili 节点时忽略。 */
+  bili?: BiliLinkSource;
+  /**
+   * 预绑到「AI 加工」（`process.prompt`）节点的提示词块 id。
+   * 垂直模板里的加工节点（如攻略加工）有自己的推荐块，不在这里覆盖。
+   */
+  promptBlockId?: string;
+  /** 输出节点的文件名主干（不含扩展名）；缺省沿用模板里的文件名。 */
+  fileStem?: string;
+}
+
+/** 模板是否以 B 站视频为起点：快捷新建只列这类模板。 */
+export function isBiliTemplate(template: WorkflowTemplate): boolean {
+  return template.graph.nodes.some((node) => node.type === "source.bili");
+}
+
+/**
+ * 按模板实例化一份工程图：可顺便把 B 站来源写进来源节点、把提示词块预绑到加工节点。
+ *
+ * 返回 null 表示 templateId 未知（调用方回退到按模板新建）。
+ */
+export function instantiateTemplate(templateId: string, options: InstantiateOptions = {}): WorkflowGraph | null {
+  const template = WORKFLOW_TEMPLATES.find((t) => t.id === templateId);
+  if (!template) return null;
+
+  // 模板图是模块级常量：必须深拷贝后再改，否则改动会泄给之后每一次新建。
+  const graph = JSON.parse(JSON.stringify(template.graph)) as WorkflowGraph;
+  const { bili, promptBlockId, fileStem } = options;
+
+  for (const node of graph.nodes) {
+    if (bili && node.type === "source.bili") {
+      const data = node.data;
+      data.url = bili.url;
+      data.page = bili.page ?? 1;
+      if (bili.pageInfo) data.pageInfo = bili.pageInfo;
+      if (bili.bvid) data.bvid = bili.bvid;
+      if (bili.title) data.title = bili.title;
+      if (bili.cover) data.cover = bili.cover;
+      if (bili.uploader) data.uploader = bili.uploader;
+      if (bili.duration !== undefined) data.duration = bili.duration;
+    }
+    if (promptBlockId && node.type === "process.prompt") {
+      node.data.promptBlockId = promptBlockId;
+    }
+    if (fileStem && node.type === "process.output") {
+      node.data.fileName = `${fileStem}.md`;
+    }
+  }
+
+  return graph;
+}

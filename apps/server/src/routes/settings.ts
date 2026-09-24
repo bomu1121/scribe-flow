@@ -8,8 +8,9 @@ import { z } from "zod";
 import type { AppDatabase } from "../db/client";
 import { runs } from "../db/schema";
 import { chatCompletion, listAiModels, transcribeAudio } from "../lib/ai";
-import { getAiConfig, getAsrConfig, getNutstoreConfig, getSettings, updateSettings } from "../lib/settings";
+import { getAiConfig, getAsrConfig, getNutstoreConfig, getSearchConfig, getSettings, updateSettings } from "../lib/settings";
 import { listRemoteDirectories } from "../lib/nutstore";
+import { collectSources } from "../lib/traceExternal";
 import type { RunEngine } from "../lib/engine";
 
 const updateSchema = z.object({
@@ -31,7 +32,7 @@ const updateSchema = z.object({
     .optional(),
   search: z
     .object({
-      provider: z.enum(["tavily"]).optional(),
+      provider: z.enum(["zhipu", "tavily"]).optional(),
       apiKey: z.string().max(500).optional(),
       maxResults: z.number().int().min(1).max(10).optional(),
     })
@@ -81,6 +82,12 @@ const asrTestSchema = z.object({
   apiKey: z.string().max(500).optional(),
 });
 
+const searchTestSchema = z.object({
+  provider: z.enum(["zhipu", "tavily"]).optional(),
+  apiKey: z.string().max(500).optional(),
+  maxResults: z.number().int().min(1).max(10).optional(),
+});
+
 function resolveAiTestConfig(db: AppDatabase, body: z.infer<typeof aiTestSchema>) {
   const saved = getAiConfig(db);
   return {
@@ -98,6 +105,15 @@ function resolveAsrTestConfig(db: AppDatabase, body: z.infer<typeof asrTestSchem
     baseUrl: (body.baseUrl ?? "").trim().replace(/\/+$/, "") || saved.baseUrl,
     model: (body.model ?? "").trim() || saved.model,
     apiKey: (body.apiKey ?? "").trim() || saved.apiKey,
+  };
+}
+
+function resolveSearchTestConfig(db: AppDatabase, body: z.infer<typeof searchTestSchema>) {
+  const saved = getSearchConfig(db);
+  return {
+    provider: body.provider ?? saved.provider,
+    apiKey: (body.apiKey ?? "").trim() || saved.apiKey,
+    maxResults: body.maxResults ?? saved.maxResults,
   };
 }
 
@@ -180,6 +196,31 @@ export function settingsApi(db: AppDatabase, engine: RunEngine, dataDir: string)
       return c.json({ error: err instanceof Error ? err.message : "ASR 连接失败" }, 400);
     } finally {
       await rm(dir, { recursive: true, force: true }).catch(() => undefined);
+    }
+  });
+
+  api.post("/test/search", async (c) => {
+    const raw = await c.req.json().catch(() => ({}));
+    const parsed = searchTestSchema.safeParse(raw ?? {});
+    if (!parsed.success) {
+      return c.json({ error: parsed.error.issues[0]?.message ?? "请求格式不正确" }, 400);
+    }
+    const config = resolveSearchTestConfig(db, parsed.data ?? {});
+    if (!config.apiKey) return c.json({ error: "请先填写检索密钥" }, 400);
+    try {
+      const collected = await collectSources(config, ["人工智能"]);
+      if (collected.sources.length === 0) {
+        return c.json({ error: "检索已连通，但没有返回可引用的结果（链接为空），请检查余额或用量配额" }, 400);
+      }
+      return c.json({
+        ok: true,
+        count: collected.sources.length,
+        sample: collected.sources[0]?.title,
+        sampleUrl: collected.sources[0]?.url,
+        authorityCounts: collected.authorityCounts,
+      });
+    } catch (err) {
+      return c.json({ error: err instanceof Error ? err.message : "检索失败" }, 400);
     }
   });
 

@@ -55,6 +55,27 @@ export function isRetryableError(error: Error, cancelled: boolean): boolean {
   return true;
 }
 
+/**
+ * 单步断言门失败后允许重问的次数。
+ *
+ * 断言门本身不放宽——重问后的输出仍要过同一道门，所以「引用必须逐字」的保证没有变；
+ * 改变的只是失败代价：实测最常见的失败是抄引文时改了一个字（原文「把欧盟告上世贸组织」
+ * 抄成「把欧盟告了世贸组织」），为这一处就让整条配方乃至整个运行失败并不划算。
+ */
+const MAX_STEP_ASSERT_ATTEMPTS = 2;
+
+/** 带校验失败原因的重问提示：只让模型修被指出的问题，不要顺手改写别的内容。 */
+function buildAssertCorrection(error: Error | undefined): string {
+  return [
+    "上一条输出没有通过校验，请重新输出完整内容，不要输出解释。",
+    `校验失败原因：${error ? describeError(error) : "未通过"}`,
+    "修正要求：",
+    "1. 凡是被指出的引用，回到原文里逐字复制一遍：一个字都不要改写，包括「了/上/的/是」这类字，也不要自己重新组织句子；",
+    "2. 如果某一句你无法确认能逐字命中，换一句你确认能逐字复制的原文句子，不要改动原文用词；",
+    "3. 除被指出的问题外，其余内容与结构保持原样。",
+  ].join("\n");
+}
+
 /** 把错误链（如 undici 的 `fetch failed` → ConnectTimeoutError）压缩成一行可读文本，用于落库与界面展示。 */
 export function describeError(err: unknown, maxLength = 400): string {
   let current: Error | undefined = err instanceof Error ? err : new Error(typeof err === "string" ? err : "节点执行失败");
@@ -1406,12 +1427,26 @@ export class RunEngine {
               inputRef,
               drillParams,
             );
-            // 信息溯源 v2：若配置了 Tavily，则对最终 JSON 做外部联网核查并回填 external 字段。
-            if (blockId === "builtin.trace.v2") {
+            // 联网核查：由提示词块自己声明（PromptBlock.externalCheck），不再硬编码具体块 id。
+            if (builtin?.externalCheck) {
               const searchConfig = getSearchConfig(this.db);
+              if (!searchConfig.apiKey) {
+                await this.log(active, node.id, "info", "未配置外部检索渠道，本次跳过了联网核查；可在设置页「外部溯源」配置后重跑", undefined, inputRef);
+              }
               if (searchConfig.apiKey) {
                 try {
-                  finalText = await enrichTraceReportWithExternalChecks(inputText, finalText, aiConfig, searchConfig, signal);
+                  // 参数顺序是（报告, 原文）：报告来自配方末步，原文是节点输入，供比对时回看上下文。
+                  finalText = await enrichTraceReportWithExternalChecks(
+                    finalText,
+                    inputText,
+                    aiConfig,
+                    searchConfig,
+                    signal,
+                    {},
+                    (done, total, phase) => {
+                      void this.progress(active, node.id, 96, `${phase === "search" ? "联网核查" : "核查判断"} ${done}/${total}`);
+                    },
+                  );
                   await this.log(active, node.id, "info", "已执行外部联网核查", undefined, inputRef);
                 } catch (err) {
                   await this.log(active, node.id, "info", `外部联网核查未完成，已保留内部溯源结果：${describeError(err)}`, undefined, inputRef);
@@ -1948,7 +1983,10 @@ ${JSON.stringify(taxonomyTags)}`;
    * M8-1：对单个输入执行一条配方（顺序步骤 + 确定性断言门）。
    * 步骤 0 的 user 消息为原文；后续步骤的 user 消息为上一步输出；
    * system 模板变量 {{input}}/{{prev}}/{{all}} 由执行器展开。
-   * 断言失败/JSON 非法抛出的错误不可自动重试（isRetryableError 词表）；网络类错误保留 cause，走节点级重试。
+   *
+   * 断言门不过时，这一步会带失败原因重问一次（见 MAX_STEP_ASSERT_ATTEMPTS），判定标准仍是同一道门；
+   * 抛出的错误本身依旧属于不可自动重试类（isRetryableError 词表把「断言未通过」排除在节点级重试之外，
+   * 避免节点重试 × 步骤重问叠成多次重复调用）。网络类错误保留 cause，走节点级重试。
    */
   private async executeRecipeOnInput(
     active: ActiveRun,
@@ -1972,40 +2010,54 @@ ${JSON.stringify(taxonomyTags)}`;
       const step = recipe.steps[j];
       const flatIndex = flatBase + j;
       const system = renderStepSystem(step.system, { input: inputText, prev, all, source: sourceLabel, params });
-      const user = j === 0 ? inputText : prev;
+      const baseUser = j === 0 ? inputText : prev;
       const model = step.model ?? aiConfig.model;
       const progress = Math.round(10 + ((flatIndex + 1) / totalFlat) * 86);
       await this.progress(active, node.id, progress, `步骤 ${flatIndex + 1}/${totalFlat} ${step.label}`);
-      await this.log(active, node.id, "ai-request", `[${step.id}] ${step.label}\n\n${model}\n\n${system}`, step.id, inputRef);
-      let result: string;
-      try {
-        result = await chatCompletion({ ...aiConfig, model }, system, user, signal);
-      } catch (error) {
-        const message = describeError(error);
-        this.emit(active, { type: "node.step.error", runId: active.id, nodeId: node.id, stepId: step.id, index: flatIndex + 1, total: totalFlat, error: message });
-        throw new Error(`步骤「${step.label}」调用失败：${message}`, { cause: error });
-      }
-      const raw = result.trim();
-      // 文本步骤：AI 偶尔会把整篇 Markdown 用 ```markdown ... ``` 包起来。
-      // 这里先剥掉外层围栏再校验/落盘，避免因为这种格式问题误判失败。
-      let trimmed = step.expects?.kind === "text" ? stripOuterCodeFence(raw) : raw;
-      // 阴阳师攻略 scan：AI 可能少写空数组字段（如 versionNotes），这里自动补全，
-      // 避免 jsonRootKeys 因“少一个空数组”把整条流程判失败。
-      if (node.type === "process.gameguide" && step.id === "scan") {
-        trimmed = ensureGameGuideScanKeys(trimmed);
-      }
-      if (!trimmed) {
-        const message = `步骤「${step.label}」返回空内容`;
-        this.emit(active, { type: "node.step.error", runId: active.id, nodeId: node.id, stepId: step.id, index: flatIndex + 1, total: totalFlat, error: message });
-        throw new Error(message);
-      }
-      await this.log(active, node.id, "ai-response", `[${step.label}] 输出 ${trimmed.length} 字\n\n${trimmed}`, step.id, inputRef);
-      try {
-        assertStepOutput(step, trimmed, { input: inputText, prev, all });
-      } catch (error) {
-        const message = describeError(error);
-        this.emit(active, { type: "node.step.error", runId: active.id, nodeId: node.id, stepId: step.id, index: flatIndex + 1, total: totalFlat, error: message });
-        throw error instanceof Error ? error : new Error(message);
+
+      let trimmed = "";
+      let lastAssertError: Error | undefined;
+      for (let attempt = 1; attempt <= MAX_STEP_ASSERT_ATTEMPTS; attempt += 1) {
+        const user = attempt === 1 ? baseUser : `${baseUser}\n\n${buildAssertCorrection(lastAssertError)}`;
+        await this.log(active, node.id, "ai-request", `[${step.id}] ${step.label}${attempt > 1 ? `（第 ${attempt} 次，带校验失败原因重问）` : ""}\n\n${model}\n\n${system}`, step.id, inputRef);
+        let result: string;
+        try {
+          result = await chatCompletion({ ...aiConfig, model }, system, user, signal);
+        } catch (error) {
+          const message = describeError(error);
+          this.emit(active, { type: "node.step.error", runId: active.id, nodeId: node.id, stepId: step.id, index: flatIndex + 1, total: totalFlat, error: message });
+          throw new Error(`步骤「${step.label}」调用失败：${message}`, { cause: error });
+        }
+        const raw = result.trim();
+        // 文本步骤：AI 偶尔会把整篇 Markdown 用 ```markdown ... ``` 包起来。
+        // 这里先剥掉外层围栏再校验/落盘，避免因为这种格式问题误判失败。
+        trimmed = step.expects?.kind === "text" ? stripOuterCodeFence(raw) : raw;
+        // 阴阳师攻略 scan：AI 可能少写空数组字段（如 versionNotes），这里自动补全，
+        // 避免 jsonRootKeys 因“少一个空数组”把整条流程判失败。
+        if (node.type === "process.gameguide" && step.id === "scan") {
+          trimmed = ensureGameGuideScanKeys(trimmed);
+        }
+        if (!trimmed) {
+          const message = `步骤「${step.label}」返回空内容`;
+          this.emit(active, { type: "node.step.error", runId: active.id, nodeId: node.id, stepId: step.id, index: flatIndex + 1, total: totalFlat, error: message });
+          throw new Error(message);
+        }
+        await this.log(active, node.id, "ai-response", `[${step.label}] 输出 ${trimmed.length} 字\n\n${trimmed}`, step.id, inputRef);
+        try {
+          assertStepOutput(step, trimmed, { input: inputText, prev, all });
+          lastAssertError = undefined;
+          break;
+        } catch (error) {
+          lastAssertError = error instanceof Error ? error : new Error(describeError(error));
+          if (attempt >= MAX_STEP_ASSERT_ATTEMPTS) {
+            const message = describeError(lastAssertError);
+            this.emit(active, { type: "node.step.error", runId: active.id, nodeId: node.id, stepId: step.id, index: flatIndex + 1, total: totalFlat, error: message });
+            throw lastAssertError;
+          }
+          // 断言门不过就带原因重问一次：最常见的是抄引文时改了一个字，重问一次基本能修好。
+          // 判定标准仍是同一道断言门，所以这不放宽「引用必须逐字」的保证。
+          await this.log(active, node.id, "info", `步骤「${step.label}」校验未通过，带失败原因重问一次：${describeError(lastAssertError)}`, step.id, inputRef);
+        }
       }
       this.emit(active, { type: "node.step.done", runId: active.id, nodeId: node.id, stepId: step.id, index: flatIndex + 1, total: totalFlat, summary: `${step.label} 完成` });
       prev = trimmed;

@@ -1,5 +1,5 @@
 import { eq } from "drizzle-orm";
-import type { AiSettings, AppSettings, AsrSettings, UpdateSettingsRequest } from "@scribe-flow/shared";
+import type { AiSettings, AppSettings, AsrSettings, SearchProvider, UpdateSettingsRequest } from "@scribe-flow/shared";
 import type { AppDatabase } from "../db/client";
 import { appSettings } from "../db/schema";
 import type { AiConfig, AsrConfig } from "./ai";
@@ -18,7 +18,7 @@ const ASR_DEFAULTS: Record<string, string> = {
 };
 
 const SEARCH_DEFAULTS: Record<string, string> = {
-  "search.provider": "tavily",
+  "search.provider": "zhipu",
   "search.maxResults": "5",
 };
 
@@ -78,6 +78,19 @@ function migrateNutstorePath(value: string, fallback: string): string {
   return value;
 }
 
+const SEARCH_PROVIDERS: SearchProvider[] = ["zhipu", "tavily"];
+
+/**
+ * 读取外部检索渠道。
+ * 旧版本把渠道硬编码为 Tavily，界面上也始终写 provider=tavily；只存了 Key 而没有 provider 的安装
+ * 继续按 Tavily 解释那把密钥，否则升级后会用 Tavily 的 Key 去请求智谱并静默失败。
+ */
+function searchProviderOf(db: AppDatabase): SearchProvider {
+  const stored = raw(db, "search.provider", "");
+  if ((SEARCH_PROVIDERS as string[]).includes(stored)) return stored as SearchProvider;
+  return raw(db, "search.apiKey", "") ? "tavily" : (SEARCH_DEFAULTS["search.provider"] as SearchProvider);
+}
+
 export function getSettings(db: AppDatabase): AppSettings {
   return {
     ai: {
@@ -93,7 +106,7 @@ export function getSettings(db: AppDatabase): AppSettings {
       hasKey: Boolean(raw(db, "asr.apiKey", "")),
     },
     search: {
-      provider: "tavily",
+      provider: searchProviderOf(db),
       hasKey: Boolean(raw(db, "search.apiKey", "")),
       maxResults: Number(raw(db, "search.maxResults", SEARCH_DEFAULTS["search.maxResults"]) ?? 5) || 5,
     },
@@ -144,6 +157,7 @@ export function getAsrConfig(db: AppDatabase): AsrConfig {
 }
 
 export interface SearchConfig {
+  provider: SearchProvider;
   apiKey: string;
   maxResults: number;
 }
@@ -151,6 +165,7 @@ export interface SearchConfig {
 export function getSearchConfig(db: AppDatabase): SearchConfig {
   const settings = getSettings(db);
   return {
+    provider: settings.search.provider,
     apiKey: raw(db, "search.apiKey", ""),
     maxResults: Math.max(1, Math.min(10, settings.search.maxResults || 5)),
   };
@@ -184,7 +199,9 @@ export function updateSettings(db: AppDatabase, patch: UpdateSettingsRequest) {
     if (patch.asr.apiKey) set(db, "asr.apiKey", patch.asr.apiKey.trim());
   }
   if (patch.search) {
-    if (patch.search.provider) set(db, "search.provider", patch.search.provider);
+    if (patch.search.provider && (SEARCH_PROVIDERS as string[]).includes(patch.search.provider)) {
+      set(db, "search.provider", patch.search.provider);
+    }
     if (patch.search.apiKey !== undefined && patch.search.apiKey.trim()) set(db, "search.apiKey", patch.search.apiKey.trim());
     if (patch.search.maxResults !== undefined) set(db, "search.maxResults", String(Math.max(1, Math.min(10, patch.search.maxResults))));
   }
