@@ -1,4 +1,4 @@
-import type { GraphNode, WorkflowGraph } from "./graph";
+import type { GraphNode, NodePick, WorkflowGraph } from "./graph";
 
 /**
  * 素材挑选（段级分流）。
@@ -12,9 +12,6 @@ import type { GraphNode, WorkflowGraph } from "./graph";
  * - 段标识缺失的产物视为不可筛选，永远通过（整体产物如 merge 的文档不受影响）；
  * - 来源节点 id 不在 pick 里 = 该来源全部选中（旧工程兼容）。
  */
-
-/** 节点级素材挑选：来源节点 id → 选中的素材段标识。 */
-export type NodePick = Record<string, string[]>;
 
 /**
  * 段标识：`bvid:<bvid>:<page>` 或 `node:<来源节点 id>`。

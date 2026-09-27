@@ -1,6 +1,5 @@
 import { canConnect, type PortSpec, type PortType } from "./port";
 import type { DrillDifficulty, DrillKind } from "./drill";
-import type { NodePick } from "./segment";
 
 export type NodeRunStatus = "idle" | "queued" | "running" | "done" | "error" | "cancelled" | "skipped";
 
@@ -196,6 +195,9 @@ export type NodeType =
   | "process.mindmap"
   | "process.obsidian"
   | "process.drill";
+
+/** 节点级素材挑选：来源节点 id → 选中的素材段标识。 */
+export type NodePick = Record<string, string[]>;
 
 export interface NodeBase {
   id: string;

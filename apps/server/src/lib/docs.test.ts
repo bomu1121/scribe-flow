@@ -1,10 +1,10 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Hono } from "hono";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { DocAccessError, listDocs, readDoc, resolveDocPath } from "./docs";
-import { parseDocFrontMatter } from "@scribe-flow/shared";
+import { docTitleFrom, parseDocFrontMatter } from "@scribe-flow/shared";
 import { docsApi } from "../routes/docs";
 
 /**
@@ -158,6 +158,87 @@ describe("文档读取：列表与正文", () => {
   });
 });
 
+/**
+ * 列表为了省 I/O 只读文件头（`HEAD_BYTES`），靠 `headIsConclusive` 判断是否需要退回整读。
+ *
+ * 直接和「整读一遍再解析」的朴素实现比对。这条对拍的必要性在于：退回逻辑写错时症状是
+ * **标题悄悄变成截断的半行**或元数据丢失，不报错、不抛异常——正是那种"看起来对"的错。
+ */
+describe("文档读取：只读头部与整读等价", () => {
+  let repo: string;
+  let docs: string;
+
+  /** 朴素实现：整读全文再解析，作为等价性的基准。 */
+  const naive = (abs: string, name: string, repoPath: string) => {
+    const text = readFileSync(abs, "utf8");
+    const stat = statSync(abs);
+    return {
+      path: repoPath,
+      dir: repoPath.slice(0, repoPath.lastIndexOf("/")),
+      title: docTitleFrom(text, name),
+      frontMatter: parseDocFrontMatter(text)?.data ?? null,
+      size: stat.size,
+      modifiedAt: stat.mtimeMs,
+    };
+  };
+
+  const CASES: [string, string][] = [
+    // 1) H1 远在 4 KB 之后 → 必须退回
+    ["far-h1.md", `${"填充段落。\n".repeat(900)}# 远处的标题\n`],
+    // 2) front matter 未闭合 → 必须退回
+    ["unclosed.md", `---\ntitle: 未闭合\n\n${"正文。\n".repeat(900)}`],
+    // 3) 全文没有 H1 → 必须退回
+    ["no-h1.md", `---\ntitle: 无 H1\nclass: status\n---\n\n${"正文。\n".repeat(900)}`],
+    // 4) 超长 front matter 把 H1 顶出头部 → 必须退回
+    ["fat-front-matter.md", `---\ntitle: 超长元数据\n${"填充: 值\n".repeat(400)}---\n\n# 头之后的标题\n`],
+    // 5) 头部正好把 H1 截断：`/^#\s+(.+)$/m` 会把截断的半行也匹配出来 → 必须退回
+    ["cut-h1.md", `${"a".repeat(4090)}\n# ${"很长".repeat(80)}\n\n正文\n`],
+    // 6) 短文件：整个文件都在头部里，直接采用头读结果
+    ["short.md", "---\ntitle: 短文档\nclass: plan\n---\n\n# 短文档\n\n正文\n"],
+  ];
+
+  beforeAll(() => {
+    repo = mkdtempSync(join(tmpdir(), "sf-docs-head-"));
+    docs = join(repo, "docs");
+    mkdirSync(join(docs, "decisions"), { recursive: true });
+    for (const [name, content] of CASES) writeFileSync(join(docs, name), content, "utf8");
+    // 无 H1 且无 front matter：标题只能由文件名兜底
+    writeFileSync(join(docs, "decisions", "bare.md"), "只有正文，没有标题行\n", "utf8");
+  });
+
+  afterAll(() => rmSync(repo, { recursive: true, force: true }));
+
+  it("每个边界的列表结果都与整读逐字段一致", () => {
+    const listed = new Map(listDocs(docs).map((item) => [item.path, item]));
+    expect(listed.size).toBe(CASES.length + 1);
+    for (const [name] of CASES) {
+      const repoPath = `docs/${name}`;
+      expect(listed.get(repoPath), repoPath).toEqual(naive(join(docs, name), name, repoPath));
+    }
+    const bare = "docs/decisions/bare.md";
+    expect(listed.get(bare)).toEqual(naive(join(docs, "decisions", "bare.md"), "bare.md", bare));
+  });
+
+  it("截断的 H1 不会被当成标题（退回整读的直接证据）", () => {
+    const item = listDocs(docs).find((i) => i.path === "docs/cut-h1.md");
+    expect(item?.title).toBe("很长".repeat(80));
+    expect(item?.title).not.toContain("\uFFFD");
+  });
+
+  it("withBody 一次返回正文，且与逐篇 readDoc 完全一致", () => {
+    const listed = listDocs(docs, { withBody: true });
+    expect(listed.length).toBe(CASES.length + 1);
+    for (const item of listed) {
+      const single = readDoc(docs, item.path);
+      expect(item.body, item.path).toBe(single.body);
+      expect(item.title, item.path).toBe(single.title);
+      expect(item.frontMatter, item.path).toEqual(single.frontMatter);
+    }
+    // 不带 body 时不该多传正文
+    expect(listDocs(docs).every((item) => item.body === undefined)).toBe(true);
+  });
+});
+
 describe("文档接口", () => {
   let repo: string;
   let app: Hono;
@@ -178,6 +259,16 @@ describe("文档接口", () => {
     const data = (await res.json()) as { available: boolean; items: { path: string }[] };
     expect(data.available).toBe(true);
     expect(data.items.map((i) => i.path)).toEqual(["docs/status.md"]);
+  });
+
+  it("GET /api/docs?body=1 一次带上正文，供阅读器省掉逐篇请求", async () => {
+    const res = await app.request("/api/docs?body=1");
+    expect(res.status).toBe(200);
+    const data = (await res.json()) as { items: { path: string; body?: string }[] };
+    expect(data.items[0]?.body).toContain("正文");
+    // 默认不带正文：列表接口不该在没被要求时多传几百 KB
+    const plain = (await (await app.request("/api/docs")).json()) as { items: { body?: string }[] };
+    expect(plain.items[0]?.body).toBeUndefined();
   });
 
   it("GET /api/docs/file 返回正文与元数据", async () => {

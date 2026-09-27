@@ -17,7 +17,10 @@
     "lint:slop": "node scripts/slop-lint.mjs",
     "lint:ui": "node scripts/ui-lint.mjs",
     "lint:docs": "node scripts/docs-lint.mjs",
-    "lint": "pnpm lint:slop && pnpm lint:ui && pnpm lint:docs",
+    "knip": "knip",
+    "depcruise": "depcruise apps/server/src apps/web/src packages/shared/src",
+    "check:prose": "vale docs/ README.md CHANGELOG.md AGENTS.md sharing/",
+    "lint": "pnpm lint:slop && pnpm lint:ui && pnpm lint:docs && pnpm knip && pnpm depcruise",
     "docs:gen": "node scripts/docs-gen.mjs",
     "docs:lint": "node scripts/docs-lint.mjs",
     "docs:freeze": "node scripts/docs-freeze.mjs",
@@ -27,5 +30,9 @@
     "check:api:m4": "node scripts/m4-api-check.mjs",
     "check:api:m6": "node scripts/m6-api-check.mjs",
     "check:api:drill": "node scripts/m-drill-api-check.mjs"
+  },
+  "devDependencies": {
+    "dependency-cruiser": "^18.4.0",
+    "knip": "^5.88.1"
   }
 }

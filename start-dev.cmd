@@ -2,11 +2,18 @@
 setlocal
 cd /d "%~dp0"
 
-echo Starting ScribeFlow dev servers...
-echo   Server: http://localhost:8787
+echo ScribeFlow dev servers
 echo   Web:    http://localhost:5173
+echo   Server: http://localhost:8787
+echo.
+echo Ctrl+C to stop both.
+echo.
 
-start "ScribeFlow Server" cmd /k "pnpm --filter @scribe-flow/server dev"
-start "ScribeFlow Web" cmd /k "pnpm --filter @scribe-flow/web dev"
+pnpm dev
+set EXITCODE=%ERRORLEVEL%
+
+echo.
+echo Dev servers exited with code %EXITCODE%.
+pause
 
 endlocal

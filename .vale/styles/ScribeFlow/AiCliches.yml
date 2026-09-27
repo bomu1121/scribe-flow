@@ -1,0 +1,15 @@
+extends: existence
+message: "套话「%s」：删掉它，直接说事"
+level: error
+scope: text
+nonword: true
+tokens:
+  - 值得注意的是
+  - 需要注意的是
+  - 需要强调的是
+  - 综上所述
+  - 总而言之
+  - 不言而喻
+  - 众所周知
+  - 不难看出
+  - 在某种意义上

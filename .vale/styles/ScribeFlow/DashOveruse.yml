@@ -1,0 +1,6 @@
+extends: occurrence
+message: "破折号用了 %d 次（上限 20）：连续用通常说明句子在硬拗，考虑拆句或改逗号"
+level: warning
+scope: text
+token: "——"
+max: 20

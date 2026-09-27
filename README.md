@@ -13,11 +13,11 @@
 
 | 指标 | 当前值 |
 | --- | --- |
-| 测试用例（`it(` 声明数） | **189**（shared 71 · server 104 · web 14） |
+| 测试用例（`it(` 声明数） | **193**（shared 71 · server 108 · web 14） |
 | UI 冒烟检查项（`pnpm smoke:ui`） | **50**（其中 3 项为恒真占位，净 47） |
 | API 自检项 | m2 7 · m3 14 · m4 12 · m6 9 · drill 22 |
 | 内置提示词块（`BUILTIN_PROMPT_BLOCKS`） | **13** |
-| 文档数（`docs/` 下 `.md`，不含调研原文） | 37 |
+| 文档数（`docs/` 下 `.md`，不含调研原文） | 43 |
 <!-- docs-gen:numbers:end -->
 
 ## 技术栈
@@ -65,7 +65,7 @@ pnpm build          # 构建
 pnpm lint           # 全部门禁（反 slop + UI 铁律 + 文档）
 pnpm lint:slop      # 去 AI 味自检（渐变/玻璃拟态/emoji/辉光等反模式扫描）
 pnpm lint:ui        # UI 铁律自检（Portal 全局样式/z-index 令牌/颜色单一来源）
-pnpm docs:gen       # 重新生成 README/status.md 里的数字与文档地图
+pnpm docs:gen       # 重新生成 README/status/nodes/architecture 里的数字、文档地图与清单
 pnpm docs:lint      # 文档门禁（front matter/死链/漂移数字/验收档案冻结/体积预算）
 pnpm docs:freeze    # 显式重新冻结验收档案的内容指纹
 pnpm smoke:ui       # CDP + 真实 Chrome 的 UI 冒烟（需先 pnpm dev）
@@ -76,25 +76,15 @@ pnpm check:api:m6   # M6 API 自检（重试/条件分支/文本工具/章节切
 pnpm check:api:drill # 知识巩固 API 自检（需真实 AI 密钥）
 ```
 
-> 改动源码后如果动了用例数、冒烟项数或内置提示词块，请跑一次 `pnpm docs:gen` 并一并提交。
+> 改动源码后如果动了用例数、冒烟项数、内置提示词块、节点类型或接口路由，请跑一次 `pnpm docs:gen` 并一并提交。
 
 ## 文档
 
-文档分类与维护规则见 [AGENTS.md](./AGENTS.md)；现状看 [docs/status.md](./docs/status.md)，完整文档地图在
-[status.md 的末尾](./docs/status.md#4-文档地图)。
+想了解怎么用看 **[使用说明](docs/usage.md)**，想知道每个节点要填什么看 **[节点手册](docs/nodes.md)**，
+想看实现看 **[架构与实现总览](docs/architecture.md)**，部署看 **[部署说明](docs/deploy.md)**。
 
-`docs/` 按生命周期分目录，**目录名就是分类信号，不要混用**：
-
-| 目录 | 类 | 代表文件 | 规则 |
-| --- | --- | --- | --- |
-| `docs/` 根 | `status` | `status.md`、`deploy.md` | 必须反映今天；数字只能来自生成块 |
-| `docs/decisions/` | `decision` | 方案、选型、架构 | 日期不可变；只靠 supersede/deprecate，永不删除 |
-| `docs/plans/` | `plan` | 实施清单、路线图 | 落地时把 `status` 改为 `done`，并补验收档案 |
-| `docs/evidence/` | `evidence` | `2026-08-28-m2-acceptance.md` 等 | 冻结快照（验收档案 / 竣工清单），**永不修改**（内容指纹由 CI 校验） |
-| `docs/research/` | `research` | 调研、抓取原文 | 只追加 |
-| `docs/samples/` | — | 样例稿 | 产物存档，不需要 front matter |
-
-验收档案的文件名带冻结日期前缀，读文件名就知道它代表哪一天，**不要把它当现状引用**。
+进度与已知缺口在 [docs/status.md](docs/status.md)。`docs/` 下的方案、计划与验收档案都是
+**历史快照，不代表现状**。文档怎么维护（分类、front matter、哪些改动必须同步）见 [AGENTS.md](./AGENTS.md)。
 
 ## 设计约定
 

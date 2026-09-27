@@ -6,12 +6,18 @@ import { DocAccessError, isArchivedDoc, listDocs, readDoc } from "../lib/docs";
  *
  * 目录不存在时（例如生产镜像没有 COPY docs/）不报 500，而是返回 `available: false`，
  * 让前端给出「当前部署未包含文档目录」的明确提示。
+ *
+ * `GET /?body=1` 连正文一起返回。阅读器的正文合计几百 KB 且几乎都是纯文本，而打开阅读器要读的
+ * 是「列表 + 首篇正文」：分成两次请求时，第二个请求往往要新建一条 TCP 连接，而开发环境里对
+ * `localhost:5173` 新建连接要等约 205 ms（Vite 只监听 IPv4，见 `docs/status.md` 的 P1 条目）。
+ * 一次拿全后打开只剩一次请求，之后切换文档不再发请求（实测打开到正文可读 355 → 62 ms）。
  */
 export function docsApi(docsDir: string) {
   const api = new Hono();
 
   api.get("/", (c) => {
-    const docs = listDocs(docsDir);
+    const withBody = c.req.query("body") === "1";
+    const docs = listDocs(docsDir, { withBody });
     return c.json({
       available: docs.length > 0,
       dir: docsDir,

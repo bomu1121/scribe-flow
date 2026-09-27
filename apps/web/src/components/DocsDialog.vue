@@ -12,6 +12,12 @@ interface DocDetail extends DocSummary {
   archived: boolean;
 }
 
+/** 列表项：`body` 只在服务端支持聚合请求时一起回来（旧进程可能还没有）。 */
+interface DocEntry extends DocSummary {
+  body?: string;
+  archived?: boolean;
+}
+
 interface Group {
   key: string;
   label: string;
@@ -20,7 +26,7 @@ interface Group {
 
 const ui = useUiStore();
 
-const items = ref<DocSummary[]>([]);
+const items = ref<DocEntry[]>([]);
 const available = ref(true);
 const listError = ref("");
 const listLoading = ref(false);
@@ -34,6 +40,36 @@ const paneRef = ref<HTMLElement | null>(null);
 
 /** 已读过的正文缓存：来回切换文档时不重复请求。 */
 const cache = new Map<string, DocDetail>();
+
+const busy = computed(() => listLoading.value || detailLoading.value);
+
+/**
+ * 加载指示延迟出现，短于这个时长的加载什么都不显示。
+ *
+ * 本地打开阅读器实测约 60 ms，指示灯一闪而过比不显示更刺眼——「突兀」正是这么来的。
+ * 超过这个时长才说明真的在等，这时才给提示。（数值取全站动效令牌里的 --dur-2 一档。）
+ */
+const BUSY_HINT_DELAY = 180;
+const showBusyHint = ref(false);
+let busyHintTimer: number | undefined;
+
+watch(
+  busy,
+  (loading) => {
+    window.clearTimeout(busyHintTimer);
+    if (!loading) {
+      showBusyHint.value = false;
+      return;
+    }
+    busyHintTimer = window.setTimeout(() => {
+      showBusyHint.value = true;
+    }, BUSY_HINT_DELAY);
+  },
+  { immediate: true },
+);
+
+/** 还没有任何正文可显示时才占位；有旧正文时只压暗（见模板里的 is-loading）。 */
+const showPanePlaceholder = computed(() => showBusyHint.value && !detail.value);
 
 const GROUP_LABELS: Record<string, string> = {
   docs: "现状",
@@ -149,13 +185,25 @@ function formatSize(bytes: number): string {
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
 
-async function loadList() {
+/**
+ * 一次请求把列表与全部正文都取回来。
+ *
+ * 「列表 + 逐篇取正文」是两次串行请求，而第二个请求通常要新建一条 TCP 连接——开发环境里对
+ * `localhost:5173` 新建连接要等约 205 ms（Vite 只监听 IPv4，`localhost` 先解析到 `::1`，
+ * 见 `docs/status.md` 的 P1 条目）。正文合计几百 KB 且全是纯文本，并进同一次请求几乎不加成本，
+ * 换来打开只剩一次请求、之后每次切换文档都是 0 次（实测打开到正文可读 355 → 62 ms）。
+ */
+async function loadDocs() {
   listLoading.value = true;
   listError.value = "";
   try {
-    const data = await api.get<{ available: boolean; items: DocSummary[] }>("/api/docs");
-    items.value = data.items;
+    const data = await api.get<{ available: boolean; items: DocEntry[] }>("/api/docs?body=1");
     available.value = data.available;
+    items.value = data.items;
+    for (const item of data.items) {
+      // 服务端没跟上（例如后端进程还是旧版）时 body 缺失，退回逐篇取正文
+      if (typeof item.body === "string") cache.set(item.path, item as DocDetail);
+    }
     if (data.available && !activePath.value) await select(items.value[0]?.path ?? "");
   } catch (err) {
     listError.value = err instanceof Error ? err.message : "文档列表加载失败";
@@ -171,24 +219,27 @@ async function select(path: string) {
   const cached = cache.get(path);
   if (cached) {
     detail.value = cached;
-    paneRef.value?.scrollTo({ top: 0 });
+    scrollPaneToTop();
     return;
   }
   detailLoading.value = true;
-  detail.value = null;
   try {
     const data = await api.get<DocDetail>(`/api/docs/file?path=${encodeURIComponent(path)}`);
     cache.set(path, data);
     // 期间用户可能已经切到别的文档，避免把旧结果盖上去
     if (activePath.value !== path) return;
     detail.value = data;
-    paneRef.value?.scrollTo({ top: 0 });
+    scrollPaneToTop();
   } catch (err) {
     if (activePath.value !== path) return;
     detailError.value = err instanceof Error ? err.message : "文档加载失败";
   } finally {
-    detailLoading.value = false;
+    if (activePath.value === path) detailLoading.value = false;
   }
+}
+
+function scrollPaneToTop() {
+  paneRef.value?.scrollTo({ top: 0 });
 }
 
 /**
@@ -232,7 +283,7 @@ watch(
       window.addEventListener("keydown", onKeydown);
       // 每次打开都从完整列表开始：上次留下的筛选词会让"文档怎么少了"变成困惑。
       keyword.value = "";
-      if (items.value.length === 0) void loadList();
+      if (items.value.length === 0) void loadDocs();
     } else {
       window.removeEventListener("keydown", onKeydown);
     }
@@ -251,7 +302,7 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown));
           <header class="sf-docs-head">
             <span class="sf-docs-head-icon"><BookText :size="15" /></span>
             <h2 class="sf-docs-head-title">项目文档</h2>
-            <span class="sf-docs-head-count tnum">{{ items.length }} 篇</span>
+            <span v-if="items.length > 0" class="sf-docs-head-count tnum">{{ items.length }} 篇</span>
             <button type="button" class="sf-docs-head-close" aria-label="关闭项目文档" @click="ui.closeDocs()">
               关闭
             </button>
@@ -266,7 +317,12 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown));
               </div>
 
               <div class="sf-docs-list">
-                <p v-if="listLoading" class="sf-docs-hint">正在读取文档目录…</p>
+                <div v-if="listLoading && items.length === 0" class="sf-docs-state">
+                  <span v-if="showBusyHint" class="sf-loading-hint">
+                    <span class="sf-loading-spinner" aria-hidden="true" />
+                    <span>正在读取文档目录…</span>
+                  </span>
+                </div>
                 <p v-else-if="listError" class="sf-docs-hint sf-docs-hint-error">{{ listError }}</p>
                 <p v-else-if="!available" class="sf-docs-hint">
                   当前部署未包含文档目录，因此没有可预览的内容。开发环境下请确认仓库根的
@@ -298,8 +354,13 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown));
               </div>
             </aside>
 
-            <section ref="paneRef" class="sf-docs-pane">
-              <p v-if="detailLoading" class="sf-docs-hint">正在读取…</p>
+            <section ref="paneRef" class="sf-docs-pane" :aria-busy="busy ? 'true' : undefined">
+              <div v-if="showPanePlaceholder" class="sf-docs-state">
+                <span class="sf-loading-hint">
+                  <span class="sf-loading-spinner" aria-hidden="true" />
+                  <span>正在读取…</span>
+                </span>
+              </div>
 
               <div v-else-if="detailError" class="sf-docs-pane-error">
                 <p>{{ detailError }}</p>
@@ -308,7 +369,7 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown));
                 </button>
               </div>
 
-              <article v-else-if="detail" class="sf-docs-article">
+              <article v-else-if="detail" class="sf-docs-article" :class="{ 'is-loading': busy }">
                 <header class="sf-docs-article-head">
                   <h1 class="sf-docs-article-title">{{ detail.title }}</h1>
                   <p class="sf-docs-article-path">
@@ -507,11 +568,34 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown));
 /* ---------------------------------------------------------------- 右正文 */
 
 .sf-docs-pane {
+  position: relative;
   flex: 1 1 auto;
   min-width: 0;
   min-height: 0;
   overflow-y: auto;
   background: var(--color-bg);
+}
+
+/*
+ * 加载占位：用全站统一的那套（`.sf-loading-hint` + `.sf-loading-spinner`，定义在 styles/app.css，
+ * 画布节点与小卡预览也是它）。这里只负责占位与居中——自己造骨架屏/进度条会与其它地方不一致。
+ * 注意指示灯本身是**延迟出现**的（见 BUSY_HINT_DELAY），短暂加载期间这里就是一块空的底色。
+ */
+.sf-docs-state {
+  display: grid;
+  place-items: center;
+  /* 撑满所在栏：指示灯落在这块空白的正中，而不是贴着顶部（大块空白里贴顶读起来像残留元素）。 */
+  min-height: 100%;
+  padding: 24px;
+  font-size: 12.5px;
+  color: var(--color-text-tertiary);
+}
+
+/* 旧正文保留在屏上但压暗：切换文档时不再"整块消失 → 重新出现"，
+   用户能看出是在换内容，而不是以为点空了。 */
+.sf-docs-article.is-loading {
+  opacity: 0.45;
+  transition: opacity var(--dur-2) var(--ease-out);
 }
 
 .sf-docs-article {
