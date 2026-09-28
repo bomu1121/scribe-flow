@@ -361,7 +361,7 @@ async function run() {
   check(
     "快捷新建默认值：单线模版 + 推荐提示词块",
     Boolean(quickFields?.values?.some((v) => v.includes("视频转笔记"))) &&
-      Boolean(quickFields?.values?.some((v) => v.includes("观点提炼"))),
+      Boolean(quickFields?.values?.some((v) => v.includes("观点笔记"))),
     (quickFields?.values ?? []).join(" / "),
   );
   await evalJs(`(() => {
@@ -642,12 +642,12 @@ async function run() {
     const optionLabels = await evalJs("[...document.querySelectorAll('.sf-model-select__option-label')].map((n) => n.textContent.trim())");
     check("提示词块下拉打开且有选项（≥3）", promptOpen, `${optionLabels.length} 个选项`);
     const clickedLabel = await evalJs(`(() => {
-      const el = [...document.querySelectorAll('.sf-model-select__option')].find((b) => /观点提炼|技术文案提炼|信息溯源/.test(b.textContent ?? ''));
+      const el = [...document.querySelectorAll('.sf-model-select__option')].find((b) => /观点笔记|技术点拆解|信息溯源/.test(b.textContent ?? ''));
       if (!el) return '';
       el.click();
       return el.querySelector('.sf-model-select__option-label')?.textContent?.trim() ?? '';
     })()`);
-    check("提示词块下拉选中回显", /观点提炼|技术文案提炼|信息溯源/.test(clickedLabel), clickedLabel);
+    check("提示词块下拉选中回显", /观点笔记|技术点拆解|信息溯源/.test(clickedLabel), clickedLabel);
 
     // ASR 引擎下拉：转写节点默认 MiMo-V2.5 → 切到 OpenAI 兼容
     const asrBefore = await evalJs("document.querySelector('.vue-flow__node .sf-node--process-transcribe .sf-model-select__value')?.textContent?.trim() ?? ''");

@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import { computed, defineAsyncComponent, h, onBeforeUnmount, onMounted, provide, ref, watch } from "vue";
+import { computed, defineAsyncComponent, h, onBeforeUnmount, onMounted, provide, ref, watch, type Component } from "vue";
 import { useRouter } from "vue-router";
 import { ElInput, ElMessageBox, ElSwitch, ElTooltip, ElUpload, type UploadRequestOptions } from "element-plus";
-import { PhBookOpenText, PhCloud, PhDotsThreeVertical, PhFileArrowDown, PhFileText, PhGitBranch, PhGitMerge, PhListChecks, PhMagicWand, PhMicrophone, PhPlay, PhShareNetwork, PhSlidersHorizontal, PhSparkle, PhSwap, PhTreeStructure, PhUploadSimple, PhVideo } from "@phosphor-icons/vue";
+import { PhBookOpenText, PhCloud, PhDotsThreeVertical, PhFileArrowDown, PhFileText, PhFunnel, PhGitBranch, PhGitMerge, PhListChecks, PhMagicWand, PhMicrophone, PhPlay, PhShareNetwork, PhSlidersHorizontal, PhSparkle, PhSwap, PhTreeStructure, PhUploadSimple, PhVideo } from "@phosphor-icons/vue";
 import { CircleAlert } from "lucide-vue-next";
 import { toast } from "@/lib/toast";
 import { Handle, Position, useVueFlow, type NodeProps } from "@vue-flow/core";
@@ -486,40 +486,33 @@ function toggleAdvanced() {
 const noInlineFormTypes: NodeType[] = ["process.refine", "process.mindmap"];
 const hasBodyContent = computed(() => !noInlineFormTypes.includes(nodeType.value) || advancedOpen.value);
 
-const typeIcon = computed(() => {
-  switch (nodeType.value) {
-    case "source.bili":
-      return PhVideo;
-    case "source.file":
-      return PhUploadSimple;
-    case "source.text":
-      return PhFileText;
-    case "process.transcribe":
-      return PhMicrophone;
-    case "process.refine":
-      return PhMagicWand;
-    case "process.prompt":
-      return PhSparkle;
-    case "process.merge":
-      return PhGitMerge;
-    case "process.output":
-      return PhFileArrowDown;
-    case "flow.if":
-      return PhGitBranch;
-    case "process.text":
-      return PhSwap;
-    case "process.chapter":
-      return PhTreeStructure;
-    case "process.gameguide":
-      return PhSparkle;
-    case "process.mindmap":
-      return PhShareNetwork;
-    case "process.obsidian":
-      return PhBookOpenText;
-    case "process.drill":
-      return PhListChecks;
-  }
-});
+/**
+ * 卡片头部的类型图标。
+ *
+ * 用 `Record<NodeType, …>` 而不是 switch：漏配一个类型会直接编译不过（`NODE_TYPE_LABELS` /
+ * `NODE_CARD_WIDTH` / `NODE_PORTS` 都是这个套路）。这里曾经是 switch，`flow.pick` 漏了一支没人发现，
+ * 素材挑选卡的头部就没有图标——标题比别的卡少缩进 17px，整张卡看起来不像同一套组件。
+ */
+const TYPE_ICONS: Record<NodeType, Component> = {
+  "source.bili": PhVideo,
+  "source.file": PhUploadSimple,
+  "source.text": PhFileText,
+  "process.transcribe": PhMicrophone,
+  "process.refine": PhMagicWand,
+  "process.prompt": PhSparkle,
+  "process.merge": PhGitMerge,
+  "process.output": PhFileArrowDown,
+  "flow.if": PhGitBranch,
+  "flow.pick": PhFunnel,
+  "process.text": PhSwap,
+  "process.chapter": PhTreeStructure,
+  "process.gameguide": PhSparkle,
+  "process.mindmap": PhShareNetwork,
+  "process.obsidian": PhBookOpenText,
+  "process.drill": PhListChecks,
+};
+
+const typeIcon = computed(() => TYPE_ICONS[nodeType.value]);
 
 const statusClass = computed(() => (props.data.status ? `is-${props.data.status}` : "is-idle"));
 const sizeClass = computed(() => `sf-node--${nodeType.value.replaceAll(".", "-")}`);
@@ -758,15 +751,17 @@ const gameGuideModeOptions = [
 /** 检索密钥是否已配置：没配就不该让需要联网核查的模版出现在可选列表里。 */
 const searchReady = computed(() => Boolean(settingsStore.settings?.search.hasKey));
 
+/**
+ * 提示词块下拉的选项文案：只写名字，自己写的块标一个「我的」。
+ * 版本号、配方、内置、推荐这些说法都留在设置页的块库里（那里才是管版本的地方），卡片上不出现。
+ */
 const promptOptions = computed(() =>
   availablePromptBlocks(
-    promptsStore.allBlocks.filter((block) => block.series !== "阴阳师攻略加工"),
+    promptsStore.allBlocks.filter((block) => block.series !== "阴阳师攻略"),
     searchReady.value,
   ).map((block) => {
     const parts = [block.name];
-    if (block.version) parts.push(block.version);
-    if (block.recipe) parts.push("配方");
-    if (block.builtin) parts.push("内置");
+    if (!block.builtin) parts.push("我的");
     return { label: parts.join(" · "), value: block.id };
   }),
 );
@@ -1775,26 +1770,6 @@ const themeOptions = [
   user-select: none;
 }
 
-.sf-node-desc {
-  margin: 0;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: var(--color-text-tertiary);
-  font-size: 11px;
-  line-height: 1.4;
-  user-select: none;
-}
-
-/* 正文里的说明文字：换行完整显示，不做单行截断（头部那行空间有限才截断）。 */
-.sf-node-desc--block {
-  white-space: normal;
-  overflow: visible;
-  text-overflow: clip;
-  line-height: 1.55;
-}
-
 .sf-node-error-trigger {
   display: inline-flex;
   align-items: center;
@@ -2454,10 +2429,6 @@ const themeOptions = [
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.sf-node-control {
-  width: 100%;
 }
 
 .sf-node-textarea {

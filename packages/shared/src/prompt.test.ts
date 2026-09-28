@@ -2,13 +2,20 @@ import { describe, expect, it } from "vitest";
 import { BUILTIN_PROMPT_BLOCKS, availablePromptBlocks, bindablePromptBlocks } from "./prompt";
 
 describe("builtin prompt blocks", () => {
+  it("展示名与系列名不夹带内部说法（版本号 / 配方 / 内置 / 代号）", () => {
+    for (const block of BUILTIN_PROMPT_BLOCKS) {
+      expect(block.name).not.toMatch(/v\d|配方|内置|试点|CASCADE|JSON/i);
+      expect(block.series ?? block.name).not.toMatch(/v\d|配方|内置|试点|CASCADE|JSON/i);
+    }
+  });
+
   it("内置块 id 不重复", () => {
     const ids = BUILTIN_PROMPT_BLOCKS.map((block) => block.id);
     expect(new Set(ids).size).toBe(ids.length);
   });
 
   it("保留各版本观点提炼并标注版本：v4 接管推荐位", () => {
-    const insightBlocks = BUILTIN_PROMPT_BLOCKS.filter((block) => block.series === "观点提炼");
+    const insightBlocks = BUILTIN_PROMPT_BLOCKS.filter((block) => block.series === "观点笔记");
     expect(insightBlocks.map((block) => block.version).sort()).toEqual(["v1", "v2", "v3", "v4"]);
     expect(insightBlocks.find((block) => block.id === "builtin.insight")?.recommended).toBeUndefined();
     expect(insightBlocks.find((block) => block.id === "builtin.insight.v4")?.recommended).toBe(true);
@@ -26,7 +33,6 @@ describe("builtin prompt blocks", () => {
   it("观点提炼 v4 为排版核对配方：4 步、finalize 带禁 ### 硬门、prompt 字段是新版式", () => {
     const v4 = BUILTIN_PROMPT_BLOCKS.find((block) => block.id === "builtin.insight.v4");
     expect(v4).toBeDefined();
-    expect(v4?.name).toContain("排版版");
     expect(v4?.version).toBe("v4");
     expect(v4?.recommended).toBe(true);
     expect(v4?.recipe?.steps.map((step) => step.id)).toEqual(["scan", "draft", "audit", "finalize"]);
@@ -41,7 +47,7 @@ describe("builtin prompt blocks", () => {
   it("新增知识科普提炼内置块", () => {
     const knowledge = BUILTIN_PROMPT_BLOCKS.find((block) => block.id === "builtin.knowledge");
     expect(knowledge).toBeDefined();
-    expect(knowledge?.name).toBe("知识科普提炼");
+    expect(knowledge?.series).toBe("科普笔记");
     expect(knowledge?.version).toBe("v1");
     expect(knowledge?.prompt).toContain("核心知识框架");
   });
@@ -62,8 +68,7 @@ describe("builtin prompt blocks", () => {
   it("新增历史认知加工内置块", () => {
     const history = BUILTIN_PROMPT_BLOCKS.find((block) => block.id === "builtin.history");
     expect(history).toBeDefined();
-    expect(history?.name).toBe("历史认知加工");
-    expect(history?.series).toBe("历史认知加工");
+    expect(history?.series).toBe("历史脉络梳理");
     expect(history?.version).toBe("v1");
     expect(history?.recommended).toBe(true);
   });
@@ -83,7 +88,6 @@ describe("builtin prompt blocks", () => {
     expect(v1?.version).toBe("v1");
     expect(v1?.recipe).toBeUndefined();
     expect(v2).toBeDefined();
-    expect(v2?.name).toContain("结构化核对版");
     expect(v2?.recipe?.steps.map((step) => step.id)).toEqual(["scan", "audit", "finalize"]);
     expect(v2?.recipe?.steps.every((step) => step.system.length > 0)).toBe(true);
     // 推荐位交给 v3；v2 仍可用，只是不再推荐
@@ -116,9 +120,7 @@ describe("builtin prompt blocks", () => {
     expect(ids).toContain("builtin.gameguide.v2");
     const v1 = BUILTIN_PROMPT_BLOCKS.find((block) => block.id === "builtin.gameguide");
     const v2 = BUILTIN_PROMPT_BLOCKS.find((block) => block.id === "builtin.gameguide.v2");
-    expect(v1?.name).toBe("阴阳师攻略提炼");
     expect(v1?.version).toBe("v1");
-    expect(v2?.name).toBe("阴阳师攻略加工（核对版）");
     expect(v2?.version).toBe("v2");
     expect(v2?.recommended).toBe(true);
     expect(v2?.recipe).toBeDefined();
@@ -152,7 +154,7 @@ describe("availablePromptBlocks", () => {
 describe("bindablePromptBlocks", () => {
   it("同系列只留推荐版本：观点提炼出 v4 而非 v1/v2/v3", () => {
     const blocks = bindablePromptBlocks();
-    const insight = blocks.filter((block) => block.series === "观点提炼");
+    const insight = blocks.filter((block) => block.series === "观点笔记");
     expect(insight.map((block) => block.id)).toEqual(["builtin.insight.v4"]);
   });
 
@@ -164,8 +166,8 @@ describe("bindablePromptBlocks", () => {
 
   it("没有推荐位的系列取该系列首个版本", () => {
     const blocks = bindablePromptBlocks();
-    expect(blocks.find((block) => block.series === "技术文案提炼")?.id).toBe("builtin.tech");
-    expect(blocks.find((block) => block.series === "概念演进摘要（CASCADE）")?.id).toBe("builtin.cascade");
+    expect(blocks.find((block) => block.series === "技术点拆解")?.id).toBe("builtin.tech");
+    expect(blocks.find((block) => block.series === "概念的来龙去脉")?.id).toBe("builtin.cascade");
   });
 
   it("自定义块按传入顺序追加在内置候选之后", () => {
