@@ -8,6 +8,7 @@ describe("runAlertBody", () => {
     expect(runAlertBody({ runId: "r1", status: "success", projectName: "某期视频" })).toBe("某期视频：已完成");
     expect(runAlertBody({ runId: "r2", status: "error", projectName: "某期视频" })).toBe("某期视频：失败");
     expect(runAlertBody({ runId: "r3", status: "cancelled", projectName: "某期视频" })).toBe("某期视频：已取消");
+    expect(runAlertBody({ runId: "r4", status: "interrupted", projectName: "某期视频" })).toBe("某期视频：已中断");
   });
 
   it("有失败原因时接在后面，人不在电脑前也说得清发生了什么", () => {
@@ -42,6 +43,10 @@ describe("shouldAlertRunEnd", () => {
 
   it("自己点的停止 → 不提醒", () => {
     expect(shouldAlertRunEnd("running", "cancelled")).toBe(false);
+  });
+
+  it("但服务重启掐断的运行 → 要提醒：那不是用户点的，而且有一半产物在", () => {
+    expect(shouldAlertRunEnd("running", "interrupted")).toBe(true);
   });
 
   it("还在运行中、或终态没变 → 不提醒", () => {

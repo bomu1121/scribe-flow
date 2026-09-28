@@ -723,33 +723,30 @@
   animation: wp-pulse 1.5s var(--ease-out) infinite;
 }
 
-.wp-run-main {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  align-items: baseline;
-  gap: 6px;
-  overflow: hidden;
-}
-
-.wp-run-id {
-  flex-shrink: 0;
-  font-size: 10.5px;
-  color: var(--color-text-tertiary);
-}
-
-.wp-run.active .wp-run-id {
-  color: var(--color-text-secondary);
-}
-
-.wp-run-meta {
+.wp-run-label {
   flex: 1;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   font-size: 11.5px;
+  color: var(--color-text);
+}
+
+.wp-run-time {
+  flex-shrink: 0;
+  font-size: 10.5px;
+  color: var(--color-text-tertiary);
+}
+
+.wp-run.active .wp-run-time {
   color: var(--color-text-secondary);
+}
+
+/* 行内改名用的输入框：复用 .wp-input，只把光标和行高对齐到 28px 的行里。 */
+.wp-run-input {
+  cursor: text;
+  height: 24px;
 }
 
 .wp-run-project {

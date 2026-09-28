@@ -74,6 +74,13 @@ export const useRunsStore = defineStore("runs", () => {
     await load();
   }
 
+  /** 重命名（笔记标题）。name 传 null 表示清掉名字，列表回落到时间与状态。 */
+  async function rename(id: string, name: string | null) {
+    const updated = await api.patch<RunMeta>(`/api/runs/${id}`, { name });
+    upsert(updated);
+    return updated;
+  }
+
   function upsert(run: RunMeta) {
     const index = runs.value.findIndex((r) => r.id === run.id);
     if (index >= 0) runs.value[index] = run;
@@ -97,6 +104,7 @@ export const useRunsStore = defineStore("runs", () => {
     runsOfProject,
     projectLoaded,
     remove,
+    rename,
     upsert,
   };
 });

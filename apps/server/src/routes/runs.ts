@@ -6,6 +6,7 @@ import { z } from "zod";
 import {
   NODE_TYPE_LABELS,
   parseGraph,
+  RUN_NAME_MAX_LENGTH,
   type NodeOutput,
   type RunEvent,
   type RunMeta,
@@ -32,6 +33,11 @@ const startSchema = z
     path: ["nodeId"],
   });
 
+/** 重命名运行记录：`name` 传 null 或空白表示清掉名字，列表回落到时间与状态。 */
+const renameSchema = z.object({
+  name: z.string().max(RUN_NAME_MAX_LENGTH, `名称最多 ${RUN_NAME_MAX_LENGTH} 个字`).nullable(),
+});
+
 function rowToMeta(row: RunRow, projectName?: string): RunMeta {
   return {
     id: row.id,
@@ -43,6 +49,7 @@ function rowToMeta(row: RunRow, projectName?: string): RunMeta {
     createdAt: row.createdAt,
     finishedAt: row.finishedAt ?? undefined,
     elapsedMs: row.elapsedMs ?? undefined,
+    name: row.name ?? undefined,
     summary: row.summary ?? undefined,
     error: row.error ?? undefined,
   };
@@ -250,6 +257,22 @@ export function runsApi(db: AppDatabase, engine: RunEngine, dataDir: string) {
     } catch (err) {
       return c.json({ error: err instanceof Error ? err.message : "重跑失败" }, 400);
     }
+  });
+
+  api.patch("/:id", async (c) => {
+    const runId = c.req.param("id");
+    if (!db.select().from(runs).where(eq(runs.id, runId)).get()) return c.json({ error: "运行不存在" }, 404);
+    const parsed = renameSchema.safeParse(await c.req.json().catch(() => ({})));
+    if (!parsed.success) {
+      return c.json({ error: parsed.error.issues[0]?.message ?? "请求格式不正确" }, 400);
+    }
+    const trimmed = parsed.data.name?.trim() ?? "";
+    db.update(runs)
+      .set({ name: trimmed === "" ? null : trimmed })
+      .where(eq(runs.id, runId))
+      .run();
+    const updated = db.select().from(runs).where(eq(runs.id, runId)).get();
+    return c.json(rowToMeta(updated!));
   });
 
   api.delete("/:id", async (c) => {

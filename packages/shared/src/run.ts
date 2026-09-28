@@ -2,7 +2,14 @@ import type { AsrEngine, WorkflowGraph } from "./graph";
 import type { NutstoreSettings } from "./nutstore";
 import type { RunMediaView } from "./media";
 
-export type RunStatus = "running" | "success" | "error" | "cancelled";
+/**
+ * 运行的整体结局。
+ *
+ * `cancelled` 与 `interrupted` 刻意分开：前者是**人**主动停止（点停止/强制结束），
+ * 后者是**服务**没了（进程重启、崩溃、断电）——运行被强行掐断，人并没有下过停止指令。
+ * 两者在「运行记录」列表里必须能一眼分开，否则「我明明没取消，它却写着已取消」。
+ */
+export type RunStatus = "running" | "success" | "error" | "cancelled" | "interrupted";
 export type NodeResultStatus = "queued" | "running" | "done" | "error" | "cancelled" | "skipped";
 
 export interface RunMeta {
@@ -16,10 +23,18 @@ export interface RunMeta {
   createdAt: number;
   finishedAt?: number;
   elapsedMs?: number;
+  /**
+   * 用户自己起的名字（笔记标题）。空表示没起过名，列表显示时间与状态。
+   * 与 `summary` 各管一件事：summary 是机器算出来的产物摘要，name 是人写下的标题。
+   */
+  name?: string;
   /** 产出的文档摘要，如「视频转笔记 · 2.1k 字」。 */
   summary?: string;
   error?: string;
 }
+
+/** 运行记录名称的最大长度；服务端校验与输入框 maxlength 共用一份。 */
+export const RUN_NAME_MAX_LENGTH = 80;
 
 export type RunScope = "all" | "fromNode" | "node";
 

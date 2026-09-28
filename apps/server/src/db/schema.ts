@@ -57,13 +57,16 @@ export const runs = sqliteTable("runs", {
   projectId: text("project_id").notNull(),
   /** 历史遗留列（M8 曾试验全局运行库分类；现不再使用，运行记录随工程展示）。 */
   folderId: text("folder_id"),
-  status: text("status", { enum: ["running", "success", "error", "cancelled"] }).notNull(),
+  /** `interrupted` 只由服务重启/崩溃时的收尾写入，见 db/client.ts 的 recoverInterruptedRuns。 */
+  status: text("status", { enum: ["running", "success", "error", "cancelled", "interrupted"] }).notNull(),
   scope: text("scope", { enum: ["all", "fromNode", "node"] }).notNull(),
   /** 当 scope 为 fromNode/node 时，记录本次运行的起点节点；历史行可能为空。 */
   nodeId: text("node_id"),
   createdAt: integer("created_at").notNull(),
   finishedAt: integer("finished_at"),
   elapsedMs: integer("elapsed_ms"),
+  /** 用户自己起的名字（笔记标题）；空表示没起过名，列表回落到时间与状态。 */
+  name: text("name"),
   summary: text("summary"),
   error: text("error"),
   /** 运行时的工程图快照，保证历史结果页的输入/输出溯源不被后续编辑影响。 */

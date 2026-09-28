@@ -19,6 +19,7 @@ import {
   PenLine,
   PanelRightClose,
   PanelRightOpen,
+  Pencil,
   RefreshCw,
   RotateCcw,
   ScrollText,
@@ -28,12 +29,14 @@ import {
   ZoomOut,
 } from "lucide-vue-next";
 import type { ProjectMeta, RunDetail, RunNodeInput, RunNodeResult, RunMediaView, TraceReport, WorkflowGraph } from "@scribe-flow/shared";
-import { BUILTIN_PROMPT_BLOCKS, NODE_TYPE_LABELS, parseTraceReports, traceReportToMarkdown } from "@scribe-flow/shared";
+import { BUILTIN_PROMPT_BLOCKS, NODE_TYPE_LABELS, RUN_NAME_MAX_LENGTH, parseTraceReports, traceReportToMarkdown } from "@scribe-flow/shared";
 import { api } from "@/lib/api";
 import { renderMarkdown } from "@/lib/markdown";
+import { runDisplayName, resolveRenameRequest } from "@/lib/run-meta";
 import { buildNodeSegments, type RunSegment } from "@/utils/run-segments";
 import { subscribeRunEvents } from "@/lib/sse";
 import { useProjectsStore } from "@/stores/projects";
+import { useRunsStore } from "@/stores/runs";
 import MindMapViewer from "@/components/MindMapViewer.vue";
 import DrillViewer from "@/components/DrillViewer.vue";
 import DiffViewer from "@/components/DiffViewer.vue";
@@ -44,6 +47,7 @@ import MediaPlayer from "@/components/media/MediaPlayer.vue";
 const route = useRoute();
 const router = useRouter();
 const projectsStore = useProjectsStore();
+const runsStore = useRunsStore();
 const run = ref<RunDetail | null>(null);
 const loading = ref(false);
 const activeTab = ref<DetailTab>("result");
@@ -166,6 +170,7 @@ const statusMeta: Record<string, { label: string }> = {
   done: { label: "完成" },
   error: { label: "失败" },
   cancelled: { label: "已取消" },
+  interrupted: { label: "已中断" },
   skipped: { label: "跳过" },
 };
 
@@ -1332,6 +1337,41 @@ async function forceStopRun() {
     toast.error(err instanceof Error ? err.message : "强制结束失败");
   }
 }
+
+/**
+ * 给这次运行起个名字。这一页被当笔记读，标题就该是笔记标题，而不是一串运行号。
+ *
+ * 与左侧栏、以及工程/文件夹行同一套：**就地改成输入框，回车提交、Esc 取消、失焦提交**，不弹对话框。
+ */
+const renaming = ref(false);
+const renameValue = ref("");
+const titleInputRef = ref<HTMLInputElement | null>(null);
+
+function startRename() {
+  const current = run.value;
+  if (!current) return;
+  renaming.value = true;
+  renameValue.value = runDisplayName(current);
+  void nextTick(() => {
+    titleInputRef.value?.focus();
+    titleInputRef.value?.select();
+  });
+}
+
+async function commitRename() {
+  const current = run.value;
+  if (!renaming.value || !current) return;
+  const request = resolveRenameRequest(runDisplayName(current), renameValue.value);
+  renaming.value = false;
+  if (!request) return;
+  try {
+    const updated = await runsStore.rename(current.id, request.name);
+    run.value = { ...current, name: updated.name };
+    toast.success(request.name ? "已重命名" : "已清除名称");
+  } catch (err) {
+    toast.error(err instanceof Error ? err.message : "重命名失败");
+  }
+}
 </script>
 
 <template>
@@ -1341,14 +1381,25 @@ async function forceStopRun() {
         <button type="button" class="rv-btn rv-btn--text" @click="goBack"><ArrowLeft :size="14" /><span>返回工作流</span></button>
         <div class="rv-title-block">
           <h2 class="rv-title">
-            运行结果 <span class="tnum">#{{ runId.slice(-6) }}</span>
+            <input
+              v-if="renaming"
+              ref="titleInputRef"
+              v-model="renameValue"
+              class="wp-input rv-title-input"
+              :maxlength="RUN_NAME_MAX_LENGTH"
+              placeholder="留空则只按时间显示"
+              @keydown.enter.prevent="commitRename"
+              @keydown.esc.prevent="renaming = false"
+              @blur="commitRename"
+            />
+            <span v-else class="rv-title-name">{{ run ? runDisplayName(run) || "运行结果" : "运行结果" }}</span>
             <span v-if="run" class="rv-status" :class="`is-${run.status}`">
               <span class="rv-status-dot" aria-hidden="true" />
               {{ statusMeta[run.status]?.label }}
             </span>
           </h2>
           <p class="rv-sub">
-            {{ run ? `${projectName} · 耗时 ${fmt(run.elapsedMs)} · ${new Date(run.createdAt).toLocaleString("zh-CN")}` : "加载中…" }}
+            {{ run ? `${projectName} · 耗时 ${fmt(run.elapsedMs)} · ${new Date(run.createdAt).toLocaleString("zh-CN")} · #${runId.slice(-6)}` : "加载中…" }}
           </p>
         </div>
       </div>
@@ -1357,6 +1408,7 @@ async function forceStopRun() {
           <button type="button" class="rv-btn rv-btn--text" @click="stopRun"><StopCircle :size="14" /><span>停止</span></button>
           <button type="button" class="rv-btn rv-btn--danger-text" @click="forceStopRun"><StopCircle :size="14" /><span>强制结束</span></button>
         </template>
+        <button type="button" class="rv-btn rv-btn--text" @click="startRename"><Pencil :size="14" /><span>重命名</span></button>
         <button type="button" class="rv-btn rv-btn--text" @click="openLogs('')"><ScrollText :size="14" /><span>查看日志</span></button>
         <button type="button" class="rv-btn rv-btn--text" :disabled="!activeMarkdown" @click="copyMarkdown"><Copy :size="14" /><span>复制</span></button>
         <button type="button" class="rv-btn rv-btn--text" :disabled="!activeMarkdown" @click="downloadMarkdown"><FileText :size="14" /><span>下载 Markdown</span></button>
@@ -2060,10 +2112,28 @@ async function forceStopRun() {
   display: flex;
   align-items: center;
   gap: 8px;
+  min-width: 0;
   margin: 0;
   font-size: 15px;
   font-weight: 600;
   color: var(--color-text);
+}
+
+/* 名字是用户自己写的，长度不可控；状态徽标不能被它挤走。 */
+.rv-title-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 就地改名的输入框：占住标题的位置，字号/行高跟标题对齐，避免切换时跳动。 */
+.rv-title-input {
+  flex: 1;
+  max-width: 420px;
+  height: 26px;
+  font-size: 15px;
+  font-weight: 600;
 }
 
 .rv-sub {
@@ -2146,6 +2216,7 @@ async function forceStopRun() {
   display: inline-flex;
   align-items: center;
   gap: 5px;
+  flex-shrink: 0;
   padding: 2px 8px;
   border-radius: 999px;
   background: var(--color-ink-soft);
@@ -2183,6 +2254,12 @@ async function forceStopRun() {
 .rv-status.is-error {
   background: var(--color-error-soft);
   color: var(--color-error);
+}
+
+/* 已中断用告警色而不是和「已取消」同一个灰：它是要人去处理的事，不是用户自己按下的停止。 */
+.rv-status.is-interrupted {
+  background: var(--color-warning-soft);
+  color: var(--color-warning);
 }
 
 .rv-status.is-cancelled,

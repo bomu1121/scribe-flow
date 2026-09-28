@@ -15,18 +15,74 @@ export function createDatabase(dataDir: string): AppDatabase {
   return drizzle(sqlite, { schema });
 }
 
-/** 服务启动时恢复上次异常中断的运行：把残留 running 状态标记为 cancelled。 */
+/** 运行因服务重启/崩溃被掐断时写入的 error 文案；收尾与历史归类共用一份。 */
+export const RUN_INTERRUPTED_ERROR = "服务重启，运行已中断";
+
+function doneNodeCount(db: AppDatabase, runId: string): number {
+  return db
+    .select()
+    .from(schema.runNodeResults)
+    .where(and(eq(schema.runNodeResults.runId, runId), eq(schema.runNodeResults.status, "done")))
+    .all().length;
+}
+
+/**
+ * 中断运行的摘要。
+ *
+ * 必须有，因为中断的运行在列表里只剩一个状态词——而它很可能已经跑出好几份产物了
+ * （实测：4 个「观点提炼」跑成 2 个才被掐断）。「N 个节点已完成」是让人知道
+ * 「这一步之前的东西都还在，值得点进去看」。
+ */
+function interruptedSummary(db: AppDatabase, runId: string): string {
+  const done = doneNodeCount(db, runId);
+  return done > 0 ? `${done} 个节点已完成` : "没有节点完成";
+}
+
+/**
+ * 服务启动时收尾上次异常中断的运行：把残留的 running 标记为 interrupted。
+ *
+ * 为什么不是 cancelled：`cancelled` 的语义是「人点了停止」，而这里是服务自己没了——
+ * 两者混在一个状态里，运行记录就会把「我明明没取消，它却写着已取消」的账赖到用户头上。
+ */
 export function recoverInterruptedRuns(db: AppDatabase) {
   const now = Date.now();
   const running = db.select().from(schema.runs).where(eq(schema.runs.status, "running")).all();
   for (const row of running) {
     db.update(schema.runs)
-      .set({ status: "cancelled", finishedAt: now, elapsedMs: now - row.createdAt, error: "服务重启，运行已中断" })
+      .set({
+        status: "interrupted",
+        finishedAt: now,
+        elapsedMs: now - row.createdAt,
+        error: RUN_INTERRUPTED_ERROR,
+        summary: row.summary ?? interruptedSummary(db, row.id),
+      })
       .where(eq(schema.runs.id, row.id))
       .run();
     db.update(schema.runNodeResults)
-      .set({ status: "cancelled", error: "服务重启，运行已中断", updatedAt: now })
+      .set({ status: "cancelled", error: RUN_INTERRUPTED_ERROR, updatedAt: now })
       .where(and(eq(schema.runNodeResults.runId, row.id), notInArray(schema.runNodeResults.status, ["done", "error", "cancelled", "skipped"])))
+      .run();
+  }
+  reclassifyInterruptedRuns(db);
+}
+
+/**
+ * 把历史上被写成 `cancelled` 的中断运行改回 `interrupted`。
+ *
+ * 2026-09 之前的收尾逻辑给服务重启写的是 `cancelled`，历史行不改就会永远显示成「已取消」，
+ * 正是要修掉的那个误导。WHERE 里带着 error 文案，所以跑第二遍就是空集，不需要额外的迁移版本号。
+ * 顺带补上当时没写的摘要，否则这批旧运行在列表里连「跑出过东西」都看不出来。
+ */
+function reclassifyInterruptedRuns(db: AppDatabase) {
+  const legacy = db
+    .select()
+    .from(schema.runs)
+    .where(and(eq(schema.runs.status, "cancelled"), eq(schema.runs.error, RUN_INTERRUPTED_ERROR)))
+    .all();
+  for (const row of legacy) {
+    db.update(schema.runs)
+      .set({ status: "interrupted", summary: row.summary ?? interruptedSummary(db, row.id) })
+      .where(eq(schema.runs.id, row.id))
       .run();
   }
 }
@@ -71,6 +127,7 @@ export function ensureSchema(sqlite: Database.Database) {
       created_at INTEGER NOT NULL,
       finished_at INTEGER,
       elapsed_ms INTEGER,
+      name TEXT,
       summary TEXT,
       error TEXT,
       graph_json TEXT
@@ -181,6 +238,10 @@ export function ensureSchema(sqlite: Database.Database) {
   }
   if (!runColumns.some((col) => col.name === "node_id")) {
     sqlite.exec("ALTER TABLE runs ADD COLUMN node_id TEXT");
+  }
+  // 笔记标题：运行记录列表上人可以自己起的名字。
+  if (!runColumns.some((col) => col.name === "name")) {
+    sqlite.exec("ALTER TABLE runs ADD COLUMN name TEXT");
   }
 
   // 幂等迁移：M7 工程文件夹 —— projects 增加 folder_id，并建索引。
