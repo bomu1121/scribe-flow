@@ -143,6 +143,16 @@ superseded_by: <仓库相对路径>         # 可选，必须与对方双向对�
 
 - `R3` 的用例数是静态数 `it(` 声明。有人改用 `it.each(...)` 时口径就失效了，
   所以另有一条守卫：出现 `.each(` 直接失败，逼你换计数方式。
+  **但这条守卫拦不住 `for` 循环里生成 `it(`**——那种写法同样让静态数少于实际数，
+  而且不报错。实测口径：`apps/server/src/lib/recipe.test.ts` 用 `for (const item of cases)`
+  生成 8 条，于是 server 的静态数是 212 而 vitest 实跑 219。
+  所以 status.md 里那个数字是**静态声明数**（标签已经这么写），不是实际执行数；
+  要实际数就 `pnpm test` 看 vitest 的汇总行。
+- **冒烟与 API 自检的项数同理**：status.md 报的都是 `check(` 的**静态调用点数**。
+  `scripts/cdp-ui-smoke.mjs` 里有几处 `if / else` 两个分支各写一条 `check(`
+  （如「创建 M3 UI 验收工程」与「M3 画布渲染 2 节点」），一次只跑其中一支，所以实跑数比静态数少 5（64 → 59）；
+  `scripts/m-drill-api-check.mjs` 里「启动运行」那条是失败分支，静态 22、实跑 21。
+  判断「这次到底过没过」只认脚本自己最后那行 `[cdp-ui-smoke] N/N 项通过` / `[drill-api-check] N/N 项通过`。
 - `R11` 只能发现「class 与目录不符」，发现不了「这份文档本来就归错类了」——那需要人判断。
 
 ## 已知坑（这些不是 TODO，是当前行为的说明）

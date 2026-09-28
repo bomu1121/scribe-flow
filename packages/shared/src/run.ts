@@ -163,15 +163,48 @@ export interface SearchSettings {
   maxResults: number;
 }
 
+/**
+ * 「常规」分组的设置：运行与产出的全局默认。
+ * 这里放的是**没被节点/工程单独指定的东西**，节点自己配了就以节点为准（重试策略就是这种关系）。
+ */
+export interface GeneralSettings {
+  /** 节点执行并发数（1-4）。 */
+  concurrency: number;
+  /**
+   * 产物根目录。相对路径相对数据目录解析，也可以直接填绝对路径把成稿写到数据目录之外。
+   * 留空回落 DEFAULT_OUTPUT_DIR。
+   */
+  outputDir: string;
+  /**
+   * 服务端解析后的产物根目录绝对路径。
+   * 只在设置接口的响应（与 engine 内部）里有值——数据目录是启动参数不是设置项，
+   * 底层 `getSettings(db)` 拿不到它，所以这是可选的，界面按「有则回显」处理。
+   */
+  resolvedOutputDir?: string;
+  /** 自动落盘的文件名模板，占位符见 FILE_NAME_TOKENS。 */
+  fileNameTemplate: string;
+  /** 节点没单独配 retry 时的默认最大重试次数（0-10）。 */
+  maxRetries: number;
+  /** 节点没单独配 retry 时的默认重试等待基数（秒，1-60）；按次数线性递增。 */
+  retryBackoffSec: number;
+  /** 运行结束时发系统通知。 */
+  runEndNotify: boolean;
+  /** 运行结束时播放提示音。 */
+  runEndSound: boolean;
+}
+
+/** 新数值设置的取值范围；服务端校验、设置页输入框与服务端收口共用一份。 */
+export const GENERAL_LIMITS = {
+  concurrency: { min: 1, max: 4 },
+  maxRetries: { min: 0, max: 10 },
+  retryBackoffSec: { min: 1, max: 60 },
+} as const;
+
 export interface AppSettings {
   ai: AiSettings;
   asr: AsrSettings;
   search: SearchSettings;
-  general: {
-    /** 节点执行并发数（1-4）。 */
-    concurrency: number;
-    outputDir: string;
-  };
+  general: GeneralSettings;
   obsidian: {
     /** Obsidian 库根目录，例如 D:\\知识库。 */
     vaultPath: string;
@@ -217,6 +250,11 @@ export interface UpdateSettingsRequest {
   general?: {
     concurrency?: number;
     outputDir?: string;
+    fileNameTemplate?: string;
+    maxRetries?: number;
+    retryBackoffSec?: number;
+    runEndNotify?: boolean;
+    runEndSound?: boolean;
   };
   obsidian?: {
     vaultPath?: string;

@@ -1,5 +1,4 @@
 import { readFile } from "node:fs/promises";
-import { join, resolve } from "node:path";
 import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
 import { and, desc, eq } from "drizzle-orm";
@@ -19,6 +18,7 @@ import {
 import type { AppDatabase } from "../db/client";
 import { projects, runNodeLogs, runNodeResults, runs, type RunRow } from "../db/schema";
 import { nextRunId, type RunEngine } from "../lib/engine";
+import { resolveArtifactPath } from "../lib/storage";
 import { getAiConfig, getAsrConfig } from "../lib/settings";
 import { listRunMediaViews } from "../lib/media-store";
 
@@ -309,7 +309,7 @@ export function runsApi(db: AppDatabase, engine: RunEngine, dataDir: string) {
     if (!row) return c.json({ error: "节点结果不存在" }, 404);
     if (row.outputText) return c.json({ text: row.outputText, size: row.outputSize ?? row.outputText.length });
     if (!row.outputPath) return c.json({ text: "" });
-    const abs = resolve(dataDir, row.outputPath);
+    const abs = resolveArtifactPath(dataDir, row.outputPath);
     const text = await readFile(abs, "utf8");
     return c.json({ text, size: text.length });
   });
@@ -322,7 +322,7 @@ export function runsApi(db: AppDatabase, engine: RunEngine, dataDir: string) {
       .all()
       .find((r) => r.nodeId === c.req.param("nodeId"));
     if (!row?.outputPath) return c.json({ error: "没有可下载的文件" }, 404);
-    const abs = resolve(dataDir, row.outputPath);
+    const abs = resolveArtifactPath(dataDir, row.outputPath);
     const data = await readFile(abs);
     const name = row.outputPath.split("/").pop() ?? "output";
     c.header("Content-Type", name.endsWith(".wav") ? "audio/wav" : "text/markdown; charset=utf-8");

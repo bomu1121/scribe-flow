@@ -4,11 +4,12 @@ import { useRoute } from "vue-router";
 import { ElInput, ElInputNumber, ElMessageBox, ElOption, ElSelect, ElSwitch } from "element-plus";
 import { Cloud, Download, ExternalLink, FolderOpen, Mic, PlugZap, RefreshCw, RotateCcw, Save, Trash2, Upload } from "lucide-vue-next";
 import { toast } from "@/lib/toast";
+import { ensureNotifyPermission } from "@/utils/run-alert";
 import { formatBytes } from "@/lib/bytes";
 import ModelSelect from "../components/ModelSelect.vue";
 import PromptBlockDiffDialog from "../components/PromptBlockDiffDialog.vue";
 import type { AiProvider, AsrEngine, DataOverview, PruneItem, PruneOutcome, PruneTarget, PromptBlock, SearchProvider } from "@scribe-flow/shared";
-import { TRACE_SOURCE_AUTHORITY_LABELS } from "@scribe-flow/shared";
+import { FILE_NAME_TOKENS, GENERAL_LIMITS, TRACE_SOURCE_AUTHORITY_LABELS, renderFileNameTemplate } from "@scribe-flow/shared";
 import { api } from "@/lib/api";
 import { useSettingsStore } from "@/stores/settings";
 import { usePromptsStore } from "@/stores/prompts";
@@ -22,7 +23,7 @@ const route = useRoute();
 const groups = [
   { key: "ai", label: "AI 模型" },
   { key: "asr", label: "语音识别" },
-  { key: "search", label: "外部溯源" },
+  { key: "search", label: "联网检索" },
   { key: "general", label: "常规" },
   { key: "obsidian", label: "Obsidian" },
   { key: "nutstore", label: "坚果云" },
@@ -47,6 +48,11 @@ const form = reactive({
   searchMaxResults: 5,
   concurrency: 2,
   outputDir: "outputs",
+  fileNameTemplate: "{project}",
+  maxRetries: 2,
+  retryBackoffSec: 3,
+  runEndNotify: true,
+  runEndSound: false,
   obsidianVaultPath: "",
   obsidianFolder: "00-Inbox",
   obsidianTagTaxonomyText: "{}",
@@ -311,16 +317,48 @@ async function runPrune(targets: PruneTarget[], key: PruneTarget | "all") {
   }
 }
 
-async function revealDataDir() {
+async function revealDir(target: "data" | "output") {
   revealTesting.value = true;
   try {
-    await api.post("/api/settings/reveal-data-dir");
-    toast.success("已在系统文件管理器中打开数据目录");
+    const result = await api.post<{ ok: boolean; path: string }>(`/api/settings/reveal-${target}-dir`);
+    toast.success(`已在系统文件管理器中打开${target === "data" ? "数据目录" : "输出目录"}：${result.path}`);
   } catch (err) {
-    toast.error(err instanceof Error ? err.message : "打开数据目录失败");
+    toast.error(err instanceof Error ? err.message : `打开${target === "data" ? "数据目录" : "输出目录"}失败`);
   } finally {
     revealTesting.value = false;
   }
+}
+
+function revealDataDir() {
+  return revealDir("data");
+}
+
+function revealOutputDir() {
+  return revealDir("output");
+}
+
+/** 文件名模板的实时预览；示例值固定，用户改模板就能看见最终文件名长什么样。 */
+const fileNamePreview = computed(
+  () => `${renderFileNameTemplate(form.fileNameTemplate, { project: "某期视频笔记", node: "观点提炼", now: new Date() })}.md`,
+);
+
+/** 打开「运行结束提醒」时顺带申请浏览器通知权限——浏览器只允许在用户手势里申请。 */
+async function toggleRunEndNotify(value: boolean) {
+  if (!value) {
+    form.runEndNotify = false;
+    return;
+  }
+  const permission = await ensureNotifyPermission();
+  if (permission === "granted") {
+    form.runEndNotify = true;
+    return;
+  }
+  form.runEndNotify = false;
+  toast.warning(
+    permission === "denied"
+      ? "浏览器拒绝了通知权限，需要到浏览器地址栏的站点设置里手动允许后才能开启"
+      : "当前环境不支持系统通知（浏览器通常在 https 或 localhost 下才允许）",
+  );
 }
 
 function syncAiModelOptions(models?: string[]) {
@@ -362,6 +400,11 @@ function fillForm() {
   form.searchMaxResults = store.settings.search.maxResults;
   form.concurrency = store.settings.general.concurrency;
   form.outputDir = store.settings.general.outputDir;
+  form.fileNameTemplate = store.settings.general.fileNameTemplate;
+  form.maxRetries = store.settings.general.maxRetries;
+  form.retryBackoffSec = store.settings.general.retryBackoffSec;
+  form.runEndNotify = store.settings.general.runEndNotify;
+  form.runEndSound = store.settings.general.runEndSound;
   form.obsidianVaultPath = store.settings.obsidian.vaultPath;
   form.obsidianFolder = store.settings.obsidian.folder;
   form.obsidianTagTaxonomyText = JSON.stringify(store.settings.obsidian.tagTaxonomy ?? {}, null, 2);
@@ -441,7 +484,15 @@ async function saveAll() {
       ai: { provider: form.aiProvider, baseUrl: form.aiBaseUrl, model: form.aiModel, apiKey: form.aiKey || undefined },
       asr: { engine: form.asrEngine, baseUrl: form.asrBaseUrl, model: form.asrModel, apiKey: form.asrKey || undefined },
       search: { provider: form.searchProvider, apiKey: form.searchKey || undefined, maxResults: form.searchMaxResults },
-      general: { concurrency: form.concurrency, outputDir: form.outputDir },
+      general: {
+        concurrency: form.concurrency,
+        outputDir: form.outputDir,
+        fileNameTemplate: form.fileNameTemplate,
+        maxRetries: form.maxRetries,
+        retryBackoffSec: form.retryBackoffSec,
+        runEndNotify: form.runEndNotify,
+        runEndSound: form.runEndSound,
+      },
       obsidian: {
         vaultPath: form.obsidianVaultPath,
         folder: form.obsidianFolder,
@@ -825,8 +876,15 @@ async function restoreNutstoreBackup(backup: { path: string; name: string }) {
       </template>
 
       <template v-else-if="active === 'search'">
-        <h2 class="sf-settings-title">外部溯源</h2>
-        <p class="sf-settings-desc">信息溯源模块专用的「搜索服务」密钥：用于对外部人物/机构/研究/新闻做联网核查，并按来源权威度给出结论。</p>
+        <h2 class="sf-settings-title">联网检索</h2>
+        <p class="sf-settings-desc">
+          所有需要「上网查」的模块共用这一份「搜索服务」密钥。目前在用它的有两个：
+          <strong>信息溯源</strong>拿它做外部联网核查（按来源权威度给出「外部可印证 / 仅非权威来源 / 有反证 / 未找到出处」）；
+          <strong>知识巩固（练一练）</strong>拿它按知识点上网找同类练习题，供出题时参考考察角度与干扰项。
+        </p>
+        <p class="sf-settings-desc">
+          哪些节点会用到它，节点卡上会直接显示渠道与密钥状态。没配置也能跑：溯源跳过外部核查，练一练完全依据原文出题。
+        </p>
         <p class="sf-settings-desc">
           注意：它和「AI 模型」页里那个跑模型的密钥不是同一个。即使两边都用智谱，也各自需要一个单独的 Key——
           模型 Key 用来生成内容，这里的 Key 只用来检索网页。两边都不用填对方的值。
@@ -851,9 +909,13 @@ async function restoreNutstoreBackup(backup: { path: string; name: string }) {
             <el-input v-model="form.searchKey" type="password" show-password class="sf-field-control" :placeholder="store.settings?.search.hasKey ? '已保存，留空则不修改' : searchKeyPlaceholder" />
           </label>
           <label class="sf-field">
-            <span class="sf-field-label">每条最多返回结果数</span>
-            <el-input-number v-model="form.searchMaxResults" :min="1" :max="10" class="sf-field-control" />
+            <span class="sf-field-label">每个检索词最多返回结果数</span>
+            <el-input-number v-model="form.searchMaxResults" :min="1" :max="10" />
           </label>
+          <p class="sf-settings-desc">
+            这是「每个检索词取几条结果」的上限，两个模块都受它约束：溯源核查逐条取来源，练一练按知识点的检索词取参考资料。
+            调大能拿到更多候选，也更慢、更贵。
+          </p>
           <div class="sf-settings-actions">
             <button type="button" class="sf-btn" :disabled="searchTesting" @click="testSearch"><PlugZap :size="14" /><span>{{ searchTesting ? "测试中…" : "测试连接" }}</span></button>
             <button type="button" class="sf-btn sf-btn--primary" @click="saveAll"><span>保存设置</span></button>
@@ -863,19 +925,76 @@ async function restoreNutstoreBackup(backup: { path: string; name: string }) {
 
       <template v-else-if="active === 'general'">
         <h2 class="sf-settings-title">常规</h2>
-        <p class="sf-settings-desc">运行并发与输出目录。</p>
+        <p class="sf-settings-desc">运行与产出的全局默认。这里放的是「没被单独配置的东西」——节点卡上自己配了重试，就以节点为准。</p>
+
+        <div class="sf-settings-divider">运行</div>
         <div class="sf-settings-form">
           <label class="sf-field">
-            <span class="sf-field-label">并发数（1-4）</span>
-            <el-input v-model.number="form.concurrency" type="number" min="1" max="4" class="sf-field-control" />
+            <span class="sf-field-label">并发数</span>
+            <el-input-number v-model="form.concurrency" :min="GENERAL_LIMITS.concurrency.min" :max="GENERAL_LIMITS.concurrency.max" />
+            <p class="sf-field-hint">同时跑几个节点。调大能多占带宽，也更吃机器；下载与转写这类节点本身就慢，2-3 够用。</p>
           </label>
+          <label class="sf-field">
+            <span class="sf-field-label">失败自动重试次数</span>
+            <el-input-number v-model="form.maxRetries" :min="GENERAL_LIMITS.maxRetries.min" :max="GENERAL_LIMITS.maxRetries.max" />
+            <p class="sf-field-hint">
+              节点卡上没有单独配重试时用这个值。只对会走外部调用的节点生效（B 站下载、转写、AI 加工、练一练）；
+              密钥缺失、条件不满足、断言未通过这类不重试——重试也不会变对。
+            </p>
+          </label>
+          <label class="sf-field">
+            <span class="sf-field-label">重试等待（秒）</span>
+            <el-input-number v-model="form.retryBackoffSec" :min="GENERAL_LIMITS.retryBackoffSec.min" :max="GENERAL_LIMITS.retryBackoffSec.max" />
+            <p class="sf-field-hint">第一次重试前等多久，之后按次数线性递增：填 3 就是等 3 秒、6 秒、9 秒……</p>
+          </label>
+        </div>
+
+        <div class="sf-settings-divider">产出</div>
+        <div class="sf-settings-form">
           <label class="sf-field">
             <span class="sf-field-label">输出目录</span>
             <el-input v-model="form.outputDir" class="sf-field-control" placeholder="outputs" />
+            <p class="sf-field-hint">
+              留空用默认的 <strong>outputs</strong>（落在数据目录里）；填相对路径同理；
+              想直接把成稿写进自己的笔记文件夹，就填绝对路径，例如 <strong>D:\笔记\ScribeFlow</strong>。
+            </p>
+            <p class="sf-field-hint">当前生效：<span class="sf-data-dir">{{ store.settings?.general.resolvedOutputDir || "（保存后显示）" }}</span></p>
           </label>
           <div class="sf-settings-actions">
-            <button type="button" class="sf-btn sf-btn--primary" @click="saveAll"><span>保存设置</span></button>
+            <button type="button" class="sf-btn" :disabled="revealTesting" @click="revealOutputDir"><ExternalLink :size="14" /><span>打开输出目录</span></button>
           </div>
+          <label class="sf-field">
+            <span class="sf-field-label">文件名模板</span>
+            <el-input v-model="form.fileNameTemplate" class="sf-field-control" placeholder="{project}" />
+            <p class="sf-field-hint">
+              占位符：
+              <strong v-for="item in FILE_NAME_TOKENS" :key="item.token" class="sf-token">{{ item.token }}（{{ item.label }}）</strong>
+            </p>
+            <p class="sf-field-hint">
+              预览：<strong>{{ fileNamePreview }}</strong>；
+              一次跑出多份产物而模板里没写 <strong>{node}</strong> 时，会自动在后面补节点名，避免互相覆盖。
+            </p>
+          </label>
+        </div>
+
+        <div class="sf-settings-divider">运行结束提醒</div>
+        <div class="sf-settings-form">
+          <label class="sf-field sf-field-row">
+            <span class="sf-field-label">发系统通知</span>
+            <el-switch :model-value="form.runEndNotify" @change="(value) => void toggleRunEndNotify(Boolean(value))" />
+          </label>
+          <label class="sf-field sf-field-row">
+            <span class="sf-field-label">播放提示音</span>
+            <el-switch v-model="form.runEndSound" />
+          </label>
+          <p class="sf-field-hint">
+            运行是「下载 → 转写 → AI 加工」，几分钟到十几分钟都正常，可以放心切走去做别的。
+            只提醒成功与失败；自己点的停止不提醒。
+          </p>
+        </div>
+
+        <div class="sf-settings-actions">
+          <button type="button" class="sf-btn sf-btn--primary" @click="saveAll"><span>保存设置</span></button>
         </div>
       </template>
 
@@ -909,7 +1028,7 @@ async function restoreNutstoreBackup(backup: { path: string; name: string }) {
           </label>
           <label class="sf-field">
             <span class="sf-field-label">最多关联篇数</span>
-            <el-input-number v-model="form.obsidianAutoLinkMax" :min="0" :max="20" size="small" />
+            <el-input-number v-model="form.obsidianAutoLinkMax" :min="0" :max="20" />
           </label>
 
           <div class="sf-settings-actions">
@@ -1343,6 +1462,18 @@ async function restoreNutstoreBackup(backup: { path: string; name: string }) {
   width: 100%;
 }
 
+/*
+ * 设置页里的数值增减器一律窄宽度（实测 120px；改之前套着 .sf-field-control 是 460px，
+ * 中间那格输入框放一个「2」，剩下三百多像素全是空白）。
+ *
+ * 写在结构上而不是让每个调用点各自加一个类：本页的数值项只会越来越多（并发数、重试次数、
+ * 每个检索词返回条数、最多关联篇数……），靠人记得加类迟早漏一个，而漏掉的那一个正好就是最丑的。
+ * 选择器比 .sf-field-control 更具体，所以就算哪天有人手滑把宽度类加回来，也压得住。
+ */
+.sf-field .el-input-number {
+  width: 120px;
+}
+
 .sf-field-row {
   display: flex;
   flex-direction: row;
@@ -1375,6 +1506,14 @@ async function restoreNutstoreBackup(backup: { path: string; name: string }) {
   display: flex;
   gap: 8px;
   margin-top: 4px;
+}
+
+.sf-token {
+  margin-right: 6px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--color-text-secondary);
 }
 
 .sf-settings-divider {

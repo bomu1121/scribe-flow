@@ -109,7 +109,8 @@ async function run() {
   check("PUT graph 接受知识巩固节点", put.status === 200, `status=${put.status}`);
 
   const started = await j("POST", `/api/projects/${projectId}/runs`, { scope: "all" });
-  if (started.status !== 200) {
+  // 启动运行返回 202（与 m3/m6 自检一致）；这里曾写成 200，本脚本因此一直卡在这一步没跑到链路验证。
+  if (started.status !== 202) {
     check("启动运行", false, JSON.stringify(started.data).slice(0, 160));
     return;
   }

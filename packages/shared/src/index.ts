@@ -3,6 +3,7 @@ export * from "./graph";
 export * from "./segment";
 export * from "./project";
 export * from "./run";
+export * from "./output";
 export * from "./nutstore";
 export * from "./trace";
 export * from "./drill";

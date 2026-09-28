@@ -4,7 +4,7 @@ import { useRoute, useRouter } from "vue-router";
 import { ElDropdown, ElDropdownItem, ElDropdownMenu, ElMessageBox } from "element-plus";
 import { toast } from "@/lib/toast";
 import { Activity, Check, Copy, Download, History, LayoutPanelTop, Maximize, MoreHorizontal, Play, Redo2, StopCircle, Undo2 } from "lucide-vue-next";
-import { emptyGraph, type NodeType, type RunDetail, type RunMeta, type RunNodeResult, type SourceVideoItem, type WorkflowGraph } from "@scribe-flow/shared";
+import { emptyGraph, type NodeType, type RunDetail, type RunMeta, type RunNodeResult, type RunStatus, type SourceVideoItem, type WorkflowGraph } from "@scribe-flow/shared";
 import FlowCanvas from "@/components/canvas/FlowCanvas.vue";
 import SourcePickerDialog from "@/components/canvas/SourcePickerDialog.vue";
 import BiliAccountButton from "@/components/auth/BiliAccountButton.vue";
@@ -382,14 +382,7 @@ async function resumeRun(run: RunMeta) {
     if (event.type === "node.error") {
       toast.error(`${nodeName(event.nodeId)} 失败：${event.error}`);
     } else if (event.type === "run.done") {
-      running.value = false;
-      activeRun.value = { ...(activeRun.value as RunMeta), status: event.status };
-      runsStore.upsert(activeRun.value);
-      stopRunEvents?.();
-      stopRunEvents = null;
-      subscribedRunId = null;
-      void syncFinalRun(event.runId);
-      void runsStore.load();
+      handleRunDone(event.runId, event.status);
     }
   });
   subscribedRunId = run.id;
@@ -446,6 +439,24 @@ async function mergedNodeResults(detail: RunDetail): Promise<RunNodeResult[]> {
     // 合并失败时保留当前快照，不阻塞界面。
   }
   return [...resultMap.values()];
+}
+
+/**
+ * 运行结束的统一收尾：状态、最终快照、列表刷新。
+ *
+ * 抽出来是因为画布页有两个订阅点（新起一次运行 / 恢复上次运行），两边原本是同一段代码抄了两遍——
+ * 要加一句收尾动作就得改两处，漏一处就变成「有时候生效有时候不生效」。
+ * 运行结束的提醒（系统通知/提示音）不在这里，它挂在 AppLayout 上，见那边的说明。
+ */
+function handleRunDone(runId: string, status: RunStatus) {
+  running.value = false;
+  activeRun.value = { ...(activeRun.value as RunMeta), status };
+  runsStore.upsert(activeRun.value);
+  stopRunEvents?.();
+  stopRunEvents = null;
+  subscribedRunId = null;
+  void syncFinalRun(runId);
+  void runsStore.load();
 }
 
 /** 运行结束后主动拉取最终快照并同步到画布，避免 SSE 丢事件导致下游节点停留在旧状态。 */
@@ -565,14 +576,7 @@ async function startRun(scope: "all" | "fromNode" | "node", nodeId?: string) {
         if (event.type === "node.error") {
           toast.error(`${nodeName(event.nodeId)} 失败：${event.error}`);
         } else if (event.type === "run.done") {
-          running.value = false;
-          activeRun.value = { ...(activeRun.value as RunMeta), status: event.status };
-          runsStore.upsert(activeRun.value);
-          stopRunEvents?.();
-          stopRunEvents = null;
-          subscribedRunId = null;
-          void syncFinalRun(event.runId);
-          void runsStore.load();
+          handleRunDone(event.runId, event.status);
         }
       });
       subscribedRunId = run.id;

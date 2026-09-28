@@ -1,14 +1,18 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { BookText, History, LayoutGrid, PenLine, Settings, Shapes } from "lucide-vue-next";
+import type { RunStatus } from "@scribe-flow/shared";
 import { useRunsStore } from "@/stores/runs";
 import { usePromptsStore } from "@/stores/prompts";
+import { useSettingsStore } from "@/stores/settings";
 import { useUiStore, type RailTab } from "@/stores/ui";
+import { notifyRunFinished, shouldAlertRunEnd } from "@/utils/run-alert";
 import WorkspacePanel from "@/components/workspace/WorkspacePanel.vue";
 import QuickCreateDialog from "@/components/workspace/QuickCreateDialog.vue";
 
 const runsStore = useRunsStore();
 const promptsStore = usePromptsStore();
+const settingsStore = useSettingsStore();
 const uiStore = useUiStore();
 
 const panelOpen = computed(() => uiStore.panelOpen);
@@ -30,10 +34,49 @@ function onRailClick(tab: RailTab) {
   else uiStore.openPanel(tab);
 }
 
+/**
+ * 运行结束提醒（系统通知 / 提示音，开关在「常规」里）。
+ *
+ * 挂在工作台外壳而不是画布页：一次运行几分钟到十几分钟，用户多半会切到别的工程、
+ * 结果页甚至别的应用去，而这里挂着全局轮询，任何页面上都能看到状态翻到终态。
+ *
+ * 判定规则是「上一次看到的是 running，这一次不是」：
+ * - 首屏加载时列表里那些早就跑完的历史运行，上一次状态是 undefined，不会补弹一遍；
+ * - 新起的运行一定先以 running 进列表（画布 startRun 会立刻 upsert），所以不会漏。
+ * 已取消的运行不提醒：那是用户自己点的停止，此时人就在屏幕前，再弹一条是噪音。
+ */
+const knownRunStatus = new Map<string, RunStatus>();
+
+watch(
+  () => runsStore.runs,
+  (runs) => {
+    const seen = new Set<string>();
+    for (const run of runs) {
+      seen.add(run.id);
+      const previous = knownRunStatus.get(run.id);
+      knownRunStatus.set(run.id, run.status);
+      if (!shouldAlertRunEnd(previous, run.status)) continue;
+      const general = settingsStore.settings?.general;
+      if (!general) continue;
+      notifyRunFinished(
+        { runId: run.id, status: run.status, projectName: run.projectName ?? "", error: run.error },
+        { notify: general.runEndNotify, sound: general.runEndSound },
+      );
+    }
+    // 列表只保留最近 200 条，被挤出去或已删除的运行要从基线里清掉，否则这个 Map 会一直长。
+    for (const id of knownRunStatus.keys()) {
+      if (!seen.has(id)) knownRunStatus.delete(id);
+    }
+  },
+  { deep: true },
+);
+
 let timer: ReturnType<typeof setInterval> | null = null;
 onMounted(() => {
   void runsStore.load();
   void promptsStore.load();
+  // 运行结束时要用「常规」里的两个开关，而用户可能从没打开过设置页。
+  void settingsStore.ensureLoaded();
   timer = setInterval(() => void runsStore.load(), 5000);
 });
 onBeforeUnmount(() => {

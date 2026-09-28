@@ -440,7 +440,7 @@ const nodeDescriptions: Record<NodeType, string> = {
   "process.gameguide": "将阴阳师攻略文稿整理为结构化攻略笔记",
   "process.mindmap": "将文稿整理为思维导图 Markdown",
   "process.obsidian": "将结果写入 Obsidian 笔记库",
-  "process.drill": "从文稿提炼可考察的知识点并出题，在结果页答题",
+  "process.drill": "从文稿提炼可考察的知识点并出题，在结果页答题；配置联网检索后还会上网找同类练习题",
 };
 
 const nodeDescription = computed(() => nodeDescriptions[nodeType.value] ?? "");
@@ -775,7 +775,7 @@ const selectedSearchBlock = computed(() => {
 });
 
 /**
- * 检索渠道名。这里读的是设置页「外部溯源」里那一份，和「AI 模型」的密钥不是同一个东西，
+ * 检索渠道名。这里读的是设置页「联网检索」里那一份，和「AI 模型」的密钥不是同一个东西，
  * 所以节点上把渠道与配置状态摊开显示，省得去设置页猜该填哪个 key。
  */
 const searchChannelLabel = computed(() => {
@@ -1236,7 +1236,7 @@ const themeOptions = [
               </div>
               <p v-if="!searchReady" class="sf-node-search-note">
                 未配置时不会联网核查{{ selectedSearchBlock.externalCheck === "required" ? "（该模版需要检索密钥，已从可选列表里隐去）" : "，原文核对照常" }}。
-                用的是设置页「外部溯源」里的搜索服务密钥，与「AI 模型」的密钥不是同一个。
+                用的是设置页「联网检索」里的搜索服务密钥，与「AI 模型」的密钥不是同一个。
               </p>
               <div class="sf-node-search-actions">
                 <button
@@ -1304,6 +1304,34 @@ const themeOptions = [
               :focus="data.focus"
               @update="patchDrill"
             />
+            <!-- 练一练与溯源共用同一份检索渠道：这里显示状态，省得去设置页猜该填哪个 key。 -->
+            <div class="sf-node-search">
+              <div class="sf-node-search-head">
+                <span class="sf-node-field-label">联网找同类题</span>
+                <span class="sf-node-chip">{{ searchChannelLabel }}</span>
+                <span class="sf-node-chip" :class="searchReady ? 'is-ready' : 'is-missing'">
+                  {{ searchReady ? "密钥已配置" : "密钥未配置" }}
+                </span>
+              </div>
+              <p class="sf-node-search-note">
+                {{
+                  searchReady
+                    ? "抽点后会拿知识点的检索词上网找同类练习题，参考它们的考察角度与干扰项设计；题目答案与原文依据仍只认原文。"
+                    : "未配置时完全依据原文出题（不联网）。用的是设置页「联网检索」里的搜索服务密钥，与「AI 模型」的密钥不是同一个。"
+                }}
+              </p>
+              <div class="sf-node-search-actions">
+                <button
+                  type="button"
+                  class="sf-node-search-btn nodrag"
+                  :disabled="!searchReady || searchTesting"
+                  @click="testTraceSearch"
+                >
+                  {{ searchTesting ? "测试中…" : "测试连接" }}
+                </button>
+                <button type="button" class="sf-node-search-btn nodrag" @click="openSearchSettings">去设置</button>
+              </div>
+            </div>
           </template>
 
           <template v-else-if="nodeType === 'process.merge'">

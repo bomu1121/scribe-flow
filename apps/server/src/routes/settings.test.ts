@@ -30,6 +30,16 @@ async function post(app: App, path: string, body: unknown) {
   return app.request(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
 }
 
+async function put(app: App, path: string, body: unknown) {
+  return app.request(path, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+}
+
+/** 只关心 general 分段的响应形状。 */
+async function generalOf(app: App): Promise<Record<string, unknown>> {
+  const body = (await (await app.request("/api/settings")).json()) as { general: Record<string, unknown> };
+  return body.general;
+}
+
 const textGraph = {
   schemaVersion: 1,
   nodes: [
@@ -78,6 +88,61 @@ describe("GET /api/settings/data", () => {
     expect(overview.runs).toEqual({ total: 1, running: 0, finished: 1 });
     expect(overview.projects).toMatchObject({ total: 1, withRuns: 1 });
     expect(overview.reclaimableBytes).toBeGreaterThan(0);
+  });
+});
+
+describe("「常规」分组设置", () => {
+  it("给出各项默认值，并回显解析后的产物目录绝对路径", async () => {
+    const { app, dataDir } = await setup();
+    const general = await generalOf(app);
+
+    expect(general).toMatchObject({
+      concurrency: 2,
+      outputDir: "outputs",
+      fileNameTemplate: "{project}",
+      maxRetries: 2,
+      retryBackoffSec: 3,
+      runEndNotify: true,
+      runEndSound: false,
+    });
+    expect(general.resolvedOutputDir).toBe(join(dataDir, "outputs"));
+  });
+
+  it("产物目录可以填数据目录之外的绝对路径，账本会标出这一点", async () => {
+    const { app, dataDir } = await setup();
+    const external = join(dirname(dataDir), "我的笔记");
+
+    const response = await put(app, "/api/settings", { general: { outputDir: external } });
+    expect(response.status).toBe(200);
+    expect(((await response.json()) as { general: Record<string, unknown> }).general.resolvedOutputDir).toBe(external);
+
+    const area = (await overviewOf(app)).areas.find((item) => item.key === "outputs");
+    expect(area?.label).toContain("数据目录之外");
+  });
+
+  it("相对路径用 .. 爬到数据目录之外时被拒绝，并说清该怎么改", async () => {
+    const { app } = await setup();
+    const response = await put(app, "/api/settings", { general: { outputDir: "../../outside" } });
+
+    expect(response.status).toBe(400);
+    expect(((await response.json()) as { error: string }).error).toContain("绝对路径");
+    // 被拒的这次不能顺手把别的字段写进去。
+    expect((await generalOf(app)).outputDir).toBe("outputs");
+  });
+
+  it("清空产物目录等于用回默认目录，而不是留着旧值", async () => {
+    const { app } = await setup();
+    await put(app, "/api/settings", { general: { outputDir: "notes" } });
+    expect((await generalOf(app)).outputDir).toBe("notes");
+
+    await put(app, "/api/settings", { general: { outputDir: "" } });
+    expect((await generalOf(app)).outputDir).toBe("outputs");
+  });
+
+  it("重试次数 0 是合法值，不能被当成「没传」丢掉", async () => {
+    const { app } = await setup();
+    await put(app, "/api/settings", { general: { maxRetries: 0, retryBackoffSec: 1 } });
+    expect(await generalOf(app)).toMatchObject({ maxRetries: 0, retryBackoffSec: 1 });
   });
 });
 

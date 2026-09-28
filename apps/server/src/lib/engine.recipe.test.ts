@@ -166,6 +166,8 @@ beforeAll(async () => {
                 gist: "原文给出的结论数据是 42",
                 worthTesting: "数字最容易被记错",
                 sourceQuote: "示例原文关键句甲",
+                // 出题步的检索词取自这里（未配检索渠道时不会被用到）
+                queries: ["结论数据 42 考点"],
               },
             ],
           }),
@@ -652,6 +654,34 @@ describe("知识巩固节点（process.drill）", () => {
     const logs = db.select().from(runNodeLogs).where(eq(runNodeLogs.runId, runId)).all();
     expect(logs.some((row) => row.kind === "info" && row.content.includes("丢弃明细"))).toBe(true);
     expect(chatCalls).toBe(3);
+  });
+
+  it("未配置联网检索渠道时：出题步按不联网执行，产物照常产出（检索是增强不是前提）", async () => {
+    chatCalls = 0;
+    drillExtraItem = false;
+    const dataDir = await mkdtemp(join(tmpdir(), "scribe-drill-nosearch-"));
+    tmpDirs.push(dataDir);
+    const runId = "run_drill_nosearch";
+    const { db, engine, graph } = await setupDrill(dataDir, runId);
+
+    runWith(engine, runId, graph);
+    await waitFinished(db, runId);
+
+    // 没配渠道不该让练一练失败，也不该多花一次模型调用
+    expect(db.select().from(runs).where(eq(runs.id, runId)).get()?.status).toBe("success");
+    const nodeRow = db.select().from(runNodeResults).where(eq(runNodeResults.nodeId, "n_drill")).get();
+    expect(nodeRow?.status).toBe("done");
+    expect(nodeRow?.summary).toBe("1 个考察点 · 1 题 · 1 条延伸");
+    expect(chatCalls).toBe(3);
+
+    const logs = db.select().from(runNodeLogs).where(eq(runNodeLogs.runId, runId)).all();
+    expect(
+      logs.some((row) => row.kind === "info" && row.content.includes("未配置渠道") && row.content.includes("联网检索")),
+    ).toBe(true);
+    // {{sources}} 展开成「本次未能联网检索」的说明，而不是留下一句指向空块的规则
+    const authorRequest = logs.find((row) => row.kind === "ai-request" && row.step === "author");
+    expect(authorRequest?.content).toContain("本次未能联网检索");
+    expect(authorRequest?.content).toContain("不要写 externalRef 字段");
   });
 
   it("接到合并与输出节点：写出的是可读 Markdown 题目集，不是原始 JSON", async () => {

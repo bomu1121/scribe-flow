@@ -1,7 +1,8 @@
 import { readdir, rm, stat } from "node:fs/promises";
-import { isAbsolute, join, relative, resolve } from "node:path";
+import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { eq } from "drizzle-orm";
 import type { DataOverview, PruneItem, PruneOutcome, PruneTarget, ProjectUsage, StorageArea, StorageAreaKey } from "@scribe-flow/shared";
+import { DEFAULT_OUTPUT_DIR } from "@scribe-flow/shared";
 import type { AppDatabase } from "../db/client";
 import { folders, mediaAssets, projects, runMedia, runs, type MediaAssetRow, type ProjectRow, type RunRow } from "../db/schema";
 
@@ -26,23 +27,50 @@ const AREA_META: Array<{ key: StorageAreaKey; label: string }> = [
 ];
 
 /**
- * 产物目录名必须落在数据目录内。
- * general.outputDir 是外部可改的字符串，engine 直接 `join(dataDir, outputDir)`；
- * 配成 `..` 之类会把扫描与清理的作用域抬到数据目录之外，因此这里统一收口。
+ * 产物根目录的绝对路径。这是 `general.outputDir` 的唯一收口点——扫描、清理与落盘都走它。
+ *
+ * 三种输入：绝对路径原样采用（用户显式把成稿写到数据目录之外，例如 `D:\笔记`）；
+ * 相对路径相对数据目录解析，且**不允许**用 `..` 爬出数据目录（配置写错不该把清理作用域抬到仓库外）；
+ * 空值回落 `DEFAULT_OUTPUT_DIR`。
  */
-export function resolveOutputDir(dataDir: string, configured: string): string {
-  const name = (configured || "").trim().replace(/[\\/]+$/, "");
-  if (!name) return "outputs";
-  const rel = relative(dataDir, resolve(dataDir, name));
-  if (!rel || rel.startsWith("..") || isAbsolute(rel)) return "outputs";
-  return rel;
+export function resolveOutputRoot(dataDir: string, configured: string): string {
+  const raw = (configured || "").trim().replace(/[\\/]+$/, "");
+  const fallback = join(dataDir, DEFAULT_OUTPUT_DIR);
+  if (!raw) return fallback;
+  if (isAbsolute(raw)) return resolve(raw);
+  const abs = resolve(dataDir, raw);
+  const rel = relative(dataDir, abs);
+  if (!rel || rel.startsWith("..") || isAbsolute(rel)) return fallback;
+  return abs;
+}
+
+/** 产物根目录是否落在数据目录内。不在时账本要把这一点标出来，否则「总计占用」会被误读成数据目录的体积。 */
+export function isInsideDataDir(dataDir: string, absPath: string): boolean {
+  const rel = relative(dataDir, absPath);
+  return Boolean(rel) && !rel.startsWith("..") && !isAbsolute(rel);
+}
+
+/**
+ * 产物在库里的存储路径：数据目录内用相对路径（与历史口径一致），数据目录外用绝对路径。
+ * 分隔符统一折成 "/"——Windows 下 join 给的反斜杠会让下游按 "/" 切文件名的代码出错。
+ */
+export function toStoredArtifactPath(dataDir: string, absPath: string): string {
+  const abs = resolve(absPath);
+  const rel = relative(dataDir, abs);
+  const value = rel && !rel.startsWith("..") && !isAbsolute(rel) ? rel : abs;
+  return value.split(sep).join("/");
+}
+
+/** 读回产物：库里存的可能是相对数据目录的路径，也可能是（产物目录在数据目录外时的）绝对路径。 */
+export function resolveArtifactPath(dataDir: string, storedPath: string): string {
+  return isAbsolute(storedPath) ? resolve(storedPath) : resolve(dataDir, storedPath);
 }
 
 export interface StorageDeps {
   db: AppDatabase;
   dataDir: string;
-  /** 产物目录名（已由 resolveOutputDir 收口），相对 dataDir。 */
-  outputDir: string;
+  /** 产物根目录的绝对路径，由 resolveOutputRoot 收口。 */
+  outputRoot: string;
   /** 删除一条运行记录（含其产物目录与媒体 GC）；由 engine 提供。 */
   deleteRun: (runId: string) => Promise<void>;
 }
@@ -115,7 +143,8 @@ function addUsage(a: Usage, b: Usage): Usage {
 /** 一次 survey 的产物：账本、各区域的原始文件清单、以及按运行 id 归并好的占用。 */
 interface Survey {
   dataDir: string;
-  outputDir: string;
+  /** 产物根目录绝对路径；可能落在数据目录之外（用户在设置里填了绝对路径）。 */
+  outputRoot: string;
   areas: StorageArea[];
   mediaEntries: FileEntry[];
   uploadEntries: FileEntry[];
@@ -133,10 +162,11 @@ interface Survey {
 }
 
 async function survey(deps: StorageDeps): Promise<Survey> {
-  const { dataDir, outputDir } = deps;
+  const { dataDir, outputRoot } = deps;
   // 六个分区里只有五个是目录；数据库是数据目录下的三个文件，单独 stat。
+  // outputs 用绝对路径（可能落在数据目录外），不能走 join(dataDir, ...)，否则 "D:\x" 会被拼成 dataDir\D:\x。
   const dirOf = (key: Exclude<StorageAreaKey, "database">) =>
-    join(dataDir, { media: "media", uploads: "uploads", runs: "runs", outputs: outputDir, graphBackups: "graph-backups" }[key]);
+    key === "outputs" ? outputRoot : join(dataDir, { media: "media", uploads: "uploads", runs: "runs", graphBackups: "graph-backups" }[key]);
 
   const [dbEntries, mediaEntries, uploadEntries, runEntries, outputEntries, backupEntries, runDirNames, outputDirNames] = await Promise.all([
     (async () => {
@@ -183,10 +213,12 @@ async function survey(deps: StorageDeps): Promise<Survey> {
 
   return {
     dataDir,
-    outputDir,
+    outputRoot,
     areas: AREA_META.map((meta) => {
       const usage = total(entriesOf[meta.key]);
-      return { key: meta.key, label: meta.label, files: usage.files, bytes: usage.bytes, present: presentOf[meta.key] };
+      // 产物目录可以配到数据目录之外；不标注的话「总计占用」会被读成数据目录的体积。
+      const label = meta.key === "outputs" && !isInsideDataDir(dataDir, outputRoot) ? `${meta.label}（在数据目录之外）` : meta.label;
+      return { key: meta.key, label, files: usage.files, bytes: usage.bytes, present: presentOf[meta.key] };
     }),
     mediaEntries,
     uploadEntries,
@@ -254,7 +286,7 @@ function orphanPaths(surveyRef: Survey, catalogue: Catalogue): Array<{ name: str
       .map((name) => ({ name, path: join(root, name), bytes: groups.get(name)?.bytes ?? 0 }));
   return [
     ...dirsOf(surveyRef.runDirNames, join(surveyRef.dataDir, "runs"), surveyRef.runGroups),
-    ...dirsOf(surveyRef.outputDirNames, join(surveyRef.dataDir, surveyRef.outputDir), surveyRef.outputGroups),
+    ...dirsOf(surveyRef.outputDirNames, surveyRef.outputRoot, surveyRef.outputGroups),
     ...surveyRef.strayEntries.filter((entry) => !known.has(entry.name)),
   ];
 }

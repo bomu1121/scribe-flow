@@ -1,15 +1,16 @@
 import { spawn } from "node:child_process";
-import { mkdtemp, readdir, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { isAbsolute, join, resolve } from "node:path";
 import { Hono } from "hono";
+import type { Context } from "hono";
 import { z } from "zod";
-import { PRUNE_TARGETS } from "@scribe-flow/shared";
+import { GENERAL_LIMITS, PRUNE_TARGETS } from "@scribe-flow/shared";
 import type { AppDatabase } from "../db/client";
 import { chatCompletion, listAiModels, transcribeAudio } from "../lib/ai";
-import { getAiConfig, getAsrConfig, getNutstoreConfig, getSearchConfig, getSettings, updateSettings } from "../lib/settings";
+import { getAiConfig, getAsrConfig, getNutstoreConfig, getSearchConfig, getSettings, updateSettings, withResolvedPaths } from "../lib/settings";
 import { listRemoteDirectories } from "../lib/nutstore";
-import { buildDataOverview, fileManagerCommand, pruneStorage, resolveOutputDir, type StorageDeps } from "../lib/storage";
+import { buildDataOverview, fileManagerCommand, isInsideDataDir, pruneStorage, resolveOutputRoot, type StorageDeps } from "../lib/storage";
 import { collectSources } from "../lib/traceExternal";
 import type { RunEngine } from "../lib/engine";
 
@@ -39,8 +40,13 @@ const updateSchema = z.object({
     .optional(),
   general: z
     .object({
-      concurrency: z.number().int().min(1).max(4).optional(),
-      outputDir: z.string().trim().max(200).optional(),
+      concurrency: z.number().int().min(GENERAL_LIMITS.concurrency.min).max(GENERAL_LIMITS.concurrency.max).optional(),
+      outputDir: z.string().trim().max(500).optional(),
+      fileNameTemplate: z.string().trim().max(200).optional(),
+      maxRetries: z.number().int().min(GENERAL_LIMITS.maxRetries.min).max(GENERAL_LIMITS.maxRetries.max).optional(),
+      retryBackoffSec: z.number().int().min(GENERAL_LIMITS.retryBackoffSec.min).max(GENERAL_LIMITS.retryBackoffSec.max).optional(),
+      runEndNotify: z.boolean().optional(),
+      runEndSound: z.boolean().optional(),
     })
     .optional(),
   obsidian: z
@@ -132,15 +138,20 @@ async function runFfmpeg(args: string[]): Promise<void> {
 export function settingsApi(db: AppDatabase, engine: RunEngine, dataDir: string) {
   const api = new Hono();
 
-  api.get("/", (c) => c.json(getSettings(db)));
+  api.get("/", (c) => c.json(withResolvedPaths(getSettings(db), dataDir)));
 
   api.put("/", async (c) => {
     const parsed = updateSchema.safeParse(await c.req.json());
     if (!parsed.success) {
       return c.json({ error: parsed.error.issues[0]?.message ?? "请求格式不正确" }, 400);
     }
+    const nextOutputDir = parsed.data.general?.outputDir?.trim();
+    if (nextOutputDir && !isAbsolute(nextOutputDir) && !isInsideDataDir(dataDir, resolve(dataDir, nextOutputDir))) {
+      // 相对路径用 .. 爬到数据目录之外会让清理作用域失控；想写到别处请直接填绝对路径。
+      return c.json({ error: "输出目录填相对路径时不能爬到数据目录之外；想写到别的地方请直接填绝对路径（如 D:\\笔记）。" }, 400);
+    }
     updateSettings(db, parsed.data);
-    return c.json(getSettings(db));
+    return c.json(withResolvedPaths(getSettings(db), dataDir));
   });
 
   api.post("/test/ai", async (c) => {
@@ -287,28 +298,42 @@ export function settingsApi(db: AppDatabase, engine: RunEngine, dataDir: string)
   });
 
   api.post("/reveal-data-dir", async (c) => {
-    const [command, args] = fileManagerCommand(process.platform, dataDir);
+    return reveal(c, dataDir);
+  });
+
+  /**
+   * 打开产物目录（不是数据目录）——「常规」里刚配的就是它，配完能立刻看一眼才算闭环。
+   * 目录还不存在时先建出来，否则第一次点会因为目录不存在而失败。
+   */
+  api.post("/reveal-output-dir", async (c) => {
+    const root = resolveOutputRoot(dataDir, getSettings(db).general.outputDir);
+    await mkdir(root, { recursive: true }).catch(() => undefined);
+    return reveal(c, root);
+  });
+
+  async function reveal(c: Context, target: string) {
+    const [command, args] = fileManagerCommand(process.platform, target);
     try {
-      await new Promise<void>((resolve, reject) => {
+      await new Promise<void>((resolvePromise, reject) => {
         const child = spawn(command, args, { stdio: "ignore", detached: true });
         child.once("error", reject);
         // explorer.exe 即使成功也可能返回非 0，因此能 spawn 出来就算成功。
         child.once("spawn", () => {
           child.unref();
-          resolve();
+          resolvePromise();
         });
       });
     } catch (err) {
       return c.json({ error: `无法打开文件管理器（服务端可能运行在容器里）：${err instanceof Error ? err.message : "未知错误"}` }, 400);
     }
-    return c.json({ ok: true, path: dataDir });
-  });
+    return c.json({ ok: true, path: target });
+  }
 
   function storageDeps(): StorageDeps {
     return {
       db,
       dataDir,
-      outputDir: resolveOutputDir(dataDir, getSettings(db).general.outputDir),
+      outputRoot: resolveOutputRoot(dataDir, getSettings(db).general.outputDir),
       deleteRun: (runId) => engine.deleteRun(runId),
     };
   }

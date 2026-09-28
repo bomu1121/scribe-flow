@@ -39,6 +39,40 @@ describe("buildDrill", () => {
     expect(built.error).toBeUndefined();
     expect(built.summary).toBe("1 个考察点 · 1 题 · 1 条延伸");
     expect(built.dropDetail).toBe("");
+    expect(built.referenceNote).toBe("");
+  });
+
+  it("参考链接只在本次真检索到时保留，并在摘要里报出「几题参考了网上同类题」", () => {
+    const withRef = raw({
+      items: [{ ...JSON.parse(raw()).items[0], externalRef: { title: "闭包考点", url: "https://example.com/a" } }],
+    });
+    const references = [{ title: "闭包考点整理", url: "http://www.example.com/a/" }];
+    const built = buildDrill(withRef, SOURCE, { references });
+    expect(built.set?.items[0].externalRef).toEqual({ title: "闭包考点", url: "https://example.com/a" });
+    expect(built.summary).toBe("1 个考察点 · 1 题 · 1 条延伸 · 1 题参考了网上同类题");
+    expect(built.referenceNote).toBe("");
+  });
+
+  it("模型编的链接（本次没检索到）被剥掉并单独报数，不计入题目丢弃数", () => {
+    const withRef = raw({
+      items: [{ ...JSON.parse(raw()).items[0], externalRef: { title: "闭包考点", url: "https://made-up.example.com/x" } }],
+    });
+    const built = buildDrill(withRef, SOURCE, { references: [{ title: "闭包考点整理", url: "https://example.com/a" }] });
+    expect(built.set?.items[0].externalRef).toBeUndefined();
+    // 题目本身没被丢弃，摘要不该出现「丢弃」
+    expect(built.summary).toBe("1 个考察点 · 1 题 · 1 条延伸");
+    expect(built.drops).toHaveLength(0);
+    expect(built.referenceNote).toContain("剥掉 1 条不在本次检索结果里的参考链接");
+    expect(built.referenceNote).toContain("https://made-up.example.com/x");
+  });
+
+  it("没联网（references 为空）时产物里不留任何参考标记", () => {
+    const withRef = raw({
+      items: [{ ...JSON.parse(raw()).items[0], externalRef: { title: "凭空冒出来的资料" } }],
+    });
+    const built = buildDrill(withRef, SOURCE);
+    expect(built.set?.items[0].externalRef).toBeUndefined();
+    expect(built.referenceNote).toContain("剥掉 1 条");
   });
 
   it("丢弃不合格条目并在摘要里报数", () => {

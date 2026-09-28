@@ -9,11 +9,14 @@ import {
   isSourceOutputNeeded,
   maybeDrillToMarkdown,
   passesPick,
+  renderFileNameTemplate,
+  sanitizeFileName,
   segmentKey,
   type GraphNode,
   type NodeOutput,
   type NodePick,
   type Recipe,
+  type RecipeStep,
   type ResultDelta,
   type RunEvent,
   type RunMeta,
@@ -21,6 +24,7 @@ import {
   type RunNodeResult,
   type RunScope,
   type RunStatus,
+  type TraceExternalSource,
   type WorkflowGraph,
 } from "@scribe-flow/shared";
 import type { AppDatabase } from "../db/client";
@@ -38,9 +42,14 @@ import {
   gcMediaAssets,
 } from "./media-store";
 import { ensureRemoteDirectory, scanRemoteMarkdown, writeRemoteFile, type NutstoreConfig } from "./nutstore";
-import { appendAllOutput, assertStepOutput, parseJsonLoose, renderStepSystem } from "./recipe";
-import { getAiConfig, getAsrConfig, getNutstoreConfig, getSearchConfig, getSettings } from "./settings";
-import { enrichTraceReportWithExternalChecks } from "./traceExternal";
+import { appendAllOutput, assertStepOutput, parseJsonLoose, readSearchQueries, renderStepSystem } from "./recipe";
+import { getAiConfig, getAsrConfig, getGeneralSettings, getNutstoreConfig, getSearchConfig, getSettings } from "./settings";
+import { resolveArtifactPath, resolveOutputRoot, toStoredArtifactPath } from "./storage";
+import {
+  enrichTraceReportWithExternalChecks,
+  lookupReferenceSources,
+  NO_REFERENCE_SOURCES_TEXT,
+} from "./traceExternal";
 
 const MAX_INLINE_TEXT = 200_000;
 
@@ -53,6 +62,26 @@ export function isRetryableError(error: Error, cancelled: boolean): boolean {
   const message = error.message;
   if (/运行已取消|未配置.*密钥|没有可.*输入|文稿为空|链接为空|缺少 BV|缺少 cid|文件为空|正则表达式无效|文稿过短|B 站登录已失效|没有可下载的音轨|断言未通过|不是合法 JSON|没有生成可用的练习题|练习产物|未通过校验/.test(message)) return false;
   return true;
+}
+
+/**
+ * 节点这一次运行实际用哪套重试策略。
+ *
+ * 优先级：节点卡上自己配的 `data.retry` > 「常规」里的全局默认。
+ * 抽成纯函数是为了能被直接断言——重试要真跑出来得先造一个「失败两次然后成功」的节点，成本远高于收益。
+ */
+export function resolveRetryPolicy(
+  node: Pick<GraphNode, "type" | "data">,
+  general: { maxRetries: number; retryBackoffSec: number },
+): { maxRetries: number; backoffMs: number } {
+  // 本地节点失败重试没有意义，所以不参与重试的节点类型恒为 0 次。
+  if (!RETRYABLE_NODE_TYPES.has(node.type)) return { maxRetries: 0, backoffMs: 0 };
+  const retry = ((node.data as Record<string, unknown> | undefined)?.retry ?? {}) as { maxRetries?: number; backoffMs?: number };
+  const fallbackBackoffMs = general.retryBackoffSec * 1000;
+  return {
+    maxRetries: Math.max(0, Number(retry.maxRetries ?? general.maxRetries) || 0),
+    backoffMs: Math.max(100, Number(retry.backoffMs ?? fallbackBackoffMs) || fallbackBackoffMs),
+  };
 }
 
 /**
@@ -219,7 +248,7 @@ function pairItemKeys(inputs: ResolvedInput[], outputs: NodeOutput[]): void {
 }
 
 function escapePathName(value: string): string {
-  return value.replace(/[\\/:*?"<>|]/g, "_").slice(0, 80);
+  return sanitizeFileName(value);
 }
 
 /** 解析 AI 返回的 JSON 标签数组；失败返回空数组。 */
@@ -1153,9 +1182,8 @@ export class RunEngine {
     const abort = new AbortController();
     active.nodeAborts.set(nodeId, abort);
     const data = node.data as Record<string, unknown>;
-    const retry = (data.retry as { maxRetries?: number; backoffMs?: number } | undefined) ?? {};
-    const maxRetries = RETRYABLE_NODE_TYPES.has(node.type) ? Math.max(0, Number(retry.maxRetries ?? 2) || 0) : 0;
-    const backoffMs = Math.max(100, Number(retry.backoffMs ?? 3000) || 3000);
+    // 重试策略：节点自己配了就以节点为准，没配才走「常规」里的全局默认。
+    const { maxRetries, backoffMs } = resolveRetryPolicy(node, getGeneralSettings(this.db, this.dataDir));
     await this.updateNode(active, nodeId, "running", 0, undefined, undefined, undefined, 1);
     this.emit(active, { type: "node.started", runId: active.id, nodeId });
 
@@ -1414,7 +1442,7 @@ export class RunEngine {
             const inputRef = { index: item.position, total: textItems.length };
             const inputText = item.output.text?.trim() ?? "";
             await this.progress(active, node.id, 8, `输入 ${i + 1}/${textItems.length}：运行配方 ${recipe.steps.length} 步`);
-            let finalText = await this.executeRecipeOnInput(
+            const recipeRun = await this.executeRecipeOnInput(
               active,
               node,
               inputText,
@@ -1427,11 +1455,12 @@ export class RunEngine {
               inputRef,
               drillParams,
             );
+            let finalText = recipeRun.text;
             // 联网核查：由提示词块自己声明（PromptBlock.externalCheck），不再硬编码具体块 id。
             if (builtin?.externalCheck) {
               const searchConfig = getSearchConfig(this.db);
               if (!searchConfig.apiKey) {
-                await this.log(active, node.id, "info", "未配置外部检索渠道，本次跳过了联网核查；可在设置页「外部溯源」配置后重跑", undefined, inputRef);
+                await this.log(active, node.id, "info", "未配置外部检索渠道，本次跳过了联网核查；可在设置页「联网检索」配置后重跑", undefined, inputRef);
               }
               if (searchConfig.apiKey) {
                 try {
@@ -1455,12 +1484,19 @@ export class RunEngine {
             }
             // 知识巩固：把多步产物编译成结构化练习集（引文校验 + 逐条丢弃），并覆盖节点摘要。
             if (isDrill) {
-              const built = buildDrill(finalText, inputText, { withExtensions: data.withExtensions !== false });
+              const built = buildDrill(finalText, inputText, {
+                withExtensions: data.withExtensions !== false,
+                // 参考链接只认本次真检索到的来源：模型编出来的网址不留在产物里（见 verifyExternalRefs）。
+                references: recipeRun.sources,
+              });
               if (!built.set) throw new Error(built.error ?? "没有生成可用的练习题，请重跑本节点");
               finalText = JSON.stringify(built.set);
               drillSummary = built.summary;
               if (built.drops.length > 0) {
                 await this.log(active, node.id, "info", `丢弃明细：${built.dropDetail}`, undefined, inputRef);
+              }
+              if (built.referenceNote) {
+                await this.log(active, node.id, "info", `参考链接校验：${built.referenceNote}`, undefined, inputRef);
               }
             }
             await this.updateInputResult(active, node.id, item.sourceNodeId, item.position, finalText);
@@ -1532,8 +1568,7 @@ export class RunEngine {
       case "process.output": {
         if (!inputs.text) throw new Error("没有可输出的文档");
         const fileName = escapePathName(String(data.fileName ?? "笔记.md").trim() || "笔记.md");
-        const outputDir = getSettings(this.db).general.outputDir || "outputs";
-        const dir = join(this.dataDir, outputDir, active.id);
+        const dir = join(resolveOutputRoot(this.dataDir, getSettings(this.db).general.outputDir), active.id);
         await mkdir(dir, { recursive: true });
         const outPath = join(dir, fileName);
         // 知识巩固产物是 JSON：写出前序列化成可读 Markdown 题目集。
@@ -1543,7 +1578,7 @@ export class RunEngine {
           .filter(Boolean)
           .join("\n\n");
         await writeFile(outPath, outText, "utf8");
-        const rel = `${outputDir}/${active.id}/${fileName}`;
+        const rel = toStoredArtifactPath(this.dataDir, outPath);
         await this.log(active, node.id, "info", `输出文件：${rel}`);
         return { outputs: [{ kind: "noteDoc", text: outText, path: rel, size: outText.length }], summary: `${fileName} · ${outText.length} 字` };
       }
@@ -2002,17 +2037,29 @@ ${JSON.stringify(taxonomyTags)}`;
     inputRef?: { index: number; total: number },
     /** 节点参数指令（{{params}}），与原文分离注入，避免污染引用回查的比对源。 */
     params?: string,
-  ): Promise<string> {
+  ): Promise<{ text: string; sources: TraceExternalSource[] }> {
     await this.log(active, node.id, "input", inputText, undefined, inputRef);
     let prev = "";
     let all = "";
+    /** 本次配方里所有步骤联网检索到的来源（供产物校验 externalRef 是否真实存在）。 */
+    const sources: TraceExternalSource[] = [];
     for (let j = 0; j < recipe.steps.length; j += 1) {
       const step = recipe.steps[j];
       const flatIndex = flatBase + j;
-      const system = renderStepSystem(step.system, { input: inputText, prev, all, source: sourceLabel, params });
+      const progress = Math.round(10 + ((flatIndex + 1) / totalFlat) * 86);
+      // 步骤声明的联网检索（如练一练的「出题」步）：先把同类参考资料拿到手，再让模型落笔。
+      const lookup = step.search ? await this.lookupStepSources(active, node, step, prev, progress, inputRef) : undefined;
+      if (lookup) sources.push(...lookup.sources);
+      const system = renderStepSystem(step.system, {
+        input: inputText,
+        prev,
+        all,
+        source: sourceLabel,
+        params,
+        sources: lookup?.text,
+      });
       const baseUser = j === 0 ? inputText : prev;
       const model = step.model ?? aiConfig.model;
-      const progress = Math.round(10 + ((flatIndex + 1) / totalFlat) * 86);
       await this.progress(active, node.id, progress, `步骤 ${flatIndex + 1}/${totalFlat} ${step.label}`);
 
       let trimmed = "";
@@ -2063,7 +2110,48 @@ ${JSON.stringify(taxonomyTags)}`;
       prev = trimmed;
       all = appendAllOutput(all, step, trimmed);
     }
-    return prev;
+    return { text: prev, sources };
+  }
+
+  /**
+   * 步骤级联网检索（配方 `search` 声明）：从「上一步产物」取检索词，联网找参考资料。
+   *
+   * 检索是**增强**，不是这一步的前提——没配渠道、没有检索词、检索失败，都只记一条日志然后按
+   * 「不联网」继续（注入一段说明让模型只依据原文），而不是让整份产物作废：用户要的是能用的
+   * 练习题，不该因为网断了或忘记配密钥就白跑。
+   */
+  private async lookupStepSources(
+    active: ActiveRun,
+    node: GraphNode,
+    step: RecipeStep,
+    prev: string,
+    progress: number,
+    inputRef?: { index: number; total: number },
+  ): Promise<{ text: string; sources: TraceExternalSource[] }> {
+    if (!step.search) return { text: NO_REFERENCE_SOURCES_TEXT, sources: [] };
+    const config = getSearchConfig(this.db);
+    if (!config.apiKey) {
+      await this.log(active, node.id, "info", `步骤「${step.label}」需要联网检索但未配置渠道，本次按不联网执行；可在设置页「联网检索」配置后重跑`, step.id, inputRef);
+      return { text: NO_REFERENCE_SOURCES_TEXT, sources: [] };
+    }
+    const queries = readSearchQueries(prev, step.search.queriesFrom);
+    if (queries.length === 0) {
+      await this.log(active, node.id, "info", `步骤「${step.label}」没有取到检索词（上一步产物的 ${step.search.queriesFrom}），本次按不联网执行`, step.id, inputRef);
+      return { text: NO_REFERENCE_SOURCES_TEXT, sources: [] };
+    }
+    try {
+      await this.progress(active, node.id, progress, `联网检索参考资料 ${queries.length} 条`);
+      const lookup = await lookupReferenceSources(config, queries, { maxQueries: step.search.maxQueries });
+      if (!lookup.text) {
+        await this.log(active, node.id, "info", `步骤「${step.label}」检索没有返回可用来源，本次按不联网执行`, step.id, inputRef);
+        return { text: NO_REFERENCE_SOURCES_TEXT, sources: [] };
+      }
+      await this.log(active, node.id, "info", `步骤「${step.label}」已联网检索参考资料：${lookup.sources.length} 条（检索词：${lookup.queries.join("、")}）`, step.id, inputRef);
+      return { text: lookup.text, sources: lookup.sources };
+    } catch (err) {
+      await this.log(active, node.id, "info", `步骤「${step.label}」联网检索未完成，按不联网执行：${describeError(err)}`, step.id, inputRef);
+      return { text: NO_REFERENCE_SOURCES_TEXT, sources: [] };
+    }
   }
 
   private async updateNode(
@@ -2104,7 +2192,8 @@ ${JSON.stringify(taxonomyTags)}`;
     const elapsed = Date.now() - active.startedAt;
     const rows = this.db.select().from(runNodeResults).where(eq(runNodeResults.runId, active.id)).all();
     const doneCount = rows.filter((r) => r.status === "done").length;
-    // 跑完把链路末端的笔记落一份到输出目录；文件名用工程名，所以运行记录里一眼能看出交付物叫什么。
+    // 跑完把链路末端的笔记落一份到输出目录；文件名按「常规」里的模板渲染，
+    // 运行记录的摘要就是它，所以一眼能看出这次交付物叫什么。
     const written = status === "success" ? await this.saveRunDocuments(active, rows) : [];
     for (const doc of written) {
       await this.db
@@ -2129,12 +2218,12 @@ ${JSON.stringify(taxonomyTags)}`;
   }
 
   /**
-   * 把链路末端的笔记落一份到输出目录，文件名用工程名。
+   * 把链路末端的笔记落一份到输出目录，文件名按「常规」里的模板渲染（默认就是工程名）。
    *
    * 这件事以前由「输出」节点做，但那张卡片已经从节点库与模板里移除（节点类型本身保留给老工程，
    * 见 `runNode` 的 `process.output` 分支），所以改由运行收尾统一做：
    * 取范围内**没有下游**的节点的笔记产物，跳过音频与老工程里的输出节点自身；
-   * 多份时在文件名后补节点名，避免互相覆盖。
+   * 模板没写 `{node}` 且有多份产物时，在文件名后补节点名，避免互相覆盖。
    */
   private async saveRunDocuments(active: ActiveRun, rows: (typeof runNodeResults)["$inferSelect"][]) {
     const withDownstream = new Set(active.graph.edges.filter((e) => active.nodeIds.has(e.source)).map((e) => e.source));
@@ -2147,20 +2236,30 @@ ${JSON.stringify(taxonomyTags)}`;
     );
     if (docs.length === 0) return [];
 
-    const outputDir = getSettings(this.db).general.outputDir || "outputs";
-    const dir = join(this.dataDir, outputDir, active.id);
+    const general = getGeneralSettings(this.db, this.dataDir);
+    const dir = join(general.resolvedOutputDir ?? resolveOutputRoot(this.dataDir, general.outputDir), active.id);
     await mkdir(dir, { recursive: true });
 
-    const base = escapePathName(active.projectName.trim()) || "笔记";
+    const template = general.fileNameTemplate;
+    const now = new Date();
+    // 模板里没写 {node} 时，多份产物仍要靠后缀区分，否则它们会争同一个文件名。
+    const suffixWithNode = docs.length > 1 && !template.includes("{node}");
+    const usedNames = new Set<string>();
     const written: { nodeId: string; fileName: string; rel: string; text: string }[] = [];
     for (const row of docs) {
       const raw = await this.readResultText(row);
       if (!raw.trim()) continue;
       const node = active.graph.nodes.find((n) => n.id === row.nodeId);
       const label = node ? nodeLabel(node) : row.nodeId;
-      const fileName = docs.length > 1 ? `${base}-${escapePathName(label)}.md` : `${base}.md`;
-      const rel = `${outputDir}/${active.id}/${fileName}`;
-      await writeFile(join(this.dataDir, rel), raw, "utf8");
+      const base = renderFileNameTemplate(template, { project: active.projectName, node: label, now });
+      const stem = suffixWithNode ? `${base}-${sanitizeFileName(label)}` : base;
+      // 兜底去重：两个节点的名字撞到同一个文件名时，宁可多一个 -2 也不能静默覆盖掉一份产物。
+      let fileName = `${stem}.md`;
+      for (let seq = 2; usedNames.has(fileName); seq += 1) fileName = `${stem}-${seq}.md`;
+      usedNames.add(fileName);
+      const outPath = join(dir, fileName);
+      const rel = toStoredArtifactPath(this.dataDir, outPath);
+      await writeFile(outPath, raw, "utf8");
       // 记在产物所属节点上：老「输出」节点会记这条「输出文件」，卡片移除后由收尾补上，日志里的信息不变。
       await this.log(active, row.nodeId, "info", `输出文件：${rel}`);
       written.push({ nodeId: row.nodeId, fileName, rel, text: raw });
@@ -2170,7 +2269,7 @@ ${JSON.stringify(taxonomyTags)}`;
 
   /** 取节点产物全文：优先用落库的内联文本，超大产物回落到它自己的文件；知识巩固的 JSON 转成可读题目集。 */
   private async readResultText(row: (typeof runNodeResults)["$inferSelect"]): Promise<string> {
-    const text = row.outputText ?? (row.outputPath ? await readFile(join(this.dataDir, row.outputPath), "utf8").catch(() => "") : "");
+    const text = row.outputText ?? (row.outputPath ? await readFile(resolveArtifactPath(this.dataDir, row.outputPath), "utf8").catch(() => "") : "");
     return maybeDrillToMarkdown(text);
   }
 
@@ -2220,7 +2319,7 @@ ${JSON.stringify(taxonomyTags)}`;
         .filter((l) => l.kind === "info" && /^音频输入 \d+：/.test(l.content))
         .map((l) => l.content.replace(/^音频输入 \d+：/, "").trim());
       const responses = transcribeLogs.filter((l) => l.kind === "ai-response").map((l) => l.content);
-      const absPath = resolve(this.dataDir, sourceRow.outputPath ?? "");
+      const absPath = resolveArtifactPath(this.dataDir, sourceRow.outputPath ?? "");
       const idx = infoPaths.findIndex((p) => p === absPath);
       if (idx >= 0 && responses[idx]) {
         inputs.push({
@@ -2302,8 +2401,8 @@ ${JSON.stringify(taxonomyTags)}`;
     // 媒体 GC：不再被任何运行引用的资产删行；media/ 文件删除，uploads/ 直放原件保留。
     await gcMediaAssets(this.db, this.dataDir, assetIds);
     await rm(join(this.dataDir, "runs", runId), { recursive: true, force: true }).catch(() => undefined);
-    const outputDir = getSettings(this.db).general.outputDir || "outputs";
-    await rm(join(this.dataDir, outputDir, runId), { recursive: true, force: true }).catch(() => undefined);
+    const outputRoot = resolveOutputRoot(this.dataDir, getSettings(this.db).general.outputDir);
+    await rm(join(outputRoot, runId), { recursive: true, force: true }).catch(() => undefined);
   }
 
   /**

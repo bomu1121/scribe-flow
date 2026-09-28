@@ -364,6 +364,17 @@ const hasProduct = computed(() => sets.value.length > 0);
             </button>
             <blockquote v-if="sourceOpen[currentItem.id]">{{ currentItem.sourceQuote }}</blockquote>
           </div>
+          <!-- 出题时参考过的网上同类题：只说明「这类题长什么样」，不是本题的答案依据。 -->
+          <p v-if="currentItem.externalRef" class="rv-drill-external">
+            <span>出题时参考过</span>
+            <a
+              v-if="currentItem.externalRef.url"
+              :href="currentItem.externalRef.url"
+              target="_blank"
+              rel="noreferrer noopener"
+            >{{ currentItem.externalRef.title }}</a>
+            <span v-else>{{ currentItem.externalRef.title }}</span>
+          </p>
           <div class="rv-drill-feedback-actions">
             <button v-if="!currentGrade?.correct" type="button" class="rv-drill-link" @click="markEditing">改答案</button>
             <button type="button" class="rv-drill-link" @click="goNext">下一题</button>
@@ -413,6 +424,16 @@ const hasProduct = computed(() => sets.value.length > 0);
               <p class="rv-drill-extension-question">{{ extension.question }}</p>
               <p v-if="extension.hint" class="rv-drill-extension-meta">提示：{{ extension.hint }}</p>
               <p v-if="extension.angle" class="rv-drill-extension-meta">方向：{{ extension.angle }}</p>
+              <p v-if="extension.externalRef" class="rv-drill-extension-meta">
+                网上参考：
+                <a
+                  v-if="extension.externalRef.url"
+                  :href="extension.externalRef.url"
+                  target="_blank"
+                  rel="noreferrer noopener"
+                >{{ extension.externalRef.title }}</a>
+                <template v-else>{{ extension.externalRef.title }}</template>
+              </p>
             </li>
           </ol>
         </div>
@@ -656,6 +677,20 @@ const hasProduct = computed(() => sets.value.length > 0);
   font-size: 13px;
   line-height: 1.7;
   color: var(--color-text-secondary);
+}
+
+.rv-drill-external {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 8px 0 0;
+  font-size: var(--control-font-size-sm);
+  color: var(--color-text-tertiary);
+}
+
+.rv-drill-external a {
+  color: var(--color-brand);
+  word-break: break-all;
 }
 
 .rv-drill-feedback-actions {

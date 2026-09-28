@@ -80,6 +80,24 @@ async function connect() {
         cdp = ws;
         await send("Page.enable");
         await send("Runtime.enable");
+        /*
+         * 关掉通知权限。
+         *
+         * 冒烟会真实跑完一个工程（M3 那段），而设置里「运行结束提醒」默认是开的：
+         * 运行结束时页面会 `new Notification(...)` 弹一条系统通知。桌面通知会抢窗口焦点，
+         * 而后面若干检查依赖焦点（往输入框打字、Esc 关对话框），于是变成偶发失败。
+         * 实测：连续 7 次冒烟里有 1 次掉到 55/58，且事后无法复现——夹具不该被被测特性干扰，
+         * 所以这里直接把权限拒掉，让「有没有通知」不再是一个变量。
+         */
+        try {
+          await send("Browser.setPermission", {
+            origin: new URL(APP_URL).origin,
+            permission: { name: "notifications" },
+            setting: "denied",
+          });
+        } catch {
+          // 老版本 Chrome 没有 Browser.setPermission 时忽略：这条只是让冒烟更稳，不是被测内容。
+        }
         await send("Page.setDeviceMetricsOverride", {
           width: 1440,
           height: 900,
@@ -215,6 +233,13 @@ async function run() {
   await navigate(APP_URL);
   const shellReady = await waitFor("!!document.querySelector('.ws-rail') && !!document.querySelector('.ws-panel')", 12000);
   check("工作台壳渲染（ws-rail 活动条 + ws-panel 就位）", shellReady);
+  // 夹具自身的前置条件：通知权限必须被拒。断言它而不是只 try/catch，
+  // 否则 Browser.setPermission 静默失效时，「冒烟会不会被系统通知抢焦点」又变回一个未知变量。
+  check(
+    "冒烟夹具已关闭通知权限（避免系统通知抢焦点干扰后续检查）",
+    (await evalJs("typeof Notification === 'undefined' ? 'none' : Notification.permission")) === "denied",
+    `Notification.permission = ${await evalJs("typeof Notification === 'undefined' ? 'none' : Notification.permission")}`,
+  );
   // 有工程时 '/' 会自动跳进最近工程编辑器（HomeView redirectIfPossible）
   await waitFor("!!document.querySelector('.sf-editor') || !!document.querySelector('.sf-home')", 15000);
 
@@ -562,6 +587,49 @@ async function run() {
     await evalJs("[...document.querySelectorAll('.sf-settings-nav-item')].find((b) => b.textContent.trim() === '提示词块库')?.click(); true");
     const blocksOk = await waitFor("document.querySelectorAll('.sf-block-card').length >= 4", 6000);
     check("提示词块库渲染内置块（≥4）", blocksOk, `${await evalJs("document.querySelectorAll('.sf-block-card').length")} 块`);
+    // 「联网检索」是溯源与知识巩固共用的检索渠道（原名「外部溯源」）：按分组名点进去，
+    // 并确认说明里写明了两个消费方——名字改了而说明没跟上，这里会红。
+    await evalJs("[...document.querySelectorAll('.sf-settings-nav-item')].find((b) => b.textContent.trim() === '联网检索')?.click(); true");
+    const searchPanelOk = await waitFor(
+      "(() => { const t = document.querySelector('.sf-settings-desc')?.textContent ?? ''; return t.includes('信息溯源') && t.includes('知识巩固'); })()",
+      5000,
+    );
+    check("设置页「联网检索」写明两个模块共用（信息溯源 + 知识巩固）", searchPanelOk);
+    // 「常规」是运行与产出的默认策略：三块都必须渲染出来，且产物目录要显示**服务端解析后的绝对路径**
+    // （只显示用户填的 "outputs" 等于没告诉人文件到底写在哪，这正是这一步要拦住的老毛病）。
+    await evalJs("[...document.querySelectorAll('.sf-settings-nav-item')].find((b) => b.textContent.trim() === '常规')?.click(); true");
+    const generalOk = await waitFor(
+      `(() => {
+        const dividers = [...document.querySelectorAll('.sf-settings-divider')].map((el) => el.textContent.trim());
+        const hasAll = ['运行', '产出', '运行结束提醒'].every((name) => dividers.includes(name));
+        const resolved = [...document.querySelectorAll('.sf-field-hint')].some((el) => /当前生效：[A-Za-z]:[\\\\/]/.test(el.textContent));
+        const preview = [...document.querySelectorAll('.sf-field-hint')].some((el) => el.textContent.trim().startsWith('预览：') && el.textContent.includes('.md'));
+        return hasAll && resolved && preview;
+      })()`,
+      5000,
+    );
+    check("设置页「常规」三块齐全（运行/产出/运行结束提醒）", generalOk, `${await evalJs("[...document.querySelectorAll('.sf-settings-divider')].map((el) => el.textContent.trim()).join(' · ')")}`);
+    // 数值增减器必须是窄的：.sf-field 是 flex column，默认会把子元素拉满整行，
+    // 于是「每个检索词最多返回结果数」曾经是 460px 宽的输入框里放一个「5」。
+    // 宽度现在写在结构选择器 .sf-field .el-input-number 上，这条断言就是它的守卫。
+    const stepperWidths = (await evalJs("[...document.querySelectorAll('.sf-settings-body .el-input-number')].map((n) => Math.round(n.getBoundingClientRect().width))")) ?? [];
+    // 断言写死 120px 而不是"别太宽"：只写上限的话，样式规则被删掉时宽度会悄悄退回 Element Plus
+    // 默认的 150px（仍然 ≤200，检查照过），而 150 与 120 正是这次要区分的两种状态。
+    check(
+      "设置页数值增减器为 120px 窄宽度",
+      stepperWidths.length >= 3 && stepperWidths.every((w) => w === 120),
+      `${stepperWidths.length} 条：${stepperWidths.join(" / ")}px`,
+    );
+    const generalSections = (await evalJs(`(() => ({
+      numberInputs: document.querySelectorAll('.sf-settings-form .el-input-number').length,
+      switches: document.querySelectorAll('.sf-settings-form .el-switch').length,
+      openOutput: [...document.querySelectorAll('.sf-btn')].some((b) => b.textContent.trim() === '打开输出目录'),
+    }))()`)) ?? { numberInputs: 0, switches: 0, openOutput: false };
+    check(
+      "「常规」渲染 3 个数值控件、2 个提醒开关与「打开输出目录」",
+      generalSections.numberInputs === 3 && generalSections.switches === 2 && generalSections.openOutput,
+      `${generalSections.numberInputs} 数值 / ${generalSections.switches} 开关 / 打开按钮=${generalSections.openOutput}`,
+    );
     await evalJs("[...document.querySelectorAll('.sf-settings-nav-item')].find((b) => b.textContent.trim() === '数据与工程')?.click(); true");
     // 账本必须在进页面时自动读出来（历史 bug：只在点「刷新」时才请求，页面长期显示「—」）。
     const dataOk = await waitFor(

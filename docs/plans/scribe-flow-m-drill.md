@@ -3,7 +3,7 @@ title: ScribeFlow 实施清单：知识巩固节点 `process.drill`（练一练�
 class: plan
 status: done
 owner: 念前
-last_reviewed: 2026-09-10
+last_reviewed: 2026-09-28
 ---
 
 # ScribeFlow 实施清单：知识巩固节点 `process.drill`（练一练）
@@ -235,6 +235,13 @@ const RECIPE_DRILL: Recipe = {
   ],
 };
 ```
+
+> ⚠️ **上面这两行 `sourceQuote[]` 的写法是错的，别照抄**（`[]` 表示该字段是数组，打在字符串上会收集到 0 条引用，
+> 断言恒过＝门是死的）。2026-09-28 已修正为 `points[].sourceQuote` / `items[].sourceQuote` 并加 `minCount: 1`
+> 与机械守卫，见 [CHANGELOG](../../CHANGELOG.md) 的「修复」段与 `apps/server/src/lib/recipe.test.ts` 的
+> 「内置配方的引用回查门是活的」。同一处错法也在溯源 v2/v3 里存在过（`items[].evidence[].quote[]`）。
+> 另外审题步现在还会通过 `{{all}}` 拿抽点产物（原来它只收到 items/extensions，被要求输出 points 时只能自造形状，
+> 导致整个节点稳定失败），实际实现以 `packages/shared/src/prompt.ts` 的 `RECIPE_DRILL` 为准。
 
 > **必须扩展一个模板变量**（已核实代码）：`renderStepSystem`（`apps/server/src/lib/recipe.ts`）目前只支持 `{{input}}` / `{{prev}}` / `{{all}}` / `{{source}}`，**注入不了节点参数**。因此本清单含一处小改：`StepContext` 增加 `params?: string`，`renderStepSystem` 增加一行 `.replace(/\{\{params\}\}/g, ctx.params ?? "")`，`executeRecipeOnInput()` 增加 `params` 入参并透传。不传即为空串，对现有 4 个配方（`insight.v3` / `insight.v4` / `trace.v2` / `gameguide.v2`）零影响。
 > ⚠️ 不要用 `promptOverride` 拼参数——`engine.ts` L1179 的配方判定带 `!override.trim()`，一旦覆盖就退化成单步执行，三步质量和断言门全丢。

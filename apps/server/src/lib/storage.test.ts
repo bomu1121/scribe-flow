@@ -1,12 +1,23 @@
 import { mkdir, mkdtemp, readdir, rm, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve, sep } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import type { PruneItem } from "@scribe-flow/shared";
+import { DEFAULT_OUTPUT_DIR } from "@scribe-flow/shared";
 import { createDatabase, type AppDatabase } from "../db/client";
 import { mediaAssets, projects, runMedia, runs } from "../db/schema";
 import { RunEngine } from "./engine";
-import { buildDataOverview, fileManagerCommand, pruneStorage, resolveOutputDir, UPLOAD_ORPHAN_MIN_AGE_MS, type StorageDeps } from "./storage";
+import {
+  buildDataOverview,
+  fileManagerCommand,
+  isInsideDataDir,
+  pruneStorage,
+  resolveArtifactPath,
+  resolveOutputRoot,
+  toStoredArtifactPath,
+  UPLOAD_ORPHAN_MIN_AGE_MS,
+  type StorageDeps,
+} from "./storage";
 
 const cleanupDirs: string[] = [];
 
@@ -15,14 +26,15 @@ afterEach(async () => {
   await Promise.all(cleanupDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true }).catch(() => undefined)));
 });
 
-async function setup(outputDir = "outputs") {
+/** outputDir 传的是设置里那份原始字符串（可为相对名、绝对路径或空），deps 里存的是收口后的绝对根目录。 */
+async function setup(outputDir = DEFAULT_OUTPUT_DIR) {
   const root = await mkdtemp(join(tmpdir(), "sf-storage-"));
   cleanupDirs.push(root);
   const dataDir = join(root, "data");
   await mkdir(dataDir, { recursive: true });
   const db = createDatabase(dataDir);
   const engine = new RunEngine(db, dataDir);
-  const deps: StorageDeps = { db, dataDir, outputDir, deleteRun: (runId) => engine.deleteRun(runId) };
+  const deps: StorageDeps = { db, dataDir, outputRoot: resolveOutputRoot(dataDir, outputDir), deleteRun: (runId) => engine.deleteRun(runId) };
   return { db, engine, dataDir, deps };
 }
 
@@ -72,23 +84,46 @@ function itemOf(items: PruneItem[], target: PruneItem["target"]): PruneItem {
   return found;
 }
 
-describe("resolveOutputDir", () => {
+describe("resolveOutputRoot", () => {
   const dataDir = join(tmpdir(), "sf-data-abs");
+  const fallback = join(dataDir, DEFAULT_OUTPUT_DIR);
 
   it("空值与结尾斜杠都落到默认目录", () => {
-    expect(resolveOutputDir(dataDir, "")).toBe("outputs");
-    expect(resolveOutputDir(dataDir, "   ")).toBe("outputs");
-    expect(resolveOutputDir(dataDir, "notes/")).toBe("notes");
+    expect(resolveOutputRoot(dataDir, "")).toBe(fallback);
+    expect(resolveOutputRoot(dataDir, "   ")).toBe(fallback);
+    expect(resolveOutputRoot(dataDir, "notes/")).toBe(join(dataDir, "notes"));
   });
 
-  it("越界的产物目录回退到默认值", () => {
-    expect(resolveOutputDir(dataDir, "..")).toBe("outputs");
-    expect(resolveOutputDir(dataDir, "../../outside")).toBe("outputs");
-    expect(resolveOutputDir(dataDir, join(tmpdir(), "elsewhere"))).toBe("outputs");
+  it("相对路径用 .. 爬出数据目录时回退到默认值", () => {
+    expect(resolveOutputRoot(dataDir, "..")).toBe(fallback);
+    expect(resolveOutputRoot(dataDir, "../../outside")).toBe(fallback);
+  });
+
+  it("绝对路径原样采用：用户可以显式把成稿写到数据目录之外", () => {
+    const outside = join(tmpdir(), "elsewhere");
+    expect(resolveOutputRoot(dataDir, outside)).toBe(resolve(outside));
+    expect(isInsideDataDir(dataDir, resolveOutputRoot(dataDir, outside))).toBe(false);
+    expect(isInsideDataDir(dataDir, resolveOutputRoot(dataDir, "notes"))).toBe(true);
   });
 
   it("数据目录内的嵌套名保留", () => {
-    expect(resolveOutputDir(dataDir, "out/md")).toBe(join("out", "md"));
+    expect(resolveOutputRoot(dataDir, "out/md")).toBe(join(dataDir, "out", "md"));
+  });
+});
+
+describe("产物路径的存取", () => {
+  const dataDir = join(tmpdir(), "sf-data-abs");
+
+  it("数据目录内记相对路径，之外记绝对路径", () => {
+    expect(toStoredArtifactPath(dataDir, join(dataDir, "outputs", "run_1", "a.md"))).toBe("outputs/run_1/a.md");
+    const outside = join(tmpdir(), "elsewhere", "run_1", "a.md");
+    expect(toStoredArtifactPath(dataDir, outside)).toBe(outside.split(sep).join("/"));
+  });
+
+  it("两种记法都能解析回绝对路径", () => {
+    expect(resolveArtifactPath(dataDir, "outputs/run_1/a.md")).toBe(resolve(join(dataDir, "outputs/run_1/a.md")));
+    const outside = join(tmpdir(), "elsewhere", "a.md");
+    expect(resolveArtifactPath(dataDir, outside.split(sep).join("/"))).toBe(resolve(outside));
   });
 });
 
