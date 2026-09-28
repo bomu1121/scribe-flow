@@ -18,6 +18,18 @@ import {
 const ARCHIVE_PREFIX = "docs/research/raw/";
 
 /**
+ * 阅读器只列这些目录下的文档。
+ *
+ * 决策、计划、验收快照、调研（含抓取原文）、样例都是仓库**内部的过程产物**：文件名带日期、
+ * 只对当天成立，放进产品界面的阅读器里全是噪音——实测 65 篇里有 60 篇属于这类。
+ * 要放开某一类，往这个集合里加目录即可（例如把 `docs/decisions` 加回来）。
+ *
+ * 注意：下面关于「只读文件头」的实测数字是在收窄之前、对全部文档测的，现在读的文件更少，
+ * 那些数字只会更保守，不影响结论。
+ */
+const READER_DIRS: ReadonlySet<string> = new Set(["docs"]);
+
+/**
  * 列表接口一次读取的字节数上限。
  *
  * 列出全部文档只需要「front matter + 首个 H1」，而全仓文档合计 643 KB。只读头部后实际读取
@@ -175,9 +187,11 @@ export function listDocs(docsDir: string, options: { withBody?: boolean } = {}):
         // 软链接指向 docs/ 之外时不列出——否则"列得出来却读不到"，行为自相矛盾。
         // 只对软链接做 realpath 判定：普通文件每篇判两次 realpath 是白付的系统调用。
         if (entry.isSymbolicLink() && !isInsideDocs(docsDir, abs)) continue;
+        const repoPath = toRepoDocPath(docsDir, abs);
+        // 只列现状说明类文档；仓库内部的过程产物（决策/计划/验收/调研/样例）不进产品界面。
+        if (!READER_DIRS.has(repoPath.slice(0, repoPath.lastIndexOf("/")))) continue;
         try {
           const stat = statSync(abs);
-          const repoPath = toRepoDocPath(docsDir, abs);
           const { text, body } = loadDocText(abs, stat.size, withBody);
           out.push({
             path: repoPath,

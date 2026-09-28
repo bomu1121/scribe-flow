@@ -127,13 +127,17 @@ describe("文档读取：列表与正文", () => {
       "utf8",
     );
     writeFileSync(join(docs, "decisions", "b.md"), "# 决策 B\n\n无 front matter 的正文\n", "utf8");
+    // 阅读器只列 docs 根下的说明文档，所以「没有 front matter」这条也要用根下的文件来测
+    writeFileSync(join(docs, "plain.md"), "# 无元数据的说明\n\n正文\n", "utf8");
   });
 
   afterAll(() => rmSync(repo, { recursive: true, force: true }));
 
-  it("列出全部 markdown，带上路径、目录与元数据", () => {
+  it("只列 docs 根下的说明文档，嵌套目录不列", () => {
     const items = listDocs(docs);
-    expect(items.map((i) => i.path)).toEqual(["docs/decisions/b.md", "docs/status.md"]);
+    expect(items.map((i) => i.path)).toEqual(["docs/plain.md", "docs/status.md"]);
+    // 决策/计划/验收/调研/样例是仓库内部的过程产物，不该出现在产品界面的阅读器里
+    expect(items.every((i) => i.dir === "docs")).toBe(true);
     const status = items.find((i) => i.path === "docs/status.md");
     expect(status?.dir).toBe("docs");
     expect(status?.frontMatter?.class).toBe("status");
@@ -141,9 +145,9 @@ describe("文档读取：列表与正文", () => {
   });
 
   it("没有 front matter 的文档也能列出，标题回落到首个 H1", () => {
-    const item = listDocs(docs).find((i) => i.path === "docs/decisions/b.md");
+    const item = listDocs(docs).find((i) => i.path === "docs/plain.md");
     expect(item?.frontMatter).toBeNull();
-    expect(item?.title).toBe("决策 B");
+    expect(item?.title).toBe("无元数据的说明");
   });
 
   it("读正文时把 front matter 摘掉，元数据单独返回", () => {
@@ -203,7 +207,7 @@ describe("文档读取：只读头部与整读等价", () => {
     mkdirSync(join(docs, "decisions"), { recursive: true });
     for (const [name, content] of CASES) writeFileSync(join(docs, name), content, "utf8");
     // 无 H1 且无 front matter：标题只能由文件名兜底
-    writeFileSync(join(docs, "decisions", "bare.md"), "只有正文，没有标题行\n", "utf8");
+    writeFileSync(join(docs, "bare.md"), "只有正文，没有标题行\n", "utf8");
   });
 
   afterAll(() => rmSync(repo, { recursive: true, force: true }));
@@ -215,8 +219,8 @@ describe("文档读取：只读头部与整读等价", () => {
       const repoPath = `docs/${name}`;
       expect(listed.get(repoPath), repoPath).toEqual(naive(join(docs, name), name, repoPath));
     }
-    const bare = "docs/decisions/bare.md";
-    expect(listed.get(bare)).toEqual(naive(join(docs, "decisions", "bare.md"), "bare.md", bare));
+    const bare = "docs/bare.md";
+    expect(listed.get(bare)).toEqual(naive(join(docs, "bare.md"), "bare.md", bare));
   });
 
   it("截断的 H1 不会被当成标题（退回整读的直接证据）", () => {
