@@ -80,11 +80,10 @@
   `apps/server/src/routes/settings.test.ts`（在临时数据目录里跑真实路由：建工程 → 跑文本链路 →
   查账本 → 清理 → 再查账本归零），新增 `apps/server/src/lib/storage.test.ts`（19 例）。
 - 新增 `sharing/` 分享会材料：18 页 PPT 生成器 `tools/build-deck.cjs`、几何自检 `tools/qa-deck.cjs`
-  （解开 pptx 读形状坐标，查越界 / 重叠 / 溢出 / 独字行）、COM 导出 `tools/export-slides.ps1`、
-  演示道具 `tools/make-bench-graph.mjs`（一条命令建 200 节点工程），以及现场手册 `ROOM.md`、
-  讲演稿 `SPEECH.md`、答辩备查 `QA.md`。`sharing/` 独立于 pnpm workspace，依赖单独安装。
-- 新增三份调研：`docs/research/canvas-performance-optimization.md`（画布性能三处改动与实测数字）、
-  `docs/research/project-audit-2026-09-27.md`（七区逐文件审计）、
+  （解开 pptx 读形状坐标，查越界 / 重叠 / 溢出 / 独字行）、COM 导出 `tools/export-slides.ps1`，
+  以及现场手册 `ROOM.md`、逐模块口播稿 `MODULES.md`、讲演稿 `SPEECH.md`、答辩备查 `QA.md`。
+  `sharing/` 独立于 pnpm workspace，依赖单独安装。
+- 新增两份调研：`docs/research/project-audit-2026-09-27.md`（七区逐文件审计）、
   `docs/research/repo-legibility-and-over-engineering.md`（仓库可读性与过度工程的外部证据与处置建议）。
 - 新增调研 `docs/research/node-vs-prompt-block-boundary.md`：新功能该加一张卡片、还是加一个提示词。
   判断就两句——不是 AI 在干活（查找替换、合并、下载、存文件、要人动手改稿）= 加卡片；是 AI 干的就看料，
@@ -108,11 +107,12 @@
 
 #### 变更
 
-- 画布性能三处改动（`apps/web/src/components/canvas/FlowCanvas.vue`）：开 Vue Flow 的
-  `onlyRenderVisibleElements`（视口内只渲染 36 个节点，DOM 8,926 → 2,099）；运行事件合流到动画帧、
-  且只替换受影响节点对象（`queueRunPatch` / `flushRunEvents`）；ELK 从主线程挪进 Web Worker
-  （`elk-api.js` + `elk-worker.min.js?url`，懒加载单例）。跑一次 200 节点链路时主线程最长阻塞
-  32,655 ms → 264 ms，自动布局长任务 728 → 53 ms。数字为单次会话实测，口径见那份报告。
+- 画布交互三处改进（`apps/web/src/components/canvas/FlowCanvas.vue`）：开 Vue Flow 的
+  `onlyRenderVisibleElements`（视口外的节点不再渲染）；运行事件合流到动画帧、且只替换受影响的节点对象
+  （`queueRunPatch` / `flushRunEvents`）；ELK 自动布局从主线程挪进 Web Worker
+  （`elk-api.js` + `elk-worker.min.js?url`，懒加载单例）。
+  **收益没有在真实规模上验证过**：只在合成的 200 节点场景上测过，那不是实际使用规模；
+  日常的个位数节点看不出差别。三条都属于"照公开做法做对了"，不是解掉了我们自己的痛点。
 - 「AI 加工」卡片里的提示词块改名、并去掉内部说法。原来下拉里长这样：
   「观点提炼（配方试点） · v3 · 配方 · 内置」——"配方"出现两次、"试点"是内部阶段名，
   还挂着版本号与"内置"。现在块名说的是**拿到什么**（观点笔记 / 技术点拆解 / 科普笔记 /

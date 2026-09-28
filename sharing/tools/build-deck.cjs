@@ -2,7 +2,7 @@
  * 生成分享会 PPT。
  *
  * 结构照 sharing/ROOM.md 的三段走（现场手册是执行稿，这份是它的投影版）：
- *   ① 一次运行把界面按在地上 32 秒   ② 推送会撒谎，数据库不会   ③ 把 AI 的输出当成会坏的东西
+ *   ① 节点编排画布（用了画布库也不省产品级画布的工作量）   ② 推送会撒谎，数据库不会   ③ 把 AI 的输出当成会坏的东西
  * 每条结论都对着仓库里的实际代码核过，出处写在各页页脚。
  *
  * 配色取自项目自己的设计令牌 apps/web/src/styles/tokens.css：
@@ -214,7 +214,7 @@ const takeaway = (s, text, { y, pt = 16, h = 0.85 } = {}) => {
   title(s, "都是产品的主体界面，不是工程配置", PAPER);
 
   const rows = [
-    ["01", "一次运行把界面按在地上 32 秒", "一次运行要更新几百次界面，画布上每个节点都在变"],
+    ["01", "节点编排画布", "16 种节点、5913 行代码，画布是这个产品的核心界面"],
     ["02", "推送会撒谎，数据库不会", "一次运行可能跑十几分钟，中途断线、切页面、重启都是常态"],
     ["03", "把 AI 的输出当成会坏的东西", "引擎给一份拼接产物，用户要按视频逐段读"],
   ];
@@ -235,93 +235,112 @@ const takeaway = (s, text, { y, pt = 16, h = 0.85 } = {}) => {
   });
 }
 
-/* ------------------------------------------------------ 04 主题一过场（性能） */
+/* ------------------------------------------------------------ 04 主题一过场 */
 {
   const s = pres.addSlide();
-  section(s, "01 / 一次运行把界面按在地上 32 秒", "服务端 268 毫秒跑完了", "前端卡了 32 秒");
-  s.addText("图是一张 200 节点的真实可跑链路，200 是这个产品的节点上限", {
+  section(s, "01 / 节点编排画布", "用了画布库", "也不省产品级画布的工作量");
+  s.addText("5913 行画布代码里，真正调库 API 的不到 200 行", {
     x: M, y: 4.65, w: CW, h: 0.4,
     fontFace: FONT, fontSize: 15, color: MUTED, margin: 0, valign: "middle",
   });
 }
 
-/* ---------------------------------------------------------- 05 核心那两组数字 */
-{
-  const s = pres.addSlide();
-  dark(s);
-  eyebrow(s, "01 / 修法不玄学，就两下");
-  title(s, "32 秒 → 264 毫秒", PAPER);
-
-  s.addText("32,655 ms", {
-    x: M, y: 2.1, w: 3.9, h: 1.1,
-    fontFace: MONO, fontSize: 40, bold: true, color: MUTED, margin: 0, valign: "middle",
-  });
-  s.addText("→", {
-    x: M + 3.95, y: 2.1, w: 0.9, h: 1.1,
-    fontFace: FONT, fontSize: 36, bold: true, color: ACCENT, align: "center", margin: 0, valign: "middle",
-  });
-  s.addText("264 ms", {
-    x: M + 4.9, y: 2.1, w: 3.6, h: 1.1,
-    fontFace: MONO, fontSize: 40, bold: true, color: ACCENT, margin: 0, valign: "middle",
-  });
-  s.addText("跑一次 200 节点链路时，主线程最长一次阻塞", {
-    x: M, y: 3.22, w: CW, h: 0.36,
-    fontFace: FONT, fontSize: 14, color: MUTED, margin: 0, valign: "middle",
-  });
-
-  rowList(
-    s,
-    [
-      ["自动布局", "长任务合计 728 ms → 53 ms（−93%），最长掉帧 526 ms → 60 ms（−89%）"],
-      ["画布 DOM", "8,926 → 2,099 个元素（−76%）；视口内只渲染 36 个节点，其余不再进 DOM"],
-      ["没改善的", "首屏把 200 个节点塞进 DOM：2,250 ms → 2,340 ms —— 裁剪省的是渲染，不是建对象"],
-    ],
-    { top: 3.85, step: 0.98, pt: 14 },
-  );
-
-  source(s, "同一张图、同一台机器、同一组指标，每改一处单独重测；口径与三处改动见 docs/research/canvas-performance-optimization.md");
-}
-
-/* -------------------------------------------------- 06 为什么会卡 + 两下修法 */
+/* ------------------------------------------------------ 05 一个 nodeType */
 {
   const s = pres.addSlide();
   light(s);
-  eyebrow(s, "01 / 一次运行把界面按在地上 32 秒");
-  title(s, "每个事件都重建整张图", INK);
+  eyebrow(s, "01 / 节点编排画布");
+  title(s, "16 种节点，只注册 1 个 nodeType", INK);
 
-  s.addText(
-    "一次运行要发几百个事件。原来每个事件都执行一次 nodesRef.value = nodesRef.value.map(...)，数组一换引用，画布就重新解析全部 200 个节点——几百次叠加，成了单个 32.7 秒的长任务。",
+  s.addText("业务类型不放进画布的 type 字段，而是放进 data.nodeType；画布只认一个组件，卡片按类型分派。", {
+    x: M, y: 1.75, w: CW, h: lineH(16, 1),
+    fontFace: FONT, fontSize: 16, color: INK, margin: 0, valign: "middle",
+  });
+
+  const two = [
     {
-      x: M, y: 1.88, w: CW, h: lineH(15, 2),
-      fontFace: FONT, fontSize: 15, color: INK, margin: 0, valign: "top",
+      x: M, head: "收益", tone: INK,
+      body: "端口、右键菜单、运行按钮、状态条、悬停预览、只读控制只写一遍，16 种节点共用同一个外壳。",
     },
-  );
+    {
+      x: M + CW / 2 + 0.2, head: "代价", tone: ERR,
+      body: "外壳文件长到 3028 行，卡片分派是一条 16 段的 v-if 链；只有 6 张卡片拆成了独立组件。",
+    },
+  ];
+  two.forEach((c) => {
+    const cw = CW / 2 - 0.2;
+    s.addShape(pres.shapes.RECTANGLE, {
+      x: c.x, y: 2.6, w: cw, h: 1.62,
+      fill: { color: BG }, line: { color: BORDER, width: 1 },
+    });
+    s.addText(c.head, {
+      x: c.x + 0.32, y: 2.8, w: cw - 0.64, h: 0.42,
+      fontFace: FONT, fontSize: 16, bold: true, color: c.tone, margin: 0, valign: "middle",
+    });
+    s.addText(c.body, {
+      x: c.x + 0.32, y: 3.32, w: cw - 0.64, h: lineH(15, 2),
+      fontFace: FONT, fontSize: 15, color: SUB, margin: 0, valign: "top",
+    });
+  });
 
-  panels(
-    s,
-    [
-      {
-        head: "改动一 · 只渲染看得见的节点",
-        body: "Vue Flow 的 onlyRenderVisibleElements 默认就是关的。打开后视口内只渲染 36 个节点，DOM 从 8,926 降到 2,099；主线程阻塞 32,655 → 11,633 ms，砍掉六成。",
-      },
-      {
-        head: "改动二 · 同一帧的事件合成一次更新",
-        body: "事件先记进待办表，每个动画帧只刷一次，而且只替换受影响的那几个节点对象，其余保持同一引用。11,633 → 264 ms，再砍掉九成八。",
-      },
-    ],
-    { top: 2.8, h: 2.0, bodyPt: 14 },
-  );
+  s.addText("要决策的是边界：哪些该共享外壳，哪些该拆成卡片", {
+    x: M, y: 4.85, w: CW, h: 0.5,
+    fontFace: FONT, fontSize: 18, bold: true, color: INK, margin: 0, valign: "middle",
+  });
 
-  takeaway(s, "直觉是「增量更新更省」，但增量把正确性押在「事件不会丢」上，而事件一定会丢", { y: 5.4, pt: 16 });
+  source(s, "FlowCanvas.vue 只注册 1 个 nodeType（:93）；卡片分派见 ScribeNode.vue（3028 行，:1014 起 16 段分支）");
+}
 
-  source(s, "合流见 FlowCanvas.vue:762 的 queueRunPatch 与 :751 的 flushRunEvents；视口裁剪见同文件模板 :908");
+/* -------------------------------------------------------- 06 撤销重做 */
+{
+  const s = pres.addSlide();
+  light(s);
+  eyebrow(s, "01 / 节点编排画布");
+  title(s, "快照式撤销，和它带来的两个副作用", INK);
+
+  s.addText("不记命令，直接存整图快照；上限 50 步，出图时把运行态字段剥掉，刷新后不会卡在运行中。", {
+    x: M, y: 1.75, w: CW, h: lineH(16, 1),
+    fontFace: FONT, fontSize: 16, color: INK, margin: 0, valign: "middle",
+  });
+  s.addText("提交走双通道：输入框逐字改图但不记历史，失焦时才提交一次历史。", {
+    x: M, y: 2.3, w: CW, h: lineH(18, 1),
+    fontFace: FONT, fontSize: 18, bold: true, color: INK, margin: 0, valign: "middle",
+  });
+
+  const two = [
+    {
+      x: M, head: "副作用一", tone: ERR,
+      body: "提交时不做去重，点进输入框再点空白会压入一模一样的快照，用户按撤销会觉得没反应。",
+    },
+    {
+      x: M + CW / 2 + 0.2, head: "副作用二", tone: ERR,
+      body: "视角本身也在快照里，所以撤销会顺带把镜头弹回当时的画面，这点容易被忽略。",
+    },
+  ];
+  two.forEach((c) => {
+    const cw = CW / 2 - 0.2;
+    s.addShape(pres.shapes.RECTANGLE, {
+      x: c.x, y: 3.05, w: cw, h: 1.62,
+      fill: { color: BG }, line: { color: BORDER, width: 1 },
+    });
+    s.addText(c.head, {
+      x: c.x + 0.32, y: 3.25, w: cw - 0.64, h: 0.42,
+      fontFace: FONT, fontSize: 16, bold: true, color: c.tone, margin: 0, valign: "middle",
+    });
+    s.addText(c.body, {
+      x: c.x + 0.32, y: 3.77, w: cw - 0.64, h: lineH(15, 2),
+      fontFace: FONT, fontSize: 15, color: SUB, margin: 0, valign: "top",
+    });
+  });
+
+  source(s, "快照与 50 步上限见 FlowCanvas.vue:82-111；失焦提交约定见 utils/flow.ts:39-40");
 }
 
 /* ------------------------------------------------------------ 07 浮层缩放 */
 {
   const s = pres.addSlide();
   light(s);
-  eyebrow(s, "01 / 一次运行把界面按在地上 32 秒");
+  eyebrow(s, "01 / 节点编排画布");
   title(s, "画布缩放之后，浮层怎么还对得上", INK);
 
   rowList(

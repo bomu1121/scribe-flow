@@ -657,9 +657,10 @@ function onDrop(event: DragEvent) {
 
 /** 自动布局用的 ELK 实例（懒加载单例）。
  *
- *  ELK 在**主线程**上排布大图会长时间独占主线程：200 节点实测最长一次掉帧 526ms、
- *  三个长任务合计 728ms。官方支持把计算放进 Web Worker，但要求用 elk-api
- *  并把 worker 脚本地址传进去（自己 bundle 的 elk.bundled 不支持 worker）。
+ *  ELK 在主线程上排布大图会长时间独占主线程（合成场景 200 节点实测最长掉帧 526ms）。
+ *  官方支持把计算放进 Web Worker，但要求用 elk-api 并把 worker 脚本地址传进去
+ *  （自己 bundle 的 elk.bundled 不支持 worker）。日常的个位数节点看不出差别，
+ *  挪进 Worker 也没有额外代价，所以按官方推荐的方式来。
  *  实例做单例是因为每次 new 都会拉起一个 worker，而 worker 启动本身有成本。 */
 type ElkInstance = import("elkjs/lib/elk-api.js").ELK;
 let elkInstance: Promise<ElkInstance> | null = null;
@@ -742,9 +743,9 @@ function runScopeNodeIds(scope: "all" | "fromNode" | "node", nodeId?: string): S
 
 /** 运行事件合流：同一帧内到达的事件合并成一次节点更新。
  *
- *  背景（200 节点链路实测）：逐个事件都重建整张节点表时，服务端 268ms 跑完的运行
- *  会让主线程累计阻塞十几秒——每个事件都会触发一次全量节点渲染。
- *  合流后每个动画帧只更新一次，且只替换受影响的那几个节点对象（其余保持同一引用）。 */
+ *  逐个事件都重建整张节点表时，每个事件都会触发一次全量节点渲染——事件密集时这些渲染会叠加。
+ *  合流后每个动画帧只更新一次，且只替换受影响的那几个节点对象（其余保持同一引用）。
+ *  日常规模（个位数节点）看不出差别，但合流本身没有代价。 */
 const pendingPatches = new Map<string, Record<string, unknown>>();
 let flushHandle: number | null = null;
 

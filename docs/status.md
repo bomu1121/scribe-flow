@@ -47,7 +47,7 @@ review_days: 30
 | UI 冒烟检查项（`pnpm smoke:ui`） | **64**（其中 3 项为恒真占位，净 61） |
 | API 自检项 | m2 7 · m3 14 · m4 19 · m6 9 · drill 22 |
 | 内置提示词块（`BUILTIN_PROMPT_BLOCKS`） | **14** |
-| 文档数（`docs/` 下 `.md`，不含调研原文） | 48 |
+| 文档数（`docs/` 下 `.md`，不含调研原文） | 47 |
 <!-- docs-gen:numbers:end -->
 
 ## 3. 已知缺口
@@ -141,7 +141,6 @@ review_days: 30
 **调研**（`docs/research/`）
 
 - [AI 加工节点内部多步链：收益调研与进阶实现方案](./research/ai-node-multistep-research.md)
-- [画布性能优化（200 节点实测）](./research/canvas-performance-optimization.md)
 - [开发记录（已拆分，此为存根）](./research/development-log.md)
 - [节点结果预览展示调研与方案](./research/node-result-preview-research.md)
 - [新功能该加一张卡片，还是加一个提示词](./research/node-vs-prompt-block-boundary.md)
