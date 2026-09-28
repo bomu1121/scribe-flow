@@ -41,11 +41,11 @@ review_days: 30
 
 | 指标 | 当前值 |
 | --- | --- |
-| 测试用例（`it(` 声明数） | **264**（shared 96 · server 148 · web 20） |
-| UI 冒烟检查项（`pnpm smoke:ui`） | **55**（其中 3 项为恒真占位，净 52） |
+| 测试用例（`it(` 声明数） | **265**（shared 97 · server 148 · web 20） |
+| UI 冒烟检查项（`pnpm smoke:ui`） | **56**（其中 3 项为恒真占位，净 53） |
 | API 自检项 | m2 7 · m3 14 · m4 12 · m6 9 · drill 22 |
 | 内置提示词块（`BUILTIN_PROMPT_BLOCKS`） | **14** |
-| 文档数（`docs/` 下 `.md`，不含调研原文） | 41 |
+| 文档数（`docs/` 下 `.md`，不含调研原文） | 42 |
 <!-- docs-gen:numbers:end -->
 
 ## 3. 已知缺口
@@ -136,6 +136,7 @@ review_days: 30
 - [画布性能优化（200 节点实测）](./research/canvas-performance-optimization.md)
 - [开发记录（已拆分，此为存根）](./research/development-log.md)
 - [节点结果预览展示调研与方案](./research/node-result-preview-research.md)
+- [新功能该加一张卡片，还是加一个提示词](./research/node-vs-prompt-block-boundary.md)
 - [全项目审计（2026-09-27）](./research/project-audit-2026-09-27.md)
 - [R1 桌面研究报告：市场工作流产品功能地图 v1](./research/r1-desktop-research.md)
 - [仓库可读性与过度工程：外部证据与本仓处置建议](./research/repo-legibility-and-over-engineering.md)

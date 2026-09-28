@@ -2104,8 +2104,20 @@ ${JSON.stringify(taxonomyTags)}`;
     const elapsed = Date.now() - active.startedAt;
     const rows = this.db.select().from(runNodeResults).where(eq(runNodeResults.runId, active.id)).all();
     const doneCount = rows.filter((r) => r.status === "done").length;
+    // 跑完把链路末端的笔记落一份到输出目录；文件名用工程名，所以运行记录里一眼能看出交付物叫什么。
+    const written = status === "success" ? await this.saveRunDocuments(active, rows) : [];
+    for (const doc of written) {
+      await this.db
+        .update(runNodeResults)
+        .set({ outputPath: doc.rel, outputSize: doc.text.length })
+        .where(and(eq(runNodeResults.runId, active.id), eq(runNodeResults.nodeId, doc.nodeId)))
+        .run();
+    }
     const outputRow = rows.find((r) => r.outputKind === "noteDoc" && r.outputPath);
-    const summary = outputRow?.summary ?? (doneCount > 0 ? `${doneCount} 个节点完成` : undefined);
+    const summary =
+      (written[0] ? `${written[0].fileName} · ${written[0].text.length} 字` : undefined) ??
+      outputRow?.summary ??
+      (doneCount > 0 ? `${doneCount} 个节点完成` : undefined);
     await this.db
       .update(runs)
       .set({ status, finishedAt: Date.now(), elapsedMs: elapsed, summary, error })
@@ -2114,6 +2126,52 @@ ${JSON.stringify(taxonomyTags)}`;
 
     this.emit(active, { type: "run.done", runId: active.id, status });
     setTimeout(() => this.actives.delete(active.id), 60_000);
+  }
+
+  /**
+   * 把链路末端的笔记落一份到输出目录，文件名用工程名。
+   *
+   * 这件事以前由「输出」节点做，但那张卡片已经从节点库与模板里移除（节点类型本身保留给老工程，
+   * 见 `runNode` 的 `process.output` 分支），所以改由运行收尾统一做：
+   * 取范围内**没有下游**的节点的笔记产物，跳过音频与老工程里的输出节点自身；
+   * 多份时在文件名后补节点名，避免互相覆盖。
+   */
+  private async saveRunDocuments(active: ActiveRun, rows: (typeof runNodeResults)["$inferSelect"][]) {
+    const withDownstream = new Set(active.graph.edges.filter((e) => active.nodeIds.has(e.source)).map((e) => e.source));
+    const docs = rows.filter(
+      (r) =>
+        r.status === "done" &&
+        !withDownstream.has(r.nodeId) &&
+        r.nodeType !== "process.output" &&
+        (r.outputKind === "noteBlock" || r.outputKind === "noteDoc"),
+    );
+    if (docs.length === 0) return [];
+
+    const outputDir = getSettings(this.db).general.outputDir || "outputs";
+    const dir = join(this.dataDir, outputDir, active.id);
+    await mkdir(dir, { recursive: true });
+
+    const base = escapePathName(active.projectName.trim()) || "笔记";
+    const written: { nodeId: string; fileName: string; rel: string; text: string }[] = [];
+    for (const row of docs) {
+      const raw = await this.readResultText(row);
+      if (!raw.trim()) continue;
+      const node = active.graph.nodes.find((n) => n.id === row.nodeId);
+      const label = node ? nodeLabel(node) : row.nodeId;
+      const fileName = docs.length > 1 ? `${base}-${escapePathName(label)}.md` : `${base}.md`;
+      const rel = `${outputDir}/${active.id}/${fileName}`;
+      await writeFile(join(this.dataDir, rel), raw, "utf8");
+      // 记在产物所属节点上：老「输出」节点会记这条「输出文件」，卡片移除后由收尾补上，日志里的信息不变。
+      await this.log(active, row.nodeId, "info", `输出文件：${rel}`);
+      written.push({ nodeId: row.nodeId, fileName, rel, text: raw });
+    }
+    return written;
+  }
+
+  /** 取节点产物全文：优先用落库的内联文本，超大产物回落到它自己的文件；知识巩固的 JSON 转成可读题目集。 */
+  private async readResultText(row: (typeof runNodeResults)["$inferSelect"]): Promise<string> {
+    const text = row.outputText ?? (row.outputPath ? await readFile(join(this.dataDir, row.outputPath), "utf8").catch(() => "") : "");
+    return maybeDrillToMarkdown(text);
   }
 
   /** 旧运行没有 run_node_inputs 时，从节点结果与转写日志推导输入明细，保证历史结果页也能单独查看。 */

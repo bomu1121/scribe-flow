@@ -1276,10 +1276,12 @@ function downloadMarkdown() {
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
-  // 分段视图下文件名带上该段标题，导出的就是这一段而不是整篇。
+  // 文件名用工程名（笔记名跟着工程走），与输出目录里落盘的名字同一套规则；分段视图再带上该段标题，
+  // 查看上游输入时标明是输入。
   const segment = selectedSegment.value;
   const segmentSuffix = segment ? `-${String(segment.index + 1).padStart(2, "0")}-${slugify(segment.label).slice(0, 40)}` : "";
-  a.download = viewingInput.value ? `run-${runId.value.slice(-6)}-input${segmentSuffix}.md` : `run-${runId.value.slice(-6)}${segmentSuffix}.md`;
+  const stem = (run.value?.projectName ?? "").replace(/[\\/:*?"<>|]/g, "_").slice(0, 80).trim() || `run-${runId.value.slice(-6)}`;
+  a.download = viewingInput.value ? `${stem}-输入${segmentSuffix}.md` : `${stem}${segmentSuffix}.md`;
   a.click();
   URL.revokeObjectURL(url);
 }

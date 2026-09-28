@@ -31,7 +31,6 @@ describe("instantiateTemplate", () => {
         duration: 300,
       },
       promptBlockId: "builtin.insight.v4",
-      fileStem: "芯片是怎么造出来的",
     })!;
 
     const source = graph.nodes.find((node) => node.type === "source.bili")!;
@@ -48,10 +47,16 @@ describe("instantiateTemplate", () => {
     const prompt = graph.nodes.find((node) => node.type === "process.prompt")!;
     expect(prompt.data).toMatchObject({ promptBlockId: "builtin.insight.v4" });
 
-    const output = graph.nodes.find((node) => node.type === "process.output")!;
-    expect(output.data).toMatchObject({ fileName: "芯片是怎么造出来的.md" });
-
     expect(graph.edges).toHaveLength(WORKFLOW_TEMPLATES.find((t) => t.id === BASIC)!.graph.edges.length);
+  });
+
+  it("模板不再以「输出」节点收尾：落盘改由运行收尾统一做，文件名跟着工程名走", () => {
+    for (const template of WORKFLOW_TEMPLATES) {
+      expect(template.graph.nodes.some((node) => node.type === "process.output")).toBe(false);
+      // 末端（没有下游）至少有一个节点，模板才不会是一条断掉的链路。
+      const sources = new Set(template.graph.edges.map((edge) => edge.source));
+      expect(template.graph.nodes.some((node) => !sources.has(node.id))).toBe(true);
+    }
   });
 
   it("改过的实例不会污染模板常量（两次实例互相独立）", () => {

@@ -76,7 +76,7 @@ async function pick(templateId?: string) {
       </button>
     </div>
     <div class="np-foot">
-      <span class="np-hint">通用模板需在 AI 加工节点中选择提示词块；垂直模板（如阴阳师攻略）已预选推荐提示词块，仍可更换。</span>
+      <span class="np-hint">通用模板需在 AI 加工节点中选择提示词块；垂直模板（如阴阳师攻略）已预选推荐提示词块，仍可更换。跑完会自动把链路末端的笔记存进输出目录，文件名用工程名。</span>
       <el-button plain :disabled="creating" @click="close">取消</el-button>
     </div>
   </ElDialog>

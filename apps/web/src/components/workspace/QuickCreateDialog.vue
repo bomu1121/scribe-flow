@@ -250,7 +250,6 @@ async function submit() {
     const graph = instantiateTemplate(templateId.value, {
       bili: buildBiliSource(url, info),
       promptBlockId: promptBlockId.value || undefined,
-      fileStem: title ? title.replace(/[\\/:*?"<>|]/g, "_").slice(0, 60) : "",
     });
 
     const project = graph

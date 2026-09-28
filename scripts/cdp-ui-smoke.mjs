@@ -475,7 +475,8 @@ async function run() {
   }
 
   // ---------------------------------------------------------------
-  // 5. M3：文本工作流在画布上运行到 done（源文本→合并→输出，不依赖 AI/ASR 密钥）
+  // 5. M3：文本工作流在画布上运行到 done（源文本→合并，不依赖 AI/ASR 密钥）
+  //     链路刻意不带「输出」节点：落盘已改由运行收尾统一做，落盘文件名跟着工程名走。
   //     运行按钮 = 画布浮动 .sf-float-run（原 .sf-editor-bar-actions 主按钮已重构掉）
   // ---------------------------------------------------------------
   const m3TextGraph = {
@@ -483,12 +484,8 @@ async function run() {
     nodes: [
       { id: "n_src", type: "source.text", position: { x: 0, y: 0 }, data: { label: "文本", text: "M3 UI 验收文稿" } },
       { id: "n_merge", type: "process.merge", position: { x: 200, y: 0 }, data: { label: "合并", title: "验收笔记" } },
-      { id: "n_out", type: "process.output", position: { x: 400, y: 0 }, data: { label: "输出", fileName: "ui.md" } },
     ],
-    edges: [
-      { id: "e1", source: "n_src", target: "n_merge", sourceHandle: "transcript", targetHandle: "noteBlock" },
-      { id: "e2", source: "n_merge", target: "n_out", sourceHandle: "noteDoc", targetHandle: "noteDoc" },
-    ],
+    edges: [{ id: "e1", source: "n_src", target: "n_merge", sourceHandle: "transcript", targetHandle: "noteBlock" }],
     viewport: { x: 0, y: 0, zoom: 1 },
   };
   const m3Create = await fetch(`${API_URL}/api/projects`, {
@@ -507,13 +504,13 @@ async function run() {
       body: JSON.stringify({ graph: m3TextGraph }),
     });
     await navigate(`${APP_URL}project/${m3Id}`);
-    const m3Canvas = await waitFor("document.querySelectorAll('.vue-flow__node').length === 3", 15000);
-    check("M3 画布渲染 3 节点", m3Canvas, `${await evalJs("document.querySelectorAll('.vue-flow__node').length")} 个节点`);
+    const m3Canvas = await waitFor("document.querySelectorAll('.vue-flow__node').length === 2", 15000);
+    check("M3 画布渲染 2 节点", m3Canvas, `${await evalJs("document.querySelectorAll('.vue-flow__node').length")} 个节点`);
     const runBtnReady = await waitFor("!!document.querySelector('.sf-float-run:not([disabled])')", 8000);
     check("M3 运行按钮可用（浮动运行 .sf-float-run）", runBtnReady);
     await evalJs("document.querySelector('.sf-float-run')?.click(); true");
-    const allDone = await waitFor("document.querySelectorAll('.sf-node.is-done').length === 3", 25000);
-    check("SSE 驱动 3 个节点进入 done 状态", allDone, `${await evalJs("document.querySelectorAll('.sf-node.is-done').length")} 个节点`);
+    const allDone = await waitFor("document.querySelectorAll('.sf-node.is-done').length === 2", 25000);
+    check("SSE 驱动 2 个节点进入 done 状态", allDone, `${await evalJs("document.querySelectorAll('.sf-node.is-done').length")} 个节点`);
 
     // 运行记录入库：切到工作台「运行记录」tab（原独立 /runs 页已并入面板）
     await openRailTab("运行记录");
@@ -526,6 +523,11 @@ async function run() {
     check("运行库出现本次运行（面板内行）", runRowReady && runRowMeta.rows >= 1, `${runRowMeta.rows} 行 · ${runRowMeta.title} · ${runRowMeta.first}`);
     const m3RunList = await fetch(`${API_URL}/api/runs?projectId=${m3Id}`).then((r) => r.json());
     m3RunId = m3RunList?.items?.[0]?.id ?? "";
+
+    // 没有「输出」节点也要落盘：运行收尾把末端笔记按工程名写进输出目录，并把文件记在该节点上。
+    const m3Detail = m3RunId ? await fetch(`${API_URL}/api/runs/${m3RunId}`).then((r) => r.json()) : null;
+    const m3NotePath = (m3Detail?.nodeResults ?? []).find((n) => n.nodeId === "n_merge")?.output?.path ?? "";
+    check("无输出节点也按工程名落盘（运行收尾自动落盘）", m3NotePath.endsWith("M3 UI 验收.md"), m3NotePath || "(没有 output.path)");
 
     // -------------------------------------------------------------
     // 6. M4：运行详情日志查看器（RunDetailView .rv-preview / RunLogDialog .rl-log-item）
