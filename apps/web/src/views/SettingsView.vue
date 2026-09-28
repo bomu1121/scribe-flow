@@ -378,7 +378,10 @@ async function refreshAiModels() {
       apiKey: form.aiKey || undefined,
     });
     if (models.length > 0) {
-      if (form.aiModel && !models.includes(form.aiModel)) form.aiModel = models[0];
+      // 这里不要改写 form.aiModel：列表只对得上「服务端这次返回了什么」，对不上用户存的值。
+      // 例如存的是 deepseek-v4-flash 而端点只提供 deepseek-flash / deepseek-v4-pro，
+      // 改写就等于「打开设置页」这个动作偷偷改了配置，再点一次保存就把用户的值写没了。
+      // 存的值继续保留，由 syncAiModelOptions 把它补进选项里让人看得见、能改。
       syncAiModelOptions(models);
     }
   } catch {
@@ -433,9 +436,12 @@ onMounted(async () => {
   // 支持 ?group=search 这类深链：画布节点上的「去配置」按钮需要直接落到对应分组。
   const group = String(route.query.group ?? "");
   if (groups.some((item) => item.key === group)) active.value = group as GroupKey;
+  // 设置常已被 AppLayout / 画布节点预取过：先用内存里的值同步填一遍。
+  // 不这么做，用户看到的就是「默认值一闪 → 真实值跳进来」，而这份数据本来就在手里。
+  fillForm();
   await store.load();
   fillForm();
-  await store.loadObsidianFolders();
+  // 目录列表由 store.load() 自己并发拉取（它只喂 Obsidian 那一栏的下拉框），这里不再重复请求。
   await promptsStore.load();
   // 账本必须在进页面时就读：只靠「刷新」按钮触发会让这一页长期显示空值。
   await loadDataInfo();
@@ -515,7 +521,6 @@ async function saveAll() {
     });
     toast.success("设置已保存");
     await store.load();
-    await store.loadObsidianFolders();
     fillForm();
   } catch (err) {
     toast.error(err instanceof Error ? err.message : "保存失败");

@@ -3,7 +3,17 @@ import { defineAsyncComponent, onBeforeUnmount, watch } from "vue";
 import { X } from "lucide-vue-next";
 import { useUiStore } from "@/stores/ui";
 
-const SettingsView = defineAsyncComponent(() => import("@/views/SettingsView.vue"));
+/**
+ * 设置内容是一个懒加载分包。这份组件在应用启动时就挂载（见 App.vue），
+ * 所以顺手把分包也取回来：否则第一次点开设置会先看到一段只有空白面板的等待
+ * （本地实测约 140 ms，网络慢时更久），而这次等待是完全可以提前消掉的。
+ */
+function loadSettingsView() {
+  return import("@/views/SettingsView.vue");
+}
+
+const SettingsView = defineAsyncComponent(loadSettingsView);
+void loadSettingsView();
 
 const ui = useUiStore();
 

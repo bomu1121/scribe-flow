@@ -84,7 +84,9 @@ export const useSettingsStore = defineStore("settings", () => {
     loading.value = true;
     try {
       settings.value = await api.get<AppSettings>("/api/settings");
-      await loadObsidianFolders();
+      // 目录列表只喂 Obsidian 那一栏的下拉框，而它是递归读本地知识库，实测要 280-840 ms。
+      // 不 await：表单回填不该被一个与自身无关的请求挡住。
+      void loadObsidianFolders();
     } finally {
       loading.value = false;
     }

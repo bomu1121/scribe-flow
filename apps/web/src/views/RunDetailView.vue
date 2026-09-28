@@ -71,6 +71,26 @@ const comparingDiff = ref(false);
 const resultRootRef = ref<HTMLElement | null>(null);
 const docScrollRef = ref<HTMLElement | null>(null);
 
+/**
+ * 每条运行各自的阅读位置。
+ *
+ * 换运行不再销毁内容后，滚动容器会跨运行复用：不主动复位就会停在上一条运行的位置，
+ * 而一律回顶部又会让「切走再切回」丢掉阅读进度。所以按运行 id 记住读到哪了。
+ */
+const READ_SCROLL_LIMIT = 50;
+const docScrollByRun = new Map<string, number>();
+
+/** 记下当前运行读到哪了。切换前调用，此时 run 还是即将离开的那一条。 */
+function recordDocScroll() {
+  const container = docScrollRef.value;
+  if (!container || !run.value) return;
+  docScrollByRun.set(run.value.id, container.scrollTop);
+  if (docScrollByRun.size > READ_SCROLL_LIMIT) {
+    const oldest = docScrollByRun.keys().next();
+    if (!oldest.done) docScrollByRun.delete(oldest.value);
+  }
+}
+
 // ---------- 顶部「结果 / 思维导图 / 节点流水」切换：滑动墨条 + 内容淡入 ----------
 type DetailTab = "result" | "nodes" | "mindmap" | "drill";
 const tabsEl = ref<HTMLElement | null>(null);
@@ -161,6 +181,40 @@ let reloadTimer: ReturnType<typeof setTimeout> | null = null;
 let tocCloseTimer: ReturnType<typeof setTimeout> | null = null;
 /** 竞态令牌：切换运行后，先前发出的详情/输出请求返回时直接丢弃。 */
 let loadRunToken = 0;
+
+/**
+ * 忙碌提示延迟出现，短于这个时长什么都不显示。
+ * 本地切换一条运行实测约 100 ms，指示灯一闪而过比不显示更刺眼——「突兀」正是这么来的。
+ * 阈值与 DocsDialog 取同一档（--dur-2）。
+ */
+const BUSY_HINT_DELAY = 180;
+let busyHintTimer: number | undefined;
+const showBusyHint = ref(false);
+
+/**
+ * 正在换运行：屏上还是上一条运行的内容。
+ *
+ * 切换运行时不先清空旧内容——「整块消失 → 重新出现」正是 DocsDialog 里已经改掉的那个毛病
+ * （用户会以为点空了）。旧内容留在屏上并压暗，等新运行的详情与正文都就绪后一起替换。
+ */
+const switchingRun = ref(false);
+/** 上一次加载失败的原因；只在屏上没有任何运行内容时才会显示出来。 */
+const loadError = ref("");
+
+watch(
+  switchingRun,
+  (switching) => {
+    window.clearTimeout(busyHintTimer);
+    if (!switching) {
+      showBusyHint.value = false;
+      return;
+    }
+    busyHintTimer = window.setTimeout(() => {
+      showBusyHint.value = true;
+    }, BUSY_HINT_DELAY);
+  },
+  { immediate: true },
+);
 
 const isRunning = computed(() => run.value?.status === "running");
 
@@ -969,6 +1023,9 @@ async function loadRun(showLoading = true) {
       }
     }
     const previousOutputId = currentOutput.value?.node.nodeId;
+    // 上一份运行的「输入视图」选择不带过来：换运行后落在输出文档上。
+    // 放在这里而不是 resetRunViewState，是为了让清空和内容替换落在同一个同步块里，屏上不出现中间态。
+    selectedInputKey.value = "";
     run.value = data;
     // 运行中输出仍在变化，自动退出编辑，避免草稿被下一次刷新覆盖。
     if (data.status === "running" && editing.value) {
@@ -980,7 +1037,14 @@ async function loadRun(showLoading = true) {
       const focusIndex = focusNodeId ? outputNodes.value.findIndex((doc) => doc.node.nodeId === focusNodeId) : -1;
       const previousIndex = outputNodes.value.findIndex((doc) => doc.node.nodeId === previousOutputId);
       selectedOutputIndex.value = focusIndex >= 0 ? focusIndex : previousIndex >= 0 ? previousIndex : 0;
-      await loadOutputContent(outputNodes.value[selectedOutputIndex.value].node.nodeId);
+      const targetNode = outputNodes.value[selectedOutputIndex.value];
+      // 正文只存了文件路径时 loadOutputContent 要等一次请求；这段时间先把旧正文清掉，
+      // 免得「新运行的标题」配着「上一条运行的正文」。
+      if (targetNode && !targetNode.node.output?.text) {
+        markdown.value = "";
+        draft.value = "";
+      }
+      await loadOutputContent(targetNode.node.nodeId);
     } else {
       markdown.value = "";
       draft.value = "";
@@ -1004,6 +1068,8 @@ async function loadRun(showLoading = true) {
       const mindIndex = Math.min(selectedMindMapIndex.value, mindMapNodes.value.length - 1);
       await loadMindMapContent(mindIndex);
     }
+    // 思维导图的选择沿用上一条运行（阅读位置不跳），但夹回新运行的范围，免得索引越界显示成空面板。
+    if (selectedMindMapIndex.value >= mindMapNodes.value.length) selectedMindMapIndex.value = 0;
     refreshSelectedInputText();
 
     if (stopRunEvents) stopRunEvents();
@@ -1016,8 +1082,27 @@ async function loadRun(showLoading = true) {
     } else {
       stopRunEvents = null;
     }
+    // 详情、正文、模型列表都到这里才齐：此刻起屏上显示的就是新运行，取消防抖的压暗。
+    if (switchingRun.value) {
+      // 滚动容器跨运行复用，换了运行要自己复位：回到这条运行上次读到的位置，没读过则回顶部。
+      const target = docScrollByRun.get(runId.value) ?? 0;
+      void nextTick(() => docScrollRef.value?.scrollTo({ top: target }));
+    }
+    switchingRun.value = false;
+    loadError.value = "";
   } catch (err) {
-    if (token === loadRunToken) toast.error(err instanceof Error ? err.message : "运行详情加载失败");
+    if (token === loadRunToken) {
+      const message = err instanceof Error ? err.message : "运行详情加载失败";
+      toast.error(message);
+      // 新运行没加载成功：不要把上一条运行的内容留在屏上冒充它。
+      if (switchingRun.value) {
+        switchingRun.value = false;
+        loadError.value = message;
+        run.value = null;
+        markdown.value = "";
+        draft.value = "";
+      }
+    }
   } finally {
     if (token === loadRunToken) loading.value = false;
   }
@@ -1031,7 +1116,16 @@ function scheduleReload() {
   }, 400);
 }
 
-/** 切换运行前清空上一份运行的本地视图状态，避免旧结果、旧编辑草稿短暂串台。 */
+/**
+ * 切换运行前清掉上一份运行的「运行态」。
+ *
+ * 这里刻意不动 run / markdown / 视图选择：它们描述的是屏上正在显示的那份内容，
+ * 提前清空会让阅读区整块消失再出现——DocsDialog 里已经修过同一个毛病
+ * （「用户能看出是在换内容，而不是以为点空了」）。内容由 loadRun 在新数据就绪后一起替换。
+ *
+ * 屏上还留着旧内容期间必须失效的东西仍在这里清：SSE 订阅、防抖定时器、编辑态、对比态，
+ * 以及只属于上一份运行的那些浮层。
+ */
 function resetRunViewState() {
   loadRunToken += 1;
   stopRunEvents?.();
@@ -1041,17 +1135,6 @@ function resetRunViewState() {
     reloadTimer = null;
   }
   restoreState.value = null;
-  run.value = null;
-  markdown.value = "";
-  draft.value = "";
-  mindMapMarkdown.value = "";
-  inputText.value = "";
-  selectedOutputIndex.value = 0;
-  selectedMindMapIndex.value = 0;
-  selectedInputKey.value = "";
-  segmentIndex.value = -1;
-  activeMediaIndex.value = 0;
-  fallbackMediaIndex.value = 0;
   editing.value = false;
   comparingDiff.value = false;
   tocValue.value = "";
@@ -1067,7 +1150,11 @@ function resetRunViewState() {
 watch(
   () => `${projectId.value}::${runId.value}`,
   () => {
+    recordDocScroll();
     resetRunViewState();
+    // 旧内容先留在屏上并压暗，等 loadRun 把新运行的正文也取回来再一起替换。
+    switchingRun.value = true;
+    loadError.value = "";
     void loadRun();
   },
 );
@@ -1375,7 +1462,7 @@ async function commitRename() {
 </script>
 
 <template>
-  <div ref="resultRootRef" class="rv-root">
+  <div ref="resultRootRef" class="rv-root" :class="{ 'is-switching': switchingRun && !!run }">
     <header class="rv-header">
       <div class="rv-header-left">
         <button type="button" class="rv-btn rv-btn--text" @click="goBack"><ArrowLeft :size="14" /><span>返回工作流</span></button>
@@ -1484,7 +1571,11 @@ async function commitRename() {
       />
     </div>
 
+    <!-- 换运行时的提示：延迟出现，短于阈值什么都不显示（本地切换实测约 100 ms，一闪而过比不显示更刺眼）。 -->
+    <div v-if="showBusyHint && run" class="rv-switch-hint" role="status">正在切换运行…</div>
+
     <div v-if="loading && !run" class="rv-loading"><div class="rv-loading-text">加载中…</div></div>
+    <div v-else-if="!run" class="rv-loading"><div class="rv-loading-text">{{ loadError || "没有可显示的内容" }}</div></div>
 
     <template v-else-if="run">
       <div
@@ -1492,7 +1583,7 @@ async function commitRename() {
         id="rv-panel-nodes"
         role="tabpanel"
         aria-labelledby="rv-tab-nodes"
-        class="rv-nodes page-scroll"
+        class="rv-panel rv-nodes page-scroll"
       >
         <el-table :data="run.nodeResults" row-key="nodeId" size="small" class="rv-nodes-table">
           <el-table-column label="节点" min-width="160">
@@ -1541,7 +1632,7 @@ async function commitRename() {
         id="rv-panel-drill"
         role="tabpanel"
         aria-labelledby="rv-tab-drill"
-        class="rv-drill-panel"
+        class="rv-panel rv-drill-panel"
       >
         <div v-if="drillNodes.length > 1" class="rv-mindmap-tabs">
           <button
@@ -1570,7 +1661,7 @@ async function commitRename() {
         id="rv-panel-mindmap"
         role="tabpanel"
         aria-labelledby="rv-tab-mindmap"
-        class="rv-mindmap"
+        class="rv-panel rv-mindmap"
       >
         <div v-if="mindMapNodes.length > 1" class="rv-mindmap-tabs">
           <button
@@ -1599,7 +1690,7 @@ async function commitRename() {
         id="rv-panel-result"
         role="tabpanel"
         aria-labelledby="rv-tab-result"
-        class="rv-body"
+        class="rv-panel rv-body"
       >
         <aside class="rv-side" :class="{ collapsed: sideCollapsed }">
           <div class="rv-side-head">
@@ -2078,6 +2169,8 @@ async function commitRename() {
 
 <style scoped>
 .rv-root {
+  /* 换运行时的提示按根容器定位。 */
+  position: relative;
   height: 100%;
   display: flex;
   flex-direction: column;
@@ -2353,6 +2446,33 @@ async function commitRename() {
   place-items: center;
   color: var(--color-text-secondary);
   font-size: 13px;
+}
+
+/* 换运行期间不销毁旧内容，只整体压暗：整块消失 → 重新出现会让人以为点空了。
+   与 DocsDialog 的 .sf-docs-article.is-loading 同一个做法。 */
+.rv-panel {
+  transition: opacity var(--dur-2) var(--ease-out);
+}
+
+.rv-root.is-switching .rv-panel {
+  opacity: 0.45;
+}
+
+/* 切换耗时超过阈值才出现的提示，压在面板之上、不参与布局。 */
+.rv-switch-hint {
+  position: absolute;
+  bottom: 20px;
+  left: 50%;
+  z-index: var(--z-dropdown-modal);
+  padding: 5px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background: var(--color-surface);
+  box-shadow: var(--shadow-overlay);
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  transform: translateX(-50%);
+  pointer-events: none;
 }
 
 .rv-nodes {
