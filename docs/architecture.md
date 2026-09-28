@@ -218,7 +218,7 @@ ASR 支持两种引擎——MiMo 走 `input_audio` data URL（超过 7MB 自动�
 <!-- docs-gen:api:start -->
 <!-- 由 `pnpm docs:gen` 从 app.ts 与 routes/*.ts 生成，请勿手改 -->
 
-共 **71** 条接口。路径即挂载后的完整路径，可直接调用（Hono 会把子应用的 `/` 合并为前缀本身，故无尾斜杠）；
+共 **75** 条接口。路径即挂载后的完整路径，可直接调用（Hono 会把子应用的 `/` 合并为前缀本身，故无尾斜杠）；
 本服务**没有任何认证中间件**，CORS 默认放开，仅适合自托管或本机使用。
 
 | 方法 | 路径 | 实现 |
@@ -280,6 +280,7 @@ ASR 支持两种引擎——MiMo 走 `input_audio` data URL（超过 7MB 自动�
 | POST | `/api/runs/:id/stop` | `routes/runs.ts` 的 `runsApi` |
 | POST | `/api/runs/:id/force-stop` | `routes/runs.ts` 的 `runsApi` |
 | POST | `/api/runs/:id/nodes/:nodeId/retry` | `routes/runs.ts` 的 `runsApi` |
+| PATCH | `/api/runs/:id` | `routes/runs.ts` 的 `runsApi` |
 | DELETE | `/api/runs/:id` | `routes/runs.ts` 的 `runsApi` |
 | GET | `/api/runs/:id/logs` | `routes/runs.ts` 的 `runsApi` |
 | GET | `/api/runs/:id/outputs/:nodeId` | `routes/runs.ts` 的 `runsApi` |
@@ -290,9 +291,12 @@ ASR 支持两种引擎——MiMo 走 `input_audio` data URL（超过 7MB 自动�
 | POST | `/api/settings/test/ai` | `routes/settings.ts` 的 `settingsApi` |
 | POST | `/api/settings/ai/models` | `routes/settings.ts` 的 `settingsApi` |
 | POST | `/api/settings/test/asr` | `routes/settings.ts` 的 `settingsApi` |
+| POST | `/api/settings/test/search` | `routes/settings.ts` 的 `settingsApi` |
 | GET | `/api/settings/obsidian/folders` | `routes/settings.ts` 的 `settingsApi` |
 | GET | `/api/settings/data` | `routes/settings.ts` 的 `settingsApi` |
-| POST | `/api/settings/clear-runs` | `routes/settings.ts` 的 `settingsApi` |
+| POST | `/api/settings/prune` | `routes/settings.ts` 的 `settingsApi` |
+| POST | `/api/settings/reveal-data-dir` | `routes/settings.ts` 的 `settingsApi` |
+| POST | `/api/settings/reveal-output-dir` | `routes/settings.ts` 的 `settingsApi` |
 | POST | `/api/videos/preview` | `routes/videos.ts` 的 `videosApi` |
 <!-- docs-gen:api:end -->
 

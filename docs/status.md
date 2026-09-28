@@ -43,11 +43,11 @@ review_days: 30
 
 | 指标 | 当前值 |
 | --- | --- |
-| 测试用例（`it(` 声明数） | **386**（shared 117 · server 225 · web 44） |
+| 测试用例（`it(` 声明数） | **390**（shared 117 · server 229 · web 44） |
 | UI 冒烟检查项（`pnpm smoke:ui`） | **64**（其中 3 项为恒真占位，净 61） |
 | API 自检项 | m2 7 · m3 14 · m4 19 · m6 9 · drill 22 |
 | 内置提示词块（`BUILTIN_PROMPT_BLOCKS`） | **14** |
-| 文档数（`docs/` 下 `.md`，不含调研原文） | 45 |
+| 文档数（`docs/` 下 `.md`，不含调研原文） | 48 |
 <!-- docs-gen:numbers:end -->
 
 ## 3. 已知缺口
@@ -97,7 +97,10 @@ review_days: 30
 
 **现状**（`docs/`）
 
+- [架构与实现总览](./architecture.md)
 - [ScribeFlow 部署说明](./deploy.md)
+- [节点手册](./nodes.md)
+- [使用说明：从零到一份笔记](./usage.md)
 
 **决策（方案 / 选型 / 架构）**（`docs/decisions/`）
 
