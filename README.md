@@ -17,7 +17,7 @@
 | UI 冒烟检查项（`pnpm smoke:ui`） | **55**（其中 3 项为恒真占位，净 52） |
 | API 自检项 | m2 7 · m3 14 · m4 12 · m6 9 · drill 22 |
 | 内置提示词块（`BUILTIN_PROMPT_BLOCKS`） | **14** |
-| 文档数（`docs/` 下 `.md`，不含调研原文） | 38 |
+| 文档数（`docs/` 下 `.md`，不含调研原文） | 41 |
 <!-- docs-gen:numbers:end -->
 
 ## 技术栈

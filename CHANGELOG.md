@@ -12,6 +12,26 @@
 
 ## [Unreleased]
 
+### 2026-09-28
+
+#### 新增
+
+- 新增 `sharing/` 分享会材料：18 页 PPT 生成器 `tools/build-deck.cjs`、几何自检 `tools/qa-deck.cjs`
+  （解开 pptx 读形状坐标，查越界 / 重叠 / 溢出 / 独字行）、COM 导出 `tools/export-slides.ps1`、
+  演示道具 `tools/make-bench-graph.mjs`（一条命令建 200 节点工程），以及现场手册 `ROOM.md`、
+  讲演稿 `SPEECH.md`、答辩备查 `QA.md`。`sharing/` 独立于 pnpm workspace，依赖单独安装。
+- 新增三份调研：`docs/research/canvas-performance-optimization.md`（画布性能三处改动与实测数字）、
+  `docs/research/project-audit-2026-09-27.md`（七区逐文件审计）、
+  `docs/research/repo-legibility-and-over-engineering.md`（仓库可读性与过度工程的外部证据与处置建议）。
+
+#### 变更
+
+- 画布性能三处改动（`apps/web/src/components/canvas/FlowCanvas.vue`）：开 Vue Flow 的
+  `onlyRenderVisibleElements`（视口内只渲染 36 个节点，DOM 8,926 → 2,099）；运行事件合流到动画帧、
+  且只替换受影响节点对象（`queueRunPatch` / `flushRunEvents`）；ELK 从主线程挪进 Web Worker
+  （`elk-api.js` + `elk-worker.min.js?url`，懒加载单例）。跑一次 200 节点链路时主线程最长阻塞
+  32,655 ms → 264 ms，自动布局长任务 728 → 53 ms。数字为单次会话实测，口径见那份报告。
+
 ### 2026-09-24
 
 #### 新增

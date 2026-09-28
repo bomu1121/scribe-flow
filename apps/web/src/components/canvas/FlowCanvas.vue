@@ -218,6 +218,8 @@ onBeforeUnmount(() => {
   window.removeEventListener("pointerdown", onWindowPointerDown);
   window.removeEventListener("pointerdown", onWindowPointerDownCapture, true);
   window.removeEventListener("click", onWindowClickCapture, true);
+  if (flushHandle !== null) cancelAnimationFrame(flushHandle);
+  flushHandle = null;
 });
 
 // ---------- Vue Flow 事件 ----------
@@ -653,13 +655,34 @@ function onDrop(event: DragEvent) {
 
 // ---------- 布局 ----------
 
+/** 自动布局用的 ELK 实例（懒加载单例）。
+ *
+ *  ELK 在**主线程**上排布大图会长时间独占主线程：200 节点实测最长一次掉帧 526ms、
+ *  三个长任务合计 728ms。官方支持把计算放进 Web Worker，但要求用 elk-api
+ *  并把 worker 脚本地址传进去（自己 bundle 的 elk.bundled 不支持 worker）。
+ *  实例做单例是因为每次 new 都会拉起一个 worker，而 worker 启动本身有成本。 */
+type ElkInstance = import("elkjs/lib/elk-api.js").ELK;
+let elkInstance: Promise<ElkInstance> | null = null;
+
+function getElk(): Promise<ElkInstance> {
+  if (!elkInstance) {
+    elkInstance = (async () => {
+      const [{ default: ELK }, { default: workerUrl }] = await Promise.all([
+        import("elkjs/lib/elk-api.js"),
+        import("elkjs/lib/elk-worker.min.js?url"),
+      ]);
+      return new ELK({ workerUrl });
+    })();
+  }
+  return elkInstance;
+}
+
 async function autoLayout() {
   if (props.running) return;
   const children = nodesRef.value.map((node) => ({ id: node.id, width: NODE_CARD_WIDTH[node.data.nodeType] ?? 224, height: 120 }));
   const edges = edgesRef.value.map((edge) => ({ id: edge.id, sources: [edge.source], targets: [edge.target] }));
   try {
-    const ELK = (await import("elkjs/lib/elk.bundled.js")).default;
-    const elk = new ELK();
+    const elk = await getElk();
     const layout = await elk.layout({
       id: "root",
       layoutOptions: {
@@ -717,14 +740,39 @@ function runScopeNodeIds(scope: "all" | "fromNode" | "node", nodeId?: string): S
   return all;
 }
 
+/** 运行事件合流：同一帧内到达的事件合并成一次节点更新。
+ *
+ *  背景（200 节点链路实测）：逐个事件都重建整张节点表时，服务端 268ms 跑完的运行
+ *  会让主线程累计阻塞十几秒——每个事件都会触发一次全量节点渲染。
+ *  合流后每个动画帧只更新一次，且只替换受影响的那几个节点对象（其余保持同一引用）。 */
+const pendingPatches = new Map<string, Record<string, unknown>>();
+let flushHandle: number | null = null;
+
+function flushRunEvents() {
+  flushHandle = null;
+  if (pendingPatches.size === 0) return;
+  const patches = new Map(pendingPatches);
+  pendingPatches.clear();
+  nodesRef.value = nodesRef.value.map((node) => {
+    const patch = patches.get(node.id);
+    return patch ? { ...node, data: { ...node.data, ...patch } as ScribeNodeData } : node;
+  });
+}
+
+function queueRunPatch(nodeId: string, patch: Record<string, unknown>) {
+  pendingPatches.set(nodeId, { ...(pendingPatches.get(nodeId) ?? {}), ...patch });
+  if (flushHandle === null) flushHandle = requestAnimationFrame(flushRunEvents);
+}
+
 /** 运行事件驱动节点状态；不触发自动保存（运行态不进 graph 快照）。 */
 function applyRunEvent(event: import("@scribe-flow/shared").RunEvent) {
   if (event.type === "run.started") {
     const resetIds = runScopeNodeIds(event.run.scope, event.run.nodeId);
-    nodesRef.value = nodesRef.value.map((node) => {
-      if (!resetIds.has(node.id)) return node;
-      return { ...node, data: { ...node.data, status: "idle", summary: undefined, preview: undefined, delta: undefined } };
-    });
+    for (const node of nodesRef.value) {
+      if (resetIds.has(node.id)) {
+        queueRunPatch(node.id, { status: "idle", summary: undefined, preview: undefined, delta: undefined });
+      }
+    }
     return;
   }
   if (!("nodeId" in event)) return;
@@ -754,9 +802,7 @@ function applyRunEvent(event: import("@scribe-flow/shared").RunEvent) {
     patch.summary = event.error;
     patch.delta = undefined;
   }
-  nodesRef.value = nodesRef.value.map((node) =>
-    node.id === event.nodeId ? { ...node, data: { ...node.data, ...patch } as ScribeNodeData } : node,
-  );
+  queueRunPatch(event.nodeId, patch);
 }
 
 /** 生成选中节点展开用的结构化摘要：保留 Markdown 换行/标题，截取前几段而不是拍平成一行。 */
@@ -859,6 +905,7 @@ defineExpose({
       :edges-updatable="!props.running"
       :is-valid-connection="validateConnection"
       :fit-view-on-init="true"
+      :only-render-visible-elements="true"
       @nodes-change="onNodesChange"
       @edges-change="onEdgesChange"
       @edge-context-menu="openEdgeContextMenu"
