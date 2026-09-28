@@ -13,11 +13,11 @@
 
 | 指标 | 当前值 |
 | --- | --- |
-| 测试用例（`it(` 声明数） | **266**（shared 98 · server 148 · web 20） |
-| UI 冒烟检查项（`pnpm smoke:ui`） | **56**（其中 3 项为恒真占位，净 53） |
-| API 自检项 | m2 7 · m3 14 · m4 12 · m6 9 · drill 22 |
+| 测试用例（`it(` 声明数） | **289**（shared 98 · server 171 · web 20） |
+| UI 冒烟检查项（`pnpm smoke:ui`） | **59**（其中 3 项为恒真占位，净 56） |
+| API 自检项 | m2 7 · m3 14 · m4 19 · m6 9 · drill 22 |
 | 内置提示词块（`BUILTIN_PROMPT_BLOCKS`） | **14** |
-| 文档数（`docs/` 下 `.md`，不含调研原文） | 42 |
+| 文档数（`docs/` 下 `.md`，不含调研原文） | 43 |
 <!-- docs-gen:numbers:end -->
 
 ## 技术栈

@@ -563,8 +563,19 @@ async function run() {
     const blocksOk = await waitFor("document.querySelectorAll('.sf-block-card').length >= 4", 6000);
     check("提示词块库渲染内置块（≥4）", blocksOk, `${await evalJs("document.querySelectorAll('.sf-block-card').length")} 块`);
     await evalJs("[...document.querySelectorAll('.sf-settings-nav-item')].find((b) => b.textContent.trim() === '数据与工程')?.click(); true");
-    const dataOk = await waitFor("document.querySelectorAll('.sf-data-cell').length >= 3", 5000);
-    check("数据与工程页渲染数据信息", dataOk, `${await evalJs("document.querySelectorAll('.sf-data-cell').length")} 个单元格`);
+    // 账本必须在进页面时自动读出来（历史 bug：只在点「刷新」时才请求，页面长期显示「—」）。
+    const dataOk = await waitFor(
+      "(() => { const el = document.querySelector('.sf-data-dir'); return !!el && el.textContent.trim() !== '' && el.textContent.trim() !== '—'; })()",
+      8000,
+    );
+    check("数据与工程页自动读出数据目录（不依赖点刷新）", dataOk, `${(await evalJs("document.querySelector('.sf-data-dir')?.textContent?.trim() ?? ''")) ?? ""}`);
+    const areaRows = (await evalJs("document.querySelectorAll('.sf-data-table tbody tr').length")) ?? 0;
+    check("存储占用与工程资产表渲染", areaRows >= 6, `${areaRows} 行`);
+    const cleanupRows = (await evalJs("document.querySelectorAll('.sf-cleanup-row').length")) ?? 0;
+    const cleanupRules = (await evalJs("document.querySelectorAll('.sf-cleanup-rule').length")) ?? 0;
+    check("可回收清单渲染五项且每项写明判定规则", cleanupRows === 5 && cleanupRules === 5, `${cleanupRows} 项 / ${cleanupRules} 条规则`);
+    const totalText = (await evalJs("document.querySelector('.sf-storage-total-value')?.textContent?.trim() ?? ''")) ?? "";
+    check("合计占用有具体数字", /[0-9]/.test(totalText), totalText);
 
     // M5：移动端响应式（390x844）—— 画布只读提示 + 活动条隐藏 + 抽屉面板可收起/重开
     await send("Emulation.setDeviceMetricsOverride", { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });

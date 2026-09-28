@@ -1,15 +1,15 @@
 import { spawn } from "node:child_process";
-import { mkdtemp, readdir, rm, stat } from "node:fs/promises";
+import { mkdtemp, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Hono } from "hono";
-import { ne } from "drizzle-orm";
 import { z } from "zod";
+import { PRUNE_TARGETS } from "@scribe-flow/shared";
 import type { AppDatabase } from "../db/client";
-import { runs } from "../db/schema";
 import { chatCompletion, listAiModels, transcribeAudio } from "../lib/ai";
 import { getAiConfig, getAsrConfig, getNutstoreConfig, getSearchConfig, getSettings, updateSettings } from "../lib/settings";
 import { listRemoteDirectories } from "../lib/nutstore";
+import { buildDataOverview, fileManagerCommand, pruneStorage, resolveOutputDir, type StorageDeps } from "../lib/storage";
 import { collectSources } from "../lib/traceExternal";
 import type { RunEngine } from "../lib/engine";
 
@@ -86,6 +86,10 @@ const searchTestSchema = z.object({
   provider: z.enum(["zhipu", "tavily"]).optional(),
   apiKey: z.string().max(500).optional(),
   maxResults: z.number().int().min(1).max(10).optional(),
+});
+
+const pruneSchema = z.object({
+  targets: z.array(z.enum(PRUNE_TARGETS)).min(1),
 });
 
 function resolveAiTestConfig(db: AppDatabase, body: z.infer<typeof aiTestSchema>) {
@@ -261,34 +265,53 @@ export function settingsApi(db: AppDatabase, engine: RunEngine, dataDir: string)
     return c.json({ items });
   });
 
-  api.get("/data", async (c) => {
-    const rows = db.select().from(runs).all();
-    const finished = rows.filter((r) => r.status !== "running").length;
-    const outputDir = join(dataDir, getSettings(db).general.outputDir || "outputs");
-    let outputFiles = 0;
-    let outputBytes = 0;
-    try {
-      const runDirs = (await readdir(outputDir, { withFileTypes: true }).catch(() => [])).filter((e) => e.isDirectory());
-      for (const dir of runDirs) {
-        const files = await readdir(join(outputDir, dir.name)).catch(() => []);
-        outputFiles += files.length;
-        for (const file of files) {
-          outputBytes += (await stat(join(outputDir, dir.name, file)).catch(() => ({ size: 0 }))).size;
-        }
-      }
-    } catch {
-      // 输出目录不存在
+  api.get("/data", async (c) => c.json(await buildDataOverview(storageDeps())));
+
+  /**
+   * 统一清理入口：targets 逐项执行，逐项回报「清掉几项、释放多少字节、哪些失败」。
+   * 与 GET /data 用的是同一份判定，界面上的数字与实际删掉的东西不会漂移。
+   */
+  api.post("/prune", async (c) => {
+    const raw = await c.req.json().catch(() => ({}));
+    const parsed = pruneSchema.safeParse(raw ?? {});
+    if (!parsed.success) {
+      return c.json({ error: parsed.error.issues[0]?.message ?? "请求格式不正确" }, 400);
     }
-    return c.json({ dataDir, runCount: rows.length, finishedRunCount: finished, outputFiles, outputBytes });
+    const outcomes = await pruneStorage(storageDeps(), parsed.data.targets);
+    return c.json({
+      outcomes,
+      removed: outcomes.reduce((acc, outcome) => acc + outcome.removed, 0),
+      bytes: outcomes.reduce((acc, outcome) => acc + outcome.bytes, 0),
+      errors: outcomes.flatMap((outcome) => outcome.errors),
+    });
   });
 
-  api.post("/clear-runs", async (c) => {
-    const rows = db.select().from(runs).where(ne(runs.status, "running")).all();
-    for (const row of rows) {
-      await engine.deleteRun(row.id);
+  api.post("/reveal-data-dir", async (c) => {
+    const [command, args] = fileManagerCommand(process.platform, dataDir);
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const child = spawn(command, args, { stdio: "ignore", detached: true });
+        child.once("error", reject);
+        // explorer.exe 即使成功也可能返回非 0，因此能 spawn 出来就算成功。
+        child.once("spawn", () => {
+          child.unref();
+          resolve();
+        });
+      });
+    } catch (err) {
+      return c.json({ error: `无法打开文件管理器（服务端可能运行在容器里）：${err instanceof Error ? err.message : "未知错误"}` }, 400);
     }
-    return c.json({ deleted: rows.length });
+    return c.json({ ok: true, path: dataDir });
   });
+
+  function storageDeps(): StorageDeps {
+    return {
+      db,
+      dataDir,
+      outputDir: resolveOutputDir(dataDir, getSettings(db).general.outputDir),
+      deleteRun: (runId) => engine.deleteRun(runId),
+    };
+  }
 
   return api;
 }

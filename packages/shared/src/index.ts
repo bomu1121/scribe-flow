@@ -13,4 +13,5 @@ export * from "./video";
 export * from "./media";
 export * from "./bili";
 export * from "./docs";
+export * from "./storage";
 export { parseGraph, safeParseGraph, graphSchema } from "./schema";

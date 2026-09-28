@@ -1,5 +1,5 @@
 /**
- * M4 API 自检：提示词块库 CRUD、运行日志、设置数据信息。
+ * M4 API 自检：提示词块库 CRUD、运行日志、数据账本与清理契约。
  * 前置：pnpm dev。用法：node scripts/m4-api-check.mjs
  */
 import { readFileSync } from "node:fs";
@@ -102,9 +102,42 @@ async function run() {
   const nodeLogs = await j("GET", `/api/runs/${runId}/logs?nodeId=n_out`);
   check("日志可按节点过滤", nodeLogs.data?.items?.every((l) => l.nodeId === "n_out"));
 
-  // 3. 数据信息
+  // 3. 数据账本与清理计划
   const dataInfo = await j("GET", "/api/settings/data");
-  check("GET /api/settings/data", dataInfo.status === 200 && typeof dataInfo.data?.runCount === "number" && typeof dataInfo.data?.outputFiles === "number");
+  const overview = dataInfo.data ?? {};
+  const areas = overview.areas ?? [];
+  check(
+    "GET /api/settings/data 返回六个分区",
+    dataInfo.status === 200 && ["database", "media", "uploads", "runs", "outputs", "graphBackups"].every((key) => areas.some((a) => a.key === key)),
+    `${areas.length} 个分区`,
+  );
+  const areaSum = areas.reduce((acc, a) => acc + a.bytes, 0);
+  const fileSum = areas.reduce((acc, a) => acc + a.files, 0);
+  check("账本合计等于各分区之和", overview.totals?.bytes === areaSum && overview.totals?.files === fileSum, `合计 ${overview.totals?.bytes} / 分区和 ${areaSum}`);
+  const outputsArea = areas.find((a) => a.key === "outputs");
+  check("本次运行写的产物进入输出分区", (outputsArea?.files ?? 0) >= 1, `${outputsArea?.files ?? 0} 个文件`);
+  check(
+    "运行与工程计数已反映本次运行",
+    (overview.runs?.total ?? 0) >= 1 && (overview.runs?.finished ?? 0) >= 1 && (overview.projects?.total ?? 0) >= 1,
+    `${overview.runs?.total ?? 0} 条运行 / ${overview.projects?.total ?? 0} 个工程`,
+  );
+  const cleanupTargets = (overview.cleanup ?? []).map((item) => item.target);
+  check(
+    "清理计划覆盖五个可回收项且每项带数字",
+    cleanupTargets.length === 5 && (overview.cleanup ?? []).every((item) => typeof item.count === "number" && typeof item.bytes === "number" && typeof item.rule === "string"),
+    cleanupTargets.join(" / "),
+  );
+  check(
+    "可回收合计等于各项之和",
+    overview.reclaimableBytes === (overview.cleanup ?? []).reduce((acc, item) => acc + item.bytes, 0),
+    `${overview.reclaimableBytes} 字节`,
+  );
+
+  // 清理只验契约：这里的服务端实例可能装着真实数据，自检脚本不做真正的删除（删除路径由单测在临时目录覆盖）。
+  const pruneNoTargets = await j("POST", "/api/settings/prune", {});
+  check("POST /api/settings/prune 缺 targets 返回 400", pruneNoTargets.status === 400);
+  const pruneBadTarget = await j("POST", "/api/settings/prune", { targets: ["nope"] });
+  check("POST /api/settings/prune 未知目标返回 400", pruneBadTarget.status === 400);
 
   // 4. 删除提示词块与清理
   const deletedBlock = await j("DELETE", `/api/prompts/${blockId}`);

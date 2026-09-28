@@ -16,6 +16,21 @@
 
 #### 新增
 
+- 设置页「数据与工程」从三个只读格子改成**本地数据账本**：数据目录按六个分区（数据库 / 媒体库 /
+  上传原件 / 运行中间产物 / 输出文件 / 工程图备份）分别给出文件数与体积、合计占用，以及按工程的
+  占用排行（含运行记录数），并可在系统文件管理器里打开数据目录（`POST /api/settings/reveal-data-dir`，
+  容器内返回 400 并说明原因）。改之前的页面在全量 2,368,258,317 字节（2.2 GB）里只展示
+  391,986 字节（383 KB）的输出文件——体积最大的 `runs/`（2,350,410,990 字节，占 99.2%）
+  一个字都没提。字节一律按 1024 进制显示，实测明细见
+  [data-ledger-and-cleanup.md](./docs/decisions/data-ledger-and-cleanup.md)。
+- 新增五类可回收空间与逐项/一键清理（`POST /api/settings/prune`，body `{ targets }`）：
+  已结束的运行记录、孤立媒体资产（补上审计里「GC 没有全局清扫入口」）、孤立上传原件
+  （`uploads/` 原本没有任何删除路径）、盘上孤立文件与目录、可回收的工程图备份
+  （补上审计里「`graph-backups` 无入口可见、无清理」）。每一项都返回「多少项 + 能释放多少字节 +
+  判定规则原文」，界面照抄规则，清理响应回报实际删除数与实际释放字节。
+- 新增 `apps/web/src/lib/bytes.ts`（字节数可读化）。新增第一个路由级测试文件
+  `apps/server/src/routes/settings.test.ts`（在临时数据目录里跑真实路由：建工程 → 跑文本链路 →
+  查账本 → 清理 → 再查账本归零），新增 `apps/server/src/lib/storage.test.ts`（19 例）。
 - 新增 `sharing/` 分享会材料：18 页 PPT 生成器 `tools/build-deck.cjs`、几何自检 `tools/qa-deck.cjs`
   （解开 pptx 读形状坐标，查越界 / 重叠 / 溢出 / 独字行）、COM 导出 `tools/export-slides.ps1`、
   演示道具 `tools/make-bench-graph.mjs`（一条命令建 200 节点工程），以及现场手册 `ROOM.md`、
@@ -44,9 +59,18 @@
   （自己写的块标一个「我的」），版本号与「推荐」标记都留给设置页的块库。**只动展示用的 `name` 与
   `series`，`id` 一律不变**——老工程里存着的 `promptBlockId` 照旧能跑。另加一条测试守卫：展示名与
   系列名不得出现 `v数字` / 配方 / 内置 / 试点 / CASCADE / JSON。
+- `GET /api/settings/data` 的响应结构整体换成账本（旧字段 `runCount` / `finishedRunCount` /
+  `outputFiles` / `outputBytes` 不再存在），字段语义见
+  [data-ledger-and-cleanup.md](./docs/decisions/data-ledger-and-cleanup.md)。唯一消费者是设置页前端，
+  已同步改完；M4 验收档案第 9 条对应该接口的旧结论按规矩不改。门禁计数随之变化：
+  用例 266 → 289、冒烟检查项 56 → 59（59 静态 / 54 实跑）、m4 API 自检 12 → 19 项。
+- 工程图备份的保留份数抽成常量 `GRAPH_BACKUP_KEEP`（写入端 `routes/projects.ts` 与清理端
+  `lib/storage.ts` 共用），原来 20 这个数字写死在留档函数里。
 
 #### 移除
 
+- `POST /api/settings/clear-runs` 删除，能力并入 `POST /api/settings/prune` 的 `runs` 目标
+  （行为一致：只清非运行中的记录，连同产物与媒体 GC），差别是现在会先算出能释放多少字节再动手。
 - 「输出」节点从节点库与 9 条模板里移除。它是唯一一个原样透传的节点（进什么出什么、不改内容），
   而它独占的两件事都由别处承担了：**文件名跟着工程名走**（结果页「下载 Markdown」也用工程名，
   不再是 `run-尾6位.md`），**落盘改由运行收尾统一做**（跑完自动把链路末端的笔记写进输出目录，
@@ -58,6 +82,9 @@
 
 #### 修复
 
+- 「数据与工程」页打开时永远是空值：`loadDataInfo()` 只在点「刷新」按钮时被调用，
+  `onMounted` 里没有它，所以三格一直显示 `—`。现在进页面即读账本；冒烟用例改成断言
+  「不点刷新也能读出数据目录」，堵住这个回归。
 - 卡片正文里的说明文字样式一直没生效：`sf-node-desc` / `sf-node-desc--block` / `sf-node-control`
   只定义在 `ScribeNode.vue` 的 scoped 块里，而「素材挑选」「知识巩固」「Obsidian 笔记」是子组件，
   父组件的 scope id 进不去——实测素材挑选卡的空状态提示算出来是 **14px、`rgb(22,24,29)` 正文黑**，
