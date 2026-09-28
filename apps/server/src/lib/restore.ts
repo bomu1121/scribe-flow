@@ -25,7 +25,7 @@ function quoteIdent(name: string): string {
  * 把从云端下载的备份文件准备成可恢复的临时库：
  * 1. 完整性校验（integrity_check）；
  * 2. 幂等迁移：旧版本备份自动补齐当前代码的表/列（复用 ensureSchema）；
- * 3. 把备份里残留的 running 运行标记为 cancelled（复用 recoverInterruptedRuns）。
+ * 3. 把备份里残留的 running 运行收尾为 interrupted（复用 recoverInterruptedRuns）。
  * 返回迁移完成、已关闭、可被主连接 ATTACH 的文件路径；调用方负责清理临时目录。
  */
 export async function prepareRestoreDatabase(sourcePath: string, targetPath: string): Promise<string> {

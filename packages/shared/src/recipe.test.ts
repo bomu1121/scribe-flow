@@ -84,3 +84,44 @@ describe("parseRecipe", () => {
     expect(parseRecipe(drill!.recipe)).toEqual(drill!.recipe);
   });
 });
+
+describe("配方步骤的联网检索声明（search）", () => {
+  const withSearch = (steps: unknown[]) => recipeSchema.safeParse({ schema: 1, steps });
+
+  it("第 2 步可以声明 search，取词路径必填", () => {
+    const result = withSearch([
+      { id: "scan", label: "抽点", system: "x" },
+      { id: "author", label: "出题", system: "y", search: { queriesFrom: "points[].queries[]", maxQueries: 4 } },
+    ]);
+    expect(result.success).toBe(true);
+    // maxQueries 可省略（走默认 2）
+    expect(
+      withSearch([
+        { id: "scan", label: "抽点", system: "x" },
+        { id: "author", label: "出题", system: "y", search: { queriesFrom: "points[].queries[]" } },
+      ]).success,
+    ).toBe(true);
+    expect(
+      withSearch([
+        { id: "scan", label: "抽点", system: "x" },
+        { id: "author", label: "出题", system: "y", search: {} },
+      ]).success,
+    ).toBe(false);
+  });
+
+  it("第 1 步不能声明 search（检索词取自「上一步产物」，第 1 步没有上一步）", () => {
+    const result = withSearch([{ id: "scan", label: "抽点", system: "x", search: { queriesFrom: "queries[]" } }]);
+    expect(result.success).toBe(false);
+    if (!result.success) expect(JSON.stringify(result.error.issues)).toContain("不能声明 search");
+  });
+
+  it("maxQueries 超出 1-6 时拒绝（检索请求数就是成本与耗时）", () => {
+    const step = (maxQueries: number) => [
+      { id: "scan", label: "抽点", system: "x" },
+      { id: "author", label: "出题", system: "y", search: { queriesFrom: "points[].queries[]", maxQueries } },
+    ];
+    expect(withSearch(step(6)).success).toBe(true);
+    expect(withSearch(step(7)).success).toBe(false);
+    expect(withSearch(step(0)).success).toBe(false);
+  });
+});

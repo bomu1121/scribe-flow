@@ -4,7 +4,7 @@ import { useRoute, useRouter } from "vue-router";
 import { ElDropdown, ElDropdownItem, ElDropdownMenu, ElMessageBox } from "element-plus";
 import { toast } from "@/lib/toast";
 import { Activity, Check, Copy, Download, History, LayoutPanelTop, Maximize, MoreHorizontal, Play, Redo2, StopCircle, Undo2 } from "lucide-vue-next";
-import { emptyGraph, type NodeType, type RunDetail, type RunMeta, type RunNodeResult, type SourceVideoItem, type WorkflowGraph } from "@scribe-flow/shared";
+import { emptyGraph, type NodeType, type RunDetail, type RunMeta, type RunNodeResult, type RunStatus, type SourceVideoItem, type WorkflowGraph } from "@scribe-flow/shared";
 import FlowCanvas from "@/components/canvas/FlowCanvas.vue";
 import SourcePickerDialog from "@/components/canvas/SourcePickerDialog.vue";
 import BiliAccountButton from "@/components/auth/BiliAccountButton.vue";
@@ -12,6 +12,7 @@ import { api } from "@/lib/api";
 import { subscribeRunEvents } from "@/lib/sse";
 import type { NodePreviewOutput } from "@/utils/flow";
 import { buildNodeSegments, type RunSegment } from "@/utils/run-segments";
+import { backfillFromRun, canBackfillFromStatus, snapshotIsComplete } from "@/utils/run-restore";
 import { useAuthStore } from "@/stores/auth";
 import { useProjectsStore } from "@/stores/projects";
 import { useRunsStore } from "@/stores/runs";
@@ -174,7 +175,10 @@ watch(
 watch(
   () => route.params.id,
   (id, oldId) => {
-    if (id && id !== oldId) void loadProject();
+    if (id && id !== oldId) {
+      if (oldId) void flushPendingSave(String(oldId));
+      void loadProject();
+    }
   },
 );
 
@@ -249,8 +253,12 @@ let emptyGraphConfirming = false;
 function scheduleSave() {
   saveState.value = "saving";
   if (saveTimer) clearTimeout(saveTimer);
+  // 记住这次保存属于哪个工程：500ms 防抖窗口内可能已经切到了别的工程，
+  // 那时 projectId 是新的、graph 还是旧的，照写就会把上一个工程的图写进新工程。
+  const id = projectId.value;
   saveTimer = setTimeout(async () => {
-    if (graph.value.nodes.length === 0 && lastSavedNodeCount > 0 && guardProjectId === projectId.value) {
+    if (id !== projectId.value) return;
+    if (graph.value.nodes.length === 0 && lastSavedNodeCount > 0 && guardProjectId === id) {
       if (emptyGraphConfirming) return;
       emptyGraphConfirming = true;
       try {
@@ -270,7 +278,7 @@ function scheduleSave() {
       if (disposed || !loaded.value) return;
     }
     try {
-      await store.saveGraph(projectId.value, graph.value);
+      await store.saveGraph(id, graph.value);
       lastSavedNodeCount = graph.value.nodes.length;
       saveState.value = "saved";
     } catch (err) {
@@ -278,6 +286,19 @@ function scheduleSave() {
       toast.error(err instanceof Error ? err.message : "保存失败");
     }
   }, 500);
+}
+
+/** 切换工程前把上一个工程没落盘的改动补写掉，别让防抖窗口里的编辑跟着丢掉。 */
+async function flushPendingSave(id: string) {
+  if (!saveTimer) return;
+  clearTimeout(saveTimer);
+  saveTimer = null;
+  const pending = graph.value;
+  try {
+    await store.saveGraph(id, pending);
+  } catch {
+    // 补写失败不打断切换：服务端还留着上一版，回到该工程再编辑会重新保存。
+  }
 }
 
 async function duplicateProject() {
@@ -361,14 +382,7 @@ async function resumeRun(run: RunMeta) {
     if (event.type === "node.error") {
       toast.error(`${nodeName(event.nodeId)} 失败：${event.error}`);
     } else if (event.type === "run.done") {
-      running.value = false;
-      activeRun.value = { ...(activeRun.value as RunMeta), status: event.status };
-      runsStore.upsert(activeRun.value);
-      stopRunEvents?.();
-      stopRunEvents = null;
-      subscribedRunId = null;
-      void syncFinalRun(event.runId);
-      void runsStore.load();
+      handleRunDone(event.runId, event.status);
     }
   });
   subscribedRunId = run.id;
@@ -405,7 +419,7 @@ async function mergedNodeResults(detail: RunDetail): Promise<RunNodeResult[]> {
   const expectedIds = new Set((detail.graph?.nodes ?? graph.value.nodes).map((n) => n.id));
   const resultMap = new Map<string, RunNodeResult>();
   for (const nr of detail.nodeResults ?? []) resultMap.set(nr.nodeId, nr);
-  if (detail.scope === "all" || resultMap.size >= expectedIds.size) return [...resultMap.values()];
+  if (detail.scope === "all" || snapshotIsComplete(resultMap, expectedIds)) return [...resultMap.values()];
 
   try {
     const list = await api.get<{ items: RunMeta[] }>(`/api/runs?projectId=${encodeURIComponent(detail.projectId)}&limit=200`);
@@ -415,19 +429,34 @@ async function mergedNodeResults(detail: RunDetail): Promise<RunNodeResult[]> {
         if (run.id === detail.id) sawCurrent = true;
         continue;
       }
-      if (resultMap.size >= expectedIds.size) break;
-      if (run.status !== "success") continue;
+      if (snapshotIsComplete(resultMap, expectedIds)) break;
+      // 只跳过仍在跑的运行：失败/取消的运行里，done 的节点同样有产物（规则见 utils/run-restore.ts）。
+      if (!canBackfillFromStatus(run.status)) continue;
       const older = await api.get<RunDetail>(`/api/runs/${run.id}`);
-      for (const nr of older.nodeResults ?? []) {
-        if (expectedIds.has(nr.nodeId) && nr.status === "done" && !resultMap.has(nr.nodeId)) {
-          resultMap.set(nr.nodeId, nr);
-        }
-      }
+      backfillFromRun(resultMap, older.nodeResults ?? [], expectedIds);
     }
   } catch {
     // 合并失败时保留当前快照，不阻塞界面。
   }
   return [...resultMap.values()];
+}
+
+/**
+ * 运行结束的统一收尾：状态、最终快照、列表刷新。
+ *
+ * 抽出来是因为画布页有两个订阅点（新起一次运行 / 恢复上次运行），两边原本是同一段代码抄了两遍——
+ * 要加一句收尾动作就得改两处，漏一处就变成「有时候生效有时候不生效」。
+ * 运行结束的提醒（系统通知/提示音）不在这里，它挂在 AppLayout 上，见那边的说明。
+ */
+function handleRunDone(runId: string, status: RunStatus) {
+  running.value = false;
+  activeRun.value = { ...(activeRun.value as RunMeta), status };
+  runsStore.upsert(activeRun.value);
+  stopRunEvents?.();
+  stopRunEvents = null;
+  subscribedRunId = null;
+  void syncFinalRun(runId);
+  void runsStore.load();
 }
 
 /** 运行结束后主动拉取最终快照并同步到画布，避免 SSE 丢事件导致下游节点停留在旧状态。 */
@@ -547,14 +576,7 @@ async function startRun(scope: "all" | "fromNode" | "node", nodeId?: string) {
         if (event.type === "node.error") {
           toast.error(`${nodeName(event.nodeId)} 失败：${event.error}`);
         } else if (event.type === "run.done") {
-          running.value = false;
-          activeRun.value = { ...(activeRun.value as RunMeta), status: event.status };
-          runsStore.upsert(activeRun.value);
-          stopRunEvents?.();
-          stopRunEvents = null;
-          subscribedRunId = null;
-          void syncFinalRun(event.runId);
-          void runsStore.load();
+          handleRunDone(event.runId, event.status);
         }
       });
       subscribedRunId = run.id;

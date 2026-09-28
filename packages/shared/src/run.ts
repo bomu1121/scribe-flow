@@ -2,7 +2,14 @@ import type { AsrEngine, WorkflowGraph } from "./graph";
 import type { NutstoreSettings } from "./nutstore";
 import type { RunMediaView } from "./media";
 
-export type RunStatus = "running" | "success" | "error" | "cancelled";
+/**
+ * 运行的整体结局。
+ *
+ * `cancelled` 与 `interrupted` 刻意分开：前者是**人**主动停止（点停止/强制结束），
+ * 后者是**服务**没了（进程重启、崩溃、断电）——运行被强行掐断，人并没有下过停止指令。
+ * 两者在「运行记录」列表里必须能一眼分开，否则「我明明没取消，它却写着已取消」。
+ */
+export type RunStatus = "running" | "success" | "error" | "cancelled" | "interrupted";
 export type NodeResultStatus = "queued" | "running" | "done" | "error" | "cancelled" | "skipped";
 
 export interface RunMeta {
@@ -16,10 +23,18 @@ export interface RunMeta {
   createdAt: number;
   finishedAt?: number;
   elapsedMs?: number;
+  /**
+   * 用户自己起的名字（笔记标题）。空表示没起过名，列表显示时间与状态。
+   * 与 `summary` 各管一件事：summary 是机器算出来的产物摘要，name 是人写下的标题。
+   */
+  name?: string;
   /** 产出的文档摘要，如「视频转笔记 · 2.1k 字」。 */
   summary?: string;
   error?: string;
 }
+
+/** 运行记录名称的最大长度；服务端校验与输入框 maxlength 共用一份。 */
+export const RUN_NAME_MAX_LENGTH = 80;
 
 export type RunScope = "all" | "fromNode" | "node";
 
@@ -147,22 +162,64 @@ export interface AsrSettings {
   hasKey: boolean;
 }
 
-/** 外部溯源检索服务配置。当前支持 Tavily Search API。 */
+/** 外部溯源检索渠道：智谱 BigModel 联网搜索、Tavily Search API。 */
+export type SearchProvider = "zhipu" | "tavily";
+
+/** 渠道展示名，服务端错误信息与设置页共用一份。 */
+export const SEARCH_PROVIDER_LABELS: Record<SearchProvider, string> = {
+  zhipu: "智谱",
+  tavily: "Tavily",
+};
+
+/** 外部溯源检索服务配置。 */
 export interface SearchSettings {
-  provider: "tavily";
+  provider: SearchProvider;
   hasKey: boolean;
   maxResults: number;
 }
+
+/**
+ * 「常规」分组的设置：运行与产出的全局默认。
+ * 这里放的是**没被节点/工程单独指定的东西**，节点自己配了就以节点为准（重试策略就是这种关系）。
+ */
+export interface GeneralSettings {
+  /** 节点执行并发数（1-4）。 */
+  concurrency: number;
+  /**
+   * 产物根目录。相对路径相对数据目录解析，也可以直接填绝对路径把成稿写到数据目录之外。
+   * 留空回落 DEFAULT_OUTPUT_DIR。
+   */
+  outputDir: string;
+  /**
+   * 服务端解析后的产物根目录绝对路径。
+   * 只在设置接口的响应（与 engine 内部）里有值——数据目录是启动参数不是设置项，
+   * 底层 `getSettings(db)` 拿不到它，所以这是可选的，界面按「有则回显」处理。
+   */
+  resolvedOutputDir?: string;
+  /** 自动落盘的文件名模板，占位符见 FILE_NAME_TOKENS。 */
+  fileNameTemplate: string;
+  /** 节点没单独配 retry 时的默认最大重试次数（0-10）。 */
+  maxRetries: number;
+  /** 节点没单独配 retry 时的默认重试等待基数（秒，1-60）；按次数线性递增。 */
+  retryBackoffSec: number;
+  /** 运行结束时发系统通知。 */
+  runEndNotify: boolean;
+  /** 运行结束时播放提示音。 */
+  runEndSound: boolean;
+}
+
+/** 新数值设置的取值范围；服务端校验、设置页输入框与服务端收口共用一份。 */
+export const GENERAL_LIMITS = {
+  concurrency: { min: 1, max: 4 },
+  maxRetries: { min: 0, max: 10 },
+  retryBackoffSec: { min: 1, max: 60 },
+} as const;
 
 export interface AppSettings {
   ai: AiSettings;
   asr: AsrSettings;
   search: SearchSettings;
-  general: {
-    /** 节点执行并发数（1-4）。 */
-    concurrency: number;
-    outputDir: string;
-  };
+  general: GeneralSettings;
   obsidian: {
     /** Obsidian 库根目录，例如 D:\\知识库。 */
     vaultPath: string;
@@ -201,13 +258,18 @@ export interface UpdateSettingsRequest {
     apiKey?: string;
   };
   search?: {
-    provider?: "tavily";
+    provider?: SearchProvider;
     apiKey?: string;
     maxResults?: number;
   };
   general?: {
     concurrency?: number;
     outputDir?: string;
+    fileNameTemplate?: string;
+    maxRetries?: number;
+    retryBackoffSec?: number;
+    runEndNotify?: boolean;
+    runEndSound?: boolean;
   };
   obsidian?: {
     vaultPath?: string;

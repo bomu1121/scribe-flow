@@ -1,19 +1,16 @@
 @echo off
-setlocal
+rem Windows batch decodes this file with the console code page, so keep every line ASCII
+rem (UTF-8 Chinese here turns into mojibake and can break parsing). Chinese output comes from
+rem scripts/start-dev.mjs, which runs under the 65001 code page set below.
+chcp 65001 >nul
 cd /d "%~dp0"
 
-echo ScribeFlow dev servers
-echo   Web:    http://localhost:5173
-echo   Server: http://localhost:8787
-echo.
-echo Ctrl+C to stop both.
-echo.
+where node >nul 2>nul
+if errorlevel 1 (
+  echo Node.js not found. Install Node.js 22 or newer first: https://nodejs.org
+  pause
+  exit /b 1
+)
 
-pnpm dev
-set EXITCODE=%ERRORLEVEL%
-
-echo.
-echo Dev servers exited with code %EXITCODE%.
-pause
-
-endlocal
+node "scripts\start-dev.mjs"
+if errorlevel 1 pause

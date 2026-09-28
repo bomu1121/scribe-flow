@@ -8,6 +8,7 @@ import { emptyGraph, parseGraph, WORKFLOW_TEMPLATES, type GraphNode, type Workfl
 import { folders, projects, runs, type ProjectRow } from "../db/schema";
 import type { AppDatabase } from "../db/client";
 import type { RunEngine } from "../lib/engine";
+import { GRAPH_BACKUP_KEEP } from "../lib/storage";
 
 const createBodySchema = z.object({
   name: z.string().trim().min(1, "工程名称不能为空").max(80, "工程名称过长").optional(),
@@ -71,7 +72,7 @@ function cleanGraph(graph: WorkflowGraph): WorkflowGraph {
  *
  * 背景（2026-09-10 实际发生过两次）：工程图只有服务端这一份，而编辑器在异常路径
  * （热更新换组件树、渲染失败、防抖保存竞态）下可能把空画布写回来，一次覆盖就永久丢失。
- * 留档让丢失永远可回滚，且不依赖前端时序。每工程保留最近 20 份。
+ * 留档让丢失永远可回滚，且不依赖前端时序。每工程保留最近 GRAPH_BACKUP_KEEP 份。
  */
 function backupGraph(_db: AppDatabase, dataDir: string, projectId: string, previousJson: string): void {
   try {
@@ -86,7 +87,7 @@ function backupGraph(_db: AppDatabase, dataDir: string, projectId: string, previ
     const mine = readdirSync(dir)
       .filter((name) => name.startsWith(prefix) && name.endsWith(".json"))
       .sort();
-    for (const stale of mine.slice(0, Math.max(0, mine.length - 20))) {
+    for (const stale of mine.slice(0, Math.max(0, mine.length - GRAPH_BACKUP_KEEP))) {
       rmSync(join(dir, stale), { force: true });
     }
   } catch {

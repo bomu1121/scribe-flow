@@ -1,4 +1,4 @@
-import { parseDrillSet, type DrillDrop, type DrillSet } from "@scribe-flow/shared";
+import { parseDrillSet, verifyExternalRefs, type DrillDrop, type DrillSet } from "@scribe-flow/shared";
 
 /**
  * 知识巩固节点辅助：解析 LLM 返回的练习集、汇总丢弃明细、生成节点摘要。
@@ -12,8 +12,16 @@ export interface BuiltDrill {
   summary: string;
   /** 丢弃明细的一行文本，写进运行日志便于排查。 */
   dropDetail: string;
+  /** 参考链接校验结果的一行文本（空串表示没有需要报告的）；写进运行日志。 */
+  referenceNote: string;
   /** 整体不可用时的中文原因。 */
   error?: string;
+}
+
+/** 参考资料的核对凭据：只要标题与网址（其余字段用不上）。 */
+export interface DrillReference {
+  title?: string;
+  url?: string;
 }
 
 /**
@@ -21,16 +29,24 @@ export interface BuiltDrill {
  *
  * @param raw        模型原始输出（步骤链末端产物）
  * @param sourceText 本次输入原文，用于引文命中校验
- * @param options    withExtensions=false 时确定性剔除延伸问题（不依赖模型自觉）
+ * @param options    withExtensions=false 时确定性剔除延伸问题（不依赖模型自觉）；
+ *                   references 是本次联网检索到的资料，用于校验产物里的 externalRef 是否真实存在
  */
 export function buildDrill(
   raw: string,
   sourceText: string,
-  options: { withExtensions?: boolean } = {},
+  options: { withExtensions?: boolean; references?: DrillReference[] } = {},
 ): BuiltDrill {
   const { set, drops, error } = parseDrillSet(raw, sourceText);
+  // 参考链接先按「本次到底检索到了什么」校验：模型编出来的链接不能留在产物里（见 verifyExternalRefs）。
+  const verified = set ? verifyExternalRefs(set, options.references ?? []) : null;
   const withExtensions = options.withExtensions !== false;
-  const normalized: DrillSet | null = set && !withExtensions ? { ...set, extensions: [] } : set;
+  const normalized: DrillSet | null =
+    verified?.set && !withExtensions ? { ...verified.set, extensions: [] } : (verified?.set ?? null);
+  const referenceNote =
+    verified && verified.stripped > 0
+      ? `剥掉 ${verified.stripped} 条不在本次检索结果里的参考链接：${verified.strippedSamples.join("；")}`
+      : "";
 
   if (!normalized) {
     return {
@@ -38,6 +54,7 @@ export function buildDrill(
       drops,
       summary: "",
       dropDetail: "",
+      referenceNote: "",
       error: error ?? (drops.length > 0 ? `生成的题目全部未通过校验：${describeDrops(drops)}` : "没有生成可用的练习题，请重跑本节点"),
     };
   }
@@ -47,12 +64,17 @@ export function buildDrill(
     drops,
     summary: summarizeDrill(normalized, drops),
     dropDetail: describeDrops(drops),
+    referenceNote,
   };
 }
 
 /** 节点摘要：把丢弃情况显式暴露在卡片上，丢弃率本身就是题目质量的健康指标。 */
 export function summarizeDrill(set: DrillSet, drops: DrillDrop[]): string {
-  const base = `${set.points.length} 个考察点 · ${set.items.length} 题 · ${set.extensions.length} 条延伸`;
+  const parts = [`${set.points.length} 个考察点`, `${set.items.length} 题`, `${set.extensions.length} 条延伸`];
+  // 联网出题的效果要看得见：几道题真的参考了网上同类题，是这次检索唯一可核对的结果。
+  const referenced = set.items.filter((item) => item.externalRef).length;
+  if (referenced > 0) parts.push(`${referenced} 题参考了网上同类题`);
+  const base = parts.join(" · ");
   if (drops.length === 0) return base;
   return `${base} · 丢弃 ${drops.length}（${dropReasons(drops)}）`;
 }

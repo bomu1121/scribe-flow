@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from "vue";
 import { useRoute } from "vue-router";
-import { PhBookOpenText, PhFileArrowDown, PhFileText, PhFolderStar, PhFunnel, PhGitBranch, PhGitMerge, PhListChecks, PhMagicWand, PhMicrophone, PhShareNetwork, PhSparkle, PhSwap, PhTreeStructure, PhUploadSimple, PhVideo } from "@phosphor-icons/vue";
+import { PhBookOpenText, PhFileText, PhFolderStar, PhFunnel, PhGitBranch, PhGitMerge, PhListChecks, PhMagicWand, PhMicrophone, PhShareNetwork, PhSparkle, PhSwap, PhTreeStructure, PhUploadSimple, PhVideo } from "@phosphor-icons/vue";
 import { toast } from "@/lib/toast";
 import { NODE_TYPE_LABELS, type NodeType } from "@scribe-flow/shared";
 import { useUiStore } from "@/stores/ui";
@@ -66,7 +66,6 @@ const groups: CatalogGroup[] = [
     label: "组织与输出",
     items: [
       { type: "process.merge", icon: PhGitMerge, description: "合并多个输入" },
-      { type: "process.output", icon: PhFileArrowDown, description: "保存为文件产物" },
       { type: "process.obsidian", icon: PhBookOpenText, description: "写入 Obsidian 库" },
     ],
   },

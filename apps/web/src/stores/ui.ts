@@ -35,6 +35,10 @@ export const useUiStore = defineStore("ui", () => {
   const settingsOpen = ref(false);
   /** 项目文档阅读器浮层。 */
   const docsOpen = ref(false);
+  /** 快捷新建（粘贴 B 站链接直接建工程）浮层；入口在工作台面板与首页。 */
+  const quickCreateOpen = ref(false);
+  /** 快捷新建的目标文件夹：null 表示根层级。 */
+  const quickCreateFolderId = ref<string | null>(null);
   /** 单面板：open=false 时收起为纯活动条。 */
   const panelState = ref<PanelState>(readPanelState());
   const panelOpen = ref(panelState.value.open);
@@ -68,6 +72,12 @@ export const useUiStore = defineStore("ui", () => {
     docsOpen.value = false;
   }
 
+  /** 打开快捷新建；folderId 决定工程建在哪个文件夹（缺省根层级）。 */
+  function openQuickCreate(folderId: string | null = null) {
+    quickCreateFolderId.value = folderId;
+    quickCreateOpen.value = true;
+  }
+
   /** 打开/收起面板；切换 tab 时自动打开。 */
   function openPanel(tab: RailTab) {
     panelOpen.value = true;
@@ -98,6 +108,8 @@ export const useUiStore = defineStore("ui", () => {
   return {
     settingsOpen,
     docsOpen,
+    quickCreateOpen,
+    quickCreateFolderId,
     panelOpen,
     panelTab,
     nodeAddRequest,
@@ -105,6 +117,7 @@ export const useUiStore = defineStore("ui", () => {
     closeSettings,
     openDocs,
     closeDocs,
+    openQuickCreate,
     openPanel,
     closePanel,
     togglePanel,

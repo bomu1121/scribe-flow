@@ -1,12 +1,13 @@
 <script setup lang="ts">
-import { computed, defineAsyncComponent, h, onBeforeUnmount, onMounted, provide, ref, watch } from "vue";
+import { computed, defineAsyncComponent, h, onBeforeUnmount, onMounted, provide, ref, watch, type Component } from "vue";
+import { useRouter } from "vue-router";
 import { ElInput, ElMessageBox, ElSwitch, ElTooltip, ElUpload, type UploadRequestOptions } from "element-plus";
-import { PhBookOpenText, PhCloud, PhDotsThreeVertical, PhFileArrowDown, PhFileText, PhGitBranch, PhGitMerge, PhListChecks, PhMagicWand, PhMicrophone, PhPlay, PhShareNetwork, PhSlidersHorizontal, PhSparkle, PhSwap, PhTreeStructure, PhUploadSimple, PhVideo } from "@phosphor-icons/vue";
+import { PhBookOpenText, PhCloud, PhDotsThreeVertical, PhFileArrowDown, PhFileText, PhFunnel, PhGitBranch, PhGitMerge, PhListChecks, PhMagicWand, PhMicrophone, PhPlay, PhShareNetwork, PhSlidersHorizontal, PhSparkle, PhSwap, PhTreeStructure, PhUploadSimple, PhVideo } from "@phosphor-icons/vue";
 import { CircleAlert } from "lucide-vue-next";
 import { toast } from "@/lib/toast";
 import { Handle, Position, useVueFlow, type NodeProps } from "@vue-flow/core";
 import { ContextMenuContent, ContextMenuItem, ContextMenuPortal, ContextMenuRoot, ContextMenuSeparator, ContextMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuPortal, DropdownMenuRoot, DropdownMenuSeparator, DropdownMenuTrigger, PopoverContent, PopoverPortal, PopoverRoot, PopoverTrigger } from "reka-ui";
-import { NODE_PORTS, NODE_TYPE_LABELS, type NodePick, type NodeType, type UploadedFile, type VideoPreview } from "@scribe-flow/shared";
+import { availablePromptBlocks, NODE_PORTS, NODE_TYPE_LABELS, SEARCH_PROVIDER_LABELS, type NodePick, type NodeType, type UploadedFile, type VideoPreview } from "@scribe-flow/shared";
 import ModelSelect from "../ModelSelect.vue";
 import NodeFieldLabel from "./NodeFieldLabel.vue";
 import IfCard from "./node-cards/IfCard.vue";
@@ -20,6 +21,7 @@ import PickFields from "./node-cards/PickFields.vue";
 import { useSegmentPick } from "@/composables/useSegmentPick";
 import { renderMarkdown } from "@/lib/markdown";
 import { usePromptsStore } from "@/stores/prompts";
+import { useSettingsStore } from "@/stores/settings";
 import { api } from "@/lib/api";
 import type { NodePreviewOutput, ScribeNodeData } from "@/utils/flow";
 
@@ -50,6 +52,8 @@ const flowMenuStyle = computed(() => ({ zoom: String(flowZoom.value) }));
 provide("sf-flow-zoom", flowZoom);
 
 const promptsStore = usePromptsStore();
+const settingsStore = useSettingsStore();
+const router = useRouter();
 const data = computed(() => props.data);
 
 const selectedPages = ref<number[]>([]);
@@ -91,9 +95,12 @@ const preview = ref<VideoPreview | null>(null);
 const previewLoading = ref(false);
 const previewError = ref("");
 let previewTimer: ReturnType<typeof setTimeout> | null = null;
+/** 链接解析的序号：链接被改过或节点换了视频时，让在飞的那次结果作废。 */
+let previewSeq = 0;
 
 function schedulePreview(url: string) {
   if (previewTimer) clearTimeout(previewTimer);
+  const seq = ++previewSeq;
   preview.value = null;
   previewError.value = "";
 
@@ -108,6 +115,9 @@ function schedulePreview(url: string) {
   previewTimer = setTimeout(async () => {
     try {
       const result = await api.post<VideoPreview>("/api/videos/preview", { url: value });
+      // 请求在飞的时候链接又变了（继续输入/切了工程）：这次结果作废，
+      // 否则旧视频的 bvid/标题/封面会被 patch 进新节点。
+      if (seq !== previewSeq) return;
       preview.value = result;
       const bvid = result.bvid || value.match(/BV[0-9A-Za-z]+/)?.[0] || "";
       patch({
@@ -136,9 +146,10 @@ function schedulePreview(url: string) {
         seasonSelected.value = restored.length > 0 ? restored : own ? [own.bvid] : [];
       }
     } catch (err) {
+      if (seq !== previewSeq) return;
       previewError.value = err instanceof Error ? err.message : "解析失败，请检查链接";
     } finally {
-      previewLoading.value = false;
+      if (seq === previewSeq) previewLoading.value = false;
     }
   }, 500);
 }
@@ -333,9 +344,41 @@ function onNodeBodyWheel(event: WheelEvent) {
 }
 
 onMounted(() => {
+  // 提示词块列表要按「有没有配检索密钥」过滤，而用户未必进过设置页。
+  void settingsStore.ensureLoaded();
   // 多选收藏卡片不需要解析“第一个视频”的预览，所有项平等展示。
   if (props.data.url && !isCollection.value) schedulePreview(props.data.url);
 });
+
+/**
+ * 清掉「本地解析出来的这一份预览」：预览、错误、勾选状态都属于当前解析结果，
+ * 换视频时必须一起丢，否则合并选集会把上一个视频的分P/合集写进本节点。
+ */
+function resetLocalPreview() {
+  if (previewTimer) clearTimeout(previewTimer);
+  previewSeq += 1;
+  preview.value = null;
+  previewLoading.value = false;
+  previewError.value = "";
+  selectedPages.value = [];
+  seasonSelected.value = [];
+  editingCollection.value = false;
+}
+
+/**
+ * 画布在工程之间是复用实例的（见 FlowCanvas 的 loadGraph），而模板里的节点 id 是固定的
+ * （`n_src`…），于是切工程时同一个 ScribeNode 实例只是换了 data：上一个工程解析出的
+ * preview（UP主/时长/合集列表）会留在本地 ref 里，卡片就显示成上一个工程的视频。
+ * 以节点数据里的 bvid 为准判断本地预览是否还属于当前节点：对不上就重解析。
+ */
+watch(
+  () => String(data.value.bvid ?? ""),
+  (bvid) => {
+    if (preview.value && bvid && preview.value.bvid === bvid) return;
+    resetLocalPreview();
+    if (data.value.url && !isCollection.value) schedulePreview(String(data.value.url));
+  },
+);
 
 onBeforeUnmount(() => {
   if (previewTimer) clearTimeout(previewTimer);
@@ -397,7 +440,7 @@ const nodeDescriptions: Record<NodeType, string> = {
   "process.gameguide": "将阴阳师攻略文稿整理为结构化攻略笔记",
   "process.mindmap": "将文稿整理为思维导图 Markdown",
   "process.obsidian": "将结果写入 Obsidian 笔记库",
-  "process.drill": "从文稿提炼可考察的知识点并出题，在结果页答题",
+  "process.drill": "从文稿提炼可考察的知识点并出题，在结果页答题；配置联网检索后还会上网找同类练习题",
 };
 
 const nodeDescription = computed(() => nodeDescriptions[nodeType.value] ?? "");
@@ -443,40 +486,33 @@ function toggleAdvanced() {
 const noInlineFormTypes: NodeType[] = ["process.refine", "process.mindmap"];
 const hasBodyContent = computed(() => !noInlineFormTypes.includes(nodeType.value) || advancedOpen.value);
 
-const typeIcon = computed(() => {
-  switch (nodeType.value) {
-    case "source.bili":
-      return PhVideo;
-    case "source.file":
-      return PhUploadSimple;
-    case "source.text":
-      return PhFileText;
-    case "process.transcribe":
-      return PhMicrophone;
-    case "process.refine":
-      return PhMagicWand;
-    case "process.prompt":
-      return PhSparkle;
-    case "process.merge":
-      return PhGitMerge;
-    case "process.output":
-      return PhFileArrowDown;
-    case "flow.if":
-      return PhGitBranch;
-    case "process.text":
-      return PhSwap;
-    case "process.chapter":
-      return PhTreeStructure;
-    case "process.gameguide":
-      return PhSparkle;
-    case "process.mindmap":
-      return PhShareNetwork;
-    case "process.obsidian":
-      return PhBookOpenText;
-    case "process.drill":
-      return PhListChecks;
-  }
-});
+/**
+ * 卡片头部的类型图标。
+ *
+ * 用 `Record<NodeType, …>` 而不是 switch：漏配一个类型会直接编译不过（`NODE_TYPE_LABELS` /
+ * `NODE_CARD_WIDTH` / `NODE_PORTS` 都是这个套路）。这里曾经是 switch，`flow.pick` 漏了一支没人发现，
+ * 素材挑选卡的头部就没有图标——标题比别的卡少缩进 17px，整张卡看起来不像同一套组件。
+ */
+const TYPE_ICONS: Record<NodeType, Component> = {
+  "source.bili": PhVideo,
+  "source.file": PhUploadSimple,
+  "source.text": PhFileText,
+  "process.transcribe": PhMicrophone,
+  "process.refine": PhMagicWand,
+  "process.prompt": PhSparkle,
+  "process.merge": PhGitMerge,
+  "process.output": PhFileArrowDown,
+  "flow.if": PhGitBranch,
+  "flow.pick": PhFunnel,
+  "process.text": PhSwap,
+  "process.chapter": PhTreeStructure,
+  "process.gameguide": PhSparkle,
+  "process.mindmap": PhShareNetwork,
+  "process.obsidian": PhBookOpenText,
+  "process.drill": PhListChecks,
+};
+
+const typeIcon = computed(() => TYPE_ICONS[nodeType.value]);
 
 const statusClass = computed(() => (props.data.status ? `is-${props.data.status}` : "is-idle"));
 const sizeClass = computed(() => `sf-node--${nodeType.value.replaceAll(".", "-")}`);
@@ -712,17 +748,60 @@ const gameGuideModeOptions = [
   { label: "快速版（省时）", value: "standard", icon: PhSparkle },
 ];
 
+/** 检索密钥是否已配置：没配就不该让需要联网核查的模版出现在可选列表里。 */
+const searchReady = computed(() => Boolean(settingsStore.settings?.search.hasKey));
+
+/**
+ * 提示词块下拉的选项文案：只写名字，自己写的块标一个「我的」。
+ * 版本号、配方、内置、推荐这些说法都留在设置页的块库里（那里才是管版本的地方），卡片上不出现。
+ */
 const promptOptions = computed(() =>
-  promptsStore.allBlocks
-    .filter((block) => block.series !== "阴阳师攻略加工")
-    .map((block) => {
-      const parts = [block.name];
-      if (block.version) parts.push(block.version);
-      if (block.recipe) parts.push("配方");
-      if (block.builtin) parts.push("内置");
-      return { label: parts.join(" · "), value: block.id };
-    }),
+  availablePromptBlocks(
+    promptsStore.allBlocks.filter((block) => block.series !== "阴阳师攻略"),
+    searchReady.value,
+  ).map((block) => {
+    const parts = [block.name];
+    if (!block.builtin) parts.push("我的");
+    return { label: parts.join(" · "), value: block.id };
+  }),
 );
+
+/**
+ * 当前选的模版会不会做联网核查（v2 是可选、v3 是必需）：是的话节点上直接显示渠道与密钥状态。
+ */
+const selectedSearchBlock = computed(() => {
+  const block = promptsStore.allBlocks.find((item) => item.id === promptBlockId.value);
+  return block?.externalCheck ? block : undefined;
+});
+
+/**
+ * 检索渠道名。这里读的是设置页「联网检索」里那一份，和「AI 模型」的密钥不是同一个东西，
+ * 所以节点上把渠道与配置状态摊开显示，省得去设置页猜该填哪个 key。
+ */
+const searchChannelLabel = computed(() => {
+  const provider = settingsStore.settings?.search.provider;
+  return provider ? SEARCH_PROVIDER_LABELS[provider] : "读取中";
+});
+
+const searchTesting = ref(false);
+
+async function testTraceSearch() {
+  searchTesting.value = true;
+  try {
+    const result = await settingsStore.testSearch();
+    const authority = Object.entries(result.authorityCounts ?? {});
+    const authorityText = authority.length > 0 ? `（${authority.map(([tier, count]) => `${tier} ${count}`).join("、")}）` : "";
+    toast.success(`检索连通，可用来源 ${result.count} 条${authorityText}`);
+  } catch (err) {
+    toast.error(err instanceof Error ? err.message : "检索失败");
+  } finally {
+    searchTesting.value = false;
+  }
+}
+
+function openSearchSettings() {
+  void router.push({ path: "/settings", query: { group: "search" } });
+}
 
 const asrEngine = computed<string>({
   get: () => (data.value.asrEngine as string | undefined) ?? "mimo",
@@ -1147,6 +1226,30 @@ const themeOptions = [
                 :prefix-icon="PhSparkle"
               />
             </div>
+            <div v-if="selectedSearchBlock" class="sf-node-search">
+              <div class="sf-node-search-head">
+                <span class="sf-node-field-label">联网核查</span>
+                <span class="sf-node-chip">{{ searchChannelLabel }}</span>
+                <span class="sf-node-chip" :class="searchReady ? 'is-ready' : 'is-missing'">
+                  {{ searchReady ? "密钥已配置" : "密钥未配置" }}
+                </span>
+              </div>
+              <p v-if="!searchReady" class="sf-node-search-note">
+                未配置时不会联网核查{{ selectedSearchBlock.externalCheck === "required" ? "（该模版需要检索密钥，已从可选列表里隐去）" : "，原文核对照常" }}。
+                用的是设置页「联网检索」里的搜索服务密钥，与「AI 模型」的密钥不是同一个。
+              </p>
+              <div class="sf-node-search-actions">
+                <button
+                  type="button"
+                  class="sf-node-search-btn nodrag"
+                  :disabled="!searchReady || searchTesting"
+                  @click="testTraceSearch"
+                >
+                  {{ searchTesting ? "测试中…" : "测试连接" }}
+                </button>
+                <button type="button" class="sf-node-search-btn nodrag" @click="openSearchSettings">去设置</button>
+              </div>
+            </div>
           </template>
 
           <template v-else-if="nodeType === 'flow.if'">
@@ -1201,6 +1304,34 @@ const themeOptions = [
               :focus="data.focus"
               @update="patchDrill"
             />
+            <!-- 练一练与溯源共用同一份检索渠道：这里显示状态，省得去设置页猜该填哪个 key。 -->
+            <div class="sf-node-search">
+              <div class="sf-node-search-head">
+                <span class="sf-node-field-label">联网找同类题</span>
+                <span class="sf-node-chip">{{ searchChannelLabel }}</span>
+                <span class="sf-node-chip" :class="searchReady ? 'is-ready' : 'is-missing'">
+                  {{ searchReady ? "密钥已配置" : "密钥未配置" }}
+                </span>
+              </div>
+              <p class="sf-node-search-note">
+                {{
+                  searchReady
+                    ? "抽点后会拿知识点的检索词上网找同类练习题，参考它们的考察角度与干扰项设计；题目答案与原文依据仍只认原文。"
+                    : "未配置时完全依据原文出题（不联网）。用的是设置页「联网检索」里的搜索服务密钥，与「AI 模型」的密钥不是同一个。"
+                }}
+              </p>
+              <div class="sf-node-search-actions">
+                <button
+                  type="button"
+                  class="sf-node-search-btn nodrag"
+                  :disabled="!searchReady || searchTesting"
+                  @click="testTraceSearch"
+                >
+                  {{ searchTesting ? "测试中…" : "测试连接" }}
+                </button>
+                <button type="button" class="sf-node-search-btn nodrag" @click="openSearchSettings">去设置</button>
+              </div>
+            </div>
           </template>
 
           <template v-else-if="nodeType === 'process.merge'">
@@ -1667,26 +1798,6 @@ const themeOptions = [
   user-select: none;
 }
 
-.sf-node-desc {
-  margin: 0;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: var(--color-text-tertiary);
-  font-size: 11px;
-  line-height: 1.4;
-  user-select: none;
-}
-
-/* 正文里的说明文字：换行完整显示，不做单行截断（头部那行空间有限才截断）。 */
-.sf-node-desc--block {
-  white-space: normal;
-  overflow: visible;
-  text-overflow: clip;
-  line-height: 1.55;
-}
-
 .sf-node-error-trigger {
   display: inline-flex;
   align-items: center;
@@ -1811,6 +1922,78 @@ const themeOptions = [
 .sf-node-result-delta.is-new {
   background: var(--color-success-soft);
   color: var(--color-success);
+}
+
+.sf-node-search {
+  margin-top: 8px;
+  padding: 8px 10px;
+  background: var(--color-surface-muted);
+  border-radius: var(--radius-sm);
+}
+
+.sf-node-search-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.sf-node-chip {
+  padding: 1px 6px;
+  border: 1px solid var(--color-border);
+  border-radius: 3px;
+  background: var(--color-surface);
+  color: var(--color-text-secondary);
+  font-size: 11px;
+  line-height: 16px;
+}
+
+.sf-node-chip.is-ready {
+  border-color: var(--color-success-border);
+  background: var(--color-success-soft);
+  color: var(--color-success);
+}
+
+.sf-node-chip.is-missing {
+  border-color: var(--color-warning-border);
+  background: var(--color-warning-soft);
+  color: var(--color-warning);
+}
+
+.sf-node-search-note {
+  margin: 6px 0 0;
+  color: var(--color-text-tertiary);
+  font-size: 11px;
+  line-height: 1.6;
+}
+
+.sf-node-search-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.sf-node-search-btn {
+  height: 24px;
+  padding: 0 10px;
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  color: var(--color-text);
+  font-family: inherit;
+  font-size: 11px;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color var(--dur-1) var(--ease-out), border-color var(--dur-1) var(--ease-out);
+}
+
+.sf-node-search-btn:hover:not(:disabled) {
+  background: var(--color-ink-soft);
+}
+
+.sf-node-search-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .sf-node-run-btn {
@@ -2274,10 +2457,6 @@ const themeOptions = [
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.sf-node-control {
-  width: 100%;
 }
 
 .sf-node-textarea {

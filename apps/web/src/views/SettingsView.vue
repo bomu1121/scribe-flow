@@ -1,11 +1,15 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from "vue";
+import { useRoute } from "vue-router";
 import { ElInput, ElInputNumber, ElMessageBox, ElOption, ElSelect, ElSwitch } from "element-plus";
-import { Cloud, Download, FolderOpen, Mic, PlugZap, RefreshCw, RotateCcw, Save, Trash2, Upload } from "lucide-vue-next";
+import { Cloud, Download, ExternalLink, FolderOpen, Mic, PlugZap, RefreshCw, RotateCcw, Save, Trash2, Upload } from "lucide-vue-next";
 import { toast } from "@/lib/toast";
+import { ensureNotifyPermission } from "@/utils/run-alert";
+import { formatBytes } from "@/lib/bytes";
 import ModelSelect from "../components/ModelSelect.vue";
 import PromptBlockDiffDialog from "../components/PromptBlockDiffDialog.vue";
-import type { AiProvider, AsrEngine, PromptBlock } from "@scribe-flow/shared";
+import type { AiProvider, AsrEngine, DataOverview, PruneItem, PruneOutcome, PruneTarget, PromptBlock, SearchProvider } from "@scribe-flow/shared";
+import { FILE_NAME_TOKENS, GENERAL_LIMITS, TRACE_SOURCE_AUTHORITY_LABELS, renderFileNameTemplate } from "@scribe-flow/shared";
 import { api } from "@/lib/api";
 import { useSettingsStore } from "@/stores/settings";
 import { usePromptsStore } from "@/stores/prompts";
@@ -14,11 +18,12 @@ import { useRunsStore } from "@/stores/runs";
 const store = useSettingsStore();
 const promptsStore = usePromptsStore();
 const runsStore = useRunsStore();
+const route = useRoute();
 
 const groups = [
   { key: "ai", label: "AI 模型" },
   { key: "asr", label: "语音识别" },
-  { key: "search", label: "外部溯源" },
+  { key: "search", label: "联网检索" },
   { key: "general", label: "常规" },
   { key: "obsidian", label: "Obsidian" },
   { key: "nutstore", label: "坚果云" },
@@ -38,10 +43,16 @@ const form = reactive({
   asrBaseUrl: "",
   asrModel: "",
   asrKey: "",
+  searchProvider: "zhipu" as SearchProvider,
   searchKey: "",
   searchMaxResults: 5,
   concurrency: 2,
   outputDir: "outputs",
+  fileNameTemplate: "{project}",
+  maxRetries: 2,
+  retryBackoffSec: 3,
+  runEndNotify: true,
+  runEndSound: false,
   obsidianVaultPath: "",
   obsidianFolder: "00-Inbox",
   obsidianTagTaxonomyText: "{}",
@@ -64,6 +75,7 @@ const aiModelOptions = ref<string[]>([...DEEPSEEK_DEFAULT_MODELS]);
 const aiModelLoading = ref(false);
 const aiTesting = ref(false);
 const asrTesting = ref(false);
+const searchTesting = ref(false);
 const nutstoreTesting = ref(false);
 
 watch(
@@ -90,11 +102,25 @@ const asrOptions = [
   { label: "OpenAI 兼容", value: "openai-compatible", icon: Cloud },
 ];
 
+const searchProviderOptions: { label: string; value: SearchProvider; keyPlaceholder: string }[] = [
+  { label: "智谱 BigModel", value: "zhipu", keyPlaceholder: "在 open.bigmodel.cn 的 API Keys 页创建" },
+  { label: "Tavily", value: "tavily", keyPlaceholder: "tvly-…" },
+];
+
+const searchKeyPlaceholder = computed(
+  () => searchProviderOptions.find((opt) => opt.value === form.searchProvider)?.keyPlaceholder ?? "API Key",
+);
+
 const blockForm = reactive({ id: "", name: "", prompt: "" });
 const expandedBlockId = ref<string | null>(null);
 const compareDialogOpen = ref(false);
 const compareInitialBlockId = ref("");
-const dataInfo = ref<{ dataDir: string; runCount: number; finishedRunCount: number; outputFiles: number; outputBytes: number } | null>(null);
+const dataInfo = ref<DataOverview | null>(null);
+const dataLoading = ref(false);
+const dataError = ref("");
+const revealTesting = ref(false);
+const pruneRunning = ref<PruneTarget | "all" | "">("");
+const pruneOutcomes = ref<PruneOutcome[]>([]);
 const nutstoreRemoteFolders = ref<string[]>([]);
 const nutstoreRemoteFiles = ref<Array<{ path: string; name: string; type: "folder" | "file"; size?: number; lastModified?: number }>>([]);
 const nutstoreReading = ref(false);
@@ -239,12 +265,35 @@ async function removeBlock(block: PromptBlock) {
 }
 
 async function loadDataInfo() {
-  dataInfo.value = await api.get("/api/settings/data");
+  dataLoading.value = true;
+  dataError.value = "";
+  try {
+    dataInfo.value = await api.get<DataOverview>("/api/settings/data");
+  } catch (err) {
+    dataError.value = err instanceof Error ? err.message : "读取数据目录失败";
+  } finally {
+    dataLoading.value = false;
+  }
 }
 
-async function clearFinishedRuns() {
+function cleanupItems(targets: PruneTarget[]): PruneItem[] {
+  const all = dataInfo.value?.cleanup ?? [];
+  return all.filter((item) => targets.includes(item.target));
+}
+
+const pruneAllTargets = computed<PruneTarget[]>(
+  () => (dataInfo.value?.cleanup ?? []).filter((item) => item.count > 0).map((item) => item.target),
+);
+
+const hasReclaimable = computed(() => (dataInfo.value?.reclaimableBytes ?? 0) > 0);
+
+/** 清理前把「清什么、清多少、释放多少」摊开给用户看，避免一键清理变成黑箱。 */
+async function runPrune(targets: PruneTarget[], key: PruneTarget | "all") {
+  const items = cleanupItems(targets).filter((item) => item.count > 0);
+  if (items.length === 0) return;
+  const summary = items.map((item) => `${item.label} ${item.count} 项（${formatBytes(item.bytes)}）`).join("；");
   try {
-    await ElMessageBox.confirm("删除全部已结束的运行及其产物文件？进行中的运行不受影响。", "清理运行记录", {
+    await ElMessageBox.confirm(`将清理：${summary}。释放约 ${formatBytes(items.reduce((acc, item) => acc + item.bytes, 0))}，此操作不可撤销。`, "清理本地数据", {
       confirmButtonText: "清理",
       cancelButtonText: "取消",
       type: "warning",
@@ -253,14 +302,63 @@ async function clearFinishedRuns() {
   } catch {
     return;
   }
+  pruneRunning.value = key;
   try {
-    const result = await api.post<{ deleted: number }>("/api/settings/clear-runs");
-    toast.success(`已清理 ${result.deleted} 条运行记录`);
-    await runsStore.load();
+    const result = await api.post<{ outcomes: PruneOutcome[]; removed: number; bytes: number; errors: string[] }>("/api/settings/prune", { targets });
+    pruneOutcomes.value = result.outcomes;
     await loadDataInfo();
+    await runsStore.load();
+    if (result.errors.length > 0) toast.warning(`已清理 ${result.removed} 项（释放 ${formatBytes(result.bytes)}），有 ${result.errors.length} 项失败`);
+    else toast.success(`已清理 ${result.removed} 项，释放 ${formatBytes(result.bytes)}`);
   } catch (err) {
     toast.error(err instanceof Error ? err.message : "清理失败");
+  } finally {
+    pruneRunning.value = "";
   }
+}
+
+async function revealDir(target: "data" | "output") {
+  revealTesting.value = true;
+  try {
+    const result = await api.post<{ ok: boolean; path: string }>(`/api/settings/reveal-${target}-dir`);
+    toast.success(`已在系统文件管理器中打开${target === "data" ? "数据目录" : "输出目录"}：${result.path}`);
+  } catch (err) {
+    toast.error(err instanceof Error ? err.message : `打开${target === "data" ? "数据目录" : "输出目录"}失败`);
+  } finally {
+    revealTesting.value = false;
+  }
+}
+
+function revealDataDir() {
+  return revealDir("data");
+}
+
+function revealOutputDir() {
+  return revealDir("output");
+}
+
+/** 文件名模板的实时预览；示例值固定，用户改模板就能看见最终文件名长什么样。 */
+const fileNamePreview = computed(
+  () => `${renderFileNameTemplate(form.fileNameTemplate, { project: "某期视频笔记", node: "观点提炼", now: new Date() })}.md`,
+);
+
+/** 打开「运行结束提醒」时顺带申请浏览器通知权限——浏览器只允许在用户手势里申请。 */
+async function toggleRunEndNotify(value: boolean) {
+  if (!value) {
+    form.runEndNotify = false;
+    return;
+  }
+  const permission = await ensureNotifyPermission();
+  if (permission === "granted") {
+    form.runEndNotify = true;
+    return;
+  }
+  form.runEndNotify = false;
+  toast.warning(
+    permission === "denied"
+      ? "浏览器拒绝了通知权限，需要到浏览器地址栏的站点设置里手动允许后才能开启"
+      : "当前环境不支持系统通知（浏览器通常在 https 或 localhost 下才允许）",
+  );
 }
 
 function syncAiModelOptions(models?: string[]) {
@@ -298,9 +396,15 @@ function fillForm() {
   form.asrEngine = store.settings.asr.engine;
   form.asrBaseUrl = store.settings.asr.baseUrl;
   form.asrModel = store.settings.asr.model;
+  form.searchProvider = store.settings.search.provider;
   form.searchMaxResults = store.settings.search.maxResults;
   form.concurrency = store.settings.general.concurrency;
   form.outputDir = store.settings.general.outputDir;
+  form.fileNameTemplate = store.settings.general.fileNameTemplate;
+  form.maxRetries = store.settings.general.maxRetries;
+  form.retryBackoffSec = store.settings.general.retryBackoffSec;
+  form.runEndNotify = store.settings.general.runEndNotify;
+  form.runEndSound = store.settings.general.runEndSound;
   form.obsidianVaultPath = store.settings.obsidian.vaultPath;
   form.obsidianFolder = store.settings.obsidian.folder;
   form.obsidianTagTaxonomyText = JSON.stringify(store.settings.obsidian.tagTaxonomy ?? {}, null, 2);
@@ -326,10 +430,15 @@ function fillForm() {
 }
 
 onMounted(async () => {
+  // 支持 ?group=search 这类深链：画布节点上的「去配置」按钮需要直接落到对应分组。
+  const group = String(route.query.group ?? "");
+  if (groups.some((item) => item.key === group)) active.value = group as GroupKey;
   await store.load();
   fillForm();
   await store.loadObsidianFolders();
   await promptsStore.load();
+  // 账本必须在进页面时就读：只靠「刷新」按钮触发会让这一页长期显示空值。
+  await loadDataInfo();
   if (form.aiProvider === "deepseek" && (store.settings?.ai.hasKey || form.aiKey)) {
     await refreshAiModels();
   }
@@ -374,8 +483,16 @@ async function saveAll() {
     await store.save({
       ai: { provider: form.aiProvider, baseUrl: form.aiBaseUrl, model: form.aiModel, apiKey: form.aiKey || undefined },
       asr: { engine: form.asrEngine, baseUrl: form.asrBaseUrl, model: form.asrModel, apiKey: form.asrKey || undefined },
-      search: { provider: "tavily", apiKey: form.searchKey || undefined, maxResults: form.searchMaxResults },
-      general: { concurrency: form.concurrency, outputDir: form.outputDir },
+      search: { provider: form.searchProvider, apiKey: form.searchKey || undefined, maxResults: form.searchMaxResults },
+      general: {
+        concurrency: form.concurrency,
+        outputDir: form.outputDir,
+        fileNameTemplate: form.fileNameTemplate,
+        maxRetries: form.maxRetries,
+        retryBackoffSec: form.retryBackoffSec,
+        runEndNotify: form.runEndNotify,
+        runEndSound: form.runEndSound,
+      },
       obsidian: {
         vaultPath: form.obsidianVaultPath,
         folder: form.obsidianFolder,
@@ -443,6 +560,27 @@ async function testAsr() {
     toast.error(err instanceof Error ? err.message : "ASR 连接失败");
   } finally {
     asrTesting.value = false;
+  }
+}
+
+async function testSearch() {
+  searchTesting.value = true;
+  try {
+    const result = await store.testSearch({
+      provider: form.searchProvider,
+      apiKey: form.searchKey || undefined,
+      maxResults: form.searchMaxResults,
+    });
+    const authority = Object.entries(result.authorityCounts ?? {});
+    const authorityText = authority.length > 0
+      ? `，其中 ${authority.map(([tier, count]) => `${TRACE_SOURCE_AUTHORITY_LABELS[tier as keyof typeof TRACE_SOURCE_AUTHORITY_LABELS]} ${count} 条`).join("、")}`
+      : "";
+    const sample = result.sample ? `，示例：${result.sample.slice(0, 30)}` : "";
+    toast.success(`检索连通，可用来源 ${result.count} 条${authorityText}${sample}`);
+  } catch (err) {
+    toast.error(err instanceof Error ? err.message : "检索失败");
+  } finally {
+    searchTesting.value = false;
   }
 }
 
@@ -738,22 +876,48 @@ async function restoreNutstoreBackup(backup: { path: string; name: string }) {
       </template>
 
       <template v-else-if="active === 'search'">
-        <h2 class="sf-settings-title">外部溯源</h2>
-        <p class="sf-settings-desc">用于“信息溯源（结构化核对版）”对外部人物/机构/研究/新闻做联网核查。当前接入 Tavily Search API。</p>
+        <h2 class="sf-settings-title">联网检索</h2>
+        <p class="sf-settings-desc">
+          所有需要「上网查」的模块共用这一份「搜索服务」密钥。目前在用它的有两个：
+          <strong>信息溯源</strong>拿它做外部联网核查（按来源权威度给出「外部可印证 / 仅非权威来源 / 有反证 / 未找到出处」）；
+          <strong>知识巩固（练一练）</strong>拿它按知识点上网找同类练习题，供出题时参考考察角度与干扰项。
+        </p>
+        <p class="sf-settings-desc">
+          哪些节点会用到它，节点卡上会直接显示渠道与密钥状态。没配置也能跑：溯源跳过外部核查，练一练完全依据原文出题。
+        </p>
+        <p class="sf-settings-desc">
+          注意：它和「AI 模型」页里那个跑模型的密钥不是同一个。即使两边都用智谱，也各自需要一个单独的 Key——
+          模型 Key 用来生成内容，这里的 Key 只用来检索网页。两边都不用填对方的值。
+        </p>
         <div class="sf-settings-form">
           <label class="sf-field">
+            <span class="sf-field-label">检索渠道</span>
+            <el-select v-model="form.searchProvider" class="sf-field-control">
+              <el-option v-for="opt in searchProviderOptions" :key="opt.value" :label="opt.label" :value="opt.value" />
+            </el-select>
+          </label>
+          <p class="sf-settings-desc">
+            智谱 BigModel 为国内渠道（支付宝/微信充值），密钥在 open.bigmodel.cn 的「API Keys」页创建；Tavily 需要国外支付方式。
+            切换渠道后请重新填写该渠道的密钥。
+          </p>
+          <label class="sf-field">
             <span class="sf-field-label">
-              Tavily API Key
+              API Key
               <span v-if="store.settings?.search.hasKey" class="sf-chip sf-chip--success">已保存</span>
               <span v-else class="sf-chip sf-chip--warning">未配置</span>
             </span>
-            <el-input v-model="form.searchKey" type="password" show-password class="sf-field-control" :placeholder="store.settings?.search.hasKey ? '已保存，留空则不修改' : 'tvly-…'" />
+            <el-input v-model="form.searchKey" type="password" show-password class="sf-field-control" :placeholder="store.settings?.search.hasKey ? '已保存，留空则不修改' : searchKeyPlaceholder" />
           </label>
           <label class="sf-field">
-            <span class="sf-field-label">每条最多返回结果数</span>
-            <el-input-number v-model="form.searchMaxResults" :min="1" :max="10" class="sf-field-control" />
+            <span class="sf-field-label">每个检索词最多返回结果数</span>
+            <el-input-number v-model="form.searchMaxResults" :min="1" :max="10" />
           </label>
+          <p class="sf-settings-desc">
+            这是「每个检索词取几条结果」的上限，两个模块都受它约束：溯源核查逐条取来源，练一练按知识点的检索词取参考资料。
+            调大能拿到更多候选，也更慢、更贵。
+          </p>
           <div class="sf-settings-actions">
+            <button type="button" class="sf-btn" :disabled="searchTesting" @click="testSearch"><PlugZap :size="14" /><span>{{ searchTesting ? "测试中…" : "测试连接" }}</span></button>
             <button type="button" class="sf-btn sf-btn--primary" @click="saveAll"><span>保存设置</span></button>
           </div>
         </div>
@@ -761,19 +925,76 @@ async function restoreNutstoreBackup(backup: { path: string; name: string }) {
 
       <template v-else-if="active === 'general'">
         <h2 class="sf-settings-title">常规</h2>
-        <p class="sf-settings-desc">运行并发与输出目录。</p>
+        <p class="sf-settings-desc">运行与产出的全局默认。这里放的是「没被单独配置的东西」——节点卡上自己配了重试，就以节点为准。</p>
+
+        <div class="sf-settings-divider">运行</div>
         <div class="sf-settings-form">
           <label class="sf-field">
-            <span class="sf-field-label">并发数（1-4）</span>
-            <el-input v-model.number="form.concurrency" type="number" min="1" max="4" class="sf-field-control" />
+            <span class="sf-field-label">并发数</span>
+            <el-input-number v-model="form.concurrency" :min="GENERAL_LIMITS.concurrency.min" :max="GENERAL_LIMITS.concurrency.max" />
+            <p class="sf-field-hint">同时跑几个节点。调大能多占带宽，也更吃机器；下载与转写这类节点本身就慢，2-3 够用。</p>
           </label>
+          <label class="sf-field">
+            <span class="sf-field-label">失败自动重试次数</span>
+            <el-input-number v-model="form.maxRetries" :min="GENERAL_LIMITS.maxRetries.min" :max="GENERAL_LIMITS.maxRetries.max" />
+            <p class="sf-field-hint">
+              节点卡上没有单独配重试时用这个值。只对会走外部调用的节点生效（B 站下载、转写、AI 加工、练一练）；
+              密钥缺失、条件不满足、断言未通过这类不重试——重试也不会变对。
+            </p>
+          </label>
+          <label class="sf-field">
+            <span class="sf-field-label">重试等待（秒）</span>
+            <el-input-number v-model="form.retryBackoffSec" :min="GENERAL_LIMITS.retryBackoffSec.min" :max="GENERAL_LIMITS.retryBackoffSec.max" />
+            <p class="sf-field-hint">第一次重试前等多久，之后按次数线性递增：填 3 就是等 3 秒、6 秒、9 秒……</p>
+          </label>
+        </div>
+
+        <div class="sf-settings-divider">产出</div>
+        <div class="sf-settings-form">
           <label class="sf-field">
             <span class="sf-field-label">输出目录</span>
             <el-input v-model="form.outputDir" class="sf-field-control" placeholder="outputs" />
+            <p class="sf-field-hint">
+              留空用默认的 <strong>outputs</strong>（落在数据目录里）；填相对路径同理；
+              想直接把成稿写进自己的笔记文件夹，就填绝对路径，例如 <strong>D:\笔记\ScribeFlow</strong>。
+            </p>
+            <p class="sf-field-hint">当前生效：<span class="sf-data-dir">{{ store.settings?.general.resolvedOutputDir || "（保存后显示）" }}</span></p>
           </label>
           <div class="sf-settings-actions">
-            <button type="button" class="sf-btn sf-btn--primary" @click="saveAll"><span>保存设置</span></button>
+            <button type="button" class="sf-btn" :disabled="revealTesting" @click="revealOutputDir"><ExternalLink :size="14" /><span>打开输出目录</span></button>
           </div>
+          <label class="sf-field">
+            <span class="sf-field-label">文件名模板</span>
+            <el-input v-model="form.fileNameTemplate" class="sf-field-control" placeholder="{project}" />
+            <p class="sf-field-hint">
+              占位符：
+              <strong v-for="item in FILE_NAME_TOKENS" :key="item.token" class="sf-token">{{ item.token }}（{{ item.label }}）</strong>
+            </p>
+            <p class="sf-field-hint">
+              预览：<strong>{{ fileNamePreview }}</strong>；
+              一次跑出多份产物而模板里没写 <strong>{node}</strong> 时，会自动在后面补节点名，避免互相覆盖。
+            </p>
+          </label>
+        </div>
+
+        <div class="sf-settings-divider">运行结束提醒</div>
+        <div class="sf-settings-form">
+          <label class="sf-field sf-field-row">
+            <span class="sf-field-label">发系统通知</span>
+            <el-switch :model-value="form.runEndNotify" @change="(value) => void toggleRunEndNotify(Boolean(value))" />
+          </label>
+          <label class="sf-field sf-field-row">
+            <span class="sf-field-label">播放提示音</span>
+            <el-switch v-model="form.runEndSound" />
+          </label>
+          <p class="sf-field-hint">
+            运行是「下载 → 转写 → AI 加工」，几分钟到十几分钟都正常，可以放心切走去做别的。
+            只提醒成功与失败；自己点的停止不提醒。
+          </p>
+        </div>
+
+        <div class="sf-settings-actions">
+          <button type="button" class="sf-btn sf-btn--primary" @click="saveAll"><span>保存设置</span></button>
         </div>
       </template>
 
@@ -807,7 +1028,7 @@ async function restoreNutstoreBackup(backup: { path: string; name: string }) {
           </label>
           <label class="sf-field">
             <span class="sf-field-label">最多关联篇数</span>
-            <el-input-number v-model="form.obsidianAutoLinkMax" :min="0" :max="20" size="small" />
+            <el-input-number v-model="form.obsidianAutoLinkMax" :min="0" :max="20" />
           </label>
 
           <div class="sf-settings-actions">
@@ -1036,18 +1257,106 @@ async function restoreNutstoreBackup(backup: { path: string; name: string }) {
 
       <template v-else-if="active === 'data'">
         <h2 class="sf-settings-title">数据与工程</h2>
-        <p class="sf-settings-desc">运行记录与产物文件都保存在本地数据目录。</p>
-        <div class="sf-settings-form">
-          <div class="sf-data-grid">
-            <div class="sf-data-cell"><span class="sf-data-label">数据目录</span><span class="sf-data-value tnum">{{ dataInfo?.dataDir ?? "—" }}</span></div>
-            <div class="sf-data-cell"><span class="sf-data-label">运行记录</span><span class="sf-data-value tnum">{{ dataInfo?.runCount ?? "—" }} 条（可清理 {{ dataInfo?.finishedRunCount ?? 0 }} 条）</span></div>
-            <div class="sf-data-cell"><span class="sf-data-label">输出文件</span><span class="sf-data-value tnum">{{ dataInfo?.outputFiles ?? "—" }} 个</span></div>
+        <p class="sf-settings-desc">本地数据目录的占用账本与工程资产总览。每一项可清理的东西都标明能释放多少空间，清理按同一份规则重新核对后执行。</p>
+
+        <div class="sf-storage-head">
+          <div class="sf-storage-total">
+            <span class="sf-storage-total-value tnum">{{ formatBytes(dataInfo?.totals.bytes ?? 0) }}</span>
+            <span class="sf-storage-total-meta">
+              {{ dataInfo?.totals.files ?? 0 }} 个文件 ·
+              {{ dataInfo?.projects.total ?? 0 }} 个工程（{{ dataInfo?.projects.folders ?? 0 }} 个文件夹） ·
+              {{ dataInfo?.runs.total ?? 0 }} 条运行记录（运行中 {{ dataInfo?.runs.running ?? 0 }}）
+            </span>
           </div>
-          <div class="sf-settings-actions">
-            <button type="button" class="sf-btn" @click="loadDataInfo"><span>刷新</span></button>
-            <button type="button" class="sf-btn sf-btn--danger" @click="clearFinishedRuns"><span>清理已结束运行</span></button>
+          <div class="sf-settings-actions sf-storage-head-actions">
+            <button type="button" class="sf-btn" :disabled="revealTesting" @click="revealDataDir"><ExternalLink :size="14" /><span>打开数据目录</span></button>
+            <button type="button" class="sf-btn" :disabled="dataLoading" @click="loadDataInfo"><RefreshCw :size="14" /><span>{{ dataLoading ? "刷新中…" : "刷新" }}</span></button>
           </div>
         </div>
+        <p v-if="dataError" class="sf-storage-error">{{ dataError }}</p>
+
+        <div class="sf-settings-divider">存储占用</div>
+        <table class="sf-data-table">
+          <thead>
+            <tr><th>区域</th><th class="sf-data-num">文件</th><th class="sf-data-num">占用</th></tr>
+          </thead>
+          <tbody>
+            <tr v-for="area in dataInfo?.areas ?? []" :key="area.key">
+              <td>{{ area.label }}</td>
+              <td class="sf-data-num tnum">{{ area.present ? area.files : "—" }}</td>
+              <td class="sf-data-num tnum">{{ area.present ? formatBytes(area.bytes) : "尚未产生" }}</td>
+            </tr>
+          </tbody>
+        </table>
+        <p class="sf-field-hint">数据目录：<span class="sf-data-dir">{{ dataInfo?.dataDir ?? "—" }}</span></p>
+
+        <div class="sf-settings-divider">工程资产</div>
+        <p class="sf-settings-desc">「占用」是该工程全部运行记录对应的产物与中间文件；删掉这些运行记录即可回收。</p>
+        <table v-if="(dataInfo?.projects.top.length ?? 0) > 0" class="sf-data-table">
+          <thead>
+            <tr><th>工程</th><th class="sf-data-num">运行记录</th><th class="sf-data-num">占用</th></tr>
+          </thead>
+          <tbody>
+            <tr v-for="usage in dataInfo?.projects.top ?? []" :key="usage.id">
+              <td>{{ usage.name }}</td>
+              <td class="sf-data-num tnum">{{ usage.runCount }}</td>
+              <td class="sf-data-num tnum">{{ formatBytes(usage.bytes) }}</td>
+            </tr>
+          </tbody>
+        </table>
+        <p v-else class="sf-field-hint">还没有任何运行记录，所以没有按工程统计的占用。</p>
+        <p v-if="dataInfo && dataInfo.projects.total > dataInfo.projects.top.length" class="sf-field-hint">
+          只列出占用最多的 10 个工程，另有 {{ dataInfo.projects.total - dataInfo.projects.top.length }} 个工程未展示。
+        </p>
+
+        <div class="sf-settings-divider">可回收空间</div>
+        <p class="sf-settings-desc">
+          合计可释放 <strong>{{ formatBytes(dataInfo?.reclaimableBytes ?? 0) }}</strong>（共 {{ dataInfo?.cleanup.length ?? 0 }} 类）。
+          磁盘上还有 {{ formatBytes((dataInfo?.totals.bytes ?? 0) - (dataInfo?.reclaimableBytes ?? 0)) }} 属于正在用的工程数据与数据库。
+        </p>
+        <div class="sf-cleanup-list">
+          <div v-for="item in dataInfo?.cleanup ?? []" :key="item.target" class="sf-cleanup-row" :data-target="item.target">
+            <div class="sf-cleanup-info">
+              <span class="sf-cleanup-label">{{ item.label }}</span>
+              <span class="sf-cleanup-rule">{{ item.rule }}</span>
+            </div>
+            <span class="sf-cleanup-count tnum">{{ item.count }} 项</span>
+            <span class="sf-cleanup-bytes tnum">{{ formatBytes(item.bytes) }}</span>
+            <button
+              type="button"
+              class="sf-btn sf-btn--danger"
+              :disabled="item.count === 0 || pruneRunning !== ''"
+              @click="runPrune([item.target], item.target)"
+            >
+              {{ pruneRunning === item.target ? "清理中…" : "清理" }}
+            </button>
+          </div>
+        </div>
+        <div class="sf-settings-actions">
+          <button type="button" class="sf-btn sf-btn--danger" :disabled="!hasReclaimable || pruneRunning !== ''" @click="runPrune(pruneAllTargets, 'all')">
+            {{ pruneRunning === "all" ? "清理中…" : `清理全部可回收项（释放 ${formatBytes(dataInfo?.reclaimableBytes ?? 0)}）` }}
+          </button>
+        </div>
+
+        <div v-if="pruneOutcomes.length > 0" class="sf-storage-result">
+          <h3 class="sf-storage-result-title">最近一次清理</h3>
+          <ul class="sf-storage-result-list">
+            <li v-for="outcome in pruneOutcomes" :key="outcome.target">
+              <span class="sf-storage-result-label">{{ outcome.label }}</span>
+              <span class="sf-storage-result-value tnum">清理 {{ outcome.removed }} 项 · 释放 {{ formatBytes(outcome.bytes) }}</span>
+            </li>
+          </ul>
+          <ul v-if="pruneOutcomes.some((outcome) => outcome.errors.length > 0)" class="sf-storage-result-list sf-storage-result-list--error">
+            <li v-for="outcome in pruneOutcomes" :key="`${outcome.target}-errors`">
+              <template v-for="message in outcome.errors" :key="message">
+                <span class="sf-storage-result-label">{{ outcome.label }}</span>
+                <span class="sf-storage-result-value">{{ message }}</span>
+              </template>
+            </li>
+          </ul>
+        </div>
+
+        <p class="sf-field-hint">整库备份与恢复（含工程、运行记录与设置）在「坚果云」分组。</p>
       </template>
 
       <template v-else>
@@ -1153,6 +1462,18 @@ async function restoreNutstoreBackup(backup: { path: string; name: string }) {
   width: 100%;
 }
 
+/*
+ * 设置页里的数值增减器一律窄宽度（实测 120px；改之前套着 .sf-field-control 是 460px，
+ * 中间那格输入框放一个「2」，剩下三百多像素全是空白）。
+ *
+ * 写在结构上而不是让每个调用点各自加一个类：本页的数值项只会越来越多（并发数、重试次数、
+ * 每个检索词返回条数、最多关联篇数……），靠人记得加类迟早漏一个，而漏掉的那一个正好就是最丑的。
+ * 选择器比 .sf-field-control 更具体，所以就算哪天有人手滑把宽度类加回来，也压得住。
+ */
+.sf-field .el-input-number {
+  width: 120px;
+}
+
 .sf-field-row {
   display: flex;
   flex-direction: row;
@@ -1185,6 +1506,14 @@ async function restoreNutstoreBackup(backup: { path: string; name: string }) {
   display: flex;
   gap: 8px;
   margin-top: 4px;
+}
+
+.sf-token {
+  margin-right: 6px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--color-text-secondary);
 }
 
 .sf-settings-divider {
@@ -1479,31 +1808,178 @@ async function restoreNutstoreBackup(backup: { path: string; name: string }) {
   color: var(--color-text);
 }
 
-.sf-data-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px;
+.sf-storage-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
 }
 
-.sf-data-cell {
+.sf-storage-total {
   display: flex;
   flex-direction: column;
   gap: 4px;
+}
+
+.sf-storage-total-value {
+  font-size: 24px;
+  font-weight: 600;
+  color: var(--color-text);
+  letter-spacing: -0.02em;
+}
+
+.sf-storage-total-meta {
+  font-size: 12px;
+  color: var(--color-text-secondary);
+}
+
+.sf-storage-head-actions {
+  margin-top: 0;
+}
+
+.sf-storage-error {
+  margin: 10px 0 0;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  background: var(--color-error-soft);
+  color: var(--color-error);
+  font-size: 12px;
+}
+
+.sf-data-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12.5px;
+  color: var(--color-text);
+}
+
+.sf-data-table th {
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--color-border);
+  color: var(--color-text-tertiary);
+  font-size: 11px;
+  font-weight: 500;
+  text-align: left;
+}
+
+.sf-data-table td {
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--color-border);
+  vertical-align: middle;
+}
+
+.sf-data-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.sf-data-table tbody tr:hover td {
+  background: var(--color-surface-muted);
+}
+
+/* 必须写成 .sf-data-table th.sf-data-num 这种复合选择器：
+   光靠 .sf-data-num 会被上面的 .sf-data-table th（权重更高）压回左对齐。 */
+.sf-data-table th.sf-data-num,
+.sf-data-table td.sf-data-num {
+  text-align: right;
+  white-space: nowrap;
+}
+
+.sf-cleanup-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.sf-cleanup-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 64px 84px auto;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+}
+
+.sf-cleanup-info {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.sf-cleanup-label {
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--color-text);
+}
+
+.sf-cleanup-rule {
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--color-text-tertiary);
+}
+
+.sf-cleanup-count,
+.sf-cleanup-bytes {
+  text-align: right;
+  font-size: 12px;
+  color: var(--color-text-secondary);
+  white-space: nowrap;
+}
+
+.sf-cleanup-bytes {
+  color: var(--color-text);
+  font-weight: 500;
+}
+
+.sf-storage-result {
+  margin-top: 16px;
   padding: 12px 14px;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
   background: var(--color-surface);
 }
 
-.sf-data-label {
-  font-size: 11px;
-  color: var(--color-text-tertiary);
+.sf-storage-result-title {
+  margin: 0 0 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-text);
 }
 
-.sf-data-value {
-  font-size: 12px;
+.sf-storage-result-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.sf-storage-result-list li {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 5px 8px;
+  border-radius: var(--radius-sm);
+  background: var(--color-ink-soft);
+  font-size: 11.5px;
+}
+
+.sf-storage-result-list--error li {
+  background: var(--color-error-soft);
+}
+
+.sf-storage-result-label {
   color: var(--color-text);
-  word-break: break-all;
+  font-weight: 500;
+}
+
+.sf-storage-result-value {
+  color: var(--color-text-secondary);
 }
 
 .sf-nutstore-result {

@@ -1,15 +1,17 @@
 import { spawn } from "node:child_process";
-import { mkdtemp, readdir, rm, stat } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { isAbsolute, join, resolve } from "node:path";
 import { Hono } from "hono";
-import { ne } from "drizzle-orm";
+import type { Context } from "hono";
 import { z } from "zod";
+import { GENERAL_LIMITS, PRUNE_TARGETS } from "@scribe-flow/shared";
 import type { AppDatabase } from "../db/client";
-import { runs } from "../db/schema";
 import { chatCompletion, listAiModels, transcribeAudio } from "../lib/ai";
-import { getAiConfig, getAsrConfig, getNutstoreConfig, getSettings, updateSettings } from "../lib/settings";
+import { getAiConfig, getAsrConfig, getNutstoreConfig, getSearchConfig, getSettings, updateSettings, withResolvedPaths } from "../lib/settings";
 import { listRemoteDirectories } from "../lib/nutstore";
+import { buildDataOverview, fileManagerCommand, isInsideDataDir, pruneStorage, resolveOutputRoot, type StorageDeps } from "../lib/storage";
+import { collectSources } from "../lib/traceExternal";
 import type { RunEngine } from "../lib/engine";
 
 const updateSchema = z.object({
@@ -31,15 +33,20 @@ const updateSchema = z.object({
     .optional(),
   search: z
     .object({
-      provider: z.enum(["tavily"]).optional(),
+      provider: z.enum(["zhipu", "tavily"]).optional(),
       apiKey: z.string().max(500).optional(),
       maxResults: z.number().int().min(1).max(10).optional(),
     })
     .optional(),
   general: z
     .object({
-      concurrency: z.number().int().min(1).max(4).optional(),
-      outputDir: z.string().trim().max(200).optional(),
+      concurrency: z.number().int().min(GENERAL_LIMITS.concurrency.min).max(GENERAL_LIMITS.concurrency.max).optional(),
+      outputDir: z.string().trim().max(500).optional(),
+      fileNameTemplate: z.string().trim().max(200).optional(),
+      maxRetries: z.number().int().min(GENERAL_LIMITS.maxRetries.min).max(GENERAL_LIMITS.maxRetries.max).optional(),
+      retryBackoffSec: z.number().int().min(GENERAL_LIMITS.retryBackoffSec.min).max(GENERAL_LIMITS.retryBackoffSec.max).optional(),
+      runEndNotify: z.boolean().optional(),
+      runEndSound: z.boolean().optional(),
     })
     .optional(),
   obsidian: z
@@ -81,6 +88,16 @@ const asrTestSchema = z.object({
   apiKey: z.string().max(500).optional(),
 });
 
+const searchTestSchema = z.object({
+  provider: z.enum(["zhipu", "tavily"]).optional(),
+  apiKey: z.string().max(500).optional(),
+  maxResults: z.number().int().min(1).max(10).optional(),
+});
+
+const pruneSchema = z.object({
+  targets: z.array(z.enum(PRUNE_TARGETS)).min(1),
+});
+
 function resolveAiTestConfig(db: AppDatabase, body: z.infer<typeof aiTestSchema>) {
   const saved = getAiConfig(db);
   return {
@@ -101,6 +118,15 @@ function resolveAsrTestConfig(db: AppDatabase, body: z.infer<typeof asrTestSchem
   };
 }
 
+function resolveSearchTestConfig(db: AppDatabase, body: z.infer<typeof searchTestSchema>) {
+  const saved = getSearchConfig(db);
+  return {
+    provider: body.provider ?? saved.provider,
+    apiKey: (body.apiKey ?? "").trim() || saved.apiKey,
+    maxResults: body.maxResults ?? saved.maxResults,
+  };
+}
+
 async function runFfmpeg(args: string[]): Promise<void> {
   await new Promise<void>((resolve, reject) => {
     const child = spawn(process.env.FFMPEG_PATH ?? "ffmpeg", args, { stdio: "ignore" });
@@ -112,15 +138,20 @@ async function runFfmpeg(args: string[]): Promise<void> {
 export function settingsApi(db: AppDatabase, engine: RunEngine, dataDir: string) {
   const api = new Hono();
 
-  api.get("/", (c) => c.json(getSettings(db)));
+  api.get("/", (c) => c.json(withResolvedPaths(getSettings(db), dataDir)));
 
   api.put("/", async (c) => {
     const parsed = updateSchema.safeParse(await c.req.json());
     if (!parsed.success) {
       return c.json({ error: parsed.error.issues[0]?.message ?? "请求格式不正确" }, 400);
     }
+    const nextOutputDir = parsed.data.general?.outputDir?.trim();
+    if (nextOutputDir && !isAbsolute(nextOutputDir) && !isInsideDataDir(dataDir, resolve(dataDir, nextOutputDir))) {
+      // 相对路径用 .. 爬到数据目录之外会让清理作用域失控；想写到别处请直接填绝对路径。
+      return c.json({ error: "输出目录填相对路径时不能爬到数据目录之外；想写到别的地方请直接填绝对路径（如 D:\\笔记）。" }, 400);
+    }
     updateSettings(db, parsed.data);
-    return c.json(getSettings(db));
+    return c.json(withResolvedPaths(getSettings(db), dataDir));
   });
 
   api.post("/test/ai", async (c) => {
@@ -183,6 +214,31 @@ export function settingsApi(db: AppDatabase, engine: RunEngine, dataDir: string)
     }
   });
 
+  api.post("/test/search", async (c) => {
+    const raw = await c.req.json().catch(() => ({}));
+    const parsed = searchTestSchema.safeParse(raw ?? {});
+    if (!parsed.success) {
+      return c.json({ error: parsed.error.issues[0]?.message ?? "请求格式不正确" }, 400);
+    }
+    const config = resolveSearchTestConfig(db, parsed.data ?? {});
+    if (!config.apiKey) return c.json({ error: "请先填写检索密钥" }, 400);
+    try {
+      const collected = await collectSources(config, ["人工智能"]);
+      if (collected.sources.length === 0) {
+        return c.json({ error: "检索已连通，但没有返回可引用的结果（链接为空），请检查余额或用量配额" }, 400);
+      }
+      return c.json({
+        ok: true,
+        count: collected.sources.length,
+        sample: collected.sources[0]?.title,
+        sampleUrl: collected.sources[0]?.url,
+        authorityCounts: collected.authorityCounts,
+      });
+    } catch (err) {
+      return c.json({ error: err instanceof Error ? err.message : "检索失败" }, 400);
+    }
+  });
+
   api.get("/obsidian/folders", async (c) => {
     const settings = getSettings(db);
     // 云端模式：读取坚果云远程目录树；否则读取本地 Obsidian 库目录树。
@@ -220,34 +276,67 @@ export function settingsApi(db: AppDatabase, engine: RunEngine, dataDir: string)
     return c.json({ items });
   });
 
-  api.get("/data", async (c) => {
-    const rows = db.select().from(runs).all();
-    const finished = rows.filter((r) => r.status !== "running").length;
-    const outputDir = join(dataDir, getSettings(db).general.outputDir || "outputs");
-    let outputFiles = 0;
-    let outputBytes = 0;
-    try {
-      const runDirs = (await readdir(outputDir, { withFileTypes: true }).catch(() => [])).filter((e) => e.isDirectory());
-      for (const dir of runDirs) {
-        const files = await readdir(join(outputDir, dir.name)).catch(() => []);
-        outputFiles += files.length;
-        for (const file of files) {
-          outputBytes += (await stat(join(outputDir, dir.name, file)).catch(() => ({ size: 0 }))).size;
-        }
-      }
-    } catch {
-      // 输出目录不存在
+  api.get("/data", async (c) => c.json(await buildDataOverview(storageDeps())));
+
+  /**
+   * 统一清理入口：targets 逐项执行，逐项回报「清掉几项、释放多少字节、哪些失败」。
+   * 与 GET /data 用的是同一份判定，界面上的数字与实际删掉的东西不会漂移。
+   */
+  api.post("/prune", async (c) => {
+    const raw = await c.req.json().catch(() => ({}));
+    const parsed = pruneSchema.safeParse(raw ?? {});
+    if (!parsed.success) {
+      return c.json({ error: parsed.error.issues[0]?.message ?? "请求格式不正确" }, 400);
     }
-    return c.json({ dataDir, runCount: rows.length, finishedRunCount: finished, outputFiles, outputBytes });
+    const outcomes = await pruneStorage(storageDeps(), parsed.data.targets);
+    return c.json({
+      outcomes,
+      removed: outcomes.reduce((acc, outcome) => acc + outcome.removed, 0),
+      bytes: outcomes.reduce((acc, outcome) => acc + outcome.bytes, 0),
+      errors: outcomes.flatMap((outcome) => outcome.errors),
+    });
   });
 
-  api.post("/clear-runs", async (c) => {
-    const rows = db.select().from(runs).where(ne(runs.status, "running")).all();
-    for (const row of rows) {
-      await engine.deleteRun(row.id);
-    }
-    return c.json({ deleted: rows.length });
+  api.post("/reveal-data-dir", async (c) => {
+    return reveal(c, dataDir);
   });
+
+  /**
+   * 打开产物目录（不是数据目录）——「常规」里刚配的就是它，配完能立刻看一眼才算闭环。
+   * 目录还不存在时先建出来，否则第一次点会因为目录不存在而失败。
+   */
+  api.post("/reveal-output-dir", async (c) => {
+    const root = resolveOutputRoot(dataDir, getSettings(db).general.outputDir);
+    await mkdir(root, { recursive: true }).catch(() => undefined);
+    return reveal(c, root);
+  });
+
+  async function reveal(c: Context, target: string) {
+    const [command, args] = fileManagerCommand(process.platform, target);
+    try {
+      await new Promise<void>((resolvePromise, reject) => {
+        const child = spawn(command, args, { stdio: "ignore", detached: true });
+        child.once("error", reject);
+        // explorer.exe 即使成功也可能返回非 0，因此能 spawn 出来就算成功。
+        child.once("spawn", () => {
+          child.unref();
+          resolvePromise();
+        });
+      });
+    } catch (err) {
+      return c.json({ error: `无法打开文件管理器（服务端可能运行在容器里）：${err instanceof Error ? err.message : "未知错误"}` }, 400);
+    }
+    return c.json({ ok: true, path: target });
+  }
+
+  function storageDeps(): StorageDeps {
+    return {
+      db,
+      dataDir,
+      outputRoot: resolveOutputRoot(dataDir, getSettings(db).general.outputDir),
+      deleteRun: (runId) => engine.deleteRun(runId),
+    };
+  }
 
   return api;
 }

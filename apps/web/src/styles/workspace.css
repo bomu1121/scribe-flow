@@ -723,33 +723,30 @@
   animation: wp-pulse 1.5s var(--ease-out) infinite;
 }
 
-.wp-run-main {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  align-items: baseline;
-  gap: 6px;
-  overflow: hidden;
-}
-
-.wp-run-id {
-  flex-shrink: 0;
-  font-size: 10.5px;
-  color: var(--color-text-tertiary);
-}
-
-.wp-run.active .wp-run-id {
-  color: var(--color-text-secondary);
-}
-
-.wp-run-meta {
+.wp-run-label {
   flex: 1;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   font-size: 11.5px;
+  color: var(--color-text);
+}
+
+.wp-run-time {
+  flex-shrink: 0;
+  font-size: 10.5px;
+  color: var(--color-text-tertiary);
+}
+
+.wp-run.active .wp-run-time {
   color: var(--color-text-secondary);
+}
+
+/* 行内改名用的输入框：复用 .wp-input，只把光标和行高对齐到 28px 的行里。 */
+.wp-run-input {
+  cursor: text;
+  height: 24px;
 }
 
 .wp-run-project {
@@ -1161,6 +1158,118 @@
   background: var(--color-ink-soft);
   color: var(--color-text-secondary);
   font-size: 11.5px;
+}
+
+/* ============ 快捷新建（粘贴链接）对话框 ============ */
+
+.qc-link {
+  margin-bottom: 10px;
+}
+
+.qc-state {
+  margin-bottom: 10px;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-muted);
+  color: var(--color-text-secondary);
+  font-size: 11.5px;
+  line-height: 1.6;
+}
+
+.qc-state--error {
+  background: var(--color-warning-soft);
+  border: 1px solid var(--color-warning-border);
+  color: var(--color-text-secondary);
+}
+
+.qc-preview {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin-bottom: 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-muted);
+}
+
+.qc-cover {
+  flex-shrink: 0;
+  width: 76px;
+  height: 48px;
+  object-fit: cover;
+  border-radius: var(--radius-xs);
+  background: var(--color-ink-soft);
+}
+
+.qc-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.qc-title {
+  font-size: 12.5px;
+  font-weight: 600;
+  line-height: 1.45;
+  color: var(--color-text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+.qc-sub {
+  font-size: 11px;
+  color: var(--color-text-secondary);
+}
+
+.qc-name {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin: 0 0 12px;
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--color-text-secondary);
+}
+
+.qc-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.qc-field {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 0;
+}
+
+.qc-field-label {
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.qc-select {
+  width: 100%;
+}
+
+.qc-field-hint {
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--color-text-tertiary);
+}
+
+.qc-actions {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 8px;
 }
 
 /* 工程选择（每工程运行库） */

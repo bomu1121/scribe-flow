@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { RETRYABLE_NODE_TYPES, describeError, isRetryableError } from "./engine";
+import { RETRYABLE_NODE_TYPES, describeError, isRetryableError, resolveRetryPolicy } from "./engine";
 
 /** 构造带 cause 的错误链（Error.cause 在构造参数里打类型补丁较繁琐，直接赋值）。 */
 function withCause<T extends Error>(error: T, cause: unknown): T {
@@ -34,6 +34,27 @@ describe("isRetryableError", () => {
   it("取消与配置类错误不重试", () => {
     expect(isRetryableError(new Error("fetch failed"), true)).toBe(false);
     expect(isRetryableError(new Error("未配置 AI 模型密钥，请到设置页填写"), false)).toBe(false);
+  });
+});
+
+describe("resolveRetryPolicy", () => {
+  const general = { maxRetries: 2, retryBackoffSec: 3 };
+  const aiNode = (data: Record<string, unknown> = {}) => ({ type: "process.refine" as const, data });
+
+  it("节点没配 retry 时用「常规」里的全局默认", () => {
+    expect(resolveRetryPolicy(aiNode(), { maxRetries: 4, retryBackoffSec: 5 })).toEqual({ maxRetries: 4, backoffMs: 5000 });
+  });
+
+  it("节点自己配了就以节点为准，不看全局", () => {
+    expect(resolveRetryPolicy(aiNode({ retry: { maxRetries: 1, backoffMs: 800 } }), general)).toEqual({ maxRetries: 1, backoffMs: 800 });
+  });
+
+  it("全局重试次数为 0 时确实不重试（0 不能被当成没配置）", () => {
+    expect(resolveRetryPolicy(aiNode(), { maxRetries: 0, retryBackoffSec: 3 }).maxRetries).toBe(0);
+  });
+
+  it("本地节点不参与重试，给多少都是 0 次", () => {
+    expect(resolveRetryPolicy({ type: "source.text", data: { retry: { maxRetries: 5 } } }, { maxRetries: 5, retryBackoffSec: 3 })).toEqual({ maxRetries: 0, backoffMs: 0 });
   });
 });
 

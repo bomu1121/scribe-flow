@@ -5,7 +5,7 @@
  * 背景：UI 已重构为单壳工作台 —— 没有独立的工程列表页/运行记录页；
  * 工程与运行记录都在左侧探索器（工作台面板）树里（见 apps/web/src/router.ts 顶部注释）。
  * 本脚本断言全部对齐当前真实 DOM（类名均在 apps/web/src 源码中核实过）：
- *   - .ws-rail / .ws-rail-btn / .wp-projects / .wp-item / .np-tpl / .el-dialog / .sf-account 等
+ *   - .ws-rail / .ws-rail-btn / .wp-projects / .wp-item / .np-tpl / .qc-link / .el-dialog / .sf-account 等
  *   - 节点添加从画布侧栏 palette 改为工作台「节点」面板（NodesPanel .wp-node-item）
  *   - 运行按钮为画布浮动按钮 .sf-float-run；运行结果状态类 .sf-node.is-done
  *   - 运行详情与日志为 RunDetailView 的 .rv-preview / RunLogDialog 的 .rl-log-item
@@ -80,6 +80,24 @@ async function connect() {
         cdp = ws;
         await send("Page.enable");
         await send("Runtime.enable");
+        /*
+         * 关掉通知权限。
+         *
+         * 冒烟会真实跑完一个工程（M3 那段），而设置里「运行结束提醒」默认是开的：
+         * 运行结束时页面会 `new Notification(...)` 弹一条系统通知。桌面通知会抢窗口焦点，
+         * 而后面若干检查依赖焦点（往输入框打字、Esc 关对话框），于是变成偶发失败。
+         * 实测：连续 7 次冒烟里有 1 次掉到 55/58，且事后无法复现——夹具不该被被测特性干扰，
+         * 所以这里直接把权限拒掉，让「有没有通知」不再是一个变量。
+         */
+        try {
+          await send("Browser.setPermission", {
+            origin: new URL(APP_URL).origin,
+            permission: { name: "notifications" },
+            setting: "denied",
+          });
+        } catch {
+          // 老版本 Chrome 没有 Browser.setPermission 时忽略：这条只是让冒烟更稳，不是被测内容。
+        }
         await send("Page.setDeviceMetricsOverride", {
           width: 1440,
           height: 900,
@@ -215,6 +233,13 @@ async function run() {
   await navigate(APP_URL);
   const shellReady = await waitFor("!!document.querySelector('.ws-rail') && !!document.querySelector('.ws-panel')", 12000);
   check("工作台壳渲染（ws-rail 活动条 + ws-panel 就位）", shellReady);
+  // 夹具自身的前置条件：通知权限必须被拒。断言它而不是只 try/catch，
+  // 否则 Browser.setPermission 静默失效时，「冒烟会不会被系统通知抢焦点」又变回一个未知变量。
+  check(
+    "冒烟夹具已关闭通知权限（避免系统通知抢焦点干扰后续检查）",
+    (await evalJs("typeof Notification === 'undefined' ? 'none' : Notification.permission")) === "denied",
+    `Notification.permission = ${await evalJs("typeof Notification === 'undefined' ? 'none' : Notification.permission")}`,
+  );
   // 有工程时 '/' 会自动跳进最近工程编辑器（HomeView redirectIfPossible）
   await waitFor("!!document.querySelector('.sf-editor') || !!document.querySelector('.sf-home')", 15000);
 
@@ -228,8 +253,8 @@ async function run() {
     };
   })()`)) ?? { logo: 0, btns: 0, labels: "", version: "" };
   check(
-    "活动条入口齐全（工程/运行记录/节点/设置）",
-    rail.logo === 1 && rail.btns === 4 && rail.labels === "工程/运行记录/节点/设置",
+    "活动条入口齐全（工程/运行记录/节点/项目文档/设置）",
+    rail.logo === 1 && rail.btns === 5 && rail.labels === "工程/运行记录/节点/项目文档/设置",
     `logo=${rail.logo} btns=${rail.btns} [${rail.labels}] ${rail.version}`,
   );
 
@@ -245,8 +270,8 @@ async function run() {
     };
   })()`)) ?? null;
   check(
-    "工程面板工具栏渲染（新建工程/文件夹/导入/刷新/排序 + 筛选 + 收起）",
-    toolbar?.ibtn === 5 && toolbar.search && toolbar.close,
+    "工程面板工具栏渲染（新建工程/粘贴链接建工程/文件夹/导入/刷新/排序 + 筛选 + 收起）",
+    toolbar?.ibtn === 6 && toolbar.search && toolbar.close,
     toolbar ? `ibtn=${toolbar.ibtn} [${toolbar.labels}] search=${toolbar.search} close=${toolbar.close}` : "面板未就绪",
   );
 
@@ -337,6 +362,58 @@ async function run() {
   await waitFor(`(() => { const i = ${VISIBLE_DIALOG_JS}; return i === null; })()`, 4000);
   check("Esc 关闭对话框", await noVisibleDialog());
 
+  // 同一工具栏的「粘贴链接建工程」（QuickCreateDialog）：字段齐全 + 粘贴内容里没有
+  // B 站链接时应被拦下、不留下空工程。解析真实视频要走外网，这里只覆盖不依赖网络的部分。
+  const projectsBefore = (await evalJs("document.querySelectorAll('.wp-projects [data-project-id]').length")) ?? 0;
+  await evalJs("document.querySelector('.wp-projects .wp-toolbar .wp-ibtn[aria-label=\"粘贴链接建工程\"]')?.click(); true");
+  const quickOpen = await waitFor(`(() => { const i = ${VISIBLE_DIALOG_JS}; return !!i && i.title.includes('粘贴链接建工程'); })()`, 5000);
+  check("快捷新建对话框打开（粘贴链接建工程）", quickOpen, JSON.stringify(await visibleDialogInfo()));
+  const quickFields = await evalJs(`(() => {
+    const ov = [...document.querySelectorAll('.el-overlay')].find((o) => getComputedStyle(o).display !== 'none');
+    const d = ov?.querySelector('.el-dialog');
+    if (!d) return null;
+    return {
+      textarea: !!d.querySelector('.qc-link .el-textarea__inner'),
+      values: [...d.querySelectorAll('.qc-field .el-select .el-select__wrapper')].map((w) => w.textContent.trim()),
+      fields: [...d.querySelectorAll('.qc-field-label')].map((e) => e.textContent.trim()),
+    };
+  })()`);
+  check(
+    "快捷新建字段齐全（链接输入 + 加工模版/AI 加工提示词下拉）",
+    Boolean(quickFields?.textarea) && quickFields.fields.length === 2 && quickFields.values.length === 2,
+    JSON.stringify(quickFields),
+  );
+  check(
+    "快捷新建默认值：单线模版 + 推荐提示词块",
+    Boolean(quickFields?.values?.some((v) => v.includes("视频转笔记"))) &&
+      Boolean(quickFields?.values?.some((v) => v.includes("观点笔记"))),
+    (quickFields?.values ?? []).join(" / "),
+  );
+  await evalJs(`(() => {
+    const ta = document.querySelector('.el-overlay .qc-link .el-textarea__inner');
+    if (!ta) return false;
+    ta.value = '随手记的一句笔记';
+    ta.dispatchEvent(new Event('input', { bubbles: true }));
+    return true;
+  })()`);
+  await evalJs(`[...document.querySelectorAll('.el-overlay .el-dialog .el-button')].find((b) => b.textContent.includes('创建并打开'))?.click(); true`);
+  const blocked = await waitFor(
+    "(() => [...document.querySelectorAll('.sf-toast--error .sf-toast-message')].some((e) => e.textContent.includes('没识别到 B 站链接')))()",
+    4000,
+  );
+  await sleep(300);
+  const projectsAfter = (await evalJs("document.querySelectorAll('.wp-projects [data-project-id]').length")) ?? 0;
+  check(
+    "粘贴内容里没有 B 站链接时被拦下（不留空工程）",
+    blocked && projectsAfter === projectsBefore,
+    `错误提示=${blocked}，工程行 ${projectsBefore} → ${projectsAfter}`,
+  );
+  // 错误 toast 常驻（duration 0），点掉以免影响后续截图与断言。
+  await evalJs("[...document.querySelectorAll('.sf-toast-close')].forEach((b) => b.click()); true");
+  await pressEscape();
+  await waitFor(`(() => { const i = ${VISIBLE_DIALOG_JS}; return i === null; })()`, 4000);
+  check("Esc 关闭快捷新建对话框", await noVisibleDialog());
+
   // ---------------------------------------------------------------
   // 3. M2：登录入口与扫码弹窗（入口现位于工程编辑器顶栏 BiliAccountButton .sf-account）
   // ---------------------------------------------------------------
@@ -423,7 +500,8 @@ async function run() {
   }
 
   // ---------------------------------------------------------------
-  // 5. M3：文本工作流在画布上运行到 done（源文本→合并→输出，不依赖 AI/ASR 密钥）
+  // 5. M3：文本工作流在画布上运行到 done（源文本→合并，不依赖 AI/ASR 密钥）
+  //     链路刻意不带「输出」节点：落盘已改由运行收尾统一做，落盘文件名跟着工程名走。
   //     运行按钮 = 画布浮动 .sf-float-run（原 .sf-editor-bar-actions 主按钮已重构掉）
   // ---------------------------------------------------------------
   const m3TextGraph = {
@@ -431,12 +509,8 @@ async function run() {
     nodes: [
       { id: "n_src", type: "source.text", position: { x: 0, y: 0 }, data: { label: "文本", text: "M3 UI 验收文稿" } },
       { id: "n_merge", type: "process.merge", position: { x: 200, y: 0 }, data: { label: "合并", title: "验收笔记" } },
-      { id: "n_out", type: "process.output", position: { x: 400, y: 0 }, data: { label: "输出", fileName: "ui.md" } },
     ],
-    edges: [
-      { id: "e1", source: "n_src", target: "n_merge", sourceHandle: "transcript", targetHandle: "noteBlock" },
-      { id: "e2", source: "n_merge", target: "n_out", sourceHandle: "noteDoc", targetHandle: "noteDoc" },
-    ],
+    edges: [{ id: "e1", source: "n_src", target: "n_merge", sourceHandle: "transcript", targetHandle: "noteBlock" }],
     viewport: { x: 0, y: 0, zoom: 1 },
   };
   const m3Create = await fetch(`${API_URL}/api/projects`, {
@@ -455,13 +529,13 @@ async function run() {
       body: JSON.stringify({ graph: m3TextGraph }),
     });
     await navigate(`${APP_URL}project/${m3Id}`);
-    const m3Canvas = await waitFor("document.querySelectorAll('.vue-flow__node').length === 3", 15000);
-    check("M3 画布渲染 3 节点", m3Canvas, `${await evalJs("document.querySelectorAll('.vue-flow__node').length")} 个节点`);
+    const m3Canvas = await waitFor("document.querySelectorAll('.vue-flow__node').length === 2", 15000);
+    check("M3 画布渲染 2 节点", m3Canvas, `${await evalJs("document.querySelectorAll('.vue-flow__node').length")} 个节点`);
     const runBtnReady = await waitFor("!!document.querySelector('.sf-float-run:not([disabled])')", 8000);
     check("M3 运行按钮可用（浮动运行 .sf-float-run）", runBtnReady);
     await evalJs("document.querySelector('.sf-float-run')?.click(); true");
-    const allDone = await waitFor("document.querySelectorAll('.sf-node.is-done').length === 3", 25000);
-    check("SSE 驱动 3 个节点进入 done 状态", allDone, `${await evalJs("document.querySelectorAll('.sf-node.is-done').length")} 个节点`);
+    const allDone = await waitFor("document.querySelectorAll('.sf-node.is-done').length === 2", 25000);
+    check("SSE 驱动 2 个节点进入 done 状态", allDone, `${await evalJs("document.querySelectorAll('.sf-node.is-done').length")} 个节点`);
 
     // 运行记录入库：切到工作台「运行记录」tab（原独立 /runs 页已并入面板）
     await openRailTab("运行记录");
@@ -474,6 +548,11 @@ async function run() {
     check("运行库出现本次运行（面板内行）", runRowReady && runRowMeta.rows >= 1, `${runRowMeta.rows} 行 · ${runRowMeta.title} · ${runRowMeta.first}`);
     const m3RunList = await fetch(`${API_URL}/api/runs?projectId=${m3Id}`).then((r) => r.json());
     m3RunId = m3RunList?.items?.[0]?.id ?? "";
+
+    // 没有「输出」节点也要落盘：运行收尾把末端笔记按工程名写进输出目录，并把文件记在该节点上。
+    const m3Detail = m3RunId ? await fetch(`${API_URL}/api/runs/${m3RunId}`).then((r) => r.json()) : null;
+    const m3NotePath = (m3Detail?.nodeResults ?? []).find((n) => n.nodeId === "n_merge")?.output?.path ?? "";
+    check("无输出节点也按工程名落盘（运行收尾自动落盘）", m3NotePath.endsWith("M3 UI 验收.md"), m3NotePath || "(没有 output.path)");
 
     // -------------------------------------------------------------
     // 6. M4：运行详情日志查看器（RunDetailView .rv-preview / RunLogDialog .rl-log-item）
@@ -508,9 +587,63 @@ async function run() {
     await evalJs("[...document.querySelectorAll('.sf-settings-nav-item')].find((b) => b.textContent.trim() === '提示词块库')?.click(); true");
     const blocksOk = await waitFor("document.querySelectorAll('.sf-block-card').length >= 4", 6000);
     check("提示词块库渲染内置块（≥4）", blocksOk, `${await evalJs("document.querySelectorAll('.sf-block-card').length")} 块`);
+    // 「联网检索」是溯源与知识巩固共用的检索渠道（原名「外部溯源」）：按分组名点进去，
+    // 并确认说明里写明了两个消费方——名字改了而说明没跟上，这里会红。
+    await evalJs("[...document.querySelectorAll('.sf-settings-nav-item')].find((b) => b.textContent.trim() === '联网检索')?.click(); true");
+    const searchPanelOk = await waitFor(
+      "(() => { const t = document.querySelector('.sf-settings-desc')?.textContent ?? ''; return t.includes('信息溯源') && t.includes('知识巩固'); })()",
+      5000,
+    );
+    check("设置页「联网检索」写明两个模块共用（信息溯源 + 知识巩固）", searchPanelOk);
+    // 「常规」是运行与产出的默认策略：三块都必须渲染出来，且产物目录要显示**服务端解析后的绝对路径**
+    // （只显示用户填的 "outputs" 等于没告诉人文件到底写在哪，这正是这一步要拦住的老毛病）。
+    await evalJs("[...document.querySelectorAll('.sf-settings-nav-item')].find((b) => b.textContent.trim() === '常规')?.click(); true");
+    const generalOk = await waitFor(
+      `(() => {
+        const dividers = [...document.querySelectorAll('.sf-settings-divider')].map((el) => el.textContent.trim());
+        const hasAll = ['运行', '产出', '运行结束提醒'].every((name) => dividers.includes(name));
+        const resolved = [...document.querySelectorAll('.sf-field-hint')].some((el) => /当前生效：[A-Za-z]:[\\\\/]/.test(el.textContent));
+        const preview = [...document.querySelectorAll('.sf-field-hint')].some((el) => el.textContent.trim().startsWith('预览：') && el.textContent.includes('.md'));
+        return hasAll && resolved && preview;
+      })()`,
+      5000,
+    );
+    check("设置页「常规」三块齐全（运行/产出/运行结束提醒）", generalOk, `${await evalJs("[...document.querySelectorAll('.sf-settings-divider')].map((el) => el.textContent.trim()).join(' · ')")}`);
+    // 数值增减器必须是窄的：.sf-field 是 flex column，默认会把子元素拉满整行，
+    // 于是「每个检索词最多返回结果数」曾经是 460px 宽的输入框里放一个「5」。
+    // 宽度现在写在结构选择器 .sf-field .el-input-number 上，这条断言就是它的守卫。
+    const stepperWidths = (await evalJs("[...document.querySelectorAll('.sf-settings-body .el-input-number')].map((n) => Math.round(n.getBoundingClientRect().width))")) ?? [];
+    // 断言写死 120px 而不是"别太宽"：只写上限的话，样式规则被删掉时宽度会悄悄退回 Element Plus
+    // 默认的 150px（仍然 ≤200，检查照过），而 150 与 120 正是这次要区分的两种状态。
+    check(
+      "设置页数值增减器为 120px 窄宽度",
+      stepperWidths.length >= 3 && stepperWidths.every((w) => w === 120),
+      `${stepperWidths.length} 条：${stepperWidths.join(" / ")}px`,
+    );
+    const generalSections = (await evalJs(`(() => ({
+      numberInputs: document.querySelectorAll('.sf-settings-form .el-input-number').length,
+      switches: document.querySelectorAll('.sf-settings-form .el-switch').length,
+      openOutput: [...document.querySelectorAll('.sf-btn')].some((b) => b.textContent.trim() === '打开输出目录'),
+    }))()`)) ?? { numberInputs: 0, switches: 0, openOutput: false };
+    check(
+      "「常规」渲染 3 个数值控件、2 个提醒开关与「打开输出目录」",
+      generalSections.numberInputs === 3 && generalSections.switches === 2 && generalSections.openOutput,
+      `${generalSections.numberInputs} 数值 / ${generalSections.switches} 开关 / 打开按钮=${generalSections.openOutput}`,
+    );
     await evalJs("[...document.querySelectorAll('.sf-settings-nav-item')].find((b) => b.textContent.trim() === '数据与工程')?.click(); true");
-    const dataOk = await waitFor("document.querySelectorAll('.sf-data-cell').length >= 3", 5000);
-    check("数据与工程页渲染数据信息", dataOk, `${await evalJs("document.querySelectorAll('.sf-data-cell').length")} 个单元格`);
+    // 账本必须在进页面时自动读出来（历史 bug：只在点「刷新」时才请求，页面长期显示「—」）。
+    const dataOk = await waitFor(
+      "(() => { const el = document.querySelector('.sf-data-dir'); return !!el && el.textContent.trim() !== '' && el.textContent.trim() !== '—'; })()",
+      8000,
+    );
+    check("数据与工程页自动读出数据目录（不依赖点刷新）", dataOk, `${(await evalJs("document.querySelector('.sf-data-dir')?.textContent?.trim() ?? ''")) ?? ""}`);
+    const areaRows = (await evalJs("document.querySelectorAll('.sf-data-table tbody tr').length")) ?? 0;
+    check("存储占用与工程资产表渲染", areaRows >= 6, `${areaRows} 行`);
+    const cleanupRows = (await evalJs("document.querySelectorAll('.sf-cleanup-row').length")) ?? 0;
+    const cleanupRules = (await evalJs("document.querySelectorAll('.sf-cleanup-rule').length")) ?? 0;
+    check("可回收清单渲染五项且每项写明判定规则", cleanupRows === 5 && cleanupRules === 5, `${cleanupRows} 项 / ${cleanupRules} 条规则`);
+    const totalText = (await evalJs("document.querySelector('.sf-storage-total-value')?.textContent?.trim() ?? ''")) ?? "";
+    check("合计占用有具体数字", /[0-9]/.test(totalText), totalText);
 
     // M5：移动端响应式（390x844）—— 画布只读提示 + 活动条隐藏 + 抽屉面板可收起/重开
     await send("Emulation.setDeviceMetricsOverride", { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
@@ -588,12 +721,12 @@ async function run() {
     const optionLabels = await evalJs("[...document.querySelectorAll('.sf-model-select__option-label')].map((n) => n.textContent.trim())");
     check("提示词块下拉打开且有选项（≥3）", promptOpen, `${optionLabels.length} 个选项`);
     const clickedLabel = await evalJs(`(() => {
-      const el = [...document.querySelectorAll('.sf-model-select__option')].find((b) => /观点提炼|技术文案提炼|信息溯源/.test(b.textContent ?? ''));
+      const el = [...document.querySelectorAll('.sf-model-select__option')].find((b) => /观点笔记|技术点拆解|信息溯源/.test(b.textContent ?? ''));
       if (!el) return '';
       el.click();
       return el.querySelector('.sf-model-select__option-label')?.textContent?.trim() ?? '';
     })()`);
-    check("提示词块下拉选中回显", /观点提炼|技术文案提炼|信息溯源/.test(clickedLabel), clickedLabel);
+    check("提示词块下拉选中回显", /观点笔记|技术点拆解|信息溯源/.test(clickedLabel), clickedLabel);
 
     // ASR 引擎下拉：转写节点默认 MiMo-V2.5 → 切到 OpenAI 兼容
     const asrBefore = await evalJs("document.querySelector('.vue-flow__node .sf-node--process-transcribe .sf-model-select__value')?.textContent?.trim() ?? ''");

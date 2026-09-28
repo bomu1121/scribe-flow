@@ -6,7 +6,9 @@ import {
   normalizeClozeAnswer,
   normalizeForMatch,
   parseDrillSet,
+  verifyExternalRefs,
   type DrillItem,
+  type DrillSet,
 } from "./drill";
 
 const SOURCE =
@@ -260,5 +262,78 @@ describe("maybeDrillToMarkdown", () => {
     const text = '{"foo":"bar"}';
     expect(maybeDrillToMarkdown(text)).toBe(text);
     expect(maybeDrillToMarkdown("{坏 JSON")).toBe("{坏 JSON");
+  });
+});
+
+describe("externalRef（网上参考标记）", () => {
+  const REF = { title: "闭包常见考点整理", url: "https://example.com/closure" };
+
+  function setWithRef(ref: unknown): DrillSet {
+    const { set } = parseDrillSet(
+      JSON.stringify({
+        points: [point({ queries: ["闭包 考点"] })],
+        items: [item({ pointId: "p1", externalRef: ref })],
+        extensions: [{ pointId: "p1", question: "再想一步：闭包会被回收吗？", externalRef: ref }],
+      }),
+      SOURCE,
+    );
+    return set!;
+  }
+
+  it("解析产物里的 externalRef（题目与延伸都支持）", () => {
+    const set = setWithRef(REF);
+    expect(set.items[0].externalRef).toEqual(REF);
+    expect(set.extensions[0].externalRef).toEqual(REF);
+  });
+
+  it("只写了标题也能解析；不是对象的写法忽略", () => {
+    expect(setWithRef({ title: "只有标题" }).items[0].externalRef).toEqual({ title: "只有标题", url: undefined });
+    expect(setWithRef("https://example.com/x").items[0].externalRef).toBeUndefined();
+    expect(setWithRef({}).items[0].externalRef).toBeUndefined();
+  });
+
+  it("导出 Markdown 时带上网上参考", () => {
+    const markdown = drillSetToMarkdown(setWithRef(REF));
+    expect(markdown).toContain("**网上参考**：闭包常见考点整理（https://example.com/closure）");
+    expect(markdown).toContain("- 网上参考：闭包常见考点整理（https://example.com/closure）");
+  });
+
+  it("verifyExternalRefs：网址命中（忽略协议/www/末尾斜杠差异）时保留", () => {
+    const set = setWithRef(REF);
+    const verified = verifyExternalRefs(set, [{ title: "闭包考点", url: "http://www.example.com/closure/" }]);
+    expect(verified.set.items[0].externalRef).toEqual(REF);
+    expect(verified.stripped).toBe(0);
+  });
+
+  it("verifyExternalRefs：只有标题命中时保留（智谱常常不给链接），网址为空仍可用", () => {
+    const set = setWithRef({ title: "闭包常见考点整理" });
+    const verified = verifyExternalRefs(set, [{ title: "闭包常见考点整理", url: "" }]);
+    expect(verified.set.items[0].externalRef).toEqual({ title: "闭包常见考点整理", url: undefined });
+    expect(verified.stripped).toBe(0);
+  });
+
+  it("verifyExternalRefs：给了网址就必须网址命中——真标题 + 编造网址照样剥掉", () => {
+    // 标题与检索到的来源完全一致，只有域名是编的：这种最像真的，也最该拦
+    const set = setWithRef({ title: "闭包常见考点整理", url: "https://fake.example.com/closure" });
+    const verified = verifyExternalRefs(set, [{ title: "闭包常见考点整理", url: "https://example.com/closure" }]);
+    expect(verified.set.items[0].externalRef).toBeUndefined();
+    expect(verified.stripped).toBe(2);
+  });
+
+  it("verifyExternalRefs：本次没检索到（或模型自己编的链接）一律剥掉并报数", () => {
+    const set = setWithRef(REF);
+    const verified = verifyExternalRefs(set, [{ title: "另一个站点的闭包讲解", url: "https://other.example.org/x" }]);
+    expect(verified.set.items[0].externalRef).toBeUndefined();
+    expect(verified.set.extensions[0].externalRef).toBeUndefined();
+    // 题目与延伸各一条 → 2；题目本身不受影响，仍可用
+    expect(verified.stripped).toBe(2);
+    expect(verified.strippedSamples).toEqual(["https://example.com/closure"]);
+    expect(verified.set.items).toHaveLength(1);
+  });
+
+  it("verifyExternalRefs：一条来源都没检索到时，所有参考标记都被剥掉", () => {
+    const verified = verifyExternalRefs(setWithRef(REF), []);
+    expect(verified.stripped).toBe(2);
+    expect(verified.set.items[0].externalRef).toBeUndefined();
   });
 });

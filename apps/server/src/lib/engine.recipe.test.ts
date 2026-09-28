@@ -24,6 +24,12 @@ let chatCalls = 0;
 let v4FinalizeViolates = false;
 /** 知识巩固用例：出题/审题步是否额外产出一道引文不存在的题（触发降级丢弃）。 */
 let drillExtraItem = false;
+/**
+ * 观点提炼 v4 scan 的引文用例：
+ * ok=逐字；first-bad=首答改一个字、重问后才逐字（模拟实测的「告上→告了」）；
+ * always-bad=每次都改，用来验证重问仍不过才判失败。
+ */
+let insightQuoteMode: "ok" | "first-bad" | "always-bad" = "ok";
 
 function reply(res: ServerResponse, content: string): void {
   res.setHeader("Content-Type", "application/json");
@@ -110,9 +116,14 @@ beforeAll(async () => {
         );
       } else if (system.includes("拆解清单 JSON（含 oneLiner")) {
         // 观点提炼 v4 scan：带 oneLiner 根键，quotes 逐字取自原文。
+        // 「改一个字」= 把第 12 个字换成「了」，原文那个位置不是「了」，因此逐字匹配必然失败。
+        const retrying = user.includes("校验失败原因");
+        const verbatim = user.slice(0, 12);
+        const altered = `${user.slice(0, 11)}了`;
+        const quote = insightQuoteMode === "always-bad" || (insightQuoteMode === "first-bad" && !retrying) ? altered : verbatim;
         reply(
           res,
-          JSON.stringify({ oneLiner: "示例原文给出观点结论 42。", blocks: [{ title: "观点一", quotes: [user.slice(0, 12)] }] }),
+          JSON.stringify({ oneLiner: "示例原文给出观点结论 42。", blocks: [{ title: "观点一", quotes: [quote] }] }),
         );
       } else if (system.includes("按下面的「期刊式」母版起草")) {
         reply(
@@ -155,6 +166,8 @@ beforeAll(async () => {
                 gist: "原文给出的结论数据是 42",
                 worthTesting: "数字最容易被记错",
                 sourceQuote: "示例原文关键句甲",
+                // 出题步的检索词取自这里（未配检索渠道时不会被用到）
+                queries: ["结论数据 42 考点"],
               },
             ],
           }),
@@ -416,7 +429,7 @@ describe("RunEngine 配方执行（M8-1）", () => {
     expect(aiRequests[0]?.content).toContain("[scan]");
   });
 
-  it("观点提炼 v4：finalize 输出含 ### 触发版式硬门，节点报步骤级断言错误", async () => {
+  it("观点提炼 v4：finalize 输出含 ### 触发版式硬门，重问一次仍违规才报错", async () => {
     chatCalls = 0;
     v4FinalizeViolates = true;
     const dataDir = await mkdtemp(join(tmpdir(), "scribe-insight-v4-bad-"));
@@ -431,10 +444,60 @@ describe("RunEngine 配方执行（M8-1）", () => {
     expect(nodeRow?.status).toBe("error");
     expect(nodeRow?.error).toContain("修正成稿");
     expect(nodeRow?.error).toContain("断言未通过");
-    expect(chatCalls).toBe(4);
+    // 4 步 + finalize 带失败原因重问一次；mock 始终违规，所以重问也过不了，最终仍判失败
+    expect(chatCalls).toBe(5);
     const logs = db.select().from(runNodeLogs).where(eq(runNodeLogs.runId, runId)).all();
     const aiResponses = logs.filter((row) => row.kind === "ai-response" && row.nodeId === "n_prompt");
-    expect(aiResponses.map((row) => row.step)).toEqual(["scan", "draft", "audit", "finalize"]);
+    expect(aiResponses.map((row) => row.step)).toEqual(["scan", "draft", "audit", "finalize", "finalize"]);
+  });
+
+  it("观点提炼 v4：引文抄错一个字时带失败原因重问一次，改对后照常完成", async () => {
+    chatCalls = 0;
+    v4FinalizeViolates = false;
+    insightQuoteMode = "first-bad";
+    const dataDir = await mkdtemp(join(tmpdir(), "scribe-insight-v4-retry-"));
+    tmpDirs.push(dataDir);
+    const runId = "run_insight_v4_retry";
+    const { db, engine, graph } = await setup(dataDir, runId, "builtin.insight.v4");
+
+    runWith(engine, runId, graph);
+    await waitFinished(db, runId);
+
+    const nodeRow = db.select().from(runNodeResults).where(eq(runNodeResults.nodeId, "n_prompt")).get();
+    expect(nodeRow?.status).toBe("done");
+    expect(nodeRow?.outputText).toContain("终稿正文包含示例原文关键句甲");
+    // scan 首答 + scan 重问 + draft + audit + finalize
+    expect(chatCalls).toBe(5);
+
+    const logs = db.select().from(runNodeLogs).where(eq(runNodeLogs.runId, runId)).all();
+    const requests = logs.filter((row) => row.kind === "ai-request" && row.nodeId === "n_prompt");
+    expect(requests.map((row) => row.step)).toEqual(["scan", "scan", "draft", "audit", "finalize"]);
+    expect(requests[1]?.content).toContain("带校验失败原因重问");
+    // 重问必须把具体失败原因回喂给模型（哪道门、哪条没命中），否则它不知道该改哪一处
+    const retryNote = logs.find((row) => row.kind === "info" && String(row.content).includes("校验未通过，带失败原因重问一次"));
+    expect(retryNote).toBeDefined();
+    expect(String(retryNote?.content)).toContain("[citationsInOriginal]");
+    insightQuoteMode = "ok";
+  });
+
+  it("观点提炼 v4：重问后引文仍抄错才判失败，且只重问一次", async () => {
+    chatCalls = 0;
+    insightQuoteMode = "always-bad";
+    const dataDir = await mkdtemp(join(tmpdir(), "scribe-insight-v4-bad-quote-"));
+    tmpDirs.push(dataDir);
+    const runId = "run_insight_v4_bad_quote";
+    const { db, engine, graph } = await setup(dataDir, runId, "builtin.insight.v4");
+
+    runWith(engine, runId, graph);
+    await waitFinished(db, runId);
+
+    const nodeRow = db.select().from(runNodeResults).where(eq(runNodeResults.nodeId, "n_prompt")).get();
+    expect(nodeRow?.status).toBe("error");
+    expect(nodeRow?.error).toContain("通读拆解");
+    expect(nodeRow?.error).toContain("未在原文找到");
+    // scan 两次（首答 + 一次重问）就停手，后面三步不再执行
+    expect(chatCalls).toBe(2);
+    insightQuoteMode = "ok";
   });
 
   it("阴阳师攻略加工 v2：4 次调用、scan 根键/audit 根键断言通过、输出为最后一步产物", async () => {
@@ -591,6 +654,34 @@ describe("知识巩固节点（process.drill）", () => {
     const logs = db.select().from(runNodeLogs).where(eq(runNodeLogs.runId, runId)).all();
     expect(logs.some((row) => row.kind === "info" && row.content.includes("丢弃明细"))).toBe(true);
     expect(chatCalls).toBe(3);
+  });
+
+  it("未配置联网检索渠道时：出题步按不联网执行，产物照常产出（检索是增强不是前提）", async () => {
+    chatCalls = 0;
+    drillExtraItem = false;
+    const dataDir = await mkdtemp(join(tmpdir(), "scribe-drill-nosearch-"));
+    tmpDirs.push(dataDir);
+    const runId = "run_drill_nosearch";
+    const { db, engine, graph } = await setupDrill(dataDir, runId);
+
+    runWith(engine, runId, graph);
+    await waitFinished(db, runId);
+
+    // 没配渠道不该让练一练失败，也不该多花一次模型调用
+    expect(db.select().from(runs).where(eq(runs.id, runId)).get()?.status).toBe("success");
+    const nodeRow = db.select().from(runNodeResults).where(eq(runNodeResults.nodeId, "n_drill")).get();
+    expect(nodeRow?.status).toBe("done");
+    expect(nodeRow?.summary).toBe("1 个考察点 · 1 题 · 1 条延伸");
+    expect(chatCalls).toBe(3);
+
+    const logs = db.select().from(runNodeLogs).where(eq(runNodeLogs.runId, runId)).all();
+    expect(
+      logs.some((row) => row.kind === "info" && row.content.includes("未配置渠道") && row.content.includes("联网检索")),
+    ).toBe(true);
+    // {{sources}} 展开成「本次未能联网检索」的说明，而不是留下一句指向空块的规则
+    const authorRequest = logs.find((row) => row.kind === "ai-request" && row.step === "author");
+    expect(authorRequest?.content).toContain("本次未能联网检索");
+    expect(authorRequest?.content).toContain("不要写 externalRef 字段");
   });
 
   it("接到合并与输出节点：写出的是可读 Markdown 题目集，不是原始 JSON", async () => {

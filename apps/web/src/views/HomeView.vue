@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { onMounted, ref, watch } from "vue";
 import { useRouter } from "vue-router";
-import { FolderTree, PenLine, Workflow } from "lucide-vue-next";
+import { ClipboardPaste, FolderTree, PenLine } from "lucide-vue-next";
 import { useProjectsStore } from "@/stores/projects";
 import { useUiStore } from "@/stores/ui";
 
@@ -39,6 +39,12 @@ watch(
 function showPanel() {
   uiStore.openPanel("projects");
 }
+
+/** 空态最快的一条路：复制了 B 站链接就直接建工程，不用先落在画布上。 */
+function pasteLink() {
+  uiStore.openPanel("projects");
+  uiStore.openQuickCreate(null);
+}
 </script>
 
 <template>
@@ -57,10 +63,10 @@ function showPanel() {
           <button type="button" class="sf-home-card-btn" @click="showPanel">打开工程面板</button>
         </div>
         <div class="sf-home-card">
-          <span class="sf-home-card-icon"><Workflow :size="16" /></span>
-          <span class="sf-home-card-title">画布编辑器全屏工作</span>
-          <span class="sf-home-card-text">素材 → 转写 → AI 加工 → 笔记成稿，一条画布流跑完。</span>
-          <button type="button" class="sf-home-card-btn" @click="showPanel">新建第一个工程</button>
+          <span class="sf-home-card-icon"><ClipboardPaste :size="16" /></span>
+          <span class="sf-home-card-title">复制链接就能开工</span>
+          <span class="sf-home-card-text">看到喜欢的视频复制链接，粘贴进来选个模版，工程会带着视频标题和预选好的加工提示词直接建好。</span>
+          <button type="button" class="sf-home-card-btn" @click="pasteLink">粘贴链接建工程</button>
         </div>
       </div>
     </template>

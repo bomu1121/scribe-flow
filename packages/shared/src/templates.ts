@@ -1,4 +1,4 @@
-import { NODE_CARD_WIDTH, type GraphEdge, type GraphNode, type NodeType, type WorkflowGraph } from "./graph";
+import { NODE_CARD_WIDTH, type GraphEdge, type GraphNode, type NodeType, type PageRef, type WorkflowGraph } from "./graph";
 import type { WorkflowTemplate } from "./project";
 
 function node(type: NodeType, id: string, x: number, y: number, data: GraphNode["data"]): GraphNode {
@@ -29,7 +29,6 @@ function videoBasicGraph(): WorkflowGraph {
   const asrX = nextColumnX("source.bili", 0);
   const refineX = nextColumnX("process.transcribe", asrX);
   const promptX = nextColumnX("process.refine", refineX);
-  const outX = nextColumnX("process.prompt", promptX);
   return {
     schemaVersion: 1,
     nodes: [
@@ -37,13 +36,11 @@ function videoBasicGraph(): WorkflowGraph {
       node("process.transcribe", "n_asr", asrX, 40, { label: "转写" }),
       node("process.refine", "n_refine", refineX, 40, { label: "AI 校对" }),
       node("process.prompt", "n_prompt", promptX, 40, { label: "AI 加工" }),
-      node("process.output", "n_out", outX, 40, { label: "输出", fileName: "笔记.md" }),
     ],
     edges: [
       edge("e1", "n_src", "n_asr", "audio", "audio"),
       edge("e2", "n_asr", "n_refine", "transcript", "transcript"),
       edge("e3", "n_refine", "n_prompt", "transcript", "transcript"),
-      edge("e4", "n_prompt", "n_out", "noteBlock", "noteDoc"),
     ],
     viewport: { x: 0, y: 0, zoom: 1 },
   };
@@ -54,7 +51,6 @@ function videoBranchesGraph(): WorkflowGraph {
   const asrX = nextColumnX("source.bili", 0);
   const promptX = nextColumnX("process.transcribe", asrX);
   const mergeX = nextColumnX("process.prompt", promptX);
-  const outX = nextColumnX("process.merge", mergeX);
   return {
     schemaVersion: 1,
     nodes: [
@@ -63,7 +59,6 @@ function videoBranchesGraph(): WorkflowGraph {
       node("process.prompt", "n_prompt_a", promptX, 0, { label: "AI 加工 A" }),
       node("process.prompt", "n_prompt_b", promptX, 160, { label: "AI 加工 B" }),
       node("process.merge", "n_merge", mergeX, 80, { label: "合并", title: "合并笔记" }),
-      node("process.output", "n_out", outX, 80, { label: "输出", fileName: "笔记.md" }),
     ],
     edges: [
       edge("e1", "n_src", "n_asr", "audio", "audio"),
@@ -71,7 +66,6 @@ function videoBranchesGraph(): WorkflowGraph {
       edge("e3", "n_asr", "n_prompt_b", "transcript", "transcript"),
       edge("e4", "n_prompt_a", "n_merge", "noteBlock", "noteBlock"),
       edge("e5", "n_prompt_b", "n_merge", "noteBlock", "noteBlock"),
-      edge("e6", "n_merge", "n_out", "noteDoc", "noteDoc"),
     ],
     viewport: { x: 0, y: 0, zoom: 1 },
   };
@@ -81,7 +75,6 @@ function videoBranchesGraph(): WorkflowGraph {
 function textCompareGraph(): WorkflowGraph {
   const promptX = nextColumnX("source.text", 0);
   const mergeX = nextColumnX("process.prompt", promptX);
-  const outX = nextColumnX("process.merge", mergeX);
   return {
     schemaVersion: 1,
     nodes: [
@@ -90,7 +83,6 @@ function textCompareGraph(): WorkflowGraph {
       node("process.prompt", "n_b", promptX, 120, { label: "AI 加工 B" }),
       node("process.prompt", "n_c", promptX, 280, { label: "AI 加工 C" }),
       node("process.merge", "n_merge", mergeX, 120, { label: "合并", title: "多路对照" }),
-      node("process.output", "n_out", outX, 120, { label: "输出", fileName: "对照笔记.md" }),
     ],
     edges: [
       edge("e1", "n_text", "n_a", "transcript", "transcript"),
@@ -99,7 +91,6 @@ function textCompareGraph(): WorkflowGraph {
       edge("e4", "n_a", "n_merge", "noteBlock", "noteBlock"),
       edge("e5", "n_b", "n_merge", "noteBlock", "noteBlock"),
       edge("e6", "n_c", "n_merge", "noteBlock", "noteBlock"),
-      edge("e7", "n_merge", "n_out", "noteDoc", "noteDoc"),
     ],
     viewport: { x: 0, y: 0, zoom: 1 },
   };
@@ -109,19 +100,16 @@ function textCompareGraph(): WorkflowGraph {
 function textPolishGraph(): WorkflowGraph {
   const refineX = nextColumnX("source.text", 0);
   const promptX = nextColumnX("process.refine", refineX);
-  const outX = nextColumnX("process.prompt", promptX);
   return {
     schemaVersion: 1,
     nodes: [
       node("source.text", "n_text", 0, 40, { label: "已有文稿", text: "" }),
       node("process.refine", "n_refine", refineX, 40, { label: "AI 校对" }),
       node("process.prompt", "n_prompt", promptX, 40, { label: "AI 加工" }),
-      node("process.output", "n_out", outX, 40, { label: "输出", fileName: "笔记.md" }),
     ],
     edges: [
       edge("e1", "n_text", "n_refine", "transcript", "transcript"),
       edge("e2", "n_refine", "n_prompt", "transcript", "transcript"),
-      edge("e3", "n_prompt", "n_out", "noteBlock", "noteDoc"),
     ],
     viewport: { x: 0, y: 0, zoom: 1 },
   };
@@ -131,7 +119,6 @@ function textPolishGraph(): WorkflowGraph {
 function textMindMapGraph(): WorkflowGraph {
   const refineX = nextColumnX("source.text", 0);
   const mindmapX = nextColumnX("process.refine", refineX);
-  const outX = nextColumnX("process.mindmap", mindmapX);
   return {
     schemaVersion: 1,
     nodes: [
@@ -144,12 +131,10 @@ function textMindMapGraph(): WorkflowGraph {
         theme: "paper",
         retry: { maxRetries: 2, backoffMs: 3000 },
       }),
-      node("process.output", "n_out", outX, 80, { label: "输出", fileName: "思维导图.md" }),
     ],
     edges: [
       edge("e1", "n_text", "n_refine", "transcript", "transcript"),
       edge("e2", "n_refine", "n_mindmap", "transcript", "in"),
-      edge("e3", "n_mindmap", "n_out", "doc", "noteDoc"),
     ],
     viewport: { x: 0, y: 0, zoom: 1 },
   };
@@ -221,7 +206,6 @@ function videoMindMapGraph(): WorkflowGraph {
   const asrX = nextColumnX("source.bili", 0);
   const refineX = nextColumnX("process.transcribe", asrX);
   const mindmapX = nextColumnX("process.refine", refineX);
-  const outX = nextColumnX("process.mindmap", mindmapX);
   return {
     schemaVersion: 1,
     nodes: [
@@ -235,13 +219,11 @@ function videoMindMapGraph(): WorkflowGraph {
         theme: "paper",
         retry: { maxRetries: 2, backoffMs: 3000 },
       }),
-      node("process.output", "n_out", outX, 80, { label: "输出", fileName: "思维导图.md" }),
     ],
     edges: [
       edge("e1", "n_src", "n_asr", "audio", "audio"),
       edge("e2", "n_asr", "n_refine", "transcript", "transcript"),
       edge("e3", "n_refine", "n_mindmap", "transcript", "in"),
-      edge("e4", "n_mindmap", "n_out", "doc", "noteDoc"),
     ],
     viewport: { x: 0, y: 0, zoom: 1 },
   };
@@ -251,7 +233,6 @@ function videoMindMapGraph(): WorkflowGraph {
 function textGameGuideGraph(): WorkflowGraph {
   const refineX = nextColumnX("source.text", 0);
   const guideX = nextColumnX("process.refine", refineX);
-  const outX = nextColumnX("process.gameguide", guideX);
   return {
     schemaVersion: 1,
     nodes: [
@@ -262,12 +243,10 @@ function textGameGuideGraph(): WorkflowGraph {
         mode: "audited",
         retry: { maxRetries: 2, backoffMs: 3000 },
       }),
-      node("process.output", "n_out", outX, 80, { label: "输出", fileName: "阴阳师攻略笔记.md" }),
     ],
     edges: [
       edge("e1", "n_text", "n_refine", "transcript", "transcript"),
       edge("e2", "n_refine", "n_guide", "transcript", "transcript"),
-      edge("e3", "n_guide", "n_out", "noteBlock", "noteDoc"),
     ],
     viewport: { x: 0, y: 0, zoom: 1 },
   };
@@ -278,7 +257,6 @@ function videoGameGuideGraph(): WorkflowGraph {
   const asrX = nextColumnX("source.bili", 0);
   const refineX = nextColumnX("process.transcribe", asrX);
   const guideX = nextColumnX("process.refine", refineX);
-  const outX = nextColumnX("process.gameguide", guideX);
   return {
     schemaVersion: 1,
     nodes: [
@@ -290,13 +268,11 @@ function videoGameGuideGraph(): WorkflowGraph {
         mode: "audited",
         retry: { maxRetries: 2, backoffMs: 3000 },
       }),
-      node("process.output", "n_out", outX, 80, { label: "输出", fileName: "阴阳师攻略笔记.md" }),
     ],
     edges: [
       edge("e1", "n_src", "n_asr", "audio", "audio"),
       edge("e2", "n_asr", "n_refine", "transcript", "transcript"),
       edge("e3", "n_refine", "n_guide", "transcript", "transcript"),
-      edge("e4", "n_guide", "n_out", "noteBlock", "noteDoc"),
     ],
     viewport: { x: 0, y: 0, zoom: 1 },
   };
@@ -315,7 +291,6 @@ function videoDrillGraph(): WorkflowGraph {
       node("process.transcribe", "n_asr", asrX, 40, { label: "转写" }),
       node("process.refine", "n_refine", refineX, 40, { label: "AI 校对" }),
       node("process.prompt", "n_prompt", promptX, 40, { label: "AI 加工" }),
-      node("process.output", "n_out", outX, 40, { label: "输出", fileName: "笔记.md" }),
       node("process.drill", "n_drill", outX, 420, {
         label: "知识巩固",
         pointCount: 6,
@@ -329,7 +304,6 @@ function videoDrillGraph(): WorkflowGraph {
       edge("e1", "n_src", "n_asr", "audio", "audio"),
       edge("e2", "n_asr", "n_refine", "transcript", "transcript"),
       edge("e3", "n_refine", "n_prompt", "transcript", "transcript"),
-      edge("e4", "n_prompt", "n_out", "noteBlock", "noteDoc"),
       edge("e5", "n_prompt", "n_drill", "noteBlock", "in"),
     ],
     viewport: { x: 0, y: 0, zoom: 1 },
@@ -340,7 +314,7 @@ export const WORKFLOW_TEMPLATES: WorkflowTemplate[] = [
   {
     id: "template.video-basic",
     name: "视频转笔记（单线）",
-    description: "B站视频 → 转写 → AI 校对 → 一个 AI 加工步骤 → 输出",
+    description: "B站视频 → 转写 → AI 校对 → 一个 AI 加工步骤",
     graph: videoBasicGraph(),
   },
   {
@@ -358,19 +332,19 @@ export const WORKFLOW_TEMPLATES: WorkflowTemplate[] = [
   {
     id: "template.text-polish",
     name: "文稿转笔记",
-    description: "粘贴已有文稿 → AI 校对 → 一个 AI 加工步骤 → 输出",
+    description: "粘贴已有文稿 → AI 校对 → 一个 AI 加工步骤",
     graph: textPolishGraph(),
   },
   {
     id: "template.text-mindmap",
     name: "文稿转思维导图",
-    description: "已有文稿 → AI 校对 → 思维导图 → 输出，把长文/讲稿整理成导图",
+    description: "已有文稿 → AI 校对 → 思维导图，把长文/讲稿整理成导图",
     graph: textMindMapGraph(),
   },
   {
     id: "template.video-mindmap",
     name: "视频转思维导图",
-    description: "B站视频 → 转写 → AI 校对 → 思维导图 → 输出，把视频内容整理成导图",
+    description: "B站视频 → 转写 → AI 校对 → 思维导图，把视频内容整理成导图",
     graph: videoMindMapGraph(),
   },
   {
@@ -388,19 +362,80 @@ export const WORKFLOW_TEMPLATES: WorkflowTemplate[] = [
   {
     id: "template.text-game-guide",
     name: "文稿转阴阳师攻略笔记（核对版）",
-    description: "阴阳师攻略文稿 → AI 校对 → AI 阴阳师攻略加工（拆解/起草/核对/终稿）→ 输出 Markdown",
+    description: "阴阳师攻略文稿 → AI 校对 → AI 阴阳师攻略加工（拆解/起草/核对/终稿）",
     graph: textGameGuideGraph(),
   },
   {
     id: "template.video-game-guide",
     name: "视频转阴阳师攻略笔记（核对版）",
-    description: "B站阴阳师攻略视频 → 转写 → AI 校对 → AI 阴阳师攻略加工 → 输出 Markdown",
+    description: "B站阴阳师攻略视频 → 转写 → AI 校对 → AI 阴阳师攻略加工",
     graph: videoGameGuideGraph(),
   },
   {
     id: "template.video-drill",
     name: "视频转练一练",
-    description: "B站视频 → 转写 → AI 校对 → AI 加工成笔记 → 输出，并用「知识巩固」提炼可考察知识点、出题与延伸问题，在结果页答题",
+    description: "B站视频 → 转写 → AI 校对 → AI 加工成笔记，并用「知识巩固」提炼可考察知识点、出题与延伸问题，在结果页答题",
     graph: videoDrillGraph(),
   },
 ];
+
+/** 写入来源节点的 B 站解析结果（快捷新建用 `POST /api/videos/preview` 的结果填充）。 */
+export interface BiliLinkSource {
+  /** 节点里保存的链接；解析成功时写规范化后的稿件地址。 */
+  url: string;
+  page?: number;
+  pageInfo?: PageRef;
+  bvid?: string;
+  title?: string;
+  cover?: string;
+  uploader?: string;
+  duration?: number;
+}
+
+export interface InstantiateOptions {
+  /** 写进来源节点的 B 站解析结果；模板没有 source.bili 节点时忽略。 */
+  bili?: BiliLinkSource;
+  /**
+   * 预绑到「AI 加工」（`process.prompt`）节点的提示词块 id。
+   * 垂直模板里的加工节点（如攻略加工）有自己的推荐块，不在这里覆盖。
+   */
+  promptBlockId?: string;
+}
+
+/** 模板是否以 B 站视频为起点：快捷新建只列这类模板。 */
+export function isBiliTemplate(template: WorkflowTemplate): boolean {
+  return template.graph.nodes.some((node) => node.type === "source.bili");
+}
+
+/**
+ * 按模板实例化一份工程图：可顺便把 B 站来源写进来源节点、把提示词块预绑到加工节点。
+ *
+ * 返回 null 表示 templateId 未知（调用方回退到按模板新建）。
+ */
+export function instantiateTemplate(templateId: string, options: InstantiateOptions = {}): WorkflowGraph | null {
+  const template = WORKFLOW_TEMPLATES.find((t) => t.id === templateId);
+  if (!template) return null;
+
+  // 模板图是模块级常量：必须深拷贝后再改，否则改动会泄给之后每一次新建。
+  const graph = JSON.parse(JSON.stringify(template.graph)) as WorkflowGraph;
+  const { bili, promptBlockId } = options;
+
+  for (const node of graph.nodes) {
+    if (bili && node.type === "source.bili") {
+      const data = node.data;
+      data.url = bili.url;
+      data.page = bili.page ?? 1;
+      if (bili.pageInfo) data.pageInfo = bili.pageInfo;
+      if (bili.bvid) data.bvid = bili.bvid;
+      if (bili.title) data.title = bili.title;
+      if (bili.cover) data.cover = bili.cover;
+      if (bili.uploader) data.uploader = bili.uploader;
+      if (bili.duration !== undefined) data.duration = bili.duration;
+    }
+    if (promptBlockId && node.type === "process.prompt") {
+      node.data.promptBlockId = promptBlockId;
+    }
+  }
+
+  return graph;
+}

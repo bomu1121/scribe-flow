@@ -19,18 +19,25 @@ export interface StepContext {
    * 刻意与 input 分离：断言门的引用回查以 input 为比对源，参数不能混进原文。
    */
   params?: string;
+  /**
+   * 联网检索到的参考资料文本（见 `lookupReferenceSources`），由引擎在声明了 `search` 的步骤上注入。
+   * 它是**外部不可信数据**，与 input（原文，也是引用回查的比对源）必须分开：参考资料里的文字
+   * 不该被当成原文依据，所以走独立变量而不是拼进 input。
+   */
+  sources?: string;
 }
 
-const TEMPLATE_VARS = ["{{input}}", "{{prev}}", "{{all}}", "{{source}}", "{{params}}"] as const;
+const TEMPLATE_VARS = ["{{input}}", "{{prev}}", "{{all}}", "{{source}}", "{{params}}", "{{sources}}"] as const;
 
-/** 展开 {{input}} / {{prev}} / {{all}} / {{source}} / {{params}}；其余 {{...}} 原样保留（避免误伤老提示词）。 */
+/** 展开 {{input}} / {{prev}} / {{all}} / {{source}} / {{params}} / {{sources}}；其余 {{...}} 原样保留（避免误伤老提示词）。 */
 export function renderStepSystem(template: string, ctx: StepContext): string {
   return template
     .replace(/\{\{input\}\}/g, ctx.input)
     .replace(/\{\{prev\}\}/g, ctx.prev)
     .replace(/\{\{all\}\}/g, ctx.all)
     .replace(/\{\{source\}\}/g, ctx.source ?? "")
-    .replace(/\{\{params\}\}/g, ctx.params ?? "");
+    .replace(/\{\{params\}\}/g, ctx.params ?? "")
+    .replace(/\{\{sources\}\}/g, ctx.sources ?? "");
 }
 
 /** 把某一步的输出拼接进“全部产物”上下文。 */
@@ -105,8 +112,38 @@ export function collectFieldStrings(root: unknown, path: string): string[] {
   return out;
 }
 
-/** 中文引号/破折号写法各异的归一：只消除标点差异，不改动任何正文字符。 */
-function normalizeQuotes(text: string): string {
+/** 取一次检索最多可能用到的检索词条数（安全阀，防止病态产物把请求数拉飞）。 */
+const MAX_STEP_QUERIES = 20;
+
+/**
+ * 取「某一步声明的联网检索」要用的检索词：从上一步产物的 JSON 里按路径收集，去重后返回。
+ *
+ * 取不到就返回空数组，由调用方按「不联网」继续——检索是增强不是前提，
+ * 上一步输出不是 JSON、或模型忘了写检索词，都不该让这一步直接失败。
+ */
+export function readSearchQueries(prev: string, queriesFrom: string): string[] {
+  if (!prev.trim()) return [];
+  let parsed: unknown;
+  try {
+    parsed = parseJsonLoose(prev);
+  } catch {
+    return [];
+  }
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const raw of collectFieldStrings(parsed, queriesFrom)) {
+    const query = raw.trim();
+    if (!query) continue;
+    const key = query.replace(/\s+/g, "").toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(query);
+    if (out.length >= MAX_STEP_QUERIES) break;
+  }
+  return out;
+}
+
+/** 中文引号/破折号写法各异的归一：只消除标点差异，不改动任何正文字符。 */function normalizeQuotes(text: string): string {
   return text
     .replace(/[\u2018\u2019\u201b\u2032]/g, "'")
     .replace(/[\u201c\u201d\u201f\u2033]/g, '"')
@@ -203,7 +240,14 @@ export function evaluateAsserts(step: RecipeStep, outputText: string, ctx: StepC
           errors.push(`${describe} ${error instanceof Error ? error.message : "JSON 解析失败"}`);
           break;
         }
-        const quotes = collectFieldStrings(parsed, assert.field);
+        const quotes = collectFieldStrings(parsed, assert.field).filter((quote) => quote.trim());
+        // 条数下限先查：字段被整段改写/丢掉时收集不到引用，后面的未命中检查会「无话可说」地通过。
+        const minCount = assert.minCount ?? 0;
+        if (quotes.length < minCount) {
+          errors.push(
+            `${describe} 只找到 ${quotes.length} 条引用，少于要求的 ${minCount} 条（${assert.field} 可能被整段改写或丢失）`,
+          );
+        }
         const misses: string[] = [];
         for (const quote of quotes) {
           const raw = quote.trim();

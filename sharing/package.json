@@ -1,11 +1,11 @@
 {
   "name": "scribe-flow-sharing",
   "private": true,
-  "version": "0.1.0",
-  "description": "分享会产出：PPT 与讲稿。独立于应用依赖图，故自带 package.json。",
+  "description": "分享会材料：PPT 生成器与演示道具（不属于 pnpm workspace，独立装依赖）",
   "scripts": {
-    "build:deck": "node tools/build-deck.cjs",
-    "export:png": "powershell -NoProfile -ExecutionPolicy Bypass -File tools/export-slides.ps1"
+    "deck": "node tools/build-deck.cjs",
+    "qa": "node tools/qa-deck.cjs",
+    "graph": "node tools/make-bench-graph.mjs"
   },
   "dependencies": {
     "pptxgenjs": "^3.12.0"

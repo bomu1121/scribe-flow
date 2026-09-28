@@ -8,6 +8,9 @@
  * 校验策略（重要）：**逐条丢弃而不是整体失败**——8 题里丢 1 题不影响另外 7 题；
  * 丢弃明细经 drops 返回，由调用方汇总进节点摘要，丢弃率本身就是题目质量的健康指标。
  * 机械校验（引文逐字命中）在配方断言门里也会做一遍；这里做的是结构层兜底。
+ *
+ * 网上参考（`externalRef`）：练一练出题时会参考联网检索到的同类题，题目上可记「借鉴了哪条资料」。
+ * 标记的**真伪校验**由 `verifyExternalRefs` 负责——链接与标题必须命中本次检索结果，编出来的一律剥掉。
  */
 
 export const DRILL_KINDS = ["single", "multi", "judge", "cloze"] as const;
@@ -52,6 +55,18 @@ export interface DrillPoint {
   sourceQuote?: string;
 }
 
+/**
+ * 该条题目借鉴到的网上参考资料。
+ *
+ * 只在「链接/标题确实出现在本次检索结果里」时才保留（见 `verifyExternalRefs`）：
+ * 出题会参考网上同类题，但**不能**让模型编一个看起来很像的网址挂在题目上——
+ * 那正是这个功能最容易变成幻觉入口的地方。
+ */
+export interface DrillExternalRef {
+  title: string;
+  url?: string;
+}
+
 /** 一道检验题。 */
 export interface DrillItem {
   id: string;
@@ -65,6 +80,8 @@ export interface DrillItem {
   answer: string[];
   explanation?: string;
   sourceQuote?: string;
+  /** 出题时借鉴过的网上同类题（可选；答案依据仍是 `sourceQuote`，不是这条）。 */
+  externalRef?: DrillExternalRef;
 }
 
 /** 「再想一步」延伸问题：不给答案，只给脚手架与方向。 */
@@ -73,6 +90,7 @@ export interface DrillExtension {
   question: string;
   hint?: string;
   angle?: string;
+  externalRef?: DrillExternalRef;
 }
 
 export interface DrillSet {
@@ -183,6 +201,16 @@ function asArray(value: unknown): unknown[] {
 
 function asText(value: unknown): string {
   return typeof value === "string" ? value.trim() : "";
+}
+
+/** 读取产物里的「网上参考」标记；标题与网址至少要有一个，否则视为没写。 */
+function readExternalRef(record: Record<string, unknown>): DrillExternalRef | undefined {
+  const raw = asRecord(record.externalRef ?? record.external);
+  if (!raw) return undefined;
+  const title = clip(asText(raw.title), 120);
+  const url = clip(asText(raw.url), 300);
+  if (!title && !url) return undefined;
+  return { title: title || url, url: url || undefined };
 }
 
 function oneOf<T extends string>(value: string, allowed: readonly T[], fallback: T): T {
@@ -408,6 +436,7 @@ function collectItems(
         answer: normalized.answer,
         explanation: asText(record.explanation) || undefined,
         sourceQuote,
+        externalRef: readExternalRef(record),
       },
     });
   }
@@ -490,10 +519,85 @@ function collectExtensions(
         question,
         hint: asText(record.hint) || undefined,
         angle: asText(record.angle) || undefined,
+        externalRef: readExternalRef(record),
       },
     });
   }
   return out;
+}
+
+/** 参考资料的可核对标识：标题按比对归一，网址再去掉协议/协议头与末尾斜杠。 */
+function sourceKeys(sources: { title?: string; url?: string }[]): Set<string> {
+  const keys = new Set<string>();
+  for (const source of sources) {
+    const url = normalizeUrlKey(source.url);
+    if (url) keys.add(`url:${url}`);
+    const title = normalizeForMatch(source.title ?? "");
+    if (title) keys.add(`title:${title}`);
+  }
+  return keys;
+}
+
+function normalizeUrlKey(url: string | undefined): string {
+  return (url ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/^https?:\/\//, "")
+    .replace(/^www\./, "")
+    .replace(/\/+$/, "");
+}
+
+/** `verifyExternalRefs` 的结果：清理后的产物 + 被剥掉的参考条数（不混进题目丢弃数）。 */
+export interface VerifiedExternalRefs {
+  set: DrillSet;
+  /** 被剥掉的参考链接条数；这条日志说明「模型写了但本次并没有检索到」。 */
+  stripped: number;
+  /** 被剥掉的前几条，用于日志里给出可核对的例子。 */
+  strippedSamples: string[];
+}
+
+/**
+ * 校验产物里的 `externalRef`：只保留**确实出现在本次检索结果里**的参考。
+ *
+ * 判定规则（两条互补，别合并成一条「网址或标题命中即可」）：
+ * - 模型给了网址 → **必须网址命中**（忽略协议 / www / 末尾斜杠差异）。一个真标题配一个编造的网址，
+ *   在界面上依然是可点击的假出处——这正是要堵的洞。
+ * - 模型没给网址 → 退回标题比对。这条兜底是为了智谱渠道：它相当一部分查询只给标题与正文（见 traceExternal.ts），
+ *   只认网址会让这条通路名存实亡。
+ *
+ * 为什么要有这一步：检索到的来源是唯一可核对的凭据。模型很擅长照着真实资料编一个「看起来很像」的网址，
+ * 而界面上带链接的引用天然显得可信——不校验就等于把幻觉包装成了出处。
+ * 剥掉的条数单独返回、不计入题目丢弃数，因为题目本身还是可用的（只是「参考自哪里」这句不可信）。
+ */
+export function verifyExternalRefs(
+  set: DrillSet,
+  sources: { title?: string; url?: string }[],
+): VerifiedExternalRefs {
+  const keys = sourceKeys(sources);
+  const samples: string[] = [];
+  let stripped = 0;
+
+  const check = (ref: DrillExternalRef | undefined): DrillExternalRef | undefined => {
+    if (!ref) return undefined;
+    const url = normalizeUrlKey(ref.url);
+    const verified = url ? keys.has(`url:${url}`) : keys.has(`title:${normalizeForMatch(ref.title)}`);
+    if (verified) return ref;
+    stripped += 1;
+    // 同一份资料可能被多道题引用，样例去重后日志才读得下去。
+    const label = ref.url || ref.title;
+    if (samples.length < 3 && !samples.includes(label)) samples.push(label);
+    return undefined;
+  };
+
+  return {
+    set: {
+      ...set,
+      items: set.items.map((item) => ({ ...item, externalRef: check(item.externalRef) })),
+      extensions: set.extensions.map((extension) => ({ ...extension, externalRef: check(extension.externalRef) })),
+    },
+    stripped,
+    strippedSamples: samples,
+  };
 }
 
 export interface GradeResult {
@@ -565,6 +669,7 @@ export function drillSetToMarkdown(set: DrillSet): string {
       lines.push(`**答案**：${item.answer.join("、")}`);
       if (item.explanation) lines.push(`**解析**：${item.explanation}`);
       if (item.sourceQuote) lines.push(`**原文依据**：> ${escapeQuote(item.sourceQuote)}`);
+      if (item.externalRef) lines.push(`**网上参考**：${externalRefText(item.externalRef)}`);
     });
   }
 
@@ -577,10 +682,15 @@ export function drillSetToMarkdown(set: DrillSet): string {
       lines.push(`${index + 1}. ${extension.question}${point ? `（${point.name}）` : ""}`);
       if (extension.hint) lines.push(`   - 提示：${extension.hint}`);
       if (extension.angle) lines.push(`   - 方向：${extension.angle}`);
+      if (extension.externalRef) lines.push(`   - 网上参考：${externalRefText(extension.externalRef)}`);
     });
   }
 
   return lines.join("\n").trimEnd() + "\n";
+}
+
+function externalRefText(ref: DrillExternalRef): string {
+  return ref.url ? `${escapeQuote(ref.title)}（${ref.url}）` : escapeQuote(ref.title);
 }
 
 function escapeQuote(text: string): string {

@@ -150,9 +150,10 @@ describe("坚果云恢复：数据库整库热替换", () => {
     expect(project.name).toBe("旧版工程");
     expect(project.folder_id).toBeNull();
 
-    // 备份中残留的 running 被收尾为 cancelled，而不是“复活”成永远无法结束的运行。
+    // 备份中残留的 running 被收尾为 interrupted（不是 cancelled：没人点过停止），
+    // 且不能“复活”成永远无法结束的运行。
     const run = raw.prepare("SELECT status, error FROM runs WHERE id = ?").get("r_old") as { status: string; error: string | null };
-    expect(run.status).toBe("cancelled");
+    expect(run.status).toBe("interrupted");
     expect(run.error).toContain("服务重启");
     const node = raw.prepare("SELECT status, attempts FROM run_node_results WHERE id = ?").get("n_old") as { status: string; attempts: number };
     expect(node.status).toBe("cancelled");

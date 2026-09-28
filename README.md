@@ -1,6 +1,6 @@
 # ScribeFlow
 
-**笔记处理画布流**：把 B 站视频、本地音视频或已有文稿放进画布，用节点编排「转写 → AI 校对 → 观点提炼 / 技术拆解 / 自定义提示词 → 合并 → 输出」的加工流，运行后得到一份可读、可改、可导出的 Markdown 笔记。整个编排保存为工作流工程，运行记录随工程归档。
+**笔记处理画布流**：把 B 站视频、本地音视频或已有文稿放进画布，用节点编排「转写 → AI 校对 → 观点提炼 / 技术拆解 / 自定义提示词 → 合并」的加工流，运行后得到一份可读、可改、可导出的 Markdown 笔记（跑完自动按工程名存进输出目录）。整个编排保存为工作流工程，运行记录随工程归档。
 
 ## 项目状态
 
@@ -13,11 +13,11 @@
 
 | 指标 | 当前值 |
 | --- | --- |
-| 测试用例（`it(` 声明数） | **193**（shared 71 · server 108 · web 14） |
-| UI 冒烟检查项（`pnpm smoke:ui`） | **50**（其中 3 项为恒真占位，净 47） |
-| API 自检项 | m2 7 · m3 14 · m4 12 · m6 9 · drill 22 |
-| 内置提示词块（`BUILTIN_PROMPT_BLOCKS`） | **13** |
-| 文档数（`docs/` 下 `.md`，不含调研原文） | 43 |
+| 测试用例（`it(` 声明数） | **386**（shared 117 · server 225 · web 44） |
+| UI 冒烟检查项（`pnpm smoke:ui`） | **64**（其中 3 项为恒真占位，净 61） |
+| API 自检项 | m2 7 · m3 14 · m4 19 · m6 9 · drill 22 |
+| 内置提示词块（`BUILTIN_PROMPT_BLOCKS`） | **14** |
+| 文档数（`docs/` 下 `.md`，不含调研原文） | 45 |
 <!-- docs-gen:numbers:end -->
 
 ## 技术栈
@@ -55,6 +55,11 @@ pnpm dev
 
 前端开发服务器将 `/api` 代理到后端。
 
+Windows 上可以更省事：双击根目录的 `start-dev.cmd`（桌面快捷方式 `ScribeFlow` 指的就是它）。
+它会检查 pnpm、首次运行自动装依赖、分别拉起前后端，等**前后端都**就绪后再打开浏览器（后端比前端慢，
+开早了页面只会印满 `/api` 连接失败）；服务已经在运行时只开浏览器、不重复拉起。**关掉那个控制台
+窗口即停止服务**，不用再去翻进程。
+
 ## 常用命令
 
 ```bash
@@ -65,7 +70,7 @@ pnpm build          # 构建
 pnpm lint           # 全部门禁（反 slop + UI 铁律 + 文档）
 pnpm lint:slop      # 去 AI 味自检（渐变/玻璃拟态/emoji/辉光等反模式扫描）
 pnpm lint:ui        # UI 铁律自检（Portal 全局样式/z-index 令牌/颜色单一来源）
-pnpm docs:gen       # 重新生成 README/status/nodes/architecture 里的数字、文档地图与清单
+pnpm docs:gen       # 重新生成 README/status.md 里的数字与文档地图
 pnpm docs:lint      # 文档门禁（front matter/死链/漂移数字/验收档案冻结/体积预算）
 pnpm docs:freeze    # 显式重新冻结验收档案的内容指纹
 pnpm smoke:ui       # CDP + 真实 Chrome 的 UI 冒烟（需先 pnpm dev）
@@ -76,14 +81,14 @@ pnpm check:api:m6   # M6 API 自检（重试/条件分支/文本工具/章节切
 pnpm check:api:drill # 知识巩固 API 自检（需真实 AI 密钥）
 ```
 
-> 改动源码后如果动了用例数、冒烟项数、内置提示词块、节点类型或接口路由，请跑一次 `pnpm docs:gen` 并一并提交。
+> 改动源码后如果动了用例数、冒烟项数或内置提示词块，请跑一次 `pnpm docs:gen` 并一并提交。
 
 ## 文档
 
-想了解怎么用看 **[使用说明](docs/usage.md)**，想知道每个节点要填什么看 **[节点手册](docs/nodes.md)**，
-想看实现看 **[架构与实现总览](docs/architecture.md)**，部署看 **[部署说明](docs/deploy.md)**。
+想了解怎么用看 **[使用说明](./docs/usage.md)**，想知道每个节点要填什么看 **[节点手册](./docs/nodes.md)**，
+想看实现看 **[架构与实现总览](./docs/architecture.md)**，部署看 **[部署说明](./docs/deploy.md)**。
 
-进度与已知缺口在 [docs/status.md](docs/status.md)。`docs/` 下的方案、计划与验收档案都是
+进度与已知缺口在 [docs/status.md](./docs/status.md)。`docs/` 下的方案、计划与验收档案都是
 **历史快照，不代表现状**。文档怎么维护（分类、front matter、哪些改动必须同步）见 [AGENTS.md](./AGENTS.md)。
 
 ## 设计约定

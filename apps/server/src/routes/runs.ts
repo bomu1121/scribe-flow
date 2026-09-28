@@ -1,5 +1,4 @@
 import { readFile } from "node:fs/promises";
-import { join, resolve } from "node:path";
 import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
 import { and, desc, eq } from "drizzle-orm";
@@ -7,6 +6,7 @@ import { z } from "zod";
 import {
   NODE_TYPE_LABELS,
   parseGraph,
+  RUN_NAME_MAX_LENGTH,
   type NodeOutput,
   type RunEvent,
   type RunMeta,
@@ -19,6 +19,7 @@ import {
 import type { AppDatabase } from "../db/client";
 import { projects, runNodeLogs, runNodeResults, runs, type RunRow } from "../db/schema";
 import { nextRunId, type RunEngine } from "../lib/engine";
+import { resolveArtifactPath } from "../lib/storage";
 import { getAiConfig, getAsrConfig } from "../lib/settings";
 import { listRunMediaViews } from "../lib/media-store";
 
@@ -32,6 +33,11 @@ const startSchema = z
     path: ["nodeId"],
   });
 
+/** 重命名运行记录：`name` 传 null 或空白表示清掉名字，列表回落到时间与状态。 */
+const renameSchema = z.object({
+  name: z.string().max(RUN_NAME_MAX_LENGTH, `名称最多 ${RUN_NAME_MAX_LENGTH} 个字`).nullable(),
+});
+
 function rowToMeta(row: RunRow, projectName?: string): RunMeta {
   return {
     id: row.id,
@@ -43,6 +49,7 @@ function rowToMeta(row: RunRow, projectName?: string): RunMeta {
     createdAt: row.createdAt,
     finishedAt: row.finishedAt ?? undefined,
     elapsedMs: row.elapsedMs ?? undefined,
+    name: row.name ?? undefined,
     summary: row.summary ?? undefined,
     error: row.error ?? undefined,
   };
@@ -252,6 +259,22 @@ export function runsApi(db: AppDatabase, engine: RunEngine, dataDir: string) {
     }
   });
 
+  api.patch("/:id", async (c) => {
+    const runId = c.req.param("id");
+    if (!db.select().from(runs).where(eq(runs.id, runId)).get()) return c.json({ error: "运行不存在" }, 404);
+    const parsed = renameSchema.safeParse(await c.req.json().catch(() => ({})));
+    if (!parsed.success) {
+      return c.json({ error: parsed.error.issues[0]?.message ?? "请求格式不正确" }, 400);
+    }
+    const trimmed = parsed.data.name?.trim() ?? "";
+    db.update(runs)
+      .set({ name: trimmed === "" ? null : trimmed })
+      .where(eq(runs.id, runId))
+      .run();
+    const updated = db.select().from(runs).where(eq(runs.id, runId)).get();
+    return c.json(rowToMeta(updated!));
+  });
+
   api.delete("/:id", async (c) => {
     const runId = c.req.param("id");
     const row = db.select().from(runs).where(eq(runs.id, runId)).get();
@@ -309,7 +332,7 @@ export function runsApi(db: AppDatabase, engine: RunEngine, dataDir: string) {
     if (!row) return c.json({ error: "节点结果不存在" }, 404);
     if (row.outputText) return c.json({ text: row.outputText, size: row.outputSize ?? row.outputText.length });
     if (!row.outputPath) return c.json({ text: "" });
-    const abs = resolve(dataDir, row.outputPath);
+    const abs = resolveArtifactPath(dataDir, row.outputPath);
     const text = await readFile(abs, "utf8");
     return c.json({ text, size: text.length });
   });
@@ -322,7 +345,7 @@ export function runsApi(db: AppDatabase, engine: RunEngine, dataDir: string) {
       .all()
       .find((r) => r.nodeId === c.req.param("nodeId"));
     if (!row?.outputPath) return c.json({ error: "没有可下载的文件" }, 404);
-    const abs = resolve(dataDir, row.outputPath);
+    const abs = resolveArtifactPath(dataDir, row.outputPath);
     const data = await readFile(abs);
     const name = row.outputPath.split("/").pop() ?? "output";
     c.header("Content-Type", name.endsWith(".wav") ? "audio/wav" : "text/markdown; charset=utf-8");
