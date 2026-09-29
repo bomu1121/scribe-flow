@@ -235,8 +235,6 @@ export const compareAnalysisSchema = z.object({
   sameNote: z.string().optional(),
 });
 
-export type CompareAnalysisInput = z.input<typeof compareAnalysisSchema>;
-
 /** 模型偶尔会包一层 ```json 或写句开场白：取第一个 `{` 到最后一个 `}` 再解析。 */
 export function parseCompareAnalysis(raw: string): CompareAnalysis {
   const start = raw.indexOf("{");

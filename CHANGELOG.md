@@ -192,6 +192,183 @@
     降级为逐页自己看图——18 页里直接看过 12 页、覆盖全部六种版式（未看的 P4/P8/P11/P12/P14/P16 都是已验版式的重复形态），以及新增页 P5 已看图确认（`qa-deck` 几何自检 0 问题）；
     「533 次采样 / 100ms / 9ms」与「1.4s → 21ms」是转引本文件 2026-09-29 那次的记录，这次没重跑。
 
+#### 变更
+
+- **重复逻辑收口（第一批）：同名或逐字重复的实现合并到一处**。这一批选了 20 余处，
+  全部是有测试兜底的纯函数、常量或样板；**刻意没碰需要抽组件/组合式函数的重构**——
+  `apps/web` 的 `.vue` 层零测试覆盖（现状见 [docs/status.md](./docs/status.md) 的 P1），
+  那类合并的回归网只有 `pnpm smoke:ui`，风险与收益不成比例。
+  - 服务端：`runFfmpeg`（3 份 → `lib/media.ts`）、`BILI_USER_AGENT`（3 份 → `lib/bilibili.ts`）、
+    `sleep`（3 份 → 新增 `lib/sleep.ts`）、`normalizeRemote`/`normalizeRemotePath`（2 份 → `lib/nutstore.ts`）、
+    「请求体校验失败 → 400」样板（**23 处、跨 8 个路由文件** → 新增 `lib/bad-request.ts`）、
+    `KIND_LABELS`（与 shared 的 `DRILL_KIND_LABELS` 逐字相同 → 改用 shared）。
+    另有 4 处「请求体不合法」因兜底文案不同、3 处「远程根前缀剥离」因算法不同（前缀切片 vs 动态
+    `new RegExp`）**故意没合并**——前缀剥离与路径归一不是同一件事。
+  - 前端：时长格式化（原本 8 处、3 种口径）与字节格式化、`slugify`/`uniqueHeadingId`、字数格式化、
+    `copyText`（3 份，其中 2 份失败文案已漂移）、`hiddenNodes`（3 份）、下拉浮层选择器表（11 项逐字相同）、
+    沿边求可达节点集合（2 份）、运行态字段剥离、「分 / 秒」时长格式，以及状态 → 文案表
+    （`RUN_STATUS_META` 成为唯一来源，本地只留节点专属的 `done`/`skipped`）。
+    统一后的共享件落在 `utils/run-segments.ts`（改为导出）与新增的 `lib/clipboard.ts`、
+    `composables/useHiddenNodes.ts`。
+  - **会让人看到不同只有这三处**，其余显示结果逐值比对后一致：
+    - `PickCard.vue` 的时长在**小数秒**下原来会输出「1 分 60 秒」（先按分钟取整、再对秒四舍五入），
+      改用与 `PickFields.vue` 一致的取整后修正；整秒时长显示不变。
+    - `ScribeNode.vue` 的分 P / 合集时长改用共享实现后，`0` 显示为空串（原 `0:00`）、
+      `undefined` 显示为空串（原 `NaN:NaN`，这个是修好了）。
+    - `stores/projects.ts` 的文件名消毒改用 shared 的 `sanitizeFileName`：补上原先缺的 `.trim()`，
+      全空格或纯非法字符的工程名回落到 `工程.scribe-flow.json`（原先会落地成 `"   .scribe-flow.json"`）。
+  - `stores/settings.ts` 两处内联的坚果云响应类型改用 shared 已有的 `NutstoreTestResult` /
+    `NutstoreBackupResult`。共享契约本来就写在 shared 里，**该做的是让 web 用它，不是把 shared 那份删掉**。
+
+#### 移除
+
+- **死代码清理（与上一批同一次改动）**。每条都用 `tsc --noUnusedLocals --noUnusedParameters` 或全仓 grep
+  证实过零引用（该开关不在仓库 `tsconfig` 里，是临时加在命令行上跑的）：
+  - 服务端：`engine.ts` 的 `parseYamlTags()`、`parseYamlFieldList` 里没人读的 `fieldKey`、
+    `executeNode` 里没人读的 `data`；`routes/runs.ts` 的 `rowToNodeResult()`（它同时是 `engine.detail()`
+    的重复实现，会误导后来人以为两处口径一致）；`recipe.ts` 的 `TEMPLATE_VARS`（它列出的 6 个模板变量
+    在 `renderStepSystem` 上方的注释里已完整列出）；3 处未使用的 import。
+  - `combineOutputs` 的 4 支不可达分支：已核实 `process.merge` / `process.output` / `flow.if` /
+    `process.mindmap` 四个 case 各自只产出 1 份产物，而该函数在 `outputs.length === 1` 时就提前返回了。
+  - 前端：`project-tree-utils.ts` 的旧 HTML5 拖拽整簇 4 项（现行拖拽走自研 `pointerDrag`，
+    注释也自称「保留兼容」）；`run-meta.ts` 的 `formatRelativeTime()`（全仓仅定义处 1 处命中）；
+    `ObsidianCard.vue` 的 `props` 变量；`ProjectItem.vue` 的 `search`/`sortMode` 两个 prop 及两处父组件传参。
+  - 样式：`styles/workspace.css` 5 条（`.wp-children.is-drop-children`、`.wp-run-project`、`.wp-section`、
+    `.wp-section-row`、`.wp-drag-ghost.is-folder`）与 `SettingsView.vue` 3 条
+    （`.sf-field-sep`、`.sf-field-mono`、`.sf-danger-text`）定义了但全仓无使用点的规则。
+  - `packages/shared`：删掉与 `index.ts` 桶里重复的 `GraphEdge`/`GraphNode`/`WorkflowGraph` re-export，
+    收回 `graphNodeSchema`/`graphEdgeSchema` 的导出（只在 schema.ts 内部使用），
+    删掉零引用的 `isSourcePicked`、`hasAnyPick`、`CompareAnalysisInput`。
+  - **没有动**这几处"看起来像死代码"的地方，理由随代码一起留下：`process.output` 节点类型（6 个测试文件
+    与 4 个 API 自检脚本仍在造它，删了测试直接红）、`PER_INPUT_NODE_TYPES`（值层零引用，但
+    `scripts/docs-gen.mjs` 用正则从源码文本里抠它生成 `docs/nodes.md` 的表格，删了 `pnpm docs:gen` 会抛错）、
+    `runs.folder_id` 列（数据库只有补列能力，删代码去不掉列）、以及 `obsidian` 的标签相关设置
+    （见下方「已知」——它们的行为层缺失是产品决定，不是清理项）。
+
+#### 修复
+
+- **B 站 App 分享短链 `bili2233.cn` 在来源卡片上被前端拦下**：`packages/shared/src/bili.ts` 认这个域名，
+  而 `ScribeNode.vue` 用来做前置拦截的本地正则只认 `bilibili.com|b23.tv`，于是 shared 明确支持的链接
+  会先被拦成「需要 B 站视频链接」，根本走不到解析接口。前端改用 shared 的 `extractBiliUrl` 判定；
+  `routes/videos.ts` 的 BV 号规则同时与 shared 对齐（改为 `\bBV[0-9A-Za-z]{8,}\b`，原先不限长度）。
+
+- **`docs/status.md`「已知缺口」里的 `文件:行号` 引用按当前源码逐条重量**：28 处引用改了 23 处。归因做了
+  commit 级溯源，结论值得记一笔——**只有 2 处是本次删代码造成的**（`routes/videos.ts`、`lib/nutstore.ts`），
+  其余 21 处在更早的改动里就已经漂了（`engine.ts` 那一批行号自 `7208547` 之后就没再跟过，
+  `db/client.ts`、`db/schema.ts`、`lib/settings.ts`、`app.ts` 亦然）。顺带复核了这些条目的
+  **行为性描述**（缺的 5 个索引、`resolveArtifactPath` 没有包含性校验、`forceStop` 只查存在性、
+  坚果云 `fetch` 无 `signal` 等），结论都仍然成立，措辞未动。
+
+#### 变更
+
+- **重复逻辑收口（第二批，前端 · 三个共享件）**。只合并逐字相同的实现，落点都留了注释：
+  - **Esc 关闭** → 新增 `apps/web/src/composables/useEscapeClose.ts`，收编 `PromptBlockDiffDialog.vue`、
+    `RunLogDialog.vue` 两份逐字相同的「打开时挂 keydown 监听 / 关闭与卸载时摘掉」。
+    `SourcePickerDialog.vue`（Esc 走 `close()`，带 `confirming` 守卫）与 `SettingsDialog.vue`（走 ui store）
+    **条件不同，没有合并**。
+  - **弹窗滚动锁** → 新增 `apps/web/src/composables/useBodyScrollLock.ts`。三个浮层各写一份的实现与三个类名
+    （`pbd-lock`/`rl-lock`/`sp-lock`）合成一份，类名沿用 `pbd-lock`，规则落在全局样式 `styles/app.css`
+    （Teleport 到 body 的浮层样式必须全局，见 `scripts/ui-lint.mjs`）。**锁定/解锁时机与原来一致**，
+    另外补了引用计数：类名只剩一个时，先关的那个浮层不能替还在开的那个解锁（这与原来各用各的类名时的实际
+    效果相同）。
+  - **Blob 下载** → 新增 `apps/web/src/lib/download.ts` 的 `downloadText()`，收编 `stores/projects.ts` 的私有
+    `download()`、`RunLogDialog.vue` 的 `downloadLogs()`、`DrillViewer.vue` 的导出。
+    `RunDetailView.vue` 那一份本轮**没动**（文件被另一处改动占用），留待下一轮。
+  - **行内改名的口径**：`ProjectItem.vue` 原先自己写了一份「trim + 比较」，现与文件夹行共用
+    `project-tree-utils.resolveTreeRename()`。口径取的是**必填名**那一套（清空 = 放弃，不发请求），
+    没取运行记录那套（`lib/run-meta.ts` 的 `resolveRenameRequest` 允许清空 → `name: null`）：
+    工程名在服务端是必填（`routes/projects.ts` 的 `name` 是 `z.string().trim().min(1)`），清空只会换回 400。
+    **两侧逐分支等价，行为不变。**
+
+#### 修复
+
+- **结果页答题视图（`DrillViewer.vue`）的选项高亮与判分改用同一套归一化**：判分走 shared 的 `gradeObjective`
+  （两侧都过 `normalizeForMatch`），选项高亮却是裸比较 `currentItem.answer.includes(option)`，同屏两套判等规则。
+  现在高亮也过 `normalizeForMatch`（复用 shared 的导出，没有新写归一化）。
+  **实测没有可见差异**：`parseDrillSet` 会把答案映射回选项原文（构造 8 类题目探针，6 道保留题的
+  「逐字比较 vs 归一化比较」判定 100% 一致；答案写法对不上的题目会被整条丢弃；填空没有选项列表）。
+  这一步修的是「两条规则各写各的」——再分叉就没人能保证一致。
+- **`DrillViewer.vue` 的空态从「没有样式」补回来**：`rv-empty` / `rv-empty-title` / `rv-empty-sub` 三条规则原本只写在
+  `RunDetailView.vue` 的 `<style scoped>` 里，而两个文件都是 scoped、`DrillViewer` 的根节点是 `.rv-drill`，
+  父作用域够不到子组件内部节点，于是这段空态一直是无样式的。三条规则按 RunDetailView 的取值原样搬进
+  `DrillViewer.vue` 自己的 scoped 块（**RunDetailView 那边保持不动**，它自己的空态还在用）。
+- **补回「拖入已展开文件夹的子列表区域」的落点高亮**：`ProjectFolderNode.vue` 的
+  `<ul class="wp-children">` 在 `pointerDrag.overChildArea && overFolderId === folder.id` 时加
+  `is-drop-children`，`styles/workspace.css` 里恢复同名规则（上一轮按「死规则」删掉的那条，取值取自 git 历史）。
+  落点仍然只有一处：拖到文件夹行 → 行高亮（`isDropTarget` 里的 `!overChildArea` 保证互斥）；拖到子列表区域 → 子列表高亮。
+  注意：**完全为空**且已展开的文件夹，其 `ul` 高度为 0，这条规则在那种情况下渲染不出面积
+  （此时拖到文件夹行仍走高亮行那条路径）；子列表里有内容（含行内新建子文件夹的输入行）时高亮可见。
+
+#### 变更
+
+- **服务端第二批（同一次改动）**：
+  - `lib/bad-request.ts` 支持可选的自定义兜底文案，把上一批因「文案不同」而没被收编的最后 4 处也归口
+    （坚果云三处 `参数不正确`、工程导入一处 `导入数据不合法`）。**文案、状态码、响应体形状一字未变**，
+    兜底参数的触发条件与原 `?? "…"` 完全相同。
+  - 「沿边求可达节点集合」的两份实现合成 `lib/graph-scope.ts`（`routes/runs.ts` 的预检放行集合与
+    `engine.ts` 的实际执行集合）。合并前做了穷举对拍：n=1..4 的全部有向边子集 × 3 种 scope ×
+    每个节点与一个「幽灵 id」，共 **62250 组**，`diffValid: 0` —— 只要 nodeId 是真节点，两份旧实现逐组一致；
+    唯一分歧全部来自「nodeId 不在图里」这条 `createRun` 已经先抛错的不可达路径。合并后 `downstream()`
+    只剩 `start()` 一个调用者，随之成为死代码并删除。
+  - 测试里 5 份 `sleep` 副本与 1 处内联 `setTimeout` 改为引用 `lib/sleep.ts`（签名逐份核对一致，断言未动）。
+- **跨包契约单点化：多产物分隔符**。`packages/shared/src/output.ts` 新增 `MULTI_PRODUCT_SEPARATOR`，
+  引擎的 `combineOutputs`、web 的 `DRILL_PRODUCT_SEPARATOR`（改为再导出）与结果页的两处拼接都引用它。
+  全仓扫描共 11 处出现，生产代码里那 4 处已收口；余下 7 处**故意不动**——测试里的手写字面量是「独立复述」
+  （常量值被改坏时它会红，比引用常量更早报警）、`engine.recipe.test.ts` 里那两处是示例笔记正文的 Markdown
+  分隔线（换成常量反而是错的）、`docs/research` 的旧快照按约定只追加。
+- **字节格式化只留一套**：删掉 `run-segments.ts` 的 `fmtSize`，各处改用 `lib/bytes.ts` 的 `formatBytes`
+  （它本来就更完整）。显示变化只有两类，均已逐值实测：**① 单位内数值 ≥ 100 时不再保留一位小数**
+  （`150000` → `146 KB`，原 `146.5 KB`；`100.0 MB` → `100 MB`）；**② 超过 1024 进制时进位到更大单位**
+  （`1500000000` → `1.4 GB`，原 `1430.5 MB`）。`0` / `512` / `1500` / `1024` / `1023` 等值输出不变；
+  「尺寸未知 → 显示空串」的旧语义在结果页保留，没有变成 `0 B`。
+- **默认题型单点化**：`packages/shared/src/drill.ts` 新增 `DEFAULT_DRILL_KINDS`（单选/判断/填空），
+  服务端的出题参数、web 新建 `process.drill` 节点的默认数据、卡片勾选框三处改为引用它
+  ——此前这三处各有一份同样的字面量，改一处就会三处各说各话。
+- **`combineOutputs` 的不变量写进注释**：逐类型写明当前哪些节点会产出多份、各自的合并 kind 是什么、
+  以及新增多产出节点时必须同步这张映射（否则会静默落到兜底 `"text"`）。**纯注释，没加断言、行为未改。**
+- `run-alert.ts` 补了一处交叉引用注释：通知正文的状态说法与界面标签（`RUN_STATUS_META`）**刻意不同**
+  （前者是句子的一部分「视频转笔记：已完成」，后者是列表标签「成功」），两张表都是穷尽 `Record`，
+  新增运行状态时 TypeScript 会强制两处都改，所以不必为「看起来只有一份」而压成一种文案。
+  `playChime` 收回为模块私有（只在本文件用）。
+- `docs/status.md`：`last_reviewed` 更新为 2026-09-29，并新增「P1 · 功能与文档不一致」一节，
+  登记清理过程中发现的两条**代码与文档对不上**的事实，以及 `docs/status.md` 已知缺口里 28 处
+  `文件:行号` 引用的重量结果（见下）。
+
+#### 移除
+
+- **`DrillCard.vue` 的 `hasInput` prop 与它承载的那句提示**。`v-if="hasInput === false"` 的分支永不成立
+  ——全仓没有任何地方传 `:has-input`（该组件唯一的父组件显式传 5 个 prop，不含它），
+  所以「把一段文稿或笔记连进来」这句提示从未渲染过。删掉 prop 与分支后渲染结果**逐字不变**
+  （原来永远走的是 `v-else` 那句）。
+- `engine.ts` 的 `downstream()`（见「变更」里的可达集合合并）。
+
+#### 修复
+
+- **结果页目录点了不跳（含链接、行内代码、加粗的标题）**。原因是目录与锚点各算一套标题 id：
+  `markdown.ts` 从**渲染后的 HTML** 取标题文本，`RunDetailView` 的目录从**原始 Markdown 行**取，
+  两者送进同一份 `slugify`。`## [链接](http://x)` 会被算成 `sec-链接` 与 `sec-链接httpx`。
+  现在目录复用「渲染时顺带收集的标题清单」，与锚点同源。
+  对照实验（jsdom + 真的 `renderMarkdown`，改动前一侧逐字复刻旧实现）三个样本共 **3 条落空 → 0 条落空**，
+  且三个样本**渲染出的 HTML 逐字节相同**（证明换实现没动正文）。顺带修掉两处：围栏代码块里形如
+  `# 注释` 的行不再进目录（原先进了也永远跳不到），同名标题的 `-1`/`-2` 序号两侧同源
+  （原先目录与锚点各用一套计数器，会跳到**另一个**同名标题）。
+  **目录条目集合有变化**：代码块里的假标题移出、引用块与列表里的标题移入；**目录显示文本逐字未变**。
+- **`recipe.ts` 的「引用必须在原文里逐字命中」判定改用 shared 的归一化**。它原先自己有一份
+  **同名**的 `normalizeForMatch`（只做引号归一 + 去空白），与 shared 那份（折叠全角 + 去 `[*_`~]` +
+  去空白 + 小写）判定不同——同一条引文可能在生成期的校验链上通过、又在配方断言上被判失败。
+  现在合为 `normalizeForCitation = shared 的 normalizeForMatch(normalizeQuotes(text))`，本地同名函数改名以消除混淆。
+  **判定变宽**（真实行为变化）：全角折叠、忽略 `[*_`~]`、忽略大小写这三类差异不再判失败。
+  `recipe.test.ts` 37 条全绿——但那三类差异**当前没有用例覆盖**，「通过」不能当作这次改动被验过；
+  变宽是另跑一张对照表确认的（`Ａ`→`ａ`、`CASE`→`case`、`**bold**` 三例由「未命中」变「命中」，
+  引号/破折号归一的例子前后都命中）。
+- `docs/status.md` 登记两条「代码与文档对不上」：**Obsidian「AI 打标签」从未接线**——
+  设置页有四个控件、引擎里 `buildObsidianTags`（基础标签规则 + 受控词表 + AI 补全）也完整存在，
+  但它没有任何调用点（`git log -S` 显示自功能提交 `7ff6ff9` 起只有定义处一处，从未被调用），
+  而决策文档标为「已实施」；今天真正写进 frontmatter 的标签只来自节点自己的 `data.tags`。
+  连带确认 `obsidian.autoLinkBidirectional` 全仓 0 个读取点。
+  **注意 `autoTagEnabled` 不是摆设**（它控制人物/事件/时期提取），别一起删。
+  两条都只登记、未动代码——删设置 UI 或补接线都是产品决定。
+
 ### 2026-09-28
 
 #### 新增

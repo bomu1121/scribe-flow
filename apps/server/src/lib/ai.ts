@@ -1,6 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { basename } from "node:path";
-import type { AsrEngine, UpdateSettingsRequest } from "@scribe-flow/shared";
+import type { AsrEngine } from "@scribe-flow/shared";
 
 export interface AiConfig {
   provider: "deepseek" | "openai" | "custom";

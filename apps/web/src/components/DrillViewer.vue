@@ -6,11 +6,13 @@ import {
   DRILL_KIND_LABELS,
   drillSetToMarkdown,
   gradeObjective,
+  normalizeForMatch,
   type DrillItem,
   type DrillPoint,
   type DrillSet,
 } from "@scribe-flow/shared";
 import { parseDrillSets } from "@/utils/drill";
+import { downloadText } from "@/lib/download";
 import { toast } from "@/lib/toast";
 
 /**
@@ -23,7 +25,7 @@ import { toast } from "@/lib/toast";
  * - 只用「已经能自己答出来 / 建议回看」两组表达结果，不给百分比、不做排行。
  */
 const props = defineProps<{
-  /** 节点产物原始文本；多输入时引擎用 "\n\n---\n\n" 连接多份产物。 */
+  /** 节点产物原始文本；多输入时引擎用 shared 的 `MULTI_PRODUCT_SEPARATOR` 连接多份产物。 */
   text: string;
   /** 节点展示名，用于导出文件名。 */
   nodeLabel?: string;
@@ -69,6 +71,21 @@ const finished = computed(() => total.value > 0 && cursor.value >= total.value);
 const optionLetters = "ABCDEFGH";
 const isMultiple = computed(() => currentItem.value?.kind === "multi");
 const isCloze = computed(() => currentItem.value?.kind === "cloze");
+
+/**
+ * 某个选项是不是正确答案（选项高亮用）。
+ *
+ * 必须与判分走同一套归一化（shared 的 `gradeObjective` 内部也是把两侧都过一遍
+ * `normalizeForMatch` 再比，全角、空白、Markdown 强调符差异不算错），
+ * 否则同屏会出现「判分说对、高亮说错」。填空没有选项列表（走输入框 + `normalizeClozeAnswer`），
+ * 不需要这里判断。
+ */
+function isAnswerOption(option: string): boolean {
+  const item = currentItem.value;
+  if (!item) return false;
+  const key = normalizeForMatch(option);
+  return item.answer.some((answer) => normalizeForMatch(answer) === key);
+}
 
 const allItems = computed(() => activeSet.value?.items ?? []);
 const answeredCount = computed(() => allItems.value.filter((item) => grades.value[item.id]).length);
@@ -229,13 +246,7 @@ function exportMarkdown() {
   const set = activeSet.value;
   if (!set) return;
   const markdown = drillSetToMarkdown(set);
-  const blob = new Blob([markdown], { type: "text/markdown; charset=utf-8" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = `${props.nodeLabel?.trim() || "知识巩固"}.md`;
-  a.click();
-  URL.revokeObjectURL(url);
+  downloadText(`${props.nodeLabel?.trim() || "知识巩固"}.md`, markdown, "text/markdown; charset=utf-8");
 }
 
 // ---------- 键盘操作：数字选选项、回车提交/下一题 ----------
@@ -331,8 +342,8 @@ const hasProduct = computed(() => sets.value.length > 0);
             :class="{
               picked: draft.includes(option),
               locked: isGraded,
-              correct: isGraded && currentItem.answer.includes(option),
-              wrong: isGraded && draft.includes(option) && !currentItem.answer.includes(option),
+              correct: isGraded && isAnswerOption(option),
+              wrong: isGraded && draft.includes(option) && !isAnswerOption(option),
             }"
             :aria-checked="draft.includes(option)"
             :role="isMultiple ? 'checkbox' : 'radio'"
@@ -469,6 +480,33 @@ const hasProduct = computed(() => sets.value.length > 0);
   min-height: 0;
   padding: 16px 20px 20px;
   overflow: auto;
+}
+
+/*
+ * 空态三件套。必须落在本组件的 scoped 块里：RunDetailView 里也有同名规则，
+ * 但两边都是 scoped，父作用域够不到子组件内部节点，所以那份管不到这里。
+ * 取值与 RunDetailView 的同名规则保持一致（同一个空态外观，可对抄）。
+ */
+.rv-empty {
+  max-width: 900px;
+  margin: 24px auto 0;
+  padding: 40px 24px;
+  border: 1px dashed var(--color-border);
+  border-radius: var(--radius-xl);
+  background: var(--color-surface);
+  text-align: center;
+}
+
+.rv-empty-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.rv-empty-sub {
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--color-text-tertiary);
 }
 
 .rv-drill-tabs {

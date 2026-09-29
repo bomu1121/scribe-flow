@@ -2,6 +2,7 @@
 import { computed } from "vue";
 import { ElCheckbox } from "element-plus";
 import type { NodePick, SegmentOption } from "@scribe-flow/shared";
+import { fmtMinutesSeconds } from "@/utils/run-segments";
 
 /**
  * 素材挑选（节点高级设置内）。
@@ -64,14 +65,6 @@ function toggleGroup(originNodeId: string, checked: boolean) {
   if (props.readonly) return;
   writePick(originNodeId, checked ? props.options.filter((option) => option.originNodeId === originNodeId).map((option) => option.key) : []);
 }
-
-function durationText(seconds?: number): string {
-  if (!seconds || !Number.isFinite(seconds)) return "";
-  const total = Math.round(seconds);
-  const m = Math.floor(total / 60);
-  const s = total % 60;
-  return m > 0 ? `${m} 分 ${s} 秒` : `${s} 秒`;
-}
 </script>
 
 <template>
@@ -104,7 +97,7 @@ function durationText(seconds?: number): string {
         <span class="sf-pick-item-index">{{ String(option.index).padStart(2, "0") }}</span>
         <span class="sf-pick-item-title">{{ option.title }}</span>
         <span v-if="option.part" class="sf-pick-item-part">{{ option.part }}</span>
-        <span v-if="durationText(option.duration)" class="sf-pick-item-time">{{ durationText(option.duration) }}</span>
+        <span v-if="fmtMinutesSeconds(option.duration)" class="sf-pick-item-time">{{ fmtMinutesSeconds(option.duration) }}</span>
       </label>
     </div>
 

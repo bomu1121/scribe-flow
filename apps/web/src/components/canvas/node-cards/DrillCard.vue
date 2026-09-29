@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from "vue";
 import { ElCheckbox, ElInput, ElInputNumber, ElSwitch } from "element-plus";
-import { DRILL_KINDS, DRILL_KIND_LABELS, type DrillDifficulty, type DrillKind } from "@scribe-flow/shared";
+import { DEFAULT_DRILL_KINDS, DRILL_KINDS, DRILL_KIND_LABELS, type DrillDifficulty, type DrillKind } from "@scribe-flow/shared";
 import ModelSelect from "../../ModelSelect.vue";
 import NodeFieldLabel from "../NodeFieldLabel.vue";
 
@@ -11,7 +11,6 @@ const props = defineProps<{
   difficulty?: DrillDifficulty;
   withExtensions?: boolean;
   focus?: string;
-  hasInput?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -22,7 +21,7 @@ const emit = defineEmits<{
   commit: [];
 }>();
 
-const DEFAULT_KINDS: DrillKind[] = ["single", "judge", "cloze"];
+const DEFAULT_KINDS: DrillKind[] = [...DEFAULT_DRILL_KINDS];
 
 const difficultyOptions = [
   { label: "基础（没接触过也能答）", value: "basic" },
@@ -114,8 +113,7 @@ function clampCount(value: number | undefined): number {
       />
     </label>
 
-    <p v-if="hasInput === false" class="sf-node-desc sf-node-desc--block">把一段文稿或笔记连进来</p>
-    <p v-else class="sf-node-desc sf-node-desc--block">运行后在结果页「练一练」答题</p>
+    <p class="sf-node-desc sf-node-desc--block">运行后在结果页「练一练」答题</p>
   </div>
 </template>
 

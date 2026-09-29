@@ -12,9 +12,12 @@
  * - Element Plus：el-select / el-dropdown / el-picker 等 `.el-*-popper`
  * - Reka UI：menu / context-menu / popover 内容（data-reka-*）
  * - 自研 ModelSelect：若仍有非 portal 的菜单节点，也纳入兜底
+ *
+ * 选择器表对外导出：画布（FlowCanvas）要用同一份判断「这次点击是否落在浮层内」，
+ * 两处各写一份必然漂移——加一个浮层类型时漏掉一边，就会出现「点了浮层里的选项却被判成点空白」。
  */
 
-const POPUP_SELECTORS = [
+export const POPUP_SELECTORS = [
   // Element Plus
   ".el-select__popper",
   ".el-dropdown__popper",

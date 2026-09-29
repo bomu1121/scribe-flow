@@ -16,6 +16,13 @@
 export const DRILL_KINDS = ["single", "multi", "judge", "cloze"] as const;
 export type DrillKind = (typeof DRILL_KINDS)[number];
 
+/**
+ * 默认题型：节点没有指定 `kinds`（或指定后全被过滤掉）时用这三个。
+ *
+ * 三个使用点必须一致，否则「节点没勾题型」在出题提示词、节点默认数据、卡片勾选框三处会各说各话。
+ */
+export const DEFAULT_DRILL_KINDS = ["single", "judge", "cloze"] as const;
+
 export const DRILL_DIFFICULTIES = ["basic", "medium", "hard"] as const;
 export type DrillDifficulty = (typeof DRILL_DIFFICULTIES)[number];
 

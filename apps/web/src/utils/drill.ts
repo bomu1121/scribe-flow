@@ -1,4 +1,4 @@
-import { parseDrillSet, type DrillSet } from "@scribe-flow/shared";
+import { MULTI_PRODUCT_SEPARATOR, parseDrillSet, type DrillSet } from "@scribe-flow/shared";
 
 /**
  * 结果页解析 process.drill 产物。
@@ -9,7 +9,9 @@ import { parseDrillSet, type DrillSet } from "@scribe-flow/shared";
  * 说明：生成期已经做过引文校验与逐条丢弃，这里只做结构解析（sourceText 传空即跳过引文比对），
  * 避免「结果页把生成期已入库的题再判一次死刑」。
  */
-export const DRILL_PRODUCT_SEPARATOR = "\n\n---\n\n";
+
+/** 引擎拼接多份产物用的分隔符。值只在 shared 定义一处，这里是结果页侧的别名（不再复制字面量）。 */
+export const DRILL_PRODUCT_SEPARATOR = MULTI_PRODUCT_SEPARATOR;
 
 export function parseDrillSets(text: string): DrillSet[] {
   const raw = (text ?? "").trim();

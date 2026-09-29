@@ -17,12 +17,14 @@ import { MiniMap } from "@vue-flow/minimap";
 import { NODE_CARD_WIDTH, NODE_PORTS, canConnectSpecs, nextEdgeId, nextNodeId, type BiliSourceItem, type NodeType, type PortSpec, type ResultDelta, type RunNodeResult, type WorkflowGraph } from "@scribe-flow/shared";
 import ScribeNode from "./ScribeNode.vue";
 import FlowEdge from "./FlowEdge.vue";
+import { POPUP_SELECTORS } from "@/lib/dropdown-modal";
 import {
   cloneGraph,
   emptyNodeData,
   NODE_DRAG_HANDLE_SELECTOR,
   SCRIBE_EDGE_TYPE,
   SCRIBE_NODE_TYPE,
+  runScopeNodeIds,
   toBusinessGraph,
   toFlowEdges,
   toFlowNodes,
@@ -55,19 +57,6 @@ const DROPDOWN_CONTROL_SELECTOR = [
   "[data-reka-menu-trigger]",
   "[data-reka-popover-trigger]",
   ".sf-node-bar-more",
-].join(",");
-const DROPDOWN_POPUP_SELECTOR = [
-  ".el-select__popper",
-  ".el-dropdown__popper",
-  ".el-picker__popper",
-  ".el-cascader__popper",
-  ".el-autocomplete__popper",
-  "[data-reka-menu-content]",
-  "[data-reka-popover-content]:not(.sf-node-result-preview)",
-  ".sf-node-menu",
-  ".sf-model-select__menu",
-  ".sf-tree-menu",
-  ".wp-menu",
 ].join(",");
 const DROPDOWN_OPTION_SELECTOR = [
   ".sf-model-select__option",
@@ -169,7 +158,7 @@ function loadGraph(graph: WorkflowGraph) {
 
 function isDropdownPopupTarget(target: Element | null): boolean {
   if (!target) return false;
-  return Boolean(target.closest(DROPDOWN_POPUP_SELECTOR));
+  return Boolean(target.closest(POPUP_SELECTORS));
 }
 
 function clearNodeSelection() {
@@ -720,27 +709,6 @@ function focusNode(nodeId: string) {
   void flowRef.value?.setCenter(node.position.x + 100, node.position.y + 60, { zoom: 1.2, duration: 300 });
 }
 
-/** 计算一次运行中会真正被执行的节点；不在范围内的节点应保留上次状态，避免局部运行时被误清空。 */
-function runScopeNodeIds(scope: "all" | "fromNode" | "node", nodeId?: string): Set<string> {
-  const all = new Set(nodesRef.value.map((n) => n.id));
-  if (scope === "node" && nodeId) return new Set([nodeId]);
-  if (scope === "fromNode" && nodeId) {
-    const result = new Set([nodeId]);
-    let changed = true;
-    while (changed) {
-      changed = false;
-      for (const edge of edgesRef.value) {
-        if (result.has(edge.source) && !result.has(edge.target)) {
-          result.add(edge.target);
-          changed = true;
-        }
-      }
-    }
-    return result;
-  }
-  return all;
-}
-
 /** 运行事件合流：同一帧内到达的事件合并成一次节点更新。
  *
  *  逐个事件都重建整张节点表时，每个事件都会触发一次全量节点渲染——事件密集时这些渲染会叠加。
@@ -768,7 +736,8 @@ function queueRunPatch(nodeId: string, patch: Record<string, unknown>) {
 /** 运行事件驱动节点状态；不触发自动保存（运行态不进 graph 快照）。 */
 function applyRunEvent(event: import("@scribe-flow/shared").RunEvent) {
   if (event.type === "run.started") {
-    const resetIds = runScopeNodeIds(event.run.scope, event.run.nodeId);
+    // 不在范围内的节点保留上次状态，避免局部运行时被误清空。
+    const resetIds = runScopeNodeIds(nodesRef.value, edgesRef.value, event.run.scope, event.run.nodeId);
     for (const node of nodesRef.value) {
       if (resetIds.has(node.id)) {
         queueRunPatch(node.id, { status: "idle", summary: undefined, preview: undefined, delta: undefined });

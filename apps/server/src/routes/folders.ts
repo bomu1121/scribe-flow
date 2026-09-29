@@ -5,6 +5,7 @@ import { z } from "zod";
 import type { FolderDeleteResult, ProjectFolder } from "@scribe-flow/shared";
 import type { AppDatabase } from "../db/client";
 import { folders, projects, type FolderRow } from "../db/schema";
+import { badRequest } from "../lib/bad-request";
 
 /**
  * 工程文件夹 API。
@@ -101,7 +102,7 @@ export function foldersApi(db: AppDatabase) {
   api.post("/", async (c) => {
     const parsed = createBodySchema.safeParse(await c.req.json());
     if (!parsed.success) {
-      return c.json({ error: parsed.error.issues[0]?.message ?? "请求格式不正确" }, 400);
+      return badRequest(c, parsed);
     }
     const { name, parentId } = parsed.data;
     if (parentId) {
@@ -123,7 +124,7 @@ export function foldersApi(db: AppDatabase) {
   api.put("/order", async (c) => {
     const parsed = orderBodySchema.safeParse(await c.req.json());
     if (!parsed.success) {
-      return c.json({ error: parsed.error.issues[0]?.message ?? "请求格式不正确" }, 400);
+      return badRequest(c, parsed);
     }
     const { parentId, ids } = parsed.data;
     if (parentId) {
@@ -155,7 +156,7 @@ export function foldersApi(db: AppDatabase) {
 
     const parsed = patchBodySchema.safeParse(await c.req.json());
     if (!parsed.success) {
-      return c.json({ error: parsed.error.issues[0]?.message ?? "请求格式不正确" }, 400);
+      return badRequest(c, parsed);
     }
     const name = parsed.data.name ?? row.name;
     const parentId = parsed.data.parentId !== undefined ? parsed.data.parentId : row.parentId;

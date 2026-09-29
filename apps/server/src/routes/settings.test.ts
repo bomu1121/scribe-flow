@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import type { DataOverview, PruneOutcome } from "@scribe-flow/shared";
 import { createApp } from "../app";
 import { createDatabase } from "../db/client";
+import { sleep } from "../lib/sleep";
 import { UPLOAD_ORPHAN_MIN_AGE_MS } from "../lib/storage";
 
 const cleanupDirs: string[] = [];
@@ -72,7 +73,7 @@ async function runTextPipeline(app: App, name: string): Promise<string> {
   for (let attempt = 0; attempt < 60; attempt += 1) {
     const detail = await (await app.request(`/api/runs/${runId}`)).json();
     if (detail.status !== "running") return runId;
-    await new Promise((resolve) => setTimeout(resolve, 100));
+    await sleep(100);
   }
   throw new Error(`运行超时：${runId}`);
 }

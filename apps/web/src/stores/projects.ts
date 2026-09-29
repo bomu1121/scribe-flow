@@ -1,7 +1,9 @@
 import { defineStore } from "pinia";
 import { ref } from "vue";
 import type { FolderDeleteResult, ProjectFolder, ProjectListItem, ProjectMeta, TemplateSourceKind, WorkflowGraph } from "@scribe-flow/shared";
+import { sanitizeFileName } from "@scribe-flow/shared";
 import { api } from "@/lib/api";
+import { downloadText } from "@/lib/download";
 
 interface ProjectListResponse {
   items: ProjectListItem[];
@@ -13,18 +15,9 @@ interface FolderListResponse {
 
 const LAST_PROJECT_KEY = "scribe-flow.lastProjectId";
 
-function download(filename: string, content: string, type: string) {
-  const blob = new Blob([content], { type });
-  const url = URL.createObjectURL(blob);
-  const anchor = document.createElement("a");
-  anchor.href = url;
-  anchor.download = filename;
-  anchor.click();
-  URL.revokeObjectURL(url);
-}
-
 function safeFilename(name: string) {
-  return name.replace(/[\\/:*?"<>|]/g, "_").slice(0, 80) || "工程";
+  // 与产物落盘同一套规则（shared/sanitizeFileName）；清洗后为空才回落到「工程」。
+  return sanitizeFileName(name) || "工程";
 }
 
 function readLastProject(): string {
@@ -147,7 +140,7 @@ export const useProjectsStore = defineStore("projects", () => {
 
   async function exportProject(id: string, name: string) {
     const data = await api.get<Record<string, unknown>>(`/api/projects/${id}/export`);
-    download(`${safeFilename(name)}.scribe-flow.json`, JSON.stringify(data, null, 2), "application/json");
+    downloadText(`${safeFilename(name)}.scribe-flow.json`, JSON.stringify(data, null, 2), "application/json");
   }
 
   async function importProject(file: File, folderId?: string | null): Promise<ProjectMeta> {

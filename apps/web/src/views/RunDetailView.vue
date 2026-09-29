@@ -30,11 +30,19 @@ import {
   ZoomOut,
 } from "lucide-vue-next";
 import type { ProjectMeta, RunDetail, RunNodeInput, RunNodeResult, RunMediaView, TraceReport, WorkflowGraph } from "@scribe-flow/shared";
-import { BUILTIN_PROMPT_BLOCKS, NODE_TYPE_LABELS, RUN_NAME_MAX_LENGTH, parseTraceReports, traceReportToMarkdown } from "@scribe-flow/shared";
+import {
+  BUILTIN_PROMPT_BLOCKS,
+  MULTI_PRODUCT_SEPARATOR,
+  NODE_TYPE_LABELS,
+  RUN_NAME_MAX_LENGTH,
+  parseTraceReports,
+  traceReportToMarkdown,
+} from "@scribe-flow/shared";
 import { api } from "@/lib/api";
-import { renderMarkdown } from "@/lib/markdown";
-import { runDisplayName, resolveRenameRequest } from "@/lib/run-meta";
-import { buildNodeSegments, type RunSegment } from "@/utils/run-segments";
+import { documentHeadings, renderMarkdown, slugify } from "@/lib/markdown";
+import { formatBytes } from "@/lib/bytes";
+import { RUN_STATUS_META, runDisplayName, resolveRenameRequest } from "@/lib/run-meta";
+import { buildNodeSegments, fmtCharCount, fmtDuration, type RunSegment } from "@/utils/run-segments";
 import { buildCompareOptions, pickDefaultComparePair } from "@/utils/run-compare";
 import { isDrillOutput, looksLikeTraceReport } from "@/utils/run-output";
 import { subscribeRunEvents } from "@/lib/sse";
@@ -225,13 +233,13 @@ watch(
 
 const isRunning = computed(() => run.value?.status === "running");
 
+/**
+ * 状态文案。RunStatus 的五个键与运行记录列表共用 `@/lib/run-meta` 的 `RUN_STATUS_META`
+ * （同一个状态在两处不能有两种说法），这里只补「只会出现在节点结果里」的两个键。
+ */
 const statusMeta: Record<string, { label: string }> = {
-  running: { label: "运行中" },
-  success: { label: "成功" },
+  ...RUN_STATUS_META,
   done: { label: "完成" },
-  error: { label: "失败" },
-  cancelled: { label: "已取消" },
-  interrupted: { label: "已中断" },
   skipped: { label: "跳过" },
 };
 
@@ -279,22 +287,6 @@ function asRecord(value: unknown): Record<string, unknown> {
   return (value ?? {}) as Record<string, unknown>;
 }
 
-function fmtDuration(seconds?: number): string {
-  if (!seconds || seconds <= 0) return "—";
-  const h = Math.floor(seconds / 3600);
-  const m = Math.floor((seconds % 3600) / 60);
-  const s = Math.floor(seconds % 60);
-  if (h > 0) return `${h}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
-  return `${m}:${String(s).padStart(2, "0")}`;
-}
-
-function fmtSize(size?: number): string {
-  if (!size) return "";
-  if (size < 1024) return `${size} B`;
-  if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
-  return `${(size / 1024 / 1024).toFixed(1)} MB`;
-}
-
 /** 卡片徽标用的短类型名，避免和节点 label 重复。 */
 const CHAIN_TYPE_SHORT: Record<string, string> = {
   "source.bili": "B站",
@@ -334,7 +326,7 @@ function chainCardMeta(input: InputItem): string {
       if (input.duration) parts.push(fmtDuration(input.duration));
     } else if (input.nodeType === "source.file") {
       if (input.fileName) parts.push(input.fileName);
-      if (input.size) parts.push(fmtSize(input.size));
+      if (input.size) parts.push(formatBytes(input.size));
     } else if (input.text) {
       const chars = textCharCount(input.text);
       if (chars > 0) parts.push(`${chars} 字`);
@@ -342,22 +334,6 @@ function chainCardMeta(input: InputItem): string {
   }
   if (input.status === "error" && input.error) parts.push(input.error);
   return parts.length > 0 ? parts.join(" · ") : input.nodeType === "source.text" ? "空文稿" : "—";
-}
-
-function slugify(text: string): string {
-  const base = text
-    .trim()
-    .toLowerCase()
-    .replace(/\s+/g, "-")
-    .replace(/[^\p{L}\p{N}\-_]/gu, "");
-  return base || "section";
-}
-
-function uniqueHeadingId(text: string, seen: Map<string, number>): string {
-  const base = slugify(text);
-  const count = seen.get(base) ?? 0;
-  seen.set(base, count + 1);
-  return `sec-${base}${count ? `-${count}` : ""}`;
 }
 
 const graph = computed<WorkflowGraph | undefined>(() => run.value?.graph);
@@ -828,7 +804,7 @@ const currentMarkdown = computed(() => (editing.value ? draft.value : markdown.v
 const inputCompareText = computed(() => {
   const item = selectedInput.value;
   if (!item) return "";
-  if (item.segments && item.segments.length > 1) return item.segments.map((segment) => segment.text).join("\n\n---\n\n");
+  if (item.segments && item.segments.length > 1) return item.segments.map((segment) => segment.text).join(MULTI_PRODUCT_SEPARATOR);
   return item.text ?? "";
 });
 
@@ -908,11 +884,6 @@ function selectSegment(index: number) {
   tocValue.value = "";
 }
 
-function fmtSegmentChars(size: number): string {
-  if (!size) return "";
-  return size >= 10000 ? `${(size / 10000).toFixed(1)} 万字` : `${size} 字`;
-}
-
 /** 顺序切段：全文 ↔ 1..N，越界不动（顺序阅读用，不把「全文」卷进循环）。 */
 function stepSegment(delta: number) {
   const count = activeSegments.value.length;
@@ -969,7 +940,7 @@ const traceReports = computed<TraceReport[]>(() => (isTraceOutput.value ? parseT
 const activeTraceReports = computed<TraceReport[]>(() =>
   selectedSegment.value ? parseTraceReports(selectedSegment.value.text) : traceReports.value,
 );
-const traceMarkdownExport = computed(() => activeTraceReports.value.map((report) => traceReportToMarkdown(report)).join("\n\n---\n\n"));
+const traceMarkdownExport = computed(() => activeTraceReports.value.map((report) => traceReportToMarkdown(report)).join(MULTI_PRODUCT_SEPARATOR));
 const activeMarkdown = computed(() => {
   if (activeTab.value === "mindmap") return mindMapMarkdown.value;
   if (activeTraceReports.value.length > 0) return traceMarkdownExport.value;
@@ -985,17 +956,13 @@ const canCompareInputToOutput = computed(
 const inputWordCount = computed(() => inputBodyText.value.replace(/\s/g, "").length);
 const inputReadingTime = computed(() => Math.max(1, Math.round(inputWordCount.value / 400)));
 
-const toc = computed(() => {
-  const items: { id: string; text: string; level: number }[] = [];
-  const seen = new Map<string, number>();
-  for (const line of activeMarkdown.value.split("\n")) {
-    const match = line.match(/^(#{1,4})\s+(.*)$/);
-    if (!match) continue;
-    const text = match[2]?.trim() ?? "";
-    items.push({ id: uniqueHeadingId(text, seen), text, level: match[1].length });
-  }
-  return items;
-});
+/**
+ * 目录：直接取渲染那一趟产出的标题清单。
+ *
+ * 不能自己按行 slug：正文里的标题 id 是渲染时按**去掉标签后的文本**算的（`[链接](http://x)` → `sec-链接`），
+ * 而按行原文算会得到 `sec-链接httpx`，点目录按 id 找不到元素、不跳转。
+ */
+const toc = computed(() => documentHeadings(activeMarkdown.value));
 
 const currentTocLabel = computed(() => toc.value.find((item) => item.id === tocValue.value)?.text ?? "文档目录");
 
@@ -1943,7 +1910,7 @@ async function commitRename() {
                 v-for="segment in activeSegments"
                 :key="segment.inputId"
                 :value="segment.index"
-                :label="`${segment.index + 1}. ${segment.label}${segment.size ? ` · ${fmtSegmentChars(segment.size)}` : ''}`"
+                :label="`${segment.index + 1}. ${segment.label}${segment.size ? ` · ${fmtCharCount(segment.size)}` : ''}`"
               />
             </el-select>
             <button
@@ -1976,10 +1943,10 @@ async function commitRename() {
                   <p class="rv-paper-meta">
                     <template v-if="selectedInput?.nodeType === 'source.bili'">
                       <template v-if="selectedInput.items && selectedInput.items.length > 1">{{ selectedInput.label || "B站多选" }}（{{ selectedInput.items.length }} 项）</template>
-                      <template v-else>{{ selectedInput.title || selectedInput.url || "B站视频" }}</template> · {{ fmtDuration(selectedInput.duration) }}
+                      <template v-else>{{ selectedInput.title || selectedInput.url || "B站视频" }}</template> · {{ fmtDuration(selectedInput.duration) || "—" }}
                     </template>
                     <template v-else-if="selectedInput?.nodeType === 'source.file'">
-                      {{ selectedInput.fileName || "本地音视频" }} · {{ fmtSize(selectedInput.size) }}
+                      {{ selectedInput.fileName || "本地音视频" }} · {{ selectedInput.size ? formatBytes(selectedInput.size) : "" }}
                     </template>
                     <template v-else>
                       {{ selectedInput?.label || "文本输入" }}
@@ -2175,7 +2142,7 @@ async function commitRename() {
                 <span class="rv-rail-idx tnum">—</span>
                 <span class="rv-rail-body">
                   <span class="rv-rail-label">全文（{{ activeSegments.length }} 段合并）</span>
-                  <span class="rv-rail-meta tnum">{{ fmtSegmentChars(fullBodyChars) }}</span>
+                  <span class="rv-rail-meta tnum">{{ fmtCharCount(fullBodyChars) }}</span>
                 </span>
               </button>
               <button
@@ -2194,7 +2161,7 @@ async function commitRename() {
                 <span class="rv-rail-body">
                   <span class="rv-rail-label" :title="segment.label">{{ segment.label }}</span>
                   <span class="rv-rail-meta tnum">
-                    <span v-if="segment.size">{{ fmtSegmentChars(segment.size) }}</span>
+                    <span v-if="segment.size">{{ fmtCharCount(segment.size) }}</span>
                     <span v-if="segment.meta">{{ segment.meta }}</span>
                   </span>
                 </span>

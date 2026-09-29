@@ -1,6 +1,6 @@
 import { z } from "zod";
 import type { PortSpec } from "./port";
-import { NODE_PORTS, type GraphEdge, type GraphNode, type NodeType, type WorkflowGraph } from "./graph";
+import { NODE_PORTS, type NodeType, type WorkflowGraph } from "./graph";
 
 const positionSchema = z.object({
   x: z.number(),
@@ -136,7 +136,7 @@ function nodeOf(type: string, data: z.ZodTypeAny) {
   });
 }
 
-export const graphNodeSchema = z.discriminatedUnion("type", [
+const graphNodeSchema = z.discriminatedUnion("type", [
   nodeOf("source.bili", nodeDataByType.bili),
   nodeOf("source.file", nodeDataByType.file),
   nodeOf("source.text", nodeDataByType.text),
@@ -155,7 +155,7 @@ export const graphNodeSchema = z.discriminatedUnion("type", [
   nodeOf("process.drill", nodeDataByType.drill),
 ]);
 
-export const graphEdgeSchema = z.object({
+const graphEdgeSchema = z.object({
   id: z.string().min(1),
   source: z.string().min(1),
   target: z.string().min(1),
@@ -223,5 +223,3 @@ export function parseGraph(input: unknown): WorkflowGraph {
 export function safeParseGraph(input: unknown) {
   return graphSchema.safeParse(input);
 }
-
-export type { GraphEdge, GraphNode, WorkflowGraph };

@@ -7,6 +7,7 @@ import { collectSegmentOptions, fileSegmentKey, parseGraph, segmentKey, stalePic
 import { createDatabase } from "../db/client";
 import { projects, runNodeInputs, runNodeLogs, runNodeResults, runs } from "../db/schema";
 import { RunEngine } from "./engine";
+import { sleep } from "./sleep";
 
 /**
  * 素材挑选（段级分流）：多个素材汇入同一节点时，只加工其中几个，未选中的连同下游一并跳过。
@@ -16,10 +17,6 @@ import { RunEngine } from "./engine";
  */
 
 const tmpDirs: string[] = [];
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
 
 afterEach(async () => {
   await Promise.all(tmpDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true }).catch(() => undefined)));

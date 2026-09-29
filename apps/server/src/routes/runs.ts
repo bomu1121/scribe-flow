@@ -11,17 +11,17 @@ import {
   type RunEvent,
   type RunMeta,
   type RunNodeLog,
-  type RunNodeResult,
   type RunScope,
   type RunStatus,
-  type StartRunRequest,
 } from "@scribe-flow/shared";
 import type { AppDatabase } from "../db/client";
 import { projects, runNodeLogs, runNodeResults, runs, type RunRow } from "../db/schema";
 import { nextRunId, type RunEngine } from "../lib/engine";
+import { nodeIdsForScope } from "../lib/graph-scope";
 import { defaultRunNameFor } from "../lib/run-name";
 import { resolveArtifactPath } from "../lib/storage";
 import { getAiConfig, getAsrConfig } from "../lib/settings";
+import { badRequest } from "../lib/bad-request";
 import { listRunMediaViews } from "../lib/media-store";
 
 const startSchema = z
@@ -54,41 +54,6 @@ function rowToMeta(row: RunRow, projectName?: string): RunMeta {
     summary: row.summary ?? undefined,
     error: row.error ?? undefined,
   };
-}
-
-function rowToNodeResult(row: (typeof runNodeResults)["$inferSelect"]): RunNodeResult {
-  return {
-    nodeId: row.nodeId,
-    nodeType: row.nodeType,
-    nodeLabel: row.nodeLabel ?? undefined,
-    status: row.status,
-    elapsedMs: row.elapsedMs,
-    summary: row.summary ?? undefined,
-    error: row.error ?? undefined,
-    output: row.outputKind
-      ? { kind: row.outputKind, text: row.outputText ?? undefined, path: row.outputPath ?? undefined, size: row.outputSize ?? undefined }
-      : undefined,
-  };
-}
-
-function nodeIdsForScope(graph: ReturnType<typeof parseGraph>, scope: RunScope, nodeId?: string): Set<string> {
-  const all = new Set(graph.nodes.map((n) => n.id));
-  if (scope === "node" && nodeId) return new Set([nodeId]);
-  if (scope === "fromNode" && nodeId) {
-    const result = new Set([nodeId]);
-    let changed = true;
-    while (changed) {
-      changed = false;
-      for (const edge of graph.edges) {
-        if (result.has(edge.source) && !result.has(edge.target)) {
-          result.add(edge.target);
-          changed = true;
-        }
-      }
-    }
-    return result;
-  }
-  return all;
 }
 
 export function createRun(db: AppDatabase, projectId: string, scope: RunScope, nodeId?: string) {
@@ -140,7 +105,7 @@ export function projectRunsApi(db: AppDatabase, engine: RunEngine) {
     const projectId = String(c.req.param("id"));
     const parsed = startSchema.safeParse(await c.req.json().catch(() => ({})));
     if (!parsed.success) {
-      return c.json({ error: parsed.error.issues[0]?.message ?? "请求格式不正确" }, 400);
+      return badRequest(c, parsed);
     }
     try {
       const { id, graph } = createRun(db, projectId, parsed.data.scope, parsed.data.nodeId);
@@ -269,7 +234,7 @@ export function runsApi(db: AppDatabase, engine: RunEngine, dataDir: string) {
     if (!db.select().from(runs).where(eq(runs.id, runId)).get()) return c.json({ error: "运行不存在" }, 404);
     const parsed = renameSchema.safeParse(await c.req.json().catch(() => ({})));
     if (!parsed.success) {
-      return c.json({ error: parsed.error.issues[0]?.message ?? "请求格式不正确" }, 400);
+      return badRequest(c, parsed);
     }
     const trimmed = parsed.data.name?.trim() ?? "";
     db.update(runs)

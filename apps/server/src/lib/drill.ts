@@ -1,4 +1,13 @@
-import { parseDrillSet, verifyExternalRefs, type DrillDrop, type DrillSet } from "@scribe-flow/shared";
+import {
+  DEFAULT_DRILL_KINDS,
+  DRILL_KINDS,
+  DRILL_KIND_LABELS,
+  parseDrillSet,
+  verifyExternalRefs,
+  type DrillDrop,
+  type DrillKind,
+  type DrillSet,
+} from "@scribe-flow/shared";
 
 /**
  * 知识巩固节点辅助：解析 LLM 返回的练习集、汇总丢弃明细、生成节点摘要。
@@ -106,7 +115,7 @@ export function buildDrillParams(data: Record<string, unknown>): string {
   const lines = [
     "【出题要求】",
     `考察点数量：不超过 ${pointCount} 个`,
-    `题型：${kinds.map((kind) => KIND_LABELS[kind]).join("、")}`,
+    `题型：${kinds.map((kind) => DRILL_KIND_LABELS[kind]).join("、")}`,
     `难度：${difficulty}`,
     `输出延伸问题：${withExtensions ? "是" : "否"}`,
   ];
@@ -114,18 +123,11 @@ export function buildDrillParams(data: Record<string, unknown>): string {
   return lines.join("\n");
 }
 
-const KIND_LABELS: Record<string, string> = {
-  single: "单选",
-  multi: "多选",
-  judge: "判断",
-  cloze: "填空",
-};
+const DEFAULT_KINDS: DrillKind[] = [...DEFAULT_DRILL_KINDS];
 
-const DEFAULT_KINDS = ["single", "judge", "cloze"];
-
-function normalizeKinds(value: unknown): string[] {
+function normalizeKinds(value: unknown): DrillKind[] {
   const list = Array.isArray(value) ? value.map((item) => String(item)) : [];
-  const filtered = list.filter((kind) => kind in KIND_LABELS);
+  const filtered = list.filter((kind): kind is DrillKind => (DRILL_KINDS as readonly string[]).includes(kind));
   return filtered.length > 0 ? [...new Set(filtered)] : DEFAULT_KINDS;
 }
 

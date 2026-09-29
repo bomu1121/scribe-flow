@@ -4,6 +4,7 @@ import { join, resolve } from "node:path";
 import { and, desc, eq, inArray, notInArray } from "drizzle-orm";
 import {
   BUILTIN_PROMPT_BLOCKS,
+  MULTI_PRODUCT_SEPARATOR,
   NODE_TYPE_LABELS,
   fileSegmentKey,
   isSourceOutputNeeded,
@@ -32,6 +33,7 @@ import { biliCookies, projects, runMedia, runNodeInputs, runNodeLogs, runNodeRes
 import { chatCompletion, transcribeAudio, type AiConfig } from "./ai";
 import { fetchBiliVideoDetail } from "./bilibili";
 import { buildDrill, buildDrillParams } from "./drill";
+import { nodeIdsForScope } from "./graph-scope";
 import { countMindMapNodes, mindMapToMarkdown, parseMindMapJson } from "./mindmap";
 import { downloadBiliAudio, toAsrWav } from "./media";
 import {
@@ -44,6 +46,7 @@ import {
 import { ensureRemoteDirectory, scanRemoteMarkdown, writeRemoteFile, type NutstoreConfig } from "./nutstore";
 import { appendAllOutput, assertStepOutput, parseJsonLoose, readSearchQueries, renderStepSystem } from "./recipe";
 import { getAiConfig, getAsrConfig, getGeneralSettings, getNutstoreConfig, getSearchConfig, getSettings } from "./settings";
+import { sleep } from "./sleep";
 import { resolveArtifactPath, resolveOutputRoot, toStoredArtifactPath } from "./storage";
 import {
   enrichTraceReportWithExternalChecks,
@@ -123,10 +126,6 @@ export function describeError(err: unknown, maxLength = 400): string {
   }
   const text = parts.join(" ← ");
   return text.length <= maxLength ? text : `${text.slice(0, maxLength - 1)}…`;
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 interface ActiveRun {
@@ -304,7 +303,6 @@ function parseYamlFieldList(content: string, field: string): string[] {
   const lines = yaml.split(/\r?\n/);
   const result: string[] = [];
   let inField = false;
-  const fieldKey = field.toLowerCase();
   for (const line of lines) {
     const trimmed = line.trim();
     if (new RegExp(`^${field}:\\s*$`, "i").test(trimmed)) {
@@ -331,42 +329,6 @@ function parseYamlFieldList(content: string, field: string): string[] {
     }
   }
   return result.filter((value) => value);
-}
-
-/** 简单解析 Markdown 文件 frontmatter 中的 tags 列表。 */
-function parseYamlTags(content: string): string[] {
-  const match = content.match(/^---\n([\s\S]*?)\n---/);
-  if (!match) return [];
-  const yaml = match[1];
-  const lines = yaml.split(/\r?\n/);
-  const tags: string[] = [];
-  let inTags = false;
-  for (const line of lines) {
-    const trimmed = line.trim();
-    if (/^tags:\s*$/i.test(trimmed)) {
-      inTags = true;
-      continue;
-    }
-    if (inTags) {
-      if (/^[^-\s]/.test(trimmed)) {
-        inTags = false;
-      } else {
-        const item = trimmed.match(/^-\s*(.+)$/);
-        if (item) tags.push(item[1].trim().replace(/^["']|["']$/g, ""));
-        continue;
-      }
-    }
-    const inline = trimmed.match(/^tags:\s*(.+)$/i);
-    if (inline) {
-      tags.push(
-        ...inline[1]
-          .split(/[,，\s]+/)
-          .map((tag) => tag.trim().replace(/^["']|["']$/g, ""))
-          .filter(Boolean),
-      );
-    }
-  }
-  return tags.filter((tag) => tag);
 }
 
 function previewFor(output: NodeOutput): string | undefined {
@@ -517,18 +479,8 @@ export class RunEngine {
 
   /** 启动一次运行：run 行由调用方创建。 */
   start(runId: string, projectId: string, graph: WorkflowGraph, scope: RunScope, nodeId?: string): void {
-    const nodeIds = new Set<string>();
-    if (scope === "node" && nodeId) {
-      nodeIds.add(nodeId);
-    } else {
-      for (const node of graph.nodes) nodeIds.add(node.id);
-      if (scope === "fromNode" && nodeId) {
-        const downstream = this.downstream(graph, nodeId);
-        for (const id of [...nodeIds]) {
-          if (id !== nodeId && !downstream.has(id)) nodeIds.delete(id);
-        }
-      }
-    }
+    // 与路由侧预检共用同一份口径（`nodeIdsForScope`）：预检放行的集合就是这里执行的集合。
+    const nodeIds = nodeIdsForScope(graph, scope, nodeId);
     const order = this.topological(graph, nodeIds);
     const active: ActiveRun = {
       id: runId,
@@ -626,21 +578,6 @@ export class RunEngine {
     } else {
       await this.log(active, nodeId, "info", "可播放视频正在下载中…");
     }
-  }
-
-  private downstream(graph: WorkflowGraph, rootId: string): Set<string> {
-    const result = new Set<string>([rootId]);
-    let changed = true;
-    while (changed) {
-      changed = false;
-      for (const edge of graph.edges) {
-        if (result.has(edge.source) && !result.has(edge.target)) {
-          result.add(edge.target);
-          changed = true;
-        }
-      }
-    }
-    return result;
   }
 
   private topological(graph: WorkflowGraph, nodeIds: Set<string>): string[] {
@@ -1145,7 +1082,25 @@ export class RunEngine {
       .run();
   }
 
-  /** 多输出节点落库/展示时合并成一份主输出，保留兼容性；独立结果仍存于 run_node_inputs。 */
+  /**
+   * 多输出节点落库/展示时合并成一份主输出，保留兼容性；独立结果仍存于 run_node_inputs。
+   *
+   * 前提（代码本身表达不出来，只能写在这里）：本函数**只在真的产出了多份结果的节点上**被走到，
+   * 即 `runNode` 返回 `outputs.length > 1` 的那几种类型——
+   * - `process.transcribe`：每个音频输入一份 `text`；
+   * - `process.refine`：每份文本输入一份 `text`；
+   * - `process.prompt` / `process.gameguide` / `process.drill`：每份输入一份 `noteBlock`；
+   * - `process.text` / `flow.pick`：每份输入原样一份，`kind` 跟着输入走；
+   * - `process.chapter`：每章一份 `noteBlock`，合并后当作整篇 `noteDoc`（所以下面映射到 `noteDoc`）；
+   * - `source.bili` / `source.file`：多选卡片每个素材一份 `audio`，由下面的早退分支处理。
+   * 其余类型永远只返回一份，在 `outputs.length === 1` 处就返回了，不会走到这张表。
+   *
+   * 因此下面「类型 → 合并后的 kind」是一张需要跟着生产端一起改的映射：**新增会产出多份的节点类型时
+   * 必须同时在这里加一条**，否则不会报错，只会静默落到兜底的 `"text"`，而结果页要按 kind 决定怎么读
+   * （`noteDoc` 整篇文档 / `noteBlock` 笔记块 / `text` 纯文本），错了就是「笔记被当纯文本显示」。
+   * 拼接用的分隔符来自 shared 的 `MULTI_PRODUCT_SEPARATOR`：前端结果页按同一个值再切回来。
+   * 这里刻意不加运行时断言兜住上述约束——加断言会改变行为，需要单独批准。
+   */
   private combineOutputs(node: GraphNode, outputs: NodeOutput[]): NodeOutput {
     if (outputs.length === 0) return { kind: "text", text: "" };
     if (outputs.length === 1) return outputs[0];
@@ -1156,17 +1111,15 @@ export class RunEngine {
     const kind: NodeOutput["kind"] =
       node.type === "process.prompt" || node.type === "process.gameguide" || node.type === "process.drill"
         ? "noteBlock"
-        : node.type === "process.chapter" || node.type === "process.mindmap"
+        : node.type === "process.chapter"
           ? "noteDoc"
-          : node.type === "flow.if" || node.type === "process.text"
+          : node.type === "process.text"
             ? (firstKind ?? "text")
-            : node.type === "process.merge" || node.type === "process.output"
-              ? "noteDoc"
-              : "text";
+            : "text";
     const text = outputs
       .map((output) => output.text ?? "")
       .filter(Boolean)
-      .join("\n\n---\n\n");
+      .join(MULTI_PRODUCT_SEPARATOR);
     return { kind, text, size: text.length };
   }
 
@@ -1181,7 +1134,6 @@ export class RunEngine {
     const started = Date.now();
     const abort = new AbortController();
     active.nodeAborts.set(nodeId, abort);
-    const data = node.data as Record<string, unknown>;
     // 重试策略：节点自己配了就以节点为准，没配才走「常规」里的全局默认。
     const { maxRetries, backoffMs } = resolveRetryPolicy(node, getGeneralSettings(this.db, this.dataDir));
     await this.updateNode(active, nodeId, "running", 0, undefined, undefined, undefined, 1);

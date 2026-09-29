@@ -17,6 +17,7 @@ import {
   folderChildrenOf,
   consumeSuppressedClick,
   pointerDrag,
+  resolveTreeRename,
   type ProjectSortMode,
   visibleChildFolders,
   visibleChildProjects,
@@ -57,6 +58,14 @@ const childProjects = computed(() => visibleChildProjects(props.projects, props.
 const isDropTarget = computed(
   () => pointerDrag.active && pointerDrag.overFolderId === props.folder.id && !pointerDrag.overChildArea,
 );
+/**
+ * 「拖到本文件夹展开后的子列表区域」＝拖入该文件夹（VS Code bubble-Down）。
+ *
+ * 与 `isDropTarget`（拖到文件夹行本身）互斥是刻意的：落点只有一处，两处高亮同时亮会让人
+ * 猜不出松手会落到哪。`overChildArea` 只在本文件夹的子列表里没有行时才会为真（见
+ * ProjectsPanel 的 `dropTargetAt`），所以这里不会再和子行自身的插入线叠加。
+ */
+const isDropChildren = computed(() => pointerDrag.overChildArea && pointerDrag.overFolderId === props.folder.id);
 const isReorderBefore = computed(() => pointerDrag.reorderType === "folder" && pointerDrag.reorderBeforeId === props.folder.id);
 const isReorderAfter = computed(() => pointerDrag.reorderType === "folder" && pointerDrag.reorderAfterId === props.folder.id);
 const isDragging = computed(() => pointerDrag.draggingKey === `folder:${props.folder.id}`);
@@ -139,9 +148,10 @@ function startRename() {
 
 async function commitRename() {
   if (!renaming.value) return;
-  const name = renameValue.value.trim();
+  // 与工程行同一套口径（见 project-tree-utils.resolveTreeRename）：清空 = 放弃，不发请求。
+  const name = resolveTreeRename(props.folder.name, renameValue.value);
   renaming.value = false;
-  if (!name || name === props.folder.name) return;
+  if (!name) return;
   try {
     await store.renameFolder(props.folder.id, name);
   } catch (err) {
@@ -398,7 +408,7 @@ function onKeydown(event: KeyboardEvent) {
       <span v-else class="wp-row-label" :title="buildFolderPath(folders, folder.id)">{{ folder.name }}</span>
     </div>
 
-    <ul v-if="open" class="wp-children">
+    <ul v-if="open" class="wp-children" :class="{ 'is-drop-children': isDropChildren }">
       <ProjectFolderNode
         v-for="child in childFolders"
         :key="child.id"
@@ -437,8 +447,6 @@ function onKeydown(event: KeyboardEvent) {
         :project="project"
         :folders="folders"
         :selected-ids="selectedIds"
-        :search="search"
-        :sort-mode="sortMode"
         @select="(payload: { id: string; kind: 'project'; event: MouseEvent }) => emit('select', payload)"
         @move-selection="emit('move-selection')"
         @delete-selection="emit('delete-selection')"

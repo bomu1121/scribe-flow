@@ -1,9 +1,11 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref, watch } from "vue";
+import { computed, ref, watch } from "vue";
 import { ElOption, ElSelect } from "element-plus";
 import { Copy, X } from "lucide-vue-next";
 import type { PromptBlock } from "@scribe-flow/shared";
-import { toast } from "@/lib/toast";
+import { useBodyScrollLock } from "@/composables/useBodyScrollLock";
+import { useEscapeClose } from "@/composables/useEscapeClose";
+import { copyText } from "@/lib/clipboard";
 import DiffViewer from "./DiffViewer.vue";
 
 const props = defineProps<{
@@ -116,17 +118,17 @@ function ensureDistinct() {
 watch(
   () => props.open,
   (open) => {
-    if (open) {
-      resetCompare(props.initialBlockId);
-      document.body.classList.add("pbd-lock");
-      window.addEventListener("keydown", onKeydown);
-    } else {
-      document.body.classList.remove("pbd-lock");
-      window.removeEventListener("keydown", onKeydown);
-    }
+    if (open) resetCompare(props.initialBlockId);
   },
   { immediate: true },
 );
+
+/* 打开态下的两个副作用：Escape 关闭与锁 body 滚动（共用组合式函数，见 composables/）。 */
+useEscapeClose(
+  () => props.open,
+  () => emit("update:open", false),
+);
+useBodyScrollLock(() => props.open);
 
 watch(
   () => props.initialBlockId,
@@ -138,24 +140,6 @@ watch(
 watch(seriesFilter, ensureDistinct);
 watch(leftId, ensureDistinct);
 watch(rightId, ensureDistinct);
-
-function onKeydown(event: KeyboardEvent) {
-  if (event.key === "Escape" && props.open) emit("update:open", false);
-}
-
-onBeforeUnmount(() => {
-  document.body.classList.remove("pbd-lock");
-  window.removeEventListener("keydown", onKeydown);
-});
-
-async function copyText(text: string, message: string) {
-  try {
-    await navigator.clipboard.writeText(text);
-    toast.success(message);
-  } catch {
-    toast.error("复制失败，请手动选择文本");
-  }
-}
 
 function copyBlock(block: PromptBlock | undefined) {
   if (!block) return;
@@ -495,10 +479,6 @@ function copyBlock(block: PromptBlock | undefined) {
 
 .pbd-diff .sf-diff-list {
   max-height: none;
-}
-
-body.pbd-lock {
-  overflow: hidden;
 }
 
 .pbd-fade-enter-active,

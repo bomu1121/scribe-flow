@@ -5,7 +5,7 @@ import { RefreshCw } from "lucide-vue-next";
 import { useSettingsStore } from "@/stores/settings";
 import NodeFieldLabel from "../NodeFieldLabel.vue";
 
-const props = defineProps<{ folder?: string }>();
+defineProps<{ folder?: string }>();
 const emit = defineEmits<{ update: [value: { folder?: string }] }>();
 
 const store = useSettingsStore();

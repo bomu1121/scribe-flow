@@ -2,6 +2,7 @@
 import { computed } from "vue";
 import { ElCheckbox } from "element-plus";
 import type { NodePick, SegmentOption } from "@scribe-flow/shared";
+import { fmtMinutesSeconds } from "@/utils/run-segments";
 import NodeFieldLabel from "../NodeFieldLabel.vue";
 
 /**
@@ -68,13 +69,6 @@ function toggleGroup(originNodeId: string, checked: boolean) {
   );
 }
 
-function durationText(seconds?: number): string {
-  if (!seconds || !Number.isFinite(seconds)) return "";
-  const m = Math.floor(seconds / 60);
-  const s = Math.round(seconds % 60);
-  return m > 0 ? `${m} 分 ${s} 秒` : `${s} 秒`;
-}
-
 /**
  * 分P 标题：与素材标题重复时不显示。
  * B 站多选卡片里 part 常常就是 title（同一字段被写进两处），重复显示会很吵。
@@ -117,7 +111,7 @@ function partText(option: SegmentOption): string {
           <span class="sf-pick-item-index">{{ String(option.index).padStart(2, "0") }}</span>
           <span class="sf-pick-item-title">{{ option.title }}</span>
           <span v-if="partText(option)" class="sf-pick-item-part">{{ partText(option) }}</span>
-          <span v-if="durationText(option.duration)" class="sf-pick-item-time">{{ durationText(option.duration) }}</span>
+          <span v-if="fmtMinutesSeconds(option.duration)" class="sf-pick-item-time">{{ fmtMinutesSeconds(option.duration) }}</span>
         </label>
       </div>
 

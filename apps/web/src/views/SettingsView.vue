@@ -11,6 +11,7 @@ import PromptBlockDiffDialog from "../components/PromptBlockDiffDialog.vue";
 import type { AiProvider, AsrEngine, DataOverview, NodeType, PruneItem, PruneOutcome, PruneTarget, PromptBlock, SearchProvider } from "@scribe-flow/shared";
 import { FILE_NAME_TOKENS, GENERAL_LIMITS, NODE_TYPE_LABELS, NODE_TYPE_ORDER, TRACE_SOURCE_AUTHORITY_LABELS, renderFileNameTemplate } from "@scribe-flow/shared";
 import { api } from "@/lib/api";
+import { copyText } from "@/lib/clipboard";
 import { useSettingsStore } from "@/stores/settings";
 import { usePromptsStore } from "@/stores/prompts";
 import { useRunsStore } from "@/stores/runs";
@@ -200,15 +201,6 @@ function blockRecipeText(block: PromptBlock): string {
     }),
   ].join("\n");
   return `${block.prompt}\n\n${recipe}`;
-}
-
-async function copyText(text: string, message: string) {
-  try {
-    await navigator.clipboard.writeText(text);
-    toast.success(message);
-  } catch {
-    toast.error("复制失败，请手动选择文本");
-  }
 }
 
 function copyBlockPrompt(block: PromptBlock) {
@@ -1529,15 +1521,6 @@ async function restoreNutstoreBackup(backup: { path: string; name: string }) {
   gap: 8px;
 }
 
-.sf-field-sep {
-  color: var(--color-text-tertiary);
-}
-
-.sf-field-mono :deep(.el-textarea__inner) {
-  font-family: var(--font-mono);
-  font-size: 12px;
-}
-
 .sf-field-hint {
   margin: 2px 0 0;
   font-size: 11px;
@@ -2157,9 +2140,5 @@ async function restoreNutstoreBackup(backup: { path: string; name: string }) {
   word-break: break-word;
   max-height: 220px;
   overflow-y: auto;
-}
-
-.sf-danger-text {
-  color: var(--color-error);
 }
 </style>

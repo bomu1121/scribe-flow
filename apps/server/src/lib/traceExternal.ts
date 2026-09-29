@@ -4,6 +4,7 @@ import type { AiConfig } from "./ai";
 import { chatCompletion } from "./ai";
 import { parseJsonLoose } from "./recipe";
 import type { SearchConfig } from "./settings";
+import { sleep } from "./sleep";
 import { normalizeSourceUrl, rankSources } from "./sourceAuthority";
 
 interface CheckPlan {
@@ -245,10 +246,6 @@ export async function collectSources(
 function isRetryableSearchError(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error);
   return !/（4\d\d）/.test(message);
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 /** 检索一条：网络抖动时重试一次。串行发几十次请求时，一次 ECONNRESET 不该让整条核查白跑。 */

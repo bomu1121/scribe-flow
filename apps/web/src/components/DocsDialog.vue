@@ -4,6 +4,7 @@ import { BookText, FileWarning, RefreshCw, Search } from "lucide-vue-next";
 import { ElInput } from "element-plus";
 import { api } from "@/lib/api";
 import { renderMarkdown } from "@/lib/markdown";
+import { formatBytes } from "@/lib/bytes";
 import { useUiStore } from "@/stores/ui";
 import { DOC_CLASS_LABELS, type DocClass, type DocSummary, docClassOfDir } from "@scribe-flow/shared";
 
@@ -178,12 +179,6 @@ const metaRows = computed(() => {
   if (fm.superseded_by) rows.push({ label: "被取代", value: fm.superseded_by, mono: true });
   return rows;
 });
-
-function formatSize(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
-}
 
 /**
  * 一次请求把列表与全部正文都取回来。
@@ -375,7 +370,7 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown));
                   <p class="sf-docs-article-path">
                     <code>{{ detail.path }}</code>
                     <span class="sf-docs-dot">·</span>
-                    <span>{{ formatSize(detail.size) }}</span>
+                    <span>{{ formatBytes(detail.size) }}</span>
                   </p>
                   <dl v-if="metaRows.length" class="sf-docs-meta">
                     <div v-for="row in metaRows" :key="row.label" class="sf-docs-meta-row">

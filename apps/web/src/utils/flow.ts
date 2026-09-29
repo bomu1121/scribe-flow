@@ -1,4 +1,5 @@
 import type { ViewportTransform } from "@vue-flow/core";
+import { DEFAULT_DRILL_KINDS } from "@scribe-flow/shared";
 import type { AsrEngine, BiliSourceItem, DrillDifficulty, DrillKind, GraphEdge, GraphNode, NodeRunStatus, NodeType, PageRef, ResultDelta, SourceVideoItem, WorkflowGraph } from "@scribe-flow/shared";
 import type { RunSegment } from "./run-segments";
 
@@ -153,16 +154,26 @@ export function toFlowEdges(graph: WorkflowGraph): ScribeFlowEdge[] {
   }));
 }
 
+/**
+ * 剥掉只属于运行态的字段（status / summary / preview / delta）。
+ *
+ * 这些字段只存在于内存与运行记录里：写进工程定义后，刷新出来就是「节点卡在 running」
+ * 这种假状态。落盘前、把服务端图读进画布前都要剥一次。
+ */
+export function stripRuntimeFields(data: Record<string, unknown>): Record<string, unknown> {
+  const next: Record<string, unknown> = { ...data };
+  delete next.status;
+  delete next.summary;
+  delete next.preview;
+  delete next.delta;
+  return next;
+}
+
 export function toBusinessGraph(nodes: ScribeFlowNode[], edges: ScribeFlowEdge[], viewport: ViewportTransform): WorkflowGraph {
   const businessNodes: GraphNode[] = nodes.map((node) => {
-    const data = { ...node.data } as Record<string, unknown>;
+    const data = stripRuntimeFields({ ...node.data });
     delete data.nodeType;
     delete data.ctx;
-    // 运行态字段只属于内存/运行记录，不写入工程定义，避免刷新后“卡在 running”。
-    delete data.status;
-    delete data.summary;
-    delete data.preview;
-    delete data.delta;
     return {
       id: node.id,
       type: node.data.nodeType,
@@ -185,6 +196,41 @@ export function toBusinessGraph(nodes: ScribeFlowNode[], edges: ScribeFlowEdge[]
     edges: businessEdges,
     viewport: { x: viewport.x, y: viewport.y, zoom: viewport.zoom },
   };
+}
+
+/**
+ * 一次运行中会真正被执行的节点集合。
+ *
+ * - `node`：只有该节点自己；
+ * - `fromNode`：从该节点沿边向下游求可达闭包（局部运行「从这儿开始往下跑」）；
+ * - `all`：全图。
+ *
+ * 调用方有的拿画布渲染态（FlowCanvas 的 nodesRef/edgesRef），有的拿工程图（编辑器页的 graph），
+ * 因此这里只依赖 `id / source / target` 三个字段，两种数据都能直接传。
+ */
+export function runScopeNodeIds(
+  nodes: Array<{ id: string }>,
+  edges: Array<{ source: string; target: string }>,
+  scope: "all" | "fromNode" | "node",
+  nodeId?: string,
+): Set<string> {
+  const all = new Set(nodes.map((node) => node.id));
+  if (scope === "node" && nodeId) return new Set([nodeId]);
+  if (scope === "fromNode" && nodeId) {
+    const result = new Set([nodeId]);
+    let changed = true;
+    while (changed) {
+      changed = false;
+      for (const edge of edges) {
+        if (result.has(edge.source) && !result.has(edge.target)) {
+          result.add(edge.target);
+          changed = true;
+        }
+      }
+    }
+    return result;
+  }
+  return all;
 }
 
 export function cloneGraph(graph: WorkflowGraph): WorkflowGraph {
@@ -227,7 +273,7 @@ export function emptyNodeData(type: NodeType): Record<string, unknown> {
       return {
         label: "知识巩固",
         pointCount: 6,
-        kinds: ["single", "judge", "cloze"],
+        kinds: [...DEFAULT_DRILL_KINDS],
         difficulty: "medium",
         withExtensions: true,
         retry: { maxRetries: 2, backoffMs: 3000 },

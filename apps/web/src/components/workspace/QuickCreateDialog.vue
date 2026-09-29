@@ -18,6 +18,8 @@ import {
 } from "@scribe-flow/shared";
 import { api } from "@/lib/api";
 import { toast } from "@/lib/toast";
+import { fmtDuration } from "@/utils/run-segments";
+import { useHiddenNodes } from "@/composables/useHiddenNodes";
 import { useProjectsStore } from "@/stores/projects";
 import { usePromptsStore } from "@/stores/prompts";
 import { useSettingsStore } from "@/stores/settings";
@@ -83,7 +85,7 @@ const videoTemplates = computed<WorkflowTemplate[]>(() =>
 /** 检索密钥没配时，需要联网核查的块不出现在可选列表里（跑出来只有一份没核查的清单）。 */
 const searchReady = computed(() => Boolean(settingsStore.settings?.search.hasKey));
 /** 展示范围里收起的节点：它的提示词块也一起收起（如阴阳师攻略的块）。 */
-const hiddenNodes = computed(() => settingsStore.settings?.visibility?.hiddenNodes ?? []);
+const hiddenNodes = useHiddenNodes();
 const promptOptions = computed(() =>
   availablePromptBlocks(bindablePromptBlocks(promptsStore.customBlocks), searchReady.value, hiddenNodes.value),
 );
@@ -116,17 +118,6 @@ let resolveSeq = 0;
 
 function normalizeTitle(value: string | undefined): string {
   return (value ?? "").replace(/\s+/g, " ").trim();
-}
-
-function durationText(seconds: number | undefined): string {
-  if (!seconds || seconds <= 0) return "";
-  const total = Math.round(seconds);
-  const h = Math.floor(total / 3600);
-  const m = Math.floor((total % 3600) / 60);
-  const s = total % 60;
-  const mm = h > 0 ? String(m).padStart(2, "0") : String(m);
-  const ss = String(s).padStart(2, "0");
-  return h > 0 ? `${h}:${mm}:${ss}` : `${mm}:${ss}`;
 }
 
 /** 解析链接：拿标题/封面/UP主/分 P。失败不阻断创建，只是工程名与来源元信息退化为链接本身。 */
@@ -305,7 +296,7 @@ async function submit() {
         <span class="qc-title">{{ preview.title }}</span>
         <span class="qc-sub">
           {{ preview.uploader }}
-          <template v-if="preview.duration"> · {{ durationText(preview.duration) }}</template>
+          <template v-if="preview.duration"> · {{ fmtDuration(preview.duration) }}</template>
           <template v-if="preview.pages.length > 1"> · {{ preview.pages.length }} 个分 P</template>
         </span>
       </div>

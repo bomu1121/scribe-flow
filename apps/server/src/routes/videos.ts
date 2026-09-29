@@ -1,9 +1,8 @@
 import { Hono } from "hono";
 import { z } from "zod";
 import type { PageRef, UgcSeasonInfo, VideoPreview } from "@scribe-flow/shared";
-
-const USER_AGENT =
-  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36";
+import { badRequest } from "../lib/bad-request";
+import { BILI_USER_AGENT } from "../lib/bilibili";
 
 const PREVIEW_CACHE_TTL = 5 * 60 * 1000;
 const PREVIEW_CACHE_MAX = 30;
@@ -34,8 +33,8 @@ function normalizeCover(url: string): string {
 
 function extractBvid(input: string): string | null {
   const text = input.trim();
-  const bv = text.match(/(BV[0-9A-Za-z]+)/);
-  if (bv) return bv[1];
+  const bv = text.match(/\bBV[0-9A-Za-z]{8,}\b/);
+  if (bv) return bv[0];
   const av = text.match(/\bav(\d+)\b/i);
   if (av) return `av${av[1]}`;
   return null;
@@ -47,7 +46,7 @@ async function resolveBvid(input: string): Promise<string | null> {
 
   // b23.tv / 短链：跟随重定向后取最终地址
   try {
-    const res = await fetch(input, { method: "GET", redirect: "follow", headers: { "User-Agent": USER_AGENT }, signal: AbortSignal.timeout(8000) });
+    const res = await fetch(input, { method: "GET", redirect: "follow", headers: { "User-Agent": BILI_USER_AGENT }, signal: AbortSignal.timeout(8000) });
     return extractBvid(res.url);
   } catch {
     return null;
@@ -60,7 +59,7 @@ async function fetchVideo(bvid: string): Promise<VideoPreview> {
 
   const res = await fetch(`https://api.bilibili.com/x/web-interface/view?bvid=${encodeURIComponent(bvid)}`, {
     headers: {
-      "User-Agent": USER_AGENT,
+      "User-Agent": BILI_USER_AGENT,
       Referer: "https://www.bilibili.com/",
       Accept: "application/json",
     },
@@ -165,7 +164,7 @@ export const videosApi = new Hono();
 videosApi.post("/preview", async (c) => {
   const parsed = bodySchema.safeParse(await c.req.json());
   if (!parsed.success) {
-    return c.json({ error: parsed.error.issues[0]?.message ?? "请求格式不正确" }, 400);
+    return badRequest(c, parsed);
   }
 
   try {

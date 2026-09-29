@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from "vue";
 import { ElButton, ElInput } from "element-plus";
+import { useBodyScrollLock } from "@/composables/useBodyScrollLock";
 import { toast } from "@/lib/toast";
 import { Check, Clock3, FolderHeart, ListVideo, PlaySquare, RotateCw, Search, X } from "lucide-vue-next";
 import type { SourceCollection, SourceVideoItem, VideoPreview } from "@scribe-flow/shared";
@@ -260,9 +261,8 @@ function onKeydown(event: KeyboardEvent) {
   if (event.key === "Escape" && props.open) close();
 }
 
-function setBodyLock(locked: boolean) {
-  document.body.classList.toggle("sp-lock", locked);
-}
+/* 打开时锁 body 滚动（共用组合式函数，见 composables/useBodyScrollLock.ts）。 */
+useBodyScrollLock(() => props.open);
 
 let searchTimer: ReturnType<typeof setTimeout> | null = null;
 watch(searchKeyword, () => {
@@ -281,11 +281,9 @@ watch(
       activeTab.value = "fav";
       selectedFolder.value = "";
       selectedCollection.value = "";
-      setBodyLock(true);
       window.addEventListener("keydown", onKeydown);
       void loadTab();
     } else {
-      setBodyLock(false);
       window.removeEventListener("keydown", onKeydown);
     }
   },
@@ -306,7 +304,6 @@ watch(activeTab, () => void loadTab());
 
 onBeforeUnmount(() => {
   if (searchTimer) clearTimeout(searchTimer);
-  setBodyLock(false);
   window.removeEventListener("keydown", onKeydown);
 });
 </script>
@@ -830,10 +827,6 @@ onBeforeUnmount(() => {
   --el-button-disabled-bg-color: var(--color-border-strong);
   --el-button-disabled-border-color: var(--color-border-strong);
   --el-button-disabled-text-color: var(--color-surface);
-}
-
-body.sp-lock {
-  overflow: hidden;
 }
 
 .sp-fade-enter-active,

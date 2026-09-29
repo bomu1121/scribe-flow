@@ -5,6 +5,7 @@ import { z } from "zod";
 import { BUILTIN_PROMPT_BLOCKS, type PromptBlock } from "@scribe-flow/shared";
 import type { AppDatabase } from "../db/client";
 import { promptBlocks, type PromptBlockRow } from "../db/schema";
+import { badRequest } from "../lib/bad-request";
 
 const createSchema = z.object({
   name: z.string().trim().min(1, "名称不能为空").max(40, "名称过长"),
@@ -28,7 +29,7 @@ export function promptsApi(db: AppDatabase) {
   api.post("/", async (c) => {
     const parsed = createSchema.safeParse(await c.req.json());
     if (!parsed.success) {
-      return c.json({ error: parsed.error.issues[0]?.message ?? "请求格式不正确" }, 400);
+      return badRequest(c, parsed);
     }
     const now = Date.now();
     const id = `custom.${randomUUID()}`;
@@ -42,7 +43,7 @@ export function promptsApi(db: AppDatabase) {
     if (id.startsWith("builtin.")) return c.json({ error: "内置提示词块不可修改" }, 400);
     const parsed = updateSchema.safeParse(await c.req.json());
     if (!parsed.success) {
-      return c.json({ error: parsed.error.issues[0]?.message ?? "请求格式不正确" }, 400);
+      return badRequest(c, parsed);
     }
     const row = db.select().from(promptBlocks).where(eq(promptBlocks.id, id)).get();
     if (!row) return c.json({ error: "提示词块不存在" }, 404);

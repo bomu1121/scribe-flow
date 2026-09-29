@@ -185,6 +185,17 @@ html.sf-dropdown-modal-open body :is(
   }
 }
 
+/*
+ * 浮层打开时锁 body 滚动（见 composables/useBodyScrollLock.ts）。
+ *
+ * 只有这一条规则、一个类名：原本三个浮层各写一份（pbd-lock / rl-lock / sp-lock），
+ * 现在统一到 `pbd-lock`（沿用其中原来的那一个）。规则必须留在全局样式里——
+ * 浮层是 Teleport 到 body 的，组件内的 scoped 样式够不到 `body`（见 scripts/ui-lint.mjs）。
+ */
+body.pbd-lock {
+  overflow: hidden;
+}
+
 /* 设置页「展示范围」：节点开关列表 */
 .sf-vis-list {
   display: flex;

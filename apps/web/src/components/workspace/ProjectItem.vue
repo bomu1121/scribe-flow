@@ -9,14 +9,12 @@ import { useProjectsStore } from "@/stores/projects";
 import { useRunsStore } from "@/stores/runs";
 import RowMenu, { type RowMenuItem } from "./RowMenu.vue";
 import FolderPickerDialog from "./FolderPickerDialog.vue";
-import { bindInlineEditBlur, consumeSuppressedClick, pointerDrag, type ProjectSortMode } from "./project-tree-utils";
+import { bindInlineEditBlur, consumeSuppressedClick, pointerDrag, resolveTreeRename } from "./project-tree-utils";
 
 const props = defineProps<{
   project: ProjectListItem;
   folders: ProjectFolder[];
   selectedIds: Set<string>;
-  search?: string;
-  sortMode?: ProjectSortMode;
 }>();
 
 const emit = defineEmits<{
@@ -84,9 +82,10 @@ function startRename() {
 
 async function commitRename() {
   if (!renaming.value) return;
-  const name = renameValue.value.trim();
+  // 与文件夹行同一套口径（见 project-tree-utils.resolveTreeRename）：清空 = 放弃，不发请求。
+  const name = resolveTreeRename(props.project.name, renameValue.value);
   renaming.value = false;
-  if (!name || name === props.project.name) return;
+  if (!name) return;
   try {
     await store.renameProject(props.project.id, name);
   } catch (err) {

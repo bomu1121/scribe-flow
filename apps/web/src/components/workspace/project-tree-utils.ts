@@ -1,17 +1,10 @@
 import { reactive } from "vue";
 import type { ProjectFolder, ProjectListItem } from "@scribe-flow/shared";
 
-/** 工程树（文件夹组织工程）拖拽 MIME（保留兼容，实际使用自研指针拖拽）。 */
-export const PROJECT_TREE_DND_MIME = "application/scribe-flow-project-tree";
-
 export interface ProjectTreeDragPayload {
   kind: "folder" | "project";
   id: string;
 }
-
-export const projectTreeDragState = reactive<{ payload: ProjectTreeDragPayload | null }>({
-  payload: null,
-});
 
 /**
  * 自研指针拖拽运行时（pointerdown→move→up）。
@@ -65,10 +58,6 @@ export function consumeSuppressedClick(): boolean {
   return v;
 }
 
-export function clearClickSuppression() {
-  suppressClickFlag = false;
-}
-
 export function resetPointerDrag() {
   pointerDrag.active = false;
   pointerDrag.payload = null;
@@ -80,16 +69,6 @@ export function resetPointerDrag() {
   pointerDrag.reorderType = null;
   pointerDrag.reorderBeforeId = null;
   pointerDrag.reorderAfterId = null;
-}
-
-export function readProjectTreeDrag(event: DragEvent): ProjectTreeDragPayload | null {
-  try {
-    const raw = event.dataTransfer?.getData(PROJECT_TREE_DND_MIME);
-    if (raw) return JSON.parse(raw) as ProjectTreeDragPayload;
-  } catch {
-    // 外部拖拽或读取受限时忽略并回落
-  }
-  return projectTreeDragState.payload;
 }
 
 export function sortFoldersByName(folders: ProjectFolder[]): ProjectFolder[] {
@@ -260,6 +239,22 @@ export function effectiveSelection(
 }
 
 /* ---------- 行内编辑失焦辅助 ---------- */
+
+/**
+ * 树行改名（工程行 / 文件夹行）提交时该发什么名称；返回 null 表示「不用发」。
+ *
+ * 与运行记录那套（`lib/run-meta.ts` 的 `resolveRenameRequest`）**只差一处：这里不允许清空**。
+ * 工程名与文件夹名在服务端都是必填（`routes/projects.ts` / `routes/folders.ts` 的 name 都是
+ * `z.string().trim().min(1)`），清空提交只会换回一个 400；运行记录的名字本来可空（没名字只显示时间），
+ * 所以那边清空是正当操作，这边的空输入只能当作「改到一半反悔了」直接放弃。
+ *
+ * 两处实现合并到这里之后，工程行与文件夹行不会再各写一份「trim + 比较」而互相走偏。
+ */
+export function resolveTreeRename(current: string, input: string): string | null {
+  const next = input.trim();
+  if (!next || next === current) return null;
+  return next;
+}
 
 /**
  * 行内编辑（重命名 / 内联新建）的失焦辅助。

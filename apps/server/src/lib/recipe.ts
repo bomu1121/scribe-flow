@@ -1,4 +1,4 @@
-import type { Assertion, RecipeStep } from "@scribe-flow/shared";
+import { normalizeForMatch, type RecipeStep } from "@scribe-flow/shared";
 
 /**
  * 配方执行原语（M8-1 阶段 A）：系统模板渲染 / JSON 容错解析 / 确定性断言门。
@@ -26,8 +26,6 @@ export interface StepContext {
    */
   sources?: string;
 }
-
-const TEMPLATE_VARS = ["{{input}}", "{{prev}}", "{{all}}", "{{source}}", "{{params}}", "{{sources}}"] as const;
 
 /** 展开 {{input}} / {{prev}} / {{all}} / {{source}} / {{params}} / {{sources}}；其余 {{...}} 原样保留（避免误伤老提示词）。 */
 export function renderStepSystem(template: string, ctx: StepContext): string {
@@ -143,15 +141,27 @@ export function readSearchQueries(prev: string, queriesFrom: string): string[] {
   return out;
 }
 
-/** 中文引号/破折号写法各异的归一：只消除标点差异，不改动任何正文字符。 */function normalizeQuotes(text: string): string {
+/**
+ * 中文引号/破折号写法各异的归一：只消除标点差异，不改动任何正文字符。
+ * 放在 shared 的 `normalizeForMatch` **之前**：那一步不动标点，引号差异只能在这里消。
+ */
+function normalizeQuotes(text: string): string {
   return text
     .replace(/[\u2018\u2019\u201b\u2032]/g, "'")
     .replace(/[\u201c\u201d\u201f\u2033]/g, '"')
     .replace(/[\u2013\u2014]/g, "—");
 }
 
-function normalizeForMatch(text: string): string {
-  return normalizeQuotes(text).replace(/\s/g, "");
+/**
+ * 引用回查专用归一化：先消引号/破折号写法差异，再叠 shared 的比对归一化。
+ *
+ * 刻意与 shared 的 `normalizeForMatch` **同名不同义**的历史在上一轮清掉了：那时这边只做
+ * 「去空白 + 引号归一」，shared 那边还折全角、去 `[*_`~]` 强调符、转小写，同一句引用可能过了一条
+ * 校验链却卡在另一条上。现在两边共用同一套归一化，这边只多做一步标点归一。
+ * 代价是判定变宽：全角/强调符/大小写差异不再判失败（见 recipe.test.ts 的引用回查用例）。
+ */
+function normalizeForCitation(text: string): string {
+  return normalizeForMatch(normalizeQuotes(text));
 }
 
 /**
@@ -200,7 +210,7 @@ export function evaluateAsserts(step: RecipeStep, outputText: string, ctx: StepC
   const asserts = step.expects?.asserts;
   if (!asserts || asserts.length === 0) return { ok: true, errors: [] };
   const errors: string[] = [];
-  const inputNorm = normalizeForMatch(ctx.input);
+  const inputNorm = normalizeForCitation(ctx.input);
 
   for (const assert of asserts) {
     const describe = `[${assert.op}]`;
@@ -252,7 +262,7 @@ export function evaluateAsserts(step: RecipeStep, outputText: string, ctx: StepC
         for (const quote of quotes) {
           const raw = quote.trim();
           if (!raw || raw.length < 6 || raw.endsWith("…") || raw.endsWith("...") || raw.endsWith("……")) continue;
-          const normQuote = normalizeForMatch(raw);
+          const normQuote = normalizeForCitation(raw);
           if (!inputNorm.includes(normQuote) && !matchesAfterTrimmedLead(inputNorm, normQuote)) {
             misses.push(raw.length > 40 ? `${raw.slice(0, 40)}…` : raw);
           }

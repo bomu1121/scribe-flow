@@ -7,12 +7,9 @@ import { parseGraph } from "@scribe-flow/shared";
 import { createDatabase } from "../db/client";
 import { projects, runNodeResults, runs } from "../db/schema";
 import { RunEngine } from "./engine";
+import { sleep } from "./sleep";
 
 const tmpDirs: string[] = [];
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
 
 async function waitUntilFinished(db: ReturnType<typeof createDatabase>, runId: string, timeoutMs = 8000): Promise<void> {
   const deadline = Date.now() + timeoutMs;

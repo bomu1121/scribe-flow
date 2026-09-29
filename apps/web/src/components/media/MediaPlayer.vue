@@ -9,6 +9,7 @@
  */
 import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import { Loader2, Maximize, Minimize, Pause, PictureInPicture2, Play, RotateCcw, Volume2, VolumeX } from "lucide-vue-next";
+import { fmtDuration } from "@/utils/run-segments";
 
 const props = defineProps<{
   streamUrl: string;
@@ -60,14 +61,13 @@ const bufferRatio = computed(() => {
 });
 const canPiP = typeof document !== "undefined" && "pictureInPictureEnabled" in document && document.pictureInPictureEnabled;
 
-function fmt(sec: number): string {
-  if (!Number.isFinite(sec) || sec < 0) sec = 0;
-  const h = Math.floor(sec / 3600);
-  const m = Math.floor((sec % 3600) / 60);
-  const s = Math.floor(sec % 60);
-  const mm = String(m).padStart(2, "0");
-  const ss = String(s).padStart(2, "0");
-  return h > 0 ? `${h}:${mm}:${ss}` : `${m}:${ss}`;
+/**
+ * 时间轴上的时间读数。
+ * 用共享的 fmtDuration（它对 0 / 非有限值返回空串），再回落到 0:00——
+ * 播放器的时间轴任何时候都得有个数，不能因为「还没拿到时长」就整格空掉。
+ */
+function clock(sec: number): string {
+  return fmtDuration(sec) || "0:00";
 }
 
 function armHide() {
@@ -380,7 +380,7 @@ defineExpose({ togglePlay, seekTo, currentTime: () => currentTime.value, video: 
         aria-valuemin="0"
         aria-valuemax="100"
         :aria-valuenow="Math.round(progressRatio * 100)"
-        :aria-valuetext="`${fmt(currentTime)} / ${fmt(shownDuration)}`"
+        :aria-valuetext="`${clock(currentTime)} / ${clock(shownDuration)}`"
         @pointerdown="onTrackPointerDown"
         @pointermove="onTrackPointerMove"
         @pointerup="onTrackPointerUp"
@@ -413,7 +413,7 @@ defineExpose({ togglePlay, seekTo, currentTime: () => currentTime.value, video: 
           aria-label="音量"
           @input="changeVolume(Number(($event.target as HTMLInputElement).value) / 100)"
         />
-        <span class="mp-time tnum">{{ fmt(currentTime) }} / {{ fmt(shownDuration) }}</span>
+        <span class="mp-time tnum">{{ clock(currentTime) }} / {{ clock(shownDuration) }}</span>
         <span class="mp-spacer" />
         <button type="button" class="mp-btn mp-btn--rate" :title="`倍速 ${rate}x`" :aria-label="`倍速 ${rate}x`" @click="cycleRate">{{ rate }}x</button>
         <button v-if="canPiP" type="button" class="mp-btn" aria-label="画中画" title="画中画" @click="togglePiP">

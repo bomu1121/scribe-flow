@@ -1,6 +1,6 @@
 import type { RunMeta, RunStatus } from "@scribe-flow/shared";
 
-export interface RunStatusMeta {
+interface RunStatusMeta {
   label: string;
   /** 语义色（设计令牌变量名，行内样式引用）。 */
   color: string;
@@ -33,16 +33,7 @@ export function formatRunTime(ts: number): string {
   return sameYear ? `${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${time}` : `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
 }
 
-export function formatRelativeTime(ts: number): string {
-  const diff = Date.now() - ts;
-  if (diff < 60_000) return "刚刚";
-  if (diff < 3_600_000) return `${Math.floor(diff / 60_000)} 分钟前`;
-  if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)} 小时前`;
-  if (diff < 7 * 86_400_000) return `${Math.floor(diff / 86_400_000)} 天前`;
-  return formatRunTime(ts);
-}
-
-export function formatElapsed(ms?: number): string {
+function formatElapsed(ms?: number): string {
   if (!ms || ms <= 0) return "—";
   if (ms < 1000) return `${ms}ms`;
   if (ms < 60_000) return `${(ms / 1000).toFixed(1)}s`;

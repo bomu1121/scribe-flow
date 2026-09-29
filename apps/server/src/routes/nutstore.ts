@@ -6,10 +6,11 @@ import { Hono } from "hono";
 import { z } from "zod";
 import type { NutstoreBackupItem, NutstoreSyncDirection, NutstoreSyncResult } from "@scribe-flow/shared";
 import type { AppDatabase } from "../db/client";
-import { listRemoteDirectory, listRemoteDirectories, listRemoteMarkdown, readRemoteBuffer, readRemoteFile, testNutstoreConnection, writeRemoteBuffer, writeRemoteFile } from "../lib/nutstore";
+import { listRemoteDirectory, listRemoteDirectories, listRemoteMarkdown, normalizeRemotePath, readRemoteBuffer, readRemoteFile, testNutstoreConnection, writeRemoteBuffer, writeRemoteFile } from "../lib/nutstore";
 import type { NutstoreConfig } from "../lib/nutstore";
 import { liveSqlite, prepareRestoreDatabase, swapDatabaseLive } from "../lib/restore";
 import type { RunEngine } from "../lib/engine";
+import { badRequest } from "../lib/bad-request";
 import { getNutstoreConfig, getSettings } from "../lib/settings";
 
 interface LocalMarkdownFile {
@@ -29,13 +30,8 @@ interface RemoteMarkdownFileLite {
   lastModified?: number;
 }
 
-function normalizeRemote(path: string): string {
-  const cleaned = path.replace(/\\/g, "/").trim();
-  return cleaned.startsWith("/") ? cleaned.replace(/\/+$/, "") || "/" : `/${cleaned.replace(/\/+$/, "")}`;
-}
-
 function joinRemote(base: string, rel: string): string {
-  const basePath = normalizeRemote(base).replace(/\/+$/, "");
+  const basePath = normalizeRemotePath(base).replace(/\/+$/, "");
   const relPath = rel.replace(/\\/g, "/").replace(/^\/+|\/+$/g, "");
   return relPath ? `${basePath}/${relPath}` : basePath || "/";
 }
@@ -69,7 +65,7 @@ async function listLocalMarkdown(root: string): Promise<LocalMarkdownFile[]> {
 
 async function listRemoteMarkdownLite(config: NutstoreConfig, remoteRoot: string): Promise<RemoteMarkdownFileLite[]> {
   const files = await listRemoteMarkdown(config, remoteRoot);
-  const root = normalizeRemote(remoteRoot).replace(/\/+$/, "");
+  const root = normalizeRemotePath(remoteRoot).replace(/\/+$/, "");
   const prefix = root === "/" ? "" : `${root}/`;
   return files.map((file) => ({
     path: file.path,
@@ -105,7 +101,7 @@ function resolveTestConfig(db: AppDatabase, body: z.infer<typeof testSchema>): N
     serverUrl: (body.serverUrl ?? "").trim().replace(/\/+$/, "") ? `${(body.serverUrl ?? "").trim().replace(/\/+$/, "")}/` : saved.serverUrl,
     account: (body.account ?? "").trim() || saved.account,
     password: (body.password ?? "").trim() || saved.password,
-    remotePath: normalizeRemote((body.remotePath ?? "").trim() || settings.nutstore.remoteRoot || "/我的坚果云/ScribeFlow"),
+    remotePath: normalizeRemotePath((body.remotePath ?? "").trim() || settings.nutstore.remoteRoot || "/我的坚果云/ScribeFlow"),
   };
 }
 
@@ -114,7 +110,7 @@ async function runSync(db: AppDatabase, direction: NutstoreSyncDirection, localP
   const result: NutstoreSyncResult = {
     direction,
     localRoot: localPath,
-    remotePath: normalizeRemote(remotePath),
+    remotePath: normalizeRemotePath(remotePath),
     transferred: 0,
     skipped: 0,
     skippedItems: [],
@@ -177,7 +173,7 @@ async function backupSqlite(db: AppDatabase, dest: string): Promise<void> {
 /** 把当前 SQLite 库在线备份并上传到坚果云 backups/ 下（POST /backup 与恢复前自动备份共用）。 */
 async function uploadCurrentBackup(db: AppDatabase, config: NutstoreConfig, dataDir: string, remoteRoot: string): Promise<{ remotePath: string; files: string[] }> {
   const stamp = `${new Date().toISOString().replace(/[-:T]/g, "").slice(0, 14)}-${randomUUID().slice(0, 8)}`;
-  const remoteDir = normalizeRemote(`${remoteRoot || "/我的坚果云/ScribeFlow"}/backups/scribe-flow-${stamp}`);
+  const remoteDir = normalizeRemotePath(`${remoteRoot || "/我的坚果云/ScribeFlow"}/backups/scribe-flow-${stamp}`);
   const tmp = await mkdtemp(join(tmpdir(), "scribe-nutstore-backup-"));
   try {
     const dbFile = join(tmp, "scribe-flow.sqlite");
@@ -215,7 +211,7 @@ export function nutstoreApi(db: AppDatabase, engine: RunEngine, dataDir: string)
   api.post("/test", async (c) => {
     const raw = await c.req.json().catch(() => ({}));
     const parsed = testSchema.safeParse(raw ?? {});
-    if (!parsed.success) return c.json({ error: parsed.error.issues[0]?.message ?? "请求格式不正确" }, 400);
+    if (!parsed.success) return badRequest(c, parsed);
     const config = resolveTestConfig(db, parsed.data ?? {});
     try {
       const result = await testNutstoreConnection(config, config.remotePath);
@@ -227,10 +223,10 @@ export function nutstoreApi(db: AppDatabase, engine: RunEngine, dataDir: string)
 
   api.get("/list", async (c) => {
     const query = readQuery.safeParse(c.req.query());
-    if (!query.success) return c.json({ error: query.error.issues[0]?.message ?? "参数不正确" }, 400);
+    if (!query.success) return badRequest(c, query, "参数不正确");
     const settings = getSettings(db);
     const config = getNutstoreConfig(db);
-    const path = normalizeRemote(query.data.path || settings.nutstore.obsidianRemotePath || "/我的坚果云/ScribeFlow/Obsidian");
+    const path = normalizeRemotePath(query.data.path || settings.nutstore.obsidianRemotePath || "/我的坚果云/ScribeFlow/Obsidian");
     try {
       const result = await listRemoteDirectory(config, path);
       return c.json(result);
@@ -241,14 +237,14 @@ export function nutstoreApi(db: AppDatabase, engine: RunEngine, dataDir: string)
 
   api.get("/folders", async (c) => {
     const query = readQuery.safeParse(c.req.query());
-    if (!query.success) return c.json({ error: query.error.issues[0]?.message ?? "参数不正确" }, 400);
+    if (!query.success) return badRequest(c, query, "参数不正确");
     const settings = getSettings(db);
     const config = getNutstoreConfig(db);
-    const path = normalizeRemote(query.data.path || settings.nutstore.obsidianRemotePath || "/我的坚果云/ScribeFlow/Obsidian");
+    const path = normalizeRemotePath(query.data.path || settings.nutstore.obsidianRemotePath || "/我的坚果云/ScribeFlow/Obsidian");
     const maxDepth = query.data.maxDepth ?? 3;
     try {
       const dirs = await listRemoteDirectories(config, path, maxDepth);
-      const root = normalizeRemote(path).replace(/\/+$/, "");
+      const root = normalizeRemotePath(path).replace(/\/+$/, "");
       const prefix = root === "/" ? "" : `${root}/`;
       return c.json({ path, items: dirs.map((dir) => dir.startsWith(prefix) ? dir.slice(prefix.length) : dir.replace(/^\/+/, "")).filter(Boolean) });
     } catch (err) {
@@ -258,8 +254,8 @@ export function nutstoreApi(db: AppDatabase, engine: RunEngine, dataDir: string)
 
   api.get("/read", async (c) => {
     const query = readQuery.safeParse(c.req.query());
-    if (!query.success) return c.json({ error: query.error.issues[0]?.message ?? "参数不正确" }, 400);
-    const path = normalizeRemote(query.data.path || "");
+    if (!query.success) return badRequest(c, query, "参数不正确");
+    const path = normalizeRemotePath(query.data.path || "");
     if (!path || path === "/") return c.json({ error: "请指定要读取的远程文件路径" }, 400);
     try {
       const result = await readRemoteFile(getNutstoreConfig(db), path);
@@ -272,7 +268,7 @@ export function nutstoreApi(db: AppDatabase, engine: RunEngine, dataDir: string)
   api.post("/sync/push", async (c) => {
     const raw = await c.req.json().catch(() => ({}));
     const parsed = syncSchema.safeParse(raw ?? {});
-    if (!parsed.success) return c.json({ error: parsed.error.issues[0]?.message ?? "请求格式不正确" }, 400);
+    if (!parsed.success) return badRequest(c, parsed);
     const settings = getSettings(db);
     const localPath = (parsed.data.localPath ?? "").trim() || settings.obsidian.vaultPath.trim();
     const remotePath = (parsed.data.remotePath ?? "").trim() || settings.nutstore.obsidianRemotePath || "/我的坚果云/ScribeFlow/Obsidian";
@@ -287,7 +283,7 @@ export function nutstoreApi(db: AppDatabase, engine: RunEngine, dataDir: string)
   api.post("/sync/pull", async (c) => {
     const raw = await c.req.json().catch(() => ({}));
     const parsed = syncSchema.safeParse(raw ?? {});
-    if (!parsed.success) return c.json({ error: parsed.error.issues[0]?.message ?? "请求格式不正确" }, 400);
+    if (!parsed.success) return badRequest(c, parsed);
     const settings = getSettings(db);
     const localPath = (parsed.data.localPath ?? "").trim() || settings.obsidian.vaultPath.trim();
     const remotePath = (parsed.data.remotePath ?? "").trim() || settings.nutstore.obsidianRemotePath || "/我的坚果云/ScribeFlow/Obsidian";
@@ -302,7 +298,7 @@ export function nutstoreApi(db: AppDatabase, engine: RunEngine, dataDir: string)
   api.get("/backups", async (c) => {
     const settings = getSettings(db);
     const config = getNutstoreConfig(db);
-    const backupsPath = normalizeRemote(`${settings.nutstore.remoteRoot || "/我的坚果云/ScribeFlow"}/backups`);
+    const backupsPath = normalizeRemotePath(`${settings.nutstore.remoteRoot || "/我的坚果云/ScribeFlow"}/backups`);
     try {
       const listing = await listRemoteDirectory(config, backupsPath);
       const items: NutstoreBackupItem[] = listing.items
@@ -327,7 +323,7 @@ export function nutstoreApi(db: AppDatabase, engine: RunEngine, dataDir: string)
   api.post("/restore", async (c) => {
     const raw = await c.req.json().catch(() => ({}));
     const parsed = restoreSchema.safeParse(raw ?? {});
-    if (!parsed.success) return c.json({ error: parsed.error.issues[0]?.message ?? "请求格式不正确" }, 400);
+    if (!parsed.success) return badRequest(c, parsed);
     const settings = getSettings(db);
     const config = getNutstoreConfig(db);
     if (!config.account || !config.password) return c.json({ error: "未配置坚果云账号或应用密码，请到设置页填写" }, 400);
@@ -335,7 +331,7 @@ export function nutstoreApi(db: AppDatabase, engine: RunEngine, dataDir: string)
       c.json({ error: `有 ${runIds.length} 个流程正在运行，请先停止后再恢复`, runIds }, 409);
     const firstActive = engine.activeRunIds;
     if (firstActive.length > 0) return refuse(firstActive);
-    const remoteDir = normalizeRemote(parsed.data.path);
+    const remoteDir = normalizeRemotePath(parsed.data.path);
     const work = await mkdtemp(join(tmpdir(), "scribe-nutstore-restore-"));
     try {
       const listing = await listRemoteDirectory(config, remoteDir);

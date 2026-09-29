@@ -13,6 +13,13 @@ import type { RunStatus } from "@scribe-flow/shared";
 /** 会在提醒里出现的终态；运行中不会走这条路。 */
 export type FinishedRunStatus = Exclude<RunStatus, "running">;
 
+/**
+ * 通知正文里的状态说法。
+ *
+ * 与界面标签（`lib/run-meta.ts` 的 `RUN_STATUS_META`）**刻意不同**：那张表是列表里的标签（「成功」），
+ * 这里是通知正文的一部分（「视频转笔记：已完成」），语境是句子而不是标签。两张表都是穷尽 `Record`，
+ * 新增运行状态时 TypeScript 会同时逼两处都改，所以不必为了"看起来只有一份"而把文案压成一种。
+ */
 const STATUS_TEXT: Record<FinishedRunStatus, string> = {
   success: "已完成",
   error: "失败",
@@ -103,7 +110,7 @@ export function notifyRunFinished(payload: RunAlertPayload, options: { notify: b
  * 提示音用 WebAudio 现场合成，不带音频资源文件：
  * 既不用往仓库塞二进制，也不存在「音频加载不出来」这种半死不活的状态。
  */
-export function playChime(): void {
+function playChime(): void {
   // Node（测试环境）里没有 window；这里不套 try，因为访问未声明的标识符抛的是 ReferenceError。
   const Ctor = typeof window === "undefined" ? undefined : (window.AudioContext ?? (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext);
   if (!Ctor) return;

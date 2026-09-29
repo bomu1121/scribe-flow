@@ -1,4 +1,5 @@
 import type { NutstoreListEntry, NutstoreListResult, NutstoreReadResult } from "@scribe-flow/shared";
+import { sleep } from "./sleep";
 
 /** WebDAV 配置（含服务端明文密码，禁止返回给前端）。 */
 export interface NutstoreConfig {
@@ -33,10 +34,6 @@ const PROPFIND_BODY = `<?xml version="1.0" encoding="utf-8"?>
 /** 坚果云单次 PROPFIND 的目录项上限（文件+文件夹）。 */
 export const NUTSTORE_PROPFIND_LIMIT = 750;
 
-function sleep(ms: number) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
 function decodeXml(value: string): string {
   return value
     .replace(/&lt;/g, "<")
@@ -54,7 +51,8 @@ function extractTag(xml: string, tag: string): string {
   return match?.[1]?.trim() ?? "";
 }
 
-function normalizeRemotePath(path: string): string {
+/** 远程路径归一：反斜杠转正斜杠、去首尾空白与尾斜杠，保证以 `/` 开头。 */
+export function normalizeRemotePath(path: string): string {
   const cleaned = path.replace(/\\/g, "/").trim();
   return cleaned.startsWith("/") ? cleaned.replace(/\/+$/, "") || "/" : `/${cleaned.replace(/\/+$/, "")}`;
 }

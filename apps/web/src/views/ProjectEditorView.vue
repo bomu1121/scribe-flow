@@ -10,7 +10,7 @@ import SourcePickerDialog from "@/components/canvas/SourcePickerDialog.vue";
 import BiliAccountButton from "@/components/auth/BiliAccountButton.vue";
 import { api } from "@/lib/api";
 import { subscribeRunEvents } from "@/lib/sse";
-import type { NodePreviewOutput } from "@/utils/flow";
+import { runScopeNodeIds, stripRuntimeFields, type NodePreviewOutput } from "@/utils/flow";
 import { buildNodeSegments, type RunSegment } from "@/utils/run-segments";
 import { backfillFromRun, canBackfillFromStatus, snapshotIsComplete } from "@/utils/run-restore";
 import { useAuthStore } from "@/stores/auth";
@@ -106,14 +106,7 @@ async function loadProject() {
     if (disposed || token !== loadProjectToken || projectId.value !== id) return;
     const nextGraph = {
       ...project.graph,
-      nodes: project.graph.nodes.map((n) => {
-        const data = { ...(n.data as Record<string, unknown>) };
-        delete data.status;
-        delete data.summary;
-        delete data.preview;
-        delete data.delta;
-        return { ...n, data } as typeof n;
-      }),
+      nodes: project.graph.nodes.map((n) => ({ ...n, data: stripRuntimeFields(n.data as Record<string, unknown>) } as typeof n)),
     };
     graph.value = nextGraph;
     lastSavedNodeCount = nextGraph.nodes.length;
@@ -495,28 +488,8 @@ async function restoreLastRun() {
   }
 }
 
-function nodeIdsForScope(scope: "all" | "fromNode" | "node", nodeId?: string): Set<string> {
-  const all = new Set(graph.value.nodes.map((n) => n.id));
-  if (scope === "node" && nodeId) return new Set([nodeId]);
-  if (scope === "fromNode" && nodeId) {
-    const result = new Set([nodeId]);
-    let changed = true;
-    while (changed) {
-      changed = false;
-      for (const edge of graph.value.edges) {
-        if (result.has(edge.source) && !result.has(edge.target)) {
-          result.add(edge.target);
-          changed = true;
-        }
-      }
-    }
-    return result;
-  }
-  return all;
-}
-
 function missingKeyMessage(scope: "all" | "fromNode" | "node", nodeId?: string): string | null {
-  const ids = nodeIdsForScope(scope, nodeId);
+  const ids = runScopeNodeIds(graph.value.nodes, graph.value.edges, scope, nodeId);
   const nodes = graph.value.nodes.filter((n) => ids.has(n.id));
   if (nodes.some((n) => n.type === "process.refine" || n.type === "process.prompt" || n.type === "process.mindmap") && !settingsStore.settings?.ai.hasKey) {
     return "未配置 AI 模型密钥，请先到设置页填写";

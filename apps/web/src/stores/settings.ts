@@ -5,10 +5,12 @@ import type {
   AppSettings,
   AsrEngine,
   NutstoreBackupItem,
+  NutstoreBackupResult,
   NutstoreListResult,
   NutstoreReadResult,
   NutstoreRestoreResult,
   NutstoreSyncResult,
+  NutstoreTestResult,
   SearchProvider,
   TraceSourceAuthority,
   UpdateSettingsRequest,
@@ -139,7 +141,7 @@ export const useSettingsStore = defineStore("settings", () => {
   }
 
   async function testNutstore(payload?: { serverUrl?: string; account?: string; password?: string; remotePath?: string }) {
-    const result = await api.post<{ ok: boolean; webdav: string }>("/api/nutstore/test", payload);
+    const result = await api.post<NutstoreTestResult>("/api/nutstore/test", payload);
     return result.webdav;
   }
 
@@ -168,8 +170,8 @@ export const useSettingsStore = defineStore("settings", () => {
     return api.post<NutstoreSyncResult>("/api/nutstore/sync/pull", { localPath, remotePath });
   }
 
-  async function backupNutstore(): Promise<{ remotePath: string; files: string[]; uploadedAt: number }> {
-    return api.post<{ remotePath: string; files: string[]; uploadedAt: number }>("/api/nutstore/backup");
+  async function backupNutstore(): Promise<NutstoreBackupResult> {
+    return api.post<NutstoreBackupResult>("/api/nutstore/backup");
   }
 
   async function restoreNutstore(backupPath: string): Promise<NutstoreRestoreResult> {

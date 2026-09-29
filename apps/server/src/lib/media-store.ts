@@ -10,7 +10,7 @@ import { eq, inArray } from "drizzle-orm";
 import type { RunMediaView } from "@scribe-flow/shared";
 import type { AppDatabase } from "../db/client";
 import { mediaAssets, runMedia, type MediaAssetRow } from "../db/schema";
-import { downloadBiliVideoStreams, muxToMp4 } from "./media";
+import { downloadBiliVideoStreams, muxToMp4, runFfmpeg } from "./media";
 
 export const DEFAULT_VIDEO_QN = 80;
 
@@ -40,14 +40,6 @@ async function filePresent(dataDir: string, relPath?: string | null): Promise<bo
   } catch {
     return false;
   }
-}
-
-function runFfmpeg(args: string[]): Promise<void> {
-  return new Promise((resolvePromise, reject) => {
-    const child = spawn(process.env.FFMPEG_PATH ?? "ffmpeg", args, { stdio: "ignore" });
-    child.once("error", reject);
-    child.once("exit", (code) => (code === 0 ? resolvePromise() : reject(new Error(`ffmpeg 退出码 ${code}`))));
-  });
 }
 
 /** ffprobe 输出写入临时文件再读回，避免依赖 stdout 管道。 */

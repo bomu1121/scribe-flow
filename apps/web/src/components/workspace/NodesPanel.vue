@@ -6,7 +6,7 @@ import { toast } from "@/lib/toast";
 import { NODE_TYPE_LABELS, isNodeHidden, type NodeType } from "@scribe-flow/shared";
 import { useUiStore } from "@/stores/ui";
 import { useRunsStore } from "@/stores/runs";
-import { useSettingsStore } from "@/stores/settings";
+import { useHiddenNodes } from "@/composables/useHiddenNodes";
 
 type CatalogItemType = NodeType | "source.biliCollection";
 
@@ -78,7 +78,7 @@ const catalogGroups: CatalogGroup[] = [
  * 展示范围（设置页「展示范围」）：勾上的节点不出现在这里，空掉的分组整组收起。
  * 已有工程里出现的节点不受影响——收起的是入口，不是能力。
  */
-const hiddenNodes = computed(() => settingsStore.settings?.visibility?.hiddenNodes ?? []);
+const hiddenNodes = useHiddenNodes();
 const groups = computed<CatalogGroup[]>(() =>
   catalogGroups
     .map((group) => ({
@@ -93,7 +93,6 @@ const groups = computed<CatalogGroup[]>(() =>
 
 const route = useRoute();
 const ui = useUiStore();
-const settingsStore = useSettingsStore();
 const runsStore = useRunsStore();
 
 const inCanvas = computed(() => route.name === "project-editor");

@@ -10,6 +10,8 @@ import type { NodeType } from "@scribe-flow/shared";
 import type { AppDatabase } from "../db/client";
 import { chatCompletion, listAiModels, transcribeAudio } from "../lib/ai";
 import { getAiConfig, getAsrConfig, getNutstoreConfig, getSearchConfig, getSettings, updateSettings, withResolvedPaths } from "../lib/settings";
+import { badRequest } from "../lib/bad-request";
+import { runFfmpeg } from "../lib/media";
 import { listRemoteDirectories } from "../lib/nutstore";
 import { buildDataOverview, fileManagerCommand, isInsideDataDir, pruneStorage, resolveOutputRoot, type StorageDeps } from "../lib/storage";
 import { collectSources } from "../lib/traceExternal";
@@ -134,14 +136,6 @@ function resolveSearchTestConfig(db: AppDatabase, body: z.infer<typeof searchTes
   };
 }
 
-async function runFfmpeg(args: string[]): Promise<void> {
-  await new Promise<void>((resolve, reject) => {
-    const child = spawn(process.env.FFMPEG_PATH ?? "ffmpeg", args, { stdio: "ignore" });
-    child.once("error", reject);
-    child.once("exit", (code) => (code === 0 ? resolve() : reject(new Error(`ffmpeg 退出码 ${code}`))));
-  });
-}
-
 export function settingsApi(db: AppDatabase, engine: RunEngine, dataDir: string) {
   const api = new Hono();
 
@@ -150,7 +144,7 @@ export function settingsApi(db: AppDatabase, engine: RunEngine, dataDir: string)
   api.put("/", async (c) => {
     const parsed = updateSchema.safeParse(await c.req.json());
     if (!parsed.success) {
-      return c.json({ error: parsed.error.issues[0]?.message ?? "请求格式不正确" }, 400);
+      return badRequest(c, parsed);
     }
     const nextOutputDir = parsed.data.general?.outputDir?.trim();
     if (nextOutputDir && !isAbsolute(nextOutputDir) && !isInsideDataDir(dataDir, resolve(dataDir, nextOutputDir))) {
@@ -165,7 +159,7 @@ export function settingsApi(db: AppDatabase, engine: RunEngine, dataDir: string)
     const raw = await c.req.json().catch(() => ({}));
     const parsed = aiTestSchema.safeParse(raw ?? {});
     if (!parsed.success) {
-      return c.json({ error: parsed.error.issues[0]?.message ?? "请求格式不正确" }, 400);
+      return badRequest(c, parsed);
     }
     const config = resolveAiTestConfig(db, parsed.data ?? {});
     if (!config.apiKey) return c.json({ error: "请先填写 AI 模型密钥" }, 400);
@@ -188,7 +182,7 @@ export function settingsApi(db: AppDatabase, engine: RunEngine, dataDir: string)
     const raw = await c.req.json().catch(() => ({}));
     const parsed = aiTestSchema.safeParse(raw ?? {});
     if (!parsed.success) {
-      return c.json({ error: parsed.error.issues[0]?.message ?? "请求格式不正确" }, 400);
+      return badRequest(c, parsed);
     }
     const config = resolveAiTestConfig(db, parsed.data ?? {});
     if (!config.apiKey) return c.json({ error: "请先填写 AI 模型密钥" }, 400);
@@ -204,7 +198,7 @@ export function settingsApi(db: AppDatabase, engine: RunEngine, dataDir: string)
     const raw = await c.req.json().catch(() => ({}));
     const parsed = asrTestSchema.safeParse(raw ?? {});
     if (!parsed.success) {
-      return c.json({ error: parsed.error.issues[0]?.message ?? "请求格式不正确" }, 400);
+      return badRequest(c, parsed);
     }
     const config = resolveAsrTestConfig(db, parsed.data ?? {});
     if (!config.apiKey) return c.json({ error: "请先填写语音识别密钥" }, 400);
@@ -225,7 +219,7 @@ export function settingsApi(db: AppDatabase, engine: RunEngine, dataDir: string)
     const raw = await c.req.json().catch(() => ({}));
     const parsed = searchTestSchema.safeParse(raw ?? {});
     if (!parsed.success) {
-      return c.json({ error: parsed.error.issues[0]?.message ?? "请求格式不正确" }, 400);
+      return badRequest(c, parsed);
     }
     const config = resolveSearchTestConfig(db, parsed.data ?? {});
     if (!config.apiKey) return c.json({ error: "请先填写检索密钥" }, 400);
@@ -293,7 +287,7 @@ export function settingsApi(db: AppDatabase, engine: RunEngine, dataDir: string)
     const raw = await c.req.json().catch(() => ({}));
     const parsed = pruneSchema.safeParse(raw ?? {});
     if (!parsed.success) {
-      return c.json({ error: parsed.error.issues[0]?.message ?? "请求格式不正确" }, 400);
+      return badRequest(c, parsed);
     }
     const outcomes = await pruneStorage(storageDeps(), parsed.data.targets);
     return c.json({

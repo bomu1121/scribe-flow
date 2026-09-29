@@ -2,7 +2,7 @@
 title: 项目现状
 class: status
 owner: 念前
-last_reviewed: 2026-09-28
+last_reviewed: 2026-09-29
 review_days: 30
 ---
 
@@ -60,31 +60,48 @@ review_days: 30
 
 ### P0 · 安全（自托管场景下用户浏览任意网页即可被接管后端）
 
-- **后端没有应用层认证，CORS 默认 `*`**：`apps/server/src/app.ts:31-37` 是唯一的全局中间件。组合 `PUT /api/settings`（改 `ai.baseUrl`）与 `POST /api/settings/test/ai`（会把已保存的真实 apiKey 发往该 baseUrl）即可外泄密钥。`apps/server/src/routes/settings.ts:84-92`、`apps/server/src/lib/ai.ts:25-30`。修法：加 `AUTH_TOKEN` 环境变量 + 校验 `Authorization` 的全局中间件，`CORS_ORIGIN` 默认收敛为前端源。
-- **盲 SSRF**：`apps/server/src/routes/videos.ts:44-55` 对用户传入的任意 URL 直接 `fetch(redirect: "follow")`，无主机白名单、无内网地址拦截。修法：解析后校验 host，拒绝回环与私网段。
+- **后端没有应用层认证，CORS 默认 `*`**：`apps/server/src/app.ts:35-41` 是唯一的全局中间件。组合 `PUT /api/settings`（改 `ai.baseUrl`）与 `POST /api/settings/test/ai`（会把已保存的真实 apiKey 发往该 baseUrl）即可外泄密钥。`apps/server/src/routes/settings.ts:110-118`、`apps/server/src/lib/ai.ts:25-30`。修法：加 `AUTH_TOKEN` 环境变量 + 校验 `Authorization` 的全局中间件，`CORS_ORIGIN` 默认收敛为前端源。
+- **盲 SSRF**：`apps/server/src/routes/videos.ts:43-54` 对用户传入的任意 URL 直接 `fetch(redirect: "follow")`，无主机白名单、无内网地址拦截。修法：解析后校验 host，拒绝回环与私网段。
 - **路径校验可绕过或缺失**：`apps/server/src/routes/media.ts:31-36` 用纯字符串前缀比较（Windows 下 `data-evil\` 能通过）。**`general.outputDir` 这一条已完全收口**（2026-09-28）：`apps/server/src/lib/storage.ts` 的 `resolveOutputRoot` 成为唯一解析点，落盘（`apps/server/src/lib/engine.ts` 的运行收尾与 `process.output`）、删除运行、账本扫描与读写路径全部走它，相对路径 `..` 外爬一律回落默认目录，设置接口还会显式返回 400 并说明该怎么改；产物在数据目录外时库内记绝对路径，读回走 `resolveArtifactPath`。剩余仍未处理：`routes/media.ts` 的前缀比较、`routes/runs.ts` 两处读盘未做包含性校验（这两处的值来自本服务自己的写入，不是外部输入）。
-- **用户可控正则可 DoS**：`apps/server/src/lib/engine.ts:377` 用节点数据里的 `pattern`/`flags` 直接 `new RegExp()`，灾难性回溯会挂死事件循环且 cancel 不响应。根因是 `packages/shared/src/schema.ts` 的 `graphNodeSchema.data` 没有字段级校验。修法：补 `data` 的按节点类型判别校验 + pattern 长度与 flags 白名单。
-- **错误信息泄漏**：`apps/server/src/app.ts` 的 `app.onError`（约 `:64-67`）把 `err.message` 原样回传，含服务器绝对路径与上游响应片段。
-- **密钥明文入库且无法清除**：`apps/server/src/db/schema.ts:113-117`、`:44-51`；`apps/server/src/lib/settings.ts:168-171` 的 `if (!value) return` 使传空串无法清除已保存的密钥。
+- **用户可控正则可 DoS**：`apps/server/src/lib/engine.ts:387` 用节点数据里的 `pattern`/`flags` 直接 `new RegExp()`，灾难性回溯会挂死事件循环且 cancel 不响应。根因是 `packages/shared/src/schema.ts` 的 `graphNodeSchema.data` 没有字段级校验。修法：补 `data` 的按节点类型判别校验 + pattern 长度与 flags 白名单。
+- **错误信息泄漏**：`apps/server/src/app.ts` 的 `app.onError`（约 `:66-69`）把 `err.message` 原样回传，含服务器绝对路径与上游响应片段。
+- **密钥明文入库且无法清除**：`apps/server/src/db/schema.ts:120-124`、`:44-51`；`apps/server/src/lib/settings.ts:212-215` 的 `if (!value) return` 使传空串无法清除已保存的密钥。
 
 ### P0 · 稳定性
 
-- **未处理的 Promise rejection 会终结进程**：`apps/server/src/lib/engine.ts:501` 是 `void this.runLoop(active)` 且无 `.catch()`，而收尾的三次 `await this.finishRun(...)`（`:654`、`:659`、`:669`）在 try/catch 之外。收尾时 DB 写失败即进程退出，所有在跑的 run 一并丢失。
-- **单个节点的基础设施错误会终止整个 run**：`apps/server/src/lib/engine.ts:635` 的 `Promise.race` 会把 `executeNode` 里 `persistInputs`（`:1155`，只有 `finally` 没有 `catch`）的 DB 错误升级成整运行失败（`:652-656`），绕过同文件 `:625-631` 的部分成功降级语义。`resolveInputs` 已在 `:1144-1154` 就地捕获并落节点失败状态。
-- **坚果云请求无超时**：`apps/server/src/lib/nutstore.ts:120-159` 的 `davFetch` 没有 `signal`，服务端挂住即永久占用连接。对照 `lib/ai.ts`、`lib/media.ts`、`lib/bilibili.ts` 均有超时。
-- **`forceStop` 会篡改已结束的运行**：`apps/server/src/lib/engine.ts:513` 只检查存在性，对 success/error 的 run 也照改 status。
-- **SSE 建连竞态**：`apps/server/src/routes/runs.ts:180-231` 在快照与订阅之间 run 若结束，该连接永不 resolve。
+- **未处理的 Promise rejection 会终结进程**：`apps/server/src/lib/engine.ts:511` 是 `void this.runLoop(active)` 且无 `.catch()`，而收尾的三次 `await this.finishRun(...)`（`:664`、`:669`、`:679`）在 try/catch 之外。收尾时 DB 写失败即进程退出，所有在跑的 run 一并丢失。
+- **单个节点的基础设施错误会终止整个 run**：`apps/server/src/lib/engine.ts:645` 的 `Promise.race` 会把 `executeNode` 里 `persistInputs`（`:1161`，只有 `finally` 没有 `catch`）的 DB 错误升级成整运行失败（`:662-666`），绕过同文件 `:635-641` 的部分成功降级语义。`resolveInputs` 已在 `:1150-1160` 就地捕获并落节点失败状态。
+- **坚果云请求无超时**：`apps/server/src/lib/nutstore.ts:118-157` 的 `davFetch` 没有 `signal`，服务端挂住即永久占用连接。对照 `lib/ai.ts`、`lib/media.ts`、`lib/bilibili.ts` 均有超时。
+- **`forceStop` 会篡改已结束的运行**：`apps/server/src/lib/engine.ts:523` 只检查存在性，对 success/error 的 run 也照改 status。
+- **SSE 建连竞态**：`apps/server/src/routes/runs.ts:176-227` 在快照与订阅之间 run 若结束，该连接永不 resolve。
 
 ### P1 · 工程化
 
 - **CI 不跑冒烟与 API 自检**：`.github/workflows/ci.yml` 只做 typecheck / test / build / lint / `docker build`，`pnpm smoke:ui` 与 `pnpm check:api:*` 仍靠人手跑。代价已经显现过一次：`scripts/m4-api-check.mjs` 的内置块断言曾硬编码为 8，而源码已增到 13，于是长期静默失败——已改为从 `packages/shared/src/prompt.ts` 推导（见 [CHANGELOG.md](../CHANGELOG.md) 2026-09-11）。
 - **前端组件、路由层、store 无测试**：`apps/web` 只有两个纯逻辑测试文件；`apps/server/src/routes/` 约 1800 行零测试；`engine.ts` 中 `source.bili`、`process.transcribe`、`process.refine`、`process.chapter`、`process.gameguide`、`process.mindmap`、`process.obsidian`、`process.text`、`flow.if` 被任何测试执行到的次数为零。仓库内不存在 `vitest.config.*`，未装 `@vue/test-utils` / `happy-dom`。
-- **没有 ESLint / Prettier**：全仓无相关依赖与配置；`scripts/slop-lint.mjs:11` 的扫描范围不含 `apps/server/src`。缺的是能拦住真实缺陷的规则，最典型的是 `no-floating-promises`（`apps/server/src/lib/engine.ts:501` 那类未捕获的 Promise 本可被它拦住）与 `vue/no-unused-vars`。属**待决策事项**（不是禁止引入），动因见 [AGENTS.md](../AGENTS.md) 硬规则第 8 条。
+- **没有 ESLint / Prettier**：全仓无相关依赖与配置；`scripts/slop-lint.mjs:11` 的扫描范围不含 `apps/server/src`。缺的是能拦住真实缺陷的规则，最典型的是 `no-floating-promises`（`apps/server/src/lib/engine.ts:511` 那类未捕获的 Promise 本可被它拦住）与 `vue/no-unused-vars`。属**待决策事项**（不是禁止引入），动因见 [AGENTS.md](../AGENTS.md) 硬规则第 8 条。
 - **`apps/server` 没有真实构建产物**：`apps/server/package.json` 的 `build` 是 `tsc --noEmit`，`Dockerfile` 用 devDependency `tsx` 转译源码跑生产；单阶段、root 运行、无 `HEALTHCHECK`。
-- **没有数据库迁移机制**：无 `drizzle.config.ts`、无 `drizzle-kit`，`apps/server/src/db/client.ts:178-262` 靠手写幂等补列，只能加列。
-- **缺索引**：`runs(project_id)`、`runs(status)`、`run_node_results(run_id)`、`run_node_logs(run_id)`、`run_node_inputs(run_id)` 均缺失，而 `apps/server/src/routes/runs.ts:269`、`:288` 是先全量取再在 JS 里过滤。
+- **没有数据库迁移机制**：无 `drizzle.config.ts`、无 `drizzle-kit`，`apps/server/src/db/client.ts:246-334` 靠手写幂等补列，只能加列。
+- **缺索引**：`runs(project_id)`、`runs(status)`、`run_node_results(run_id)`、`run_node_logs(run_id)`、`run_node_inputs(run_id)` 均缺失，而 `apps/server/src/routes/runs.ts:281`、`:300` 是先全量取再在 JS 里过滤。
 - **前端首屏关键路径偏大**：以 Element Plus 全量 import 为主因（`apps/web/src/main.ts:18`）；`pnpm docs:lint` 的 R9 已加上体积预算断言防止继续恶化，根治办法是改按需引入。
 - **本机 `pnpm dev`（`pnpm --parallel`）起不动后端**：实测（中文 Windows + pnpm 11.7 + Node 22）`pnpm --parallel` 下 `apps/server` 的 `tsx watch` 子进程会静默卡在启动前——既不打印「后端已启动」，也不监听 8787；而同一个脚本用 `pnpm --filter @scribe-flow/server dev` 单独跑就正常（web 侧亦然）。所以根目录 `start-dev.cmd` 与 `scripts/start-dev.mjs` 是**分别**拉起两个包来绕开并行器的，root 的 `dev` 脚本尚未改动，`pnpm dev` 在本机仍不可用。是否改 root 脚本待定：换台机器或换个 pnpm 版本可能不复现，要先定位根因。
+
+### P1 · 功能与文档不一致
+
+2026-09-29 的清理里发现两条**代码与文档对不上**的事实。它们不是清理项（删设置 UI 或补接线都是产品决定），
+所以只登记在这里等定夺；两条都在源码与 git 历史里可复核。
+
+- **Obsidian「AI 打标签」从未接线，决策文档却标为「已实施」。** 设置页有「自动打标 / 标签体系 /
+  标签数下限 / 上限」四个控件，引擎里 `buildObsidianTags`（基础标签规则 + 受控词表 + AI 补全）也完整存在，
+  但**它没有任何调用点**；`git log -S "buildObsidianTags"` 显示自功能提交 `7ff6ff9`（2026-09-03）
+  起该符号就只有定义处一处，**从未被调用过**。今天真正写进 frontmatter 的标签只来自节点自己的 `data.tags`
+  （`apps/server/src/lib/engine.ts` 的 `process.obsidian` 段）。
+  后果：`obsidian.tagTaxonomy` / `tagMinCount` / `tagMaxCount` 改了没有任何效果——它们的唯一读取点就在这个死函数里。
+  两条出路：把 `buildObsidianTags` 接进 `process.obsidian`（会改变笔记产出的标签，并带来真实的 AI 调用与花费），
+  或把这三个设置项连同死函数一起删掉。
+  **注意别把 `autoTagEnabled` 一起当成摆设**：它是活的，控制的是人物/事件/时期提取。
+- **`obsidian.autoLinkBidirectional` 全仓 0 个读取点。** 设置页有开关、库里有键、接口有 schema 校验，
+  但引擎的自动关联段只读 `autoLinkEnabled` 与 `autoLinkMax`。要么实现「双向链接回填」，要么把这个开关删掉。
 
 ### P2 · 清理
 

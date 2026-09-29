@@ -7,6 +7,7 @@ import { collectSegmentOptions, parseGraph } from "@scribe-flow/shared";
 import { createDatabase } from "../db/client";
 import { projects, runNodeInputs, runNodeLogs, runNodeResults, runs } from "../db/schema";
 import { RunEngine } from "./engine";
+import { sleep } from "./sleep";
 
 /**
  * 「素材挑选」节点（flow.pick）：接在上游模块之后，识别它给出的那一堆素材，
@@ -16,10 +17,6 @@ import { RunEngine } from "./engine";
  */
 
 const tmpDirs: string[] = [];
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
 
 afterEach(async () => {
   await Promise.all(tmpDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true }).catch(() => undefined)));

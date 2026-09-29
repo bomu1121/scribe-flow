@@ -8,6 +8,7 @@ import { parseGraph, type WorkflowGraph } from "@scribe-flow/shared";
 import { createDatabase } from "../db/client";
 import { appSettings, projects, runNodeLogs, runNodeResults, runs } from "../db/schema";
 import { RunEngine } from "./engine";
+import { sleep } from "./sleep";
 
 /**
  * M8-1 配方端到端：本地 mock OpenAI 兼容端点按 system 内容区分配方步骤并返回对应产物。
@@ -273,10 +274,6 @@ afterAll(async () => {
 });
 
 const tmpDirs: string[] = [];
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
 
 async function waitFinished(db: ReturnType<typeof createDatabase>, runId: string): Promise<void> {
   const deadline = Date.now() + 8000;

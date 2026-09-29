@@ -7,7 +7,7 @@ import { CircleAlert } from "lucide-vue-next";
 import { toast } from "@/lib/toast";
 import { Handle, Position, useVueFlow, type NodeProps } from "@vue-flow/core";
 import { ContextMenuContent, ContextMenuItem, ContextMenuPortal, ContextMenuRoot, ContextMenuSeparator, ContextMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuPortal, DropdownMenuRoot, DropdownMenuSeparator, DropdownMenuTrigger, PopoverContent, PopoverPortal, PopoverRoot, PopoverTrigger } from "reka-ui";
-import { availablePromptBlocks, NODE_PORTS, NODE_TYPE_LABELS, SEARCH_PROVIDER_LABELS, type NodePick, type NodeType, type UploadedFile, type VideoPreview } from "@scribe-flow/shared";
+import { availablePromptBlocks, extractBiliUrl, NODE_PORTS, NODE_TYPE_LABELS, SEARCH_PROVIDER_LABELS, type NodePick, type NodeType, type UploadedFile, type VideoPreview } from "@scribe-flow/shared";
 import ModelSelect from "../ModelSelect.vue";
 import NodeFieldLabel from "./NodeFieldLabel.vue";
 import IfCard from "./node-cards/IfCard.vue";
@@ -19,7 +19,9 @@ import DrillCard from "./node-cards/DrillCard.vue";
 import PickCard from "./node-cards/PickCard.vue";
 import PickFields from "./node-cards/PickFields.vue";
 import { useSegmentPick } from "@/composables/useSegmentPick";
+import { useHiddenNodes } from "@/composables/useHiddenNodes";
 import { renderMarkdown } from "@/lib/markdown";
+import { fmtCharCount, fmtDuration } from "@/utils/run-segments";
 import { usePromptsStore } from "@/stores/prompts";
 import { useSettingsStore } from "@/stores/settings";
 import { api } from "@/lib/api";
@@ -106,7 +108,7 @@ function schedulePreview(url: string) {
 
   const value = url.trim();
   if (!value) return;
-  if (!/bilibili\.com|b23\.tv|\bBV[0-9A-Za-z]+|\bav\d+/i.test(value)) {
+  if (!extractBiliUrl(value)) {
     previewError.value = "需要 B 站视频链接（支持 BV 号或 av 号）";
     return;
   }
@@ -386,14 +388,6 @@ onBeforeUnmount(() => {
   clearPreviewTimers();
 });
 
-function fmtDuration(sec: number): string {
-  const h = Math.floor(sec / 3600);
-  const m = Math.floor((sec % 3600) / 60);
-  const s = sec % 60;
-  if (h > 0) return `${h}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
-  return `${m}:${String(s).padStart(2, "0")}`;
-}
-
 const nodeType = computed<NodeType>(() => props.data.nodeType);
 /** 思维导图节点的预览走“渲染后的导图”，其余节点维持文字/富文本预览。 */
 const isMindMapNode = computed(() => nodeType.value === "process.mindmap");
@@ -568,11 +562,6 @@ function resetPreviewSegment() {
 function choosePreviewSegment(index: number) {
   previewSegmentIndex.value = index;
   segmentListOpen.value = false;
-}
-
-function fmtSegmentChars(size: number): string {
-  if (!size) return "";
-  return size >= 10000 ? `${(size / 10000).toFixed(1)} 万字` : `${size} 字`;
 }
 
 /** 顺序切段：只在 1..N 之间走，「全文」由下拉列表进入（避免顺序阅读时误跳合并稿）。 */
@@ -751,7 +740,7 @@ const gameGuideModeOptions = [
 /** 检索密钥是否已配置：没配就不该让需要联网核查的模版出现在可选列表里。 */
 const searchReady = computed(() => Boolean(settingsStore.settings?.search.hasKey));
 /** 展示范围里收起的节点：它的提示词块（如阴阳师攻略系列）不在下拉里出现。 */
-const hiddenNodes = computed(() => settingsStore.settings?.visibility?.hiddenNodes ?? []);
+const hiddenNodes = useHiddenNodes();
 
 /**
  * 提示词块下拉的选项文案：只写名字，自己写的块标一个「我的」。
@@ -1528,7 +1517,7 @@ const themeOptions = [
                     >
                       <span class="sf-seg-item-idx tnum">{{ String(segment.index + 1).padStart(2, "0") }}</span>
                       <span class="sf-seg-item-name" :title="segment.label">{{ segment.label }}</span>
-                      <span class="sf-seg-item-len tnum">{{ fmtSegmentChars(segment.size) }}</span>
+                      <span class="sf-seg-item-len tnum">{{ fmtCharCount(segment.size) }}</span>
                     </button>
                     <button
                       type="button"
@@ -1540,7 +1529,7 @@ const themeOptions = [
                     >
                       <span class="sf-seg-item-idx tnum">—</span>
                       <span class="sf-seg-item-name">全文（{{ previewSegments.length }} 段合并）</span>
-                      <span class="sf-seg-item-len tnum">{{ fmtSegmentChars(previewFullChars) }}</span>
+                      <span class="sf-seg-item-len tnum">{{ fmtCharCount(previewFullChars) }}</span>
                     </button>
                   </div>
                 </div>

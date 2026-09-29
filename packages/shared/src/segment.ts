@@ -49,17 +49,6 @@ export function passesPick(pick: NodePick | undefined, sourceNodeId: string, ite
   return chosen.includes(itemKey);
 }
 
-/** 该来源是否被明确挑选过（用于区分「没配挑选」与「配了但全排除」）。 */
-export function isSourcePicked(pick: NodePick | undefined, sourceNodeId: string): boolean {
-  return pick?.[sourceNodeId] !== undefined;
-}
-
-/** 是否配置了任何挑选（用于避免全选时也刷一行「跳过 0 段」）。 */
-export function hasAnyPick(pick: NodePick | undefined): boolean {
-  if (!pick) return false;
-  return Object.values(pick).some((chosen) => Array.isArray(chosen));
-}
-
 export interface SegmentOption {
   /** 段标识；写进 pick 的值。 */
   key: string;

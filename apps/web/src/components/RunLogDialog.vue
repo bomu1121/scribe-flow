@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref, watch } from "vue";
+import { computed, ref, watch } from "vue";
 import { ElInput, ElOption, ElSelect } from "element-plus";
 import {
   ChevronDown,
@@ -13,7 +13,10 @@ import {
   WrapText,
   X,
 } from "lucide-vue-next";
-import { toast } from "@/lib/toast";
+import { useBodyScrollLock } from "@/composables/useBodyScrollLock";
+import { useEscapeClose } from "@/composables/useEscapeClose";
+import { copyText } from "@/lib/clipboard";
+import { downloadText } from "@/lib/download";
 import { api } from "@/lib/api";
 import type { RunNodeInput, RunNodeLog, RunNodeLogKind, RunNodeResult, WorkflowGraph } from "@scribe-flow/shared";
 import { buildSegmentMap, type RunSegment } from "@/utils/run-segments";
@@ -254,15 +257,6 @@ function formatLog(log: RunNodeLog): string {
   return `[${formatTime(log.createdAt)}] [${kindLabels[log.kind]}] ${logTitle(log)}\n${log.content}`;
 }
 
-async function copyText(text: string, message: string) {
-  try {
-    await navigator.clipboard.writeText(text);
-    toast.success(message);
-  } catch {
-    toast.error("复制失败，请手动选择文本");
-  }
-}
-
 function copyLog(log: RunNodeLog) {
   void copyText(log.content, "已复制该条日志");
 }
@@ -276,13 +270,7 @@ function copyFiltered() {
 function downloadLogs() {
   const text = filteredLogs.value.map(formatLog).join("\n\n");
   if (!text) return;
-  const blob = new Blob([text], { type: "text/plain;charset=utf-8" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = `run-${props.runId.slice(-6)}-logs.log`;
-  a.click();
-  URL.revokeObjectURL(url);
+  downloadText(`run-${props.runId.slice(-6)}-logs.log`, text, "text/plain;charset=utf-8");
 }
 
 async function fetchLogs() {
@@ -302,10 +290,6 @@ async function fetchLogs() {
   }
 }
 
-function onKeydown(event: KeyboardEvent) {
-  if (event.key === "Escape" && props.open) emit("update:open", false);
-}
-
 watch(
   () => props.open,
   (open) => {
@@ -317,16 +301,16 @@ watch(
       keyword.value = "";
       void fetchLogs();
     }
-    if (open) {
-      document.body.classList.add("rl-lock");
-      window.addEventListener("keydown", onKeydown);
-    } else {
-      document.body.classList.remove("rl-lock");
-      window.removeEventListener("keydown", onKeydown);
-    }
   },
   { immediate: true },
 );
+
+/* 打开态下的两个副作用：Escape 关闭与锁 body 滚动（共用组合式函数，见 composables/）。 */
+useEscapeClose(
+  () => props.open,
+  () => emit("update:open", false),
+);
+useBodyScrollLock(() => props.open);
 
 watch(
   () => props.initialNodeId,
@@ -349,11 +333,6 @@ watch(inputOptions, (options) => {
   if (inputPosition.value !== "all" && !options.some((segment) => segment.position === inputPosition.value)) {
     inputPosition.value = "all";
   }
-});
-
-onBeforeUnmount(() => {
-  window.removeEventListener("keydown", onKeydown);
-  document.body.classList.remove("rl-lock");
 });
 </script>
 
@@ -906,10 +885,6 @@ onBeforeUnmount(() => {
 .rl-log-expand:hover {
   background: var(--color-ink-soft);
   color: var(--color-text);
-}
-
-body.rl-lock {
-  overflow: hidden;
 }
 
 .rl-fade-enter-active,

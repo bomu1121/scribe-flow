@@ -5,6 +5,7 @@ import { z } from "zod";
 import type { CompareAnalysis } from "@scribe-flow/shared";
 import type { AppDatabase } from "../db/client";
 import { compareReports } from "../db/schema";
+import { badRequest } from "../lib/bad-request";
 import { getAiConfig } from "../lib/settings";
 import { compareCacheKey, runCompareAnalysis, type CompareRunMeta } from "../lib/compareReport";
 
@@ -29,7 +30,7 @@ export function compareApi(db: AppDatabase) {
   api.post("/", async (c) => {
     const parsed = compareBodySchema.safeParse(await c.req.json().catch(() => ({})));
     if (!parsed.success) {
-      return c.json({ error: parsed.error.issues[0]?.message ?? "请求格式不正确" }, 400);
+      return badRequest(c, parsed);
     }
     const { left, right, refresh } = parsed.data;
     if (left.text === right.text) {

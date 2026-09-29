@@ -8,6 +8,7 @@ import { buildTemplateGraph, emptyGraph, parseGraph, WORKFLOW_TEMPLATES, type Gr
 import { folders, projects, runs, type ProjectRow } from "../db/schema";
 import type { AppDatabase } from "../db/client";
 import type { RunEngine } from "../lib/engine";
+import { badRequest } from "../lib/bad-request";
 import { GRAPH_BACKUP_KEEP } from "../lib/storage";
 
 const createBodySchema = z.object({
@@ -164,7 +165,7 @@ export function projectsApi(db: AppDatabase, engine: RunEngine, dataDir: string)
   api.post("/import", async (c) => {
     const parsed = importBodySchema.safeParse(await c.req.json());
     if (!parsed.success) {
-      return c.json({ error: parsed.error.issues[0]?.message ?? "导入数据不合法" }, 400);
+      return badRequest(c, parsed, "导入数据不合法");
     }
     const folderError = validateFolder(db, parsed.data.folderId);
     if (folderError) return c.json({ error: folderError }, 400);
@@ -221,7 +222,7 @@ export function projectsApi(db: AppDatabase, engine: RunEngine, dataDir: string)
 
     const parsed = putGraphSchema.safeParse(await c.req.json());
     if (!parsed.success) {
-      return c.json({ error: parsed.error.issues[0]?.message ?? "请求格式不正确" }, 400);
+      return badRequest(c, parsed);
     }
 
     let graph: WorkflowGraph;
@@ -244,7 +245,7 @@ export function projectsApi(db: AppDatabase, engine: RunEngine, dataDir: string)
   api.post("/", async (c) => {
     const parsed = createBodySchema.safeParse(await c.req.json());
     if (!parsed.success) {
-      return c.json({ error: parsed.error.issues[0]?.message ?? "请求格式不正确" }, 400);
+      return badRequest(c, parsed);
     }
     const folderError = validateFolder(db, parsed.data.folderId);
     if (folderError) return c.json({ error: folderError }, 400);
@@ -278,7 +279,7 @@ export function projectsApi(db: AppDatabase, engine: RunEngine, dataDir: string)
   api.put("/order", async (c) => {
     const parsed = orderBodySchema.safeParse(await c.req.json());
     if (!parsed.success) {
-      return c.json({ error: parsed.error.issues[0]?.message ?? "请求格式不正确" }, 400);
+      return badRequest(c, parsed);
     }
     const { folderId, ids } = parsed.data;
     if (folderId) {
@@ -310,7 +311,7 @@ export function projectsApi(db: AppDatabase, engine: RunEngine, dataDir: string)
 
     const parsed = patchBodySchema.safeParse(await c.req.json());
     if (!parsed.success) {
-      return c.json({ error: parsed.error.issues[0]?.message ?? "请求格式不正确" }, 400);
+      return badRequest(c, parsed);
     }
     const folderError = validateFolder(db, parsed.data.folderId);
     if (folderError) return c.json({ error: folderError }, 400);

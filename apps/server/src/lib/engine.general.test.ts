@@ -8,6 +8,7 @@ import { createDatabase, type AppDatabase } from "../db/client";
 import { projects, runNodeResults, runs } from "../db/schema";
 import { RunEngine } from "./engine";
 import { getSettings, updateSettings } from "./settings";
+import { sleep } from "./sleep";
 import { buildDataOverview, resolveOutputRoot } from "./storage";
 
 /**
@@ -18,10 +19,6 @@ import { buildDataOverview, resolveOutputRoot } from "./storage";
  */
 
 const tmpDirs: string[] = [];
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolvePromise) => setTimeout(resolvePromise, ms));
-}
 
 async function waitUntilFinished(db: AppDatabase, runId: string, timeoutMs = 8000): Promise<void> {
   const deadline = Date.now() + timeoutMs;

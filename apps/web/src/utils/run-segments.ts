@@ -1,5 +1,6 @@
 import type { RunNodeInput, RunNodeResult, WorkflowGraph } from "@scribe-flow/shared";
 import { NODE_TYPE_LABELS } from "@scribe-flow/shared";
+import { formatBytes } from "@/lib/bytes";
 
 /**
  * 一个节点产出的「可独立阅读的一段」。
@@ -35,6 +36,9 @@ export interface RunSegment {
  * 那一份用于「素材挑选的识别链」（判断身份能否穿过该节点，文本工具/挑选节点可以穿）；
  * 这一份用于「结果页解析该节点自己的产出」（文本工具的产出是交付给下游的加工结果，
  * 不是它自己的输入行）。混用会让文本工具的分段退回未加工的原文。
+ * 这份名单与 `engine.ts` 的 `combineOutputs` 里那张「类型 → 合并后 kind」的映射又是另一件事：
+ * 那张表管的是「多份产物合并后算什么 kind」，管不到结果页该从哪一行取文本，两处都列了同一批类型
+ * 只是因为它们恰好都是逐输入产出的节点，改动一处不该顺手改另一处。
  */
 const PER_INPUT_RESULT_TYPES = new Set([
   "process.transcribe",
@@ -56,7 +60,7 @@ function nodeTypeOf(nodeId: string, resultMap: Map<string, RunNodeResult>, graph
   return graph?.nodes.find((node) => node.id === nodeId)?.type ?? "";
 }
 
-function fmtDuration(seconds?: number): string {
+export function fmtDuration(seconds?: number): string {
   if (!seconds || seconds <= 0) return "";
   const h = Math.floor(seconds / 3600);
   const m = Math.floor((seconds % 3600) / 60);
@@ -65,11 +69,15 @@ function fmtDuration(seconds?: number): string {
   return `${m}:${String(s).padStart(2, "0")}`;
 }
 
-function fmtSize(size?: number): string {
+/**
+ * 字数展示：过万（含 1 万）改成「万字」，其余按「字」。
+ *
+ * 结果页的段落条与画布节点的预览条共用这一份，两处对同一份产物必须给出同一个数。
+ * 无字数或为 0 时返回空串；`size` 这里指字符数，不是字节数。
+ */
+export function fmtCharCount(size?: number): string {
   if (!size) return "";
-  if (size < 1024) return `${size} B`;
-  if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
-  return `${(size / 1024 / 1024).toFixed(1)} MB`;
+  return size >= 10000 ? `${(size / 10000).toFixed(1)} 万字` : `${size} 字`;
 }
 
 /**
@@ -143,7 +151,8 @@ function resolveSegmentMeta(
       return parts.join(" · ");
     }
     if (graphNode?.type === "source.file") {
-      return fmtSize(row.size);
+      // 沿用旧口径：没有大小就什么都不显示，而不是显示「0 B」（0 B 是「确实为空」，不是「不知道」）。
+      return row.size ? formatBytes(row.size) : "";
     }
     const next = rows.find((candidate) => candidate.targetNodeId === current?.sourceNodeId && candidate.position === current?.position);
     current = next;
@@ -243,4 +252,18 @@ export function buildSegmentMap(
     if (segments.length > 1) result.set(nodeId, segments);
   }
   return result;
+}
+
+/**
+ * 「分 / 秒」的中文写法（素材挑选的素材行用）。
+ *
+ * 先把总秒数取整再拆分：先 floor 出分、再 round 出秒的写法会把 119.6 秒写成「1 分 60 秒」；
+ * 从总数入手就不会出现进位到 60 的秒。
+ */
+export function fmtMinutesSeconds(seconds?: number): string {
+  if (!seconds || !Number.isFinite(seconds)) return "";
+  const total = Math.round(seconds);
+  const m = Math.floor(total / 60);
+  const s = total % 60;
+  return m > 0 ? `${m} 分 ${s} 秒` : `${s} 秒`;
 }
