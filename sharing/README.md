@@ -8,9 +8,25 @@
 - [ROOM.md](./ROOM.md) —— **现场手册**：那天说什么、绝不投什么（含三条"别点"的演示路径）、竞品答法、被问什么
 - [DRILL.md](./DRILL.md) —— **被刁难时的问答演练（产品质询版）**：14 条"这东西有什么用、谁会要"的刁难与答法，带速查表与"要承认的"标记
 - [QA.md](./QA.md) —— 答辩备查：实际查过的问题（现象 → 怎么定位 → 结论与改法 → 证据强度），含我自己踩的测量坑
+- [WORKFLOW.md](./WORKFLOW.md) —— **「为什么做成工作流」的备料**：加一个节点的收益与代价都量出来了
+  （运行时零改动 / 可插入位置 95 与 43、`runNode` 的 switch 不是穷尽断言、73 行手写枚举、
+  加卡片 23–26 文件 vs 加做法 1 个源码文件）。**这一段不进投影**，用在问答与「以后怎么加功能」上
+- [AUTOCANVAS.md](./AUTOCANVAS.md) —— **一个新东西**：「一句话让模型把链路连出来」，
+  以及它靠不靠得住（10 条约束里 8 条有人守、1 条只在鼠标上、成环那条没人守且会让运行卡死；
+  补在两处、都在同一个关卡）。含一个可当场讲的新论点：**工作流让 AI 的产物可被机器验收**
+- [NEEDS.md](./NEEDS.md) —— **反过来读我自己的运行记录**：四个真需求（改一句话要重等多久 /
+  「我要的是一份结果，不是一次运行」/ 运行记录说不出「谁发起的」/ 没接线的节点看不见），
+  每个都有真实数据兜底。**开头先撤回一个我自己算错的数**（60% 失败率是被一次异常刷屏带偏的）
 - [MODULES.md](./MODULES.md) —— **模块技术细节备查（前端优先）**：第一部分是前端（画布 / 运行态呈现 / 结果页 / 素材交互 / 工程外壳 / 播放器 / 依赖与设计系统 / 工程化现状 / 密钥），每模块给「技术点 → 为什么 → 被问到怎么说 → 局限」；第二部分把后端压成一张「我们用的 / 主流怎么做 / 差在哪」的对照表，不展开实现
 - `tools/build-deck.cjs` —— 生成 PPT（改文案后重跑 `node tools/build-deck.cjs`）
 - `tools/qa-deck.cjs` —— 生成后的几何自检：解开 pptx 读形状坐标，查越界 / 重叠 / 溢出 / 独字行
+- `tools/node-economics.ts` —— **加节点的收益与代价的实测脚本**（连线判定矩阵、可插入位置、组合数、手写枚举计数），
+  自带前置断言；`WORKFLOW.md` 里的每个数都出自它
+- `tools/graph-guards.ts` —— **「10 条图约束谁在守」的实测脚本**（逐个施加违反，看三道判定各拦不拦），
+  自带前置断言；`AUTOCANVAS.md` 里那张表出自它
+- `tools/run-audit.mjs` —— **读真实运行记录的审计脚本**（只读打开 sqlite）：先揪出异常刷屏的工程，
+  再给两个口径的基线、重复劳动分钟数、局部重跑的死角、以及「运行记录能不能说清谁发起的」。
+  自带前置断言；`NEEDS.md` 里每个数都出自它
 - `tools/export-slides.ps1` —— COM 导出 PNG（脚本里刻意不写中文，这台读 .ps1 用 GBK；无真 PowerPoint 时由 WPS 演示承接同一 ProgID）
 
 产出链条：改内容 → build-deck → qa-deck → 导出 PNG → 逐页视觉验收。
@@ -70,6 +86,18 @@ node tools/build-deck.cjs          # 生成 pptx
 node tools/qa-deck.cjs             # 几何自检，有输出即有问题
 powershell -File tools/export-slides.ps1   # 导出 18 张 PNG
 ```
+
+`WORKFLOW.md` 里那些数从仓库根目录跑（tsx 在 pnpm 的虚拟目录里）：
+
+```bash
+node node_modules/.pnpm/tsx@4.23.12/node_modules/tsx/dist/cli.mjs sharing/tools/node-economics.ts
+node node_modules/.pnpm/tsx@4.23.12/node_modules/tsx/dist/cli.mjs sharing/tools/graph-guards.ts
+node --no-warnings sharing/tools/run-audit.mjs          # 读运行记录；只在有数据时能跑
+```
+
+前两个脚本自带前置断言（节点必须是 16 种、硬比较必须是 73 行、内置链路每段必须类型合法、
+26 张内置链路必须全部合法且无环），源码变了会直接报错——
+**报错就照信息更新脚本与文档，不要绕过断言。**
 
 ## 不太确定的地方
 
