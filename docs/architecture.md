@@ -218,7 +218,7 @@ ASR 支持两种引擎——MiMo 走 `input_audio` data URL（超过 7MB 自动�
 <!-- docs-gen:api:start -->
 <!-- 由 `pnpm docs:gen` 从 app.ts 与 routes/*.ts 生成，请勿手改 -->
 
-共 **75** 条接口。路径即挂载后的完整路径，可直接调用（Hono 会把子应用的 `/` 合并为前缀本身，故无尾斜杠）；
+共 **77** 条接口。路径即挂载后的完整路径，可直接调用（Hono 会把子应用的 `/` 合并为前缀本身，故无尾斜杠）；
 本服务**没有任何认证中间件**，CORS 默认放开，仅适合自托管或本机使用。
 
 | 方法 | 路径 | 实现 |
@@ -234,6 +234,8 @@ ASR 支持两种引擎——MiMo 走 `input_audio` data URL（超过 7MB 自动�
 | GET | `/api/bilibili/collected/:id/videos` | `routes/bilibili.ts` 的 `bilibiliApi` |
 | GET | `/api/bilibili/watch-later` | `routes/bilibili.ts` 的 `bilibiliApi` |
 | GET | `/api/bilibili/history` | `routes/bilibili.ts` 的 `bilibiliApi` |
+| POST | `/api/compare` | `routes/compare.ts` 的 `compareApi` |
+| GET | `/api/compare/ready` | `routes/compare.ts` 的 `compareApi` |
 | GET | `/api/docs` | `routes/docs.ts` 的 `docsApi` |
 | GET | `/api/docs/file` | `routes/docs.ts` 的 `docsApi` |
 | POST | `/api/files/upload` | `routes/files.ts` 的 `filesApi` |

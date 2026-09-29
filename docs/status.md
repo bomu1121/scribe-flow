@@ -29,7 +29,11 @@ review_days: 30
 | 知识巩固节点 `process.drill` | ✅ 完成（T1–T5） | 文字 → 知识点 + 题目 + 延伸，结果页答题。配置了「联网检索」渠道时，出题前还会按知识点上网找同类练习题作参考（答案与原文依据仍只认原文，参考链接只有本次真检索到的才留在产物里） | 实现清单 `docs/plans/scribe-flow-m-drill.md` §10；联网出题见 [drill-web-search.md](./decisions/drill-web-search.md) |
 | 结果页阅读体验 | ✅ 完成 | 多输入分段阅读、右侧分段大纲、tab 滑动墨条与语义化；切换运行不销毁屏上内容（压暗旧内容、就绪后一次性替换），并按运行记住各自的阅读位置 | `docs/decisions/result-viewer-design.md`、`docs/research/segment-navigation-research.md` |
 | 素材挑选 `flow.pick` | ✅ 完成 | 多素材链路只加工 / 放行其中几段；段标识穿过「一个输入一份结果」的中间模块，未选中的素材连同其下游一并跳过 | 契约见 `packages/shared/src/segment.ts`；决策记录见 [early-decisions.md](./decisions/early-decisions.md) |
-| 快捷新建「粘贴链接建工程」 | ✅ 完成 | 粘一条 B 站链接（或 App 分享文案）即建好工程：工程名=视频标题、来源节点连链接与封面/UP 主/分 P 一起写好、AI 加工预绑提示词块、输出文件名同标题；模版与提示词块记住上次选择，回车即建 | 实例化逻辑 `packages/shared/src/templates.ts`；对话框 `apps/web/src/components/workspace/QuickCreateDialog.vue` |
+| 内置链路（工作流模板） | ✅ 完成（2026-09-29 重组） | 9 条链路：单线笔记、多路对照、思维导图、Obsidian 笔记、分章笔记、系列综述、选段加工（通用）+ 阴阳师攻略、练一练（垂直）。**链路只描述加工路径，来源在新建时选**（B站链接 / 本地文件 / 粘贴文稿），构建时按来源补齐来源节点与转写节点；同一链路三种来源都能用，不再有「视频版 / 文稿版」成对铺开 | 清单与构建器 `packages/shared/src/templates.ts`；取舍理由与旧→新对照见 [template-set-and-source-axis.md](./decisions/template-set-and-source-axis.md)，本机使用数据见 [template-set-research.md](./research/template-set-research.md) |
+| 结果页「对照」视图 | ✅ 完成 | 本次运行有两份以上可比产物时出现（并行分支的链路一定会有）：左右各选一份，三层呈现——① **AI 差异分析**（点一次按钮跑：一句话结论 / 只有左边讲到 / 只有右边讲到 / 两边说法不一致 / 两边都讲到 / 各自更适合什么场景，可复制为 Markdown、可重新分析）；② **指标对比**（字数/行数/段落/标题/列表项/表格行/引用/代码块 + 差值）；③ **逐行差异**（默认收起，删增行数与重合率写在标题上）。默认比链路上最深的一组并行分支，多素材按段展开取同素材的两套加工。判读走 `POST /api/compare`，**按内容指纹缓存**（同一对内容再打开不重复调模型），单侧超 1.6 万字只送头尾并在页面写明；机械统计部分不花钱、可复现 | 判读结构与解析在 `packages/shared/src/compare.ts`，提示词与调用在 `apps/server/src/lib/compareReport.ts`，路由与缓存在 `apps/server/src/routes/compare.ts`（表 `compare_reports`），视图 `apps/web/src/components/CompareView.vue`，配对 `apps/web/src/utils/run-compare.ts`；取舍与边界见 [run-compare-view.md](./decisions/run-compare-view.md) |
+| 展示范围（哪些节点放出来） | ✅ 完成 | 设置页新增「展示范围」：逐项开关决定哪些节点不出现在界面里（节点面板、新建工程与快捷新建的链路列表、提示词块库一起收起）。**只影响新建时的可选项**：已有工程里的节点照常显示与运行。链路与提示词块跟着各自的节点联动隐藏（含来源轴补出来的来源/转写节点）。规则集中在 shared 的 `visibility.ts`，非法类型接口层 400、坏数据回落空数组 | 规则 `packages/shared/src/visibility.ts`，设置读写 `apps/server/src/lib/settings.ts`，界面 `apps/web/src/views/SettingsView.vue`；取舍与边界见 [visibility-scope.md](./decisions/visibility-scope.md) |
+| 运行记录默认名 | ✅ 完成 | 每条运行落库时带默认名「第 N 次运行」（N 按工程内创建顺序；从某节点重跑时带「· 重跑「节点名」」），用户可改名覆盖，手动清空则只剩时间。编号不因删除而重排；历史记录（name 为空）在打开库时一次性回填，回填标记存 `app_settings`，因此清空过的名字不会被重新命名。顺带修掉「改过名字的运行在结果页刷新后退回『运行结果』」（`engine.detail()` 漏了 `name`） | 命名规则 `apps/server/src/lib/run-name.ts`，回填在 `apps/server/src/db/client.ts` 的 `backfillRunNames`，验收 `apps/server/src/routes/runs.name.test.ts` |
+| 快捷新建「粘贴链接建工程」 | ✅ 完成 | 粘一条 B 站链接（或 App 分享文案）即建好工程：工程名=视频标题、来源节点连链接与封面/UP 主/分 P 一起写好、AI 加工预绑提示词块、输出文件名同标题；链路与提示词块记住上次选择，回车即建 | 实例化逻辑 `packages/shared/src/templates.ts`；对话框 `apps/web/src/components/workspace/QuickCreateDialog.vue` |
 | 信息溯源 | ✅ 完成 | 三步骤配方产出结构化证据清单 + 结果页溯源阅读器；外部联网核查的检索渠道可切换（智谱 BigModel / Tavily，模版用 `externalCheck` 声明），检索结果按来源权威度分档重排并给出「外部可印证 / 仅非权威来源 / 有反证 / 未找到出处」，设置页可「测试连接」自检。检索渠道是**共用**的（设置页「联网检索」，与练一练同一份配置） | 联网核查方案见 [trace-external-authority.md](./decisions/trace-external-authority.md)，报告与阅读器见 [trace-report-design.md](./decisions/trace-report-design.md)，渠道共用见 [drill-web-search.md](./decisions/drill-web-search.md)；渠道适配层在 `apps/server/src/lib/traceExternal.ts`，权威度分档在 `apps/server/src/lib/sourceAuthority.ts` |
 | 数据与工程：本地数据账本 | ✅ 完成 | 设置页「数据与工程」从三个只读格子改成账本：数据目录按六个分区（数据库 / 媒体库 / 上传原件 / 运行中间产物 / 输出文件 / 工程图备份）分别给出文件数与体积、合计占用与按工程的占用排行，以及五类可回收空间（已结束运行 / 孤立媒体资产 / 孤立上传原件 / 盘上孤立文件与目录 / 可回收的工程图备份）——每类都带「多少项、能释放多少字节、按什么规则判定」，可逐项或一键清理，并可在系统文件管理器打开数据目录 | 方案与取舍见 [data-ledger-and-cleanup.md](./decisions/data-ledger-and-cleanup.md)；判定与执行同源在 `apps/server/src/lib/storage.ts`，路由级验收在 `apps/server/src/routes/settings.test.ts` |
 | 设置页「常规」：运行与产出的默认策略 | ✅ 完成 | 「常规」从「并发数 + 输出目录」两个孤立输入框扩成三块：**运行**（并发 / 失败自动重试次数 / 重试等待）、**产出**（输出目录支持绝对路径并回显服务端解析后的真实落点，带「打开输出目录」按钮；新的文件名模板 `{project}`/`{date}`/`{time}`/`{node}`）、**运行结束提醒**（系统通知 / 提示音，运行成功与失败时提醒，自己点的停止不提醒）。重试是**节点级优先、全局兜底**；产物目录落在数据目录之外时账本会标注，且相对路径 `..` 外爬被路由显式拒绝。顺带把 `general.outputDir` 的解析在三处落盘与两处读回上统一收口（原 P0「路径校验」的一条），库内路径改为「数据目录内记相对、之外记绝对」，老数据无需迁移 | 方案与取舍见 [general-settings.md](./decisions/general-settings.md)；解析唯一收口点在 `apps/server/src/lib/storage.ts`，落盘与模板渲染验收在 `apps/server/src/lib/engine.general.test.ts`，路由级验收在 `apps/server/src/routes/settings.test.ts` |
@@ -43,11 +47,11 @@ review_days: 30
 
 | 指标 | 当前值 |
 | --- | --- |
-| 测试用例（`it(` 声明数） | **390**（shared 117 · server 229 · web 44） |
-| UI 冒烟检查项（`pnpm smoke:ui`） | **64**（其中 3 项为恒真占位，净 61） |
+| 测试用例（`it(` 声明数） | **453**（shared 155 · server 247 · web 51） |
+| UI 冒烟检查项（`pnpm smoke:ui`） | **70**（其中 3 项为恒真占位，净 67） |
 | API 自检项 | m2 7 · m3 14 · m4 19 · m6 9 · drill 22 |
-| 内置提示词块（`BUILTIN_PROMPT_BLOCKS`） | **14** |
-| 文档数（`docs/` 下 `.md`，不含调研原文） | 47 |
+| 内置提示词块（`BUILTIN_PROMPT_BLOCKS`） | **16** |
+| 文档数（`docs/` 下 `.md`，不含调研原文） | 51 |
 <!-- docs-gen:numbers:end -->
 
 ## 3. 已知缺口
@@ -116,12 +120,15 @@ review_days: 30
 - [坚果云同步模块（设置页）](./decisions/nutstore-sync.md)
 - [阴阳师攻略视频文稿 AI 加工模块](./decisions/onmyoji-guide-processing.md)
 - [运行结果展示页设计方案](./decisions/result-viewer-design.md)
+- [对照视图：差异在结果页看，不在链路里拼](./decisions/run-compare-view.md)
 - [ScribeFlow 方案（v3）：笔记处理画布流](./decisions/scribe-flow-proposal.md)
 - [shadcn-vue 官方使用规则（历史，不再执行）](./decisions/shadcn-vue-rules.md)
+- [内置链路：改成「加工路径 × 来源」](./decisions/template-set-and-source-axis.md)
 - [信息溯源联网核查：来源权威度分级与 v3 模版](./decisions/trace-external-authority.md)
 - [信息溯源模块优化方案（结构化核对版 + 报告阅读器）](./decisions/trace-report-design.md)
 - [UI 样式框架选型与组件实现调研（代码级，历史，已被 Element Plus 路线取代）](./decisions/ui-framework-selection.md)
 - [UI 组件库替换调研（成熟库路线）](./decisions/ui-library-replacement-research.md)
+- [展示范围：收起的入口，不是关掉的能力](./decisions/visibility-scope.md)
 - [工作流运行态恢复方案（离开页面后重新进入）](./decisions/workflow-run-resume.md)
 
 **计划（实施清单 / 路线图）**（`docs/plans/`）
@@ -149,6 +156,7 @@ review_days: 30
 - [仓库可读性与过度工程：外部证据与本仓处置建议](./research/repo-legibility-and-over-engineering.md)
 - [多视频结果的分组切换：导航模式调研与改造方案](./research/segment-navigation-research.md)
 - [结果页 tab 切换：标准依据与实测对照](./research/tab-interaction-research.md)
+- [内置链路（模板）调研](./research/template-set-research.md)
 - [视频模块 P0 真实视频验证记录](./research/video-module-poc.md)
 - [ScribeFlow 视频下载与结果页播放 —— 调研与设计](./research/video-module-research.md)
 - [ScribeFlow 功能工作流模块拓展 — 调研方案](./research/workflow-module-expansion-research.md)
