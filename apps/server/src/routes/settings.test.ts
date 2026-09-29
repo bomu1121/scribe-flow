@@ -21,7 +21,7 @@ async function setup() {
   await mkdir(dataDir, { recursive: true });
   const db = createDatabase(dataDir);
   const app = createApp(db, { dataDir, uploadsDir: join(dataDir, "uploads"), maxUploadMb: 10, docsDir: join(root, "docs") });
-  return { app, dataDir };
+  return { app, dataDir, db };
 }
 
 type App = ReturnType<typeof createApp>;
@@ -143,6 +143,51 @@ describe("「常规」分组设置", () => {
     const { app } = await setup();
     await put(app, "/api/settings", { general: { maxRetries: 0, retryBackoffSec: 1 } });
     expect(await generalOf(app)).toMatchObject({ maxRetries: 0, retryBackoffSec: 1 });
+  });
+});
+
+describe("「展示范围」分组设置", () => {
+  it("默认什么都不隐藏，保存后按列表回显（只留认识的节点类型）", async () => {
+    const { app } = await setup();
+    const before = (await (await app.request("/api/settings")).json()) as { visibility: { hiddenNodes: string[] } };
+    expect(before.visibility.hiddenNodes).toEqual([]);
+
+    const saved = (await (
+      await app.request("/api/settings", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ visibility: { hiddenNodes: ["process.gameguide", "process.gameguide", "process.drill"] } }),
+      })
+    ).json()) as { visibility: { hiddenNodes: string[] } };
+    // 去重后落库，顺序按提交顺序。
+    expect(saved.visibility.hiddenNodes).toEqual(["process.gameguide", "process.drill"]);
+
+    const again = (await (await app.request("/api/settings")).json()) as { visibility: { hiddenNodes: string[] } };
+    expect(again.visibility.hiddenNodes).toEqual(["process.gameguide", "process.drill"]);
+  });
+
+  it("传了不存在的节点类型时 400，不悄悄写进库", async () => {
+    const { app } = await setup();
+    const res = await app.request("/api/settings", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ visibility: { hiddenNodes: ["process.not-a-node"] } }),
+    });
+    expect(res.status).toBe(400);
+    const after = (await (await app.request("/api/settings")).json()) as { visibility: { hiddenNodes: string[] } };
+    expect(after.visibility.hiddenNodes).toEqual([]);
+  });
+
+  it("库里存了坏数据（手改过）时当作什么都没隐藏，不让设置页打不开", async () => {
+    const { app, db } = await setup();
+    const { appSettings } = await import("../db/schema");
+    db.insert(appSettings).values({ key: "visibility.hiddenNodes", value: "{坏 JSON", updatedAt: Date.now() }).run();
+    const res = (await (await app.request("/api/settings")).json()) as { visibility: { hiddenNodes: string[] } };
+    expect(res.visibility.hiddenNodes).toEqual([]);
+
+    db.update(appSettings).set({ value: '["process.gameguide","不存在的老类型"]' }).run();
+    const second = (await (await app.request("/api/settings")).json()) as { visibility: { hiddenNodes: string[] } };
+    expect(second.visibility.hiddenNodes).toEqual(["process.gameguide"]);
   });
 });
 

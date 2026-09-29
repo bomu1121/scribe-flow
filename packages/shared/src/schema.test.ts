@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { canConnect, canConnectSpecs, type PortSpec } from "./port";
 import { isValidConnection, NODE_CARD_WIDTH, NODE_PORTS, type GraphNode } from "./graph";
-import { WORKFLOW_TEMPLATES } from "./templates";
+import { buildTemplateGraph } from "./templates";
 import { safeParseGraph } from "./schema";
 
 const biliNode: GraphNode = {
@@ -184,40 +184,12 @@ describe("graph", () => {
 });
 
 describe("templates", () => {
-  it("全部内置模板都能通过 graph 校验", () => {
-    for (const t of WORKFLOW_TEMPLATES) {
-      const result = safeParseGraph(t.graph);
-      expect(result.success).toBe(true);
-    }
-  });
-
-  it("模板中同排相连的节点不会横向重叠", () => {
-    for (const t of WORKFLOW_TEMPLATES) {
-      const nodesById = new Map(t.graph.nodes.map((n) => [n.id, n]));
-      for (const e of t.graph.edges) {
-        const source = nodesById.get(e.source);
-        const target = nodesById.get(e.target);
-        if (!source || !target || source.position.y !== target.position.y) continue;
-        expect(source.position.x + NODE_CARD_WIDTH[source.type]).toBeLessThanOrEqual(target.position.x);
-      }
-    }
-  });
-
+  // 「模板 × 来源」的完整矩阵（能不能建图、端口连不连得上、排布重叠）由 templates.test.ts 负责，
+  // 这里只留一条 schema 自身的用例：图的节点 id 不能重复。
   it("拒绝重复的节点 id", () => {
-    const graph = structuredClone(WORKFLOW_TEMPLATES[0].graph);
+    const graph = structuredClone(buildTemplateGraph("template.single-note", { source: "text" })!);
     graph.nodes[1].id = graph.nodes[0].id;
     const result = safeParseGraph(graph);
     expect(result.success).toBe(false);
-  });
-
-  it("阴阳师攻略模板使用独立的「阴阳师攻略加工」节点并默认核对版", () => {
-    const text = WORKFLOW_TEMPLATES.find((t) => t.id === "template.text-game-guide");
-    const video = WORKFLOW_TEMPLATES.find((t) => t.id === "template.video-game-guide");
-    const isGuide = (n: { type: string; data: { mode?: string } }) =>
-      n.type === "process.gameguide" && n.data.mode === "audited";
-    const check = (t: (typeof WORKFLOW_TEMPLATES)[number] | undefined) =>
-      t?.graph.nodes.some((n) => isGuide(n as { type: string; data: { mode?: string } })) ?? false;
-    expect(check(text)).toBe(true);
-    expect(check(video)).toBe(true);
   });
 });

@@ -1090,10 +1090,53 @@
   margin-bottom: 12px;
 }
 
+/* 来源选择：链路只画加工步骤，来源在这里选 */
+.np-source {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.np-source-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.np-source-hint {
+  flex: 1 1 100%;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--color-text-tertiary);
+}
+
 .np-tpl-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px;
+  /* 链路会继续变多：列表自己滚，别把对话框顶出屏幕（小屏笔记本上 8 条就已经贴底了） */
+  max-height: 54vh;
+  overflow-y: auto;
+  padding-right: 2px;
+}
+
+/* 分组标题（通用链路 / 垂直领域）占满一行，一眼看清有几条、各属于哪类 */
+.np-tpl-group {
+  grid-column: 1 / -1;
+  margin-top: 2px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--color-text-tertiary);
+}
+
+.np-tpl--blank {
+  grid-column: 1 / -1;
+  flex-direction: row;
+  align-items: center;
+  gap: 10px;
 }
 
 .np-tpl {
@@ -1135,6 +1178,14 @@
   font-size: 11px;
   line-height: 1.5;
   color: var(--color-text-secondary);
+}
+
+/* 节点顺序提示：用等宽字让「转写 → 校对 → 加工」这一串读起来像路径而不是句子 */
+.np-tpl-hint {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  line-height: 1.5;
+  color: var(--color-text-tertiary);
 }
 
 .np-foot {

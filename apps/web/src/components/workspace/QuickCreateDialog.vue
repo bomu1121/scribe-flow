@@ -4,14 +4,14 @@ import { useRouter } from "vue-router";
 import { ElButton, ElDialog, ElInput, ElOption, ElSelect } from "element-plus";
 import { Link2 } from "lucide-vue-next";
 import {
-  WORKFLOW_TEMPLATES,
   availablePromptBlocks,
   bindablePromptBlocks,
+  buildTemplateGraph,
   extractBiliUrl,
   extractShareTitle,
-  instantiateTemplate,
-  isBiliTemplate,
   pageFromUrl,
+  supportsSource,
+  visibleTemplates,
   type BiliLinkSource,
   type VideoPreview,
   type WorkflowTemplate,
@@ -40,8 +40,8 @@ const promptsStore = usePromptsStore();
 const settingsStore = useSettingsStore();
 const inputRef = ref<InstanceType<typeof ElInput> | null>(null);
 
-/** 默认「视频转笔记（单线）」+ 推荐的观点提炼：最常用的那条链路，回车即可。 */
-const DEFAULT_TEMPLATE_ID = "template.video-basic";
+/** 默认「单线笔记」+ 推荐的观点笔记：最常用的那条链路，回车即可。 */
+const DEFAULT_TEMPLATE_ID = "template.single-note";
 const DEFAULT_PROMPT_BLOCK_ID = "builtin.insight.v4";
 const PREFS_KEY = "scribe-flow.quickCreate";
 /** 留空表示不预选，进画布后在节点检查器里再选。 */
@@ -76,10 +76,17 @@ function writePrefs() {
   }
 }
 
-const videoTemplates = computed<WorkflowTemplate[]>(() => WORKFLOW_TEMPLATES.filter(isBiliTemplate));
-/** 检索密钥没配时，需要联网核查的模版不出现在可选列表里（跑出来只有一份没核查的清单）。 */
+/** 这里粘的是 B 站链接，所以只列支持 B 站来源的链路；展示范围里收起的节点整条链路都不出现。 */
+const videoTemplates = computed<WorkflowTemplate[]>(() =>
+  visibleTemplates(settingsStore.settings?.visibility?.hiddenNodes).filter((tpl) => supportsSource(tpl, "bili")),
+);
+/** 检索密钥没配时，需要联网核查的块不出现在可选列表里（跑出来只有一份没核查的清单）。 */
 const searchReady = computed(() => Boolean(settingsStore.settings?.search.hasKey));
-const promptOptions = computed(() => availablePromptBlocks(bindablePromptBlocks(promptsStore.customBlocks), searchReady.value));
+/** 展示范围里收起的节点：它的提示词块也一起收起（如阴阳师攻略的块）。 */
+const hiddenNodes = computed(() => settingsStore.settings?.visibility?.hiddenNodes ?? []);
+const promptOptions = computed(() =>
+  availablePromptBlocks(bindablePromptBlocks(promptsStore.customBlocks), searchReady.value, hiddenNodes.value),
+);
 
 const link = ref("");
 const preview = ref<VideoPreview | null>(null);
@@ -95,8 +102,10 @@ const dialogVisible = computed({
 });
 
 const selectedTemplate = computed(() => videoTemplates.value.find((tpl) => tpl.id === templateId.value));
-/** 模版里没有 AI 加工节点时（如思维导图、攻略加工自带提示词），提示词选择不生效。 */
-const hasPromptNode = computed(() => selectedTemplate.value?.graph.nodes.some((node) => node.type === "process.prompt") ?? false);
+/** 该链路落到 B 站来源时有没有「AI 加工」节点：没有的话提示词选择不生效（如思维导图、攻略加工自带提示词）。 */
+const hasPromptNode = computed(
+  () => buildTemplateGraph(templateId.value, { source: "bili" })?.nodes.some((node) => node.type === "process.prompt") ?? false,
+);
 const selectedBlock = computed(() => promptOptions.value.find((block) => block.id === promptBlockId.value));
 /** 工程名将使用的标题：解析结果优先，其次分享文案里的【标题】。 */
 const resolvedTitle = computed(() => normalizeTitle(preview.value?.title) || extractShareTitle(link.value));
@@ -247,7 +256,8 @@ async function submit() {
 
     const title = normalizeTitle(info?.title) || extractShareTitle(raw);
     const name = (title || url).slice(0, 80);
-    const graph = instantiateTemplate(templateId.value, {
+    const graph = buildTemplateGraph(templateId.value, {
+      source: "bili",
       bili: buildBiliSource(url, info),
       promptBlockId: promptBlockId.value || undefined,
     });
@@ -263,7 +273,7 @@ async function submit() {
 
     writePrefs();
     emit("update:open", false);
-    toast.success(`已按模版建好工程「${project.name}」`);
+    toast.success(`已按链路建好工程「${project.name}」`);
     await router.push(`/project/${project.id}`);
   } catch (err) {
     toast.error(err instanceof Error ? err.message : "创建工程失败");
@@ -310,7 +320,7 @@ async function submit() {
 
     <div class="qc-fields">
       <label class="qc-field">
-        <span class="qc-field-label">加工模版</span>
+        <span class="qc-field-label">加工链路</span>
         <el-select v-model="templateId" size="default" class="qc-select">
           <el-option v-for="tpl in videoTemplates" :key="tpl.id" :label="tpl.name" :value="tpl.id" />
         </el-select>
@@ -324,13 +334,13 @@ async function submit() {
           <el-option v-for="block in promptOptions" :key="block.id" :label="block.name" :value="block.id" />
         </el-select>
         <span class="qc-field-hint">
-          {{ hasPromptNode ? selectedBlock?.description || "该块没有说明文案，可在设置页查看正文。" : "该模版没有 AI 加工节点，加工节点自带提示词。" }}
+          {{ hasPromptNode ? selectedBlock?.description || "该块没有说明文案，可在设置页查看正文。" : "该链路没有 AI 加工节点，加工节点自带提示词。" }}
         </span>
       </label>
     </div>
 
     <div class="np-foot">
-      <span class="np-hint">模版与提示词会记住上次的选择：下次复制链接后打开这里，直接回车即可。</span>
+      <span class="np-hint">链路与提示词会记住上次的选择：下次复制链接后打开这里，直接回车即可。</span>
       <div class="qc-actions">
         <el-button plain :disabled="creating" @click="close">取消</el-button>
         <el-button type="primary" :loading="creating" :disabled="!canSubmit" @click="submit">创建并打开</el-button>

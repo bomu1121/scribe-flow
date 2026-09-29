@@ -1,6 +1,6 @@
 import { eq } from "drizzle-orm";
-import type { AiSettings, AppSettings, AsrSettings, GeneralSettings, SearchProvider, UpdateSettingsRequest } from "@scribe-flow/shared";
-import { DEFAULT_FILE_NAME_TEMPLATE, DEFAULT_OUTPUT_DIR, GENERAL_LIMITS } from "@scribe-flow/shared";
+import type { AiSettings, AppSettings, AsrSettings, GeneralSettings, NodeType, SearchProvider, UpdateSettingsRequest } from "@scribe-flow/shared";
+import { DEFAULT_FILE_NAME_TEMPLATE, DEFAULT_OUTPUT_DIR, GENERAL_LIMITS, NODE_TYPE_ORDER } from "@scribe-flow/shared";
 import type { AppDatabase } from "../db/client";
 import { appSettings } from "../db/schema";
 import type { AiConfig, AsrConfig } from "./ai";
@@ -126,6 +126,9 @@ export function getSettings(db: AppDatabase): AppSettings {
       runEndNotify: raw(db, "general.runEndNotify", GENERAL_DEFAULTS["general.runEndNotify"]) === "true",
       runEndSound: raw(db, "general.runEndSound", GENERAL_DEFAULTS["general.runEndSound"]) === "true",
     },
+    visibility: {
+      hiddenNodes: parseHiddenNodes(raw(db, "visibility.hiddenNodes", "[]") ?? "[]"),
+    },
     obsidian: {
       vaultPath: raw(db, "obsidian.vaultPath", OBSIDIAN_DEFAULTS["obsidian.vaultPath"]) ?? "",
       folder: raw(db, "obsidian.folder", OBSIDIAN_DEFAULTS["obsidian.folder"]) ?? "00-Inbox",
@@ -192,6 +195,20 @@ export function getNutstoreConfig(db: AppDatabase): NutstoreConfig {
   };
 }
 
+/**
+ * 解析展示范围里存着的节点类型列表。
+ * 坏数据（手改过库、旧版本写过别的形状）一律当作「什么都没隐藏」，不让设置页因此打不开。
+ */
+function parseHiddenNodes(value: string): NodeType[] {
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    return [...new Set(parsed.filter((item): item is NodeType => typeof item === "string" && NODE_TYPE_ORDER.includes(item as NodeType)))];
+  } catch {
+    return [];
+  }
+}
+
 function set(db: AppDatabase, key: string, value: string) {
   if (!value) return;
   db.insert(appSettings).values({ key, value, updatedAt: Date.now() }).onConflictDoUpdate({ target: appSettings.key, set: { value, updatedAt: Date.now() } }).run();
@@ -256,6 +273,13 @@ export function updateSettings(db: AppDatabase, patch: UpdateSettingsRequest) {
     }
     if (patch.general.runEndNotify !== undefined) set(db, "general.runEndNotify", patch.general.runEndNotify ? "true" : "false");
     if (patch.general.runEndSound !== undefined) set(db, "general.runEndSound", patch.general.runEndSound ? "true" : "false");
+  }
+  if (patch.visibility) {
+    if (patch.visibility.hiddenNodes !== undefined) {
+      // 只留认识的节点类型：老设置里出现的已废弃类型不该把界面搞坏。
+      const unique = [...new Set(patch.visibility.hiddenNodes.filter((type) => NODE_TYPE_ORDER.includes(type)))];
+      set(db, "visibility.hiddenNodes", JSON.stringify(unique));
+    }
   }
   if (patch.obsidian) {
     if (patch.obsidian.vaultPath !== undefined) set(db, "obsidian.vaultPath", patch.obsidian.vaultPath.trim().replace(/[\\/]+$/, ""));

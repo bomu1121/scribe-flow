@@ -1,6 +1,6 @@
 import { defineStore } from "pinia";
 import { ref } from "vue";
-import type { FolderDeleteResult, ProjectFolder, ProjectListItem, ProjectMeta, WorkflowGraph } from "@scribe-flow/shared";
+import type { FolderDeleteResult, ProjectFolder, ProjectListItem, ProjectMeta, TemplateSourceKind, WorkflowGraph } from "@scribe-flow/shared";
 import { api } from "@/lib/api";
 
 interface ProjectListResponse {
@@ -83,7 +83,9 @@ export const useProjectsStore = defineStore("projects", () => {
     writeLastProject(id);
   }
 
-  async function createProject(options: { name?: string; templateId?: string; folderId?: string | null } = {}): Promise<ProjectMeta> {
+  async function createProject(
+    options: { name?: string; templateId?: string; source?: TemplateSourceKind; folderId?: string | null } = {},
+  ): Promise<ProjectMeta> {
     const project = await api.post<ProjectMeta>("/api/projects", options);
     await loadList();
     return project;

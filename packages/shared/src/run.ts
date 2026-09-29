@@ -1,4 +1,4 @@
-import type { AsrEngine, WorkflowGraph } from "./graph";
+import type { AsrEngine, NodeType, WorkflowGraph } from "./graph";
 import type { NutstoreSettings } from "./nutstore";
 import type { RunMediaView } from "./media";
 
@@ -215,11 +215,24 @@ export const GENERAL_LIMITS = {
   retryBackoffSec: { min: 1, max: 60 },
 } as const;
 
+/**
+ * 展示范围：哪些节点**不放出来**。
+ *
+ * 用途是「不想让人看到的能力先收起来」——比如演示给别人看时，某个只服务自己玩的垂直节点不该出现在面板里。
+ * 它只影响**新建时的可选项**（节点面板、链路列表、提示词块库），已有工程里出现的节点照常渲染、照常运行：
+ * 收起一个入口不该让旧工程失效。
+ */
+export interface VisibilitySettings {
+  /** 不放进界面的节点类型。空数组表示全都放出来（默认）。 */
+  hiddenNodes: NodeType[];
+}
+
 export interface AppSettings {
   ai: AiSettings;
   asr: AsrSettings;
   search: SearchSettings;
   general: GeneralSettings;
+  visibility: VisibilitySettings;
   obsidian: {
     /** Obsidian 库根目录，例如 D:\\知识库。 */
     vaultPath: string;
@@ -270,6 +283,9 @@ export interface UpdateSettingsRequest {
     retryBackoffSec?: number;
     runEndNotify?: boolean;
     runEndSound?: boolean;
+  };
+  visibility?: {
+    hiddenNodes?: NodeType[];
   };
   obsidian?: {
     vaultPath?: string;

@@ -184,3 +184,30 @@ html.sf-dropdown-modal-open body :is(
     transform: scale(0.99) translateY(-1px);
   }
 }
+
+/* 设置页「展示范围」：节点开关列表 */
+.sf-vis-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: 6px 12px;
+  background: var(--color-surface);
+}
+
+.sf-vis-row {
+  padding: 6px 0;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.sf-vis-row:last-child {
+  border-bottom: none;
+}
+
+.sf-vis-type {
+  margin-left: 6px;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--color-text-tertiary);
+}

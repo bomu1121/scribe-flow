@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { desc, eq, isNull } from "drizzle-orm";
 import { Hono } from "hono";
 import { z } from "zod";
-import { emptyGraph, parseGraph, WORKFLOW_TEMPLATES, type GraphNode, type WorkflowGraph } from "@scribe-flow/shared";
+import { buildTemplateGraph, emptyGraph, parseGraph, WORKFLOW_TEMPLATES, type GraphNode, type WorkflowGraph } from "@scribe-flow/shared";
 import { folders, projects, runs, type ProjectRow } from "../db/schema";
 import type { AppDatabase } from "../db/client";
 import type { RunEngine } from "../lib/engine";
@@ -14,6 +14,8 @@ const createBodySchema = z.object({
   name: z.string().trim().min(1, "工程名称不能为空").max(80, "工程名称过长").optional(),
   description: z.string().max(200).optional(),
   templateId: z.string().optional(),
+  /** 模板的来源种类：模板只描述加工链，来源在新建时选（缺省用模板的默认来源）。 */
+  source: z.enum(["bili", "file", "text"]).optional(),
   folderId: z.string().optional(),
 });
 
@@ -138,12 +140,17 @@ function nextProjectPosition(db: AppDatabase, folderId: string | null): number {
   return siblings.reduce((max, p) => Math.max(max, p.position ?? 0), 0) + 1;
 }
 
-function graphForTemplate(templateId: string | undefined): { graph: WorkflowGraph; name: string; description: string } {
+function graphForTemplate(
+  templateId: string | undefined,
+  source: "bili" | "file" | "text" | undefined,
+): { graph: WorkflowGraph; name: string; description: string } {
   const template = WORKFLOW_TEMPLATES.find((t) => t.id === templateId);
-  if (template) {
-    return { graph: template.graph, name: template.name, description: template.description };
+  const graph = template ? buildTemplateGraph(template.id, { source }) : null;
+  // 模板未知、或该模板不支持选定的来源：退回空白图，别给一个半截的链路。
+  if (!template || !graph) {
+    return { graph: emptyGraph(), name: "未命名工程", description: "" };
   }
-  return { graph: emptyGraph(), name: "未命名工程", description: "" };
+  return { graph, name: template.name, description: template.description };
 }
 
 export function projectsApi(db: AppDatabase, engine: RunEngine, dataDir: string) {
@@ -241,7 +248,7 @@ export function projectsApi(db: AppDatabase, engine: RunEngine, dataDir: string)
     }
     const folderError = validateFolder(db, parsed.data.folderId);
     if (folderError) return c.json({ error: folderError }, 400);
-    const preset = graphForTemplate(parsed.data.templateId);
+    const preset = graphForTemplate(parsed.data.templateId, parsed.data.source);
     const id = `prj_${randomUUID()}`;
     const ts = now();
     const name = parsed.data.name?.trim() || preset.name;

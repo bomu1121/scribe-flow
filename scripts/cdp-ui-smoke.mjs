@@ -28,6 +28,22 @@ const SHOT_DIALOG = join(ROOT, ".tmp-cdp-dialog.png");
 const SHOT_LOGIN = join(ROOT, ".tmp-cdp-login.png");
 const SHOT_EDITOR = join(ROOT, ".tmp-cdp-editor.png");
 
+/**
+ * 展示范围验收用：节点类型 → 面板上的名字。
+ * 只列几个会被收起的（演示前收起来的通常是垂直节点），对不上就跳过该项，不误报。
+ */
+const NODE_LABELS_FOR_SMOKE = {
+  "process.gameguide": "阴阳师攻略加工",
+  "process.drill": "知识巩固",
+  "process.mindmap": "思维导图",
+  "process.chapter": "章节切分",
+  "process.obsidian": "Obsidian 笔记",
+  "process.merge": "合并",
+  "flow.if": "条件分支",
+  "flow.pick": "素材挑选",
+  "process.text": "文本工具",
+};
+
 const results = [];
 function check(name, ok, detail = "") {
   results.push({ name, ok, detail });
@@ -356,6 +372,37 @@ async function run() {
     Boolean(epInDialog?.brand) && epInDialog?.brand.toLowerCase() !== "#409eff",
     `--el-color-primary=${epInDialog?.brand}`,
   );
+  // 来源轴（templates.ts 的「模板只画加工链，来源在新建时选」）：三个来源单选 + 分组标题，
+  // 且切换来源后只对音视频成立的链路（选段加工）必须消失——这是这次模板改造的核心行为。
+  const sourceAxis = await evalJs(`(() => {
+    const d = [...document.querySelectorAll('.el-overlay')].find((o) => getComputedStyle(o).display !== 'none')?.querySelector('.el-dialog');
+    if (!d) return null;
+    return {
+      radios: [...d.querySelectorAll('.np-source .el-radio-button')].map((el) => el.textContent.trim()),
+      groups: [...d.querySelectorAll('.np-tpl-group')].map((el) => el.textContent.trim()),
+    };
+  })()`);
+  check(
+    "新建工程对话框按来源组织（B站链接 / 本地文件 / 粘贴文稿 + 通用/垂直分组）",
+    sourceAxis?.radios.join("、") === "B站链接、本地文件、粘贴文稿" && (sourceAxis?.groups.length ?? 0) >= 2,
+    `来源=[${sourceAxis?.radios?.join("、")}] 分组=[${sourceAxis?.groups?.join("、")}]`,
+  );
+  await evalJs(`(() => {
+    const d = [...document.querySelectorAll('.el-overlay')].find((o) => getComputedStyle(o).display !== 'none')?.querySelector('.el-dialog');
+    const target = [...(d?.querySelectorAll('.np-source .el-radio-button') ?? [])].find((el) => el.textContent.includes('粘贴文稿'));
+    target?.querySelector('input')?.click();
+    return true;
+  })()`);
+  await sleep(300);
+  const afterTextSource = (await evalJs(`(() => {
+    const d = [...document.querySelectorAll('.el-overlay')].find((o) => getComputedStyle(o).display !== 'none')?.querySelector('.el-dialog');
+    return [...(d?.querySelectorAll('.np-tpl-name') ?? [])].map((el) => el.textContent.trim());
+  })()`)) ?? [];
+  check(
+    "切到「粘贴文稿」后，只对音视频成立的链路被移出列表",
+    afterTextSource.includes("单线笔记") && !afterTextSource.includes("选段加工"),
+    `${afterTextSource.length} 条：${afterTextSource.join("、")}`,
+  );
   await sleep(400);
   await shot(SHOT_DIALOG);
   await pressEscape();
@@ -384,8 +431,8 @@ async function run() {
     JSON.stringify(quickFields),
   );
   check(
-    "快捷新建默认值：单线模版 + 推荐提示词块",
-    Boolean(quickFields?.values?.some((v) => v.includes("视频转笔记"))) &&
+    "快捷新建默认值：单线笔记链路 + 推荐提示词块",
+    Boolean(quickFields?.values?.some((v) => v.includes("单线笔记"))) &&
       Boolean(quickFields?.values?.some((v) => v.includes("观点笔记"))),
     (quickFields?.values ?? []).join(" / "),
   );
@@ -464,6 +511,26 @@ async function run() {
       "节点面板目录齐全（来源/转写/AI 加工/文本与逻辑/组织与输出）",
       nodeCatalog.groups >= 5 && nodeCatalog.items >= 10,
       `${nodeCatalog.groups} 组 ${nodeCatalog.items} 项`,
+    );
+    // 展示范围（设置页「展示范围」）必须与面板一致：这里不假设用户收了哪些节点，而是拿设置里的
+    // 列表与面板实际渲染做对照——收起的不能出现，没收的必须出现。这样它跟着用户设置走，不会误报。
+    const hiddenNodes = await fetch(`${API_URL}/api/settings`)
+      .then((r) => r.json())
+      .then((s) => (Array.isArray(s?.visibility?.hiddenNodes) ? s.visibility.hiddenNodes : []))
+      .catch(() => []);
+    const scopeCheck = await evalJs(`(() => {
+      const hidden = ${JSON.stringify(hiddenNodes)};
+      const items = [...document.querySelectorAll('.wp-nodes .wp-node-item')].map((el) => el.textContent.trim());
+      return { hidden, items };
+    })()`);
+    check(
+      "节点面板与「展示范围」设置一致（收起的节点不在面板里）",
+      hiddenNodes.length === 0 ||
+        hiddenNodes.every((type) => {
+          const label = NODE_LABELS_FOR_SMOKE[type] ?? "";
+          return label ? !scopeCheck.items.some((text) => text.includes(label)) : true;
+        }),
+      hiddenNodes.length > 0 ? `收起 ${hiddenNodes.join("、")} → 面板 ${scopeCheck.items.length} 项` : "未收起任何节点",
     );
 
     // B站收藏（action 型入口）未登录时被拦截：自定义 toast 提示扫码登录

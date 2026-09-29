@@ -750,6 +750,8 @@ const gameGuideModeOptions = [
 
 /** 检索密钥是否已配置：没配就不该让需要联网核查的模版出现在可选列表里。 */
 const searchReady = computed(() => Boolean(settingsStore.settings?.search.hasKey));
+/** 展示范围里收起的节点：它的提示词块（如阴阳师攻略系列）不在下拉里出现。 */
+const hiddenNodes = computed(() => settingsStore.settings?.visibility?.hiddenNodes ?? []);
 
 /**
  * 提示词块下拉的选项文案：只写名字，自己写的块标一个「我的」。
@@ -759,6 +761,7 @@ const promptOptions = computed(() =>
   availablePromptBlocks(
     promptsStore.allBlocks.filter((block) => block.series !== "阴阳师攻略"),
     searchReady.value,
+    hiddenNodes.value,
   ).map((block) => {
     const parts = [block.name];
     if (!block.builtin) parts.push("我的");

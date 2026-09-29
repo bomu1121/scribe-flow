@@ -8,8 +8,8 @@ import { ensureNotifyPermission } from "@/utils/run-alert";
 import { formatBytes } from "@/lib/bytes";
 import ModelSelect from "../components/ModelSelect.vue";
 import PromptBlockDiffDialog from "../components/PromptBlockDiffDialog.vue";
-import type { AiProvider, AsrEngine, DataOverview, PruneItem, PruneOutcome, PruneTarget, PromptBlock, SearchProvider } from "@scribe-flow/shared";
-import { FILE_NAME_TOKENS, GENERAL_LIMITS, TRACE_SOURCE_AUTHORITY_LABELS, renderFileNameTemplate } from "@scribe-flow/shared";
+import type { AiProvider, AsrEngine, DataOverview, NodeType, PruneItem, PruneOutcome, PruneTarget, PromptBlock, SearchProvider } from "@scribe-flow/shared";
+import { FILE_NAME_TOKENS, GENERAL_LIMITS, NODE_TYPE_LABELS, NODE_TYPE_ORDER, TRACE_SOURCE_AUTHORITY_LABELS, renderFileNameTemplate } from "@scribe-flow/shared";
 import { api } from "@/lib/api";
 import { useSettingsStore } from "@/stores/settings";
 import { usePromptsStore } from "@/stores/prompts";
@@ -25,6 +25,7 @@ const groups = [
   { key: "asr", label: "语音识别" },
   { key: "search", label: "联网检索" },
   { key: "general", label: "常规" },
+  { key: "visibility", label: "展示范围" },
   { key: "obsidian", label: "Obsidian" },
   { key: "nutstore", label: "坚果云" },
   { key: "prompts", label: "提示词块库" },
@@ -53,6 +54,7 @@ const form = reactive({
   retryBackoffSec: 3,
   runEndNotify: true,
   runEndSound: false,
+  hiddenNodes: [] as NodeType[],
   obsidianVaultPath: "",
   obsidianFolder: "00-Inbox",
   obsidianTagTaxonomyText: "{}",
@@ -164,6 +166,8 @@ const versionOptions = computed(() => {
 
 const filteredBlocks = computed(() => {
   return promptsStore.allBlocks.filter((block) => {
+    // 展示范围里收起的节点，它的块也不在这里出现（如阴阳师攻略系列）。
+    if (block.requiresNode && form.hiddenNodes.includes(block.requiresNode)) return false;
     if (seriesFilter.value !== "all" && blockSeries(block) !== seriesFilter.value) return false;
     if (versionFilter.value !== "all" && block.version !== versionFilter.value) return false;
     return true;
@@ -391,6 +395,10 @@ async function refreshAiModels() {
   }
 }
 
+function toggleHiddenNode(type: NodeType, hidden: boolean) {
+  form.hiddenNodes = hidden ? [...new Set([...form.hiddenNodes, type])] : form.hiddenNodes.filter((item) => item !== type);
+}
+
 function fillForm() {
   if (!store.settings) return;
   form.aiProvider = store.settings.ai.provider;
@@ -408,6 +416,7 @@ function fillForm() {
   form.retryBackoffSec = store.settings.general.retryBackoffSec;
   form.runEndNotify = store.settings.general.runEndNotify;
   form.runEndSound = store.settings.general.runEndSound;
+  form.hiddenNodes = [...(store.settings.visibility?.hiddenNodes ?? [])];
   form.obsidianVaultPath = store.settings.obsidian.vaultPath;
   form.obsidianFolder = store.settings.obsidian.folder;
   form.obsidianTagTaxonomyText = JSON.stringify(store.settings.obsidian.tagTaxonomy ?? {}, null, 2);
@@ -499,6 +508,7 @@ async function saveAll() {
         runEndNotify: form.runEndNotify,
         runEndSound: form.runEndSound,
       },
+      visibility: { hiddenNodes: [...form.hiddenNodes] },
       obsidian: {
         vaultPath: form.obsidianVaultPath,
         folder: form.obsidianFolder,
@@ -995,6 +1005,39 @@ async function restoreNutstoreBackup(backup: { path: string; name: string }) {
           <p class="sf-field-hint">
             运行是「下载 → 转写 → AI 加工」，几分钟到十几分钟都正常，可以放心切走去做别的。
             只提醒成功与失败；自己点的停止不提醒。
+          </p>
+        </div>
+
+        <div class="sf-settings-actions">
+          <button type="button" class="sf-btn sf-btn--primary" @click="saveAll"><span>保存设置</span></button>
+        </div>
+      </template>
+
+      <template v-else-if="active === 'visibility'">
+        <h2 class="sf-settings-title">展示范围</h2>
+        <p class="sf-settings-desc">
+          勾上的节点<strong>不出现在界面里</strong>：节点面板、新建工程与快捷新建的链路列表、提示词块库
+          都会把它连同用到它的链路一起收起来。适合演示时先把用不到的能力收好，或者自己不用某个垂直节点。
+        </p>
+        <p class="sf-settings-desc">
+          这<strong>只影响「新建时能选什么」</strong>：已有工程里出现的节点照常显示、照常运行——收起一个入口不该让旧工程失效。
+        </p>
+        <div class="sf-settings-form">
+          <div class="sf-vis-list">
+            <label v-for="type in NODE_TYPE_ORDER" :key="type" class="sf-field sf-field-row sf-vis-row">
+              <span class="sf-field-label">
+                {{ NODE_TYPE_LABELS[type] }}
+                <span class="sf-vis-type">{{ type }}</span>
+              </span>
+              <el-switch
+                :model-value="form.hiddenNodes.includes(type)"
+                @change="(value) => toggleHiddenNode(type, Boolean(value))"
+              />
+            </label>
+          </div>
+          <p class="sf-field-hint">
+            当前收起 {{ form.hiddenNodes.length }} 个节点<template v-if="form.hiddenNodes.length > 0">：{{ form.hiddenNodes.map((type) => NODE_TYPE_LABELS[type]).join("、") }}</template>。
+            保存后生效（面板与链路列表随设置刷新）。
           </p>
         </div>
 

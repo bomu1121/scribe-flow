@@ -3,9 +3,10 @@ import { computed } from "vue";
 import { useRoute } from "vue-router";
 import { PhBookOpenText, PhFileText, PhFolderStar, PhFunnel, PhGitBranch, PhGitMerge, PhListChecks, PhMagicWand, PhMicrophone, PhShareNetwork, PhSparkle, PhSwap, PhTreeStructure, PhUploadSimple, PhVideo } from "@phosphor-icons/vue";
 import { toast } from "@/lib/toast";
-import { NODE_TYPE_LABELS, type NodeType } from "@scribe-flow/shared";
+import { NODE_TYPE_LABELS, isNodeHidden, type NodeType } from "@scribe-flow/shared";
 import { useUiStore } from "@/stores/ui";
 import { useRunsStore } from "@/stores/runs";
+import { useSettingsStore } from "@/stores/settings";
 
 type CatalogItemType = NodeType | "source.biliCollection";
 
@@ -16,6 +17,8 @@ interface CatalogItem {
   description: string;
   /** 动作型入口（如“B站收藏”多选）不落画布，点击后由编辑器侧弹选择器。 */
   action?: boolean;
+  /** 动作型入口依赖哪个节点类型：隐藏该类型时它一起收起。 */
+  requiresNode?: NodeType;
 }
 
 interface CatalogGroup {
@@ -24,7 +27,7 @@ interface CatalogGroup {
   items: CatalogItem[];
 }
 
-const groups: CatalogGroup[] = [
+const catalogGroups: CatalogGroup[] = [
   {
     key: "source",
     label: "来源",
@@ -71,8 +74,26 @@ const groups: CatalogGroup[] = [
   },
 ];
 
+/**
+ * 展示范围（设置页「展示范围」）：勾上的节点不出现在这里，空掉的分组整组收起。
+ * 已有工程里出现的节点不受影响——收起的是入口，不是能力。
+ */
+const hiddenNodes = computed(() => settingsStore.settings?.visibility?.hiddenNodes ?? []);
+const groups = computed<CatalogGroup[]>(() =>
+  catalogGroups
+    .map((group) => ({
+      ...group,
+      items: group.items.filter((item) => {
+        const type = item.requiresNode ?? (item.type === "source.biliCollection" ? "source.bili" : (item.type as NodeType));
+        return !isNodeHidden(hiddenNodes.value, type);
+      }),
+    }))
+    .filter((group) => group.items.length > 0),
+);
+
 const route = useRoute();
 const ui = useUiStore();
+const settingsStore = useSettingsStore();
 const runsStore = useRunsStore();
 
 const inCanvas = computed(() => route.name === "project-editor");

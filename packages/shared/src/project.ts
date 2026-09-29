@@ -43,10 +43,3 @@ export interface FolderDeleteResult {
   /** 因删除文件夹而移回根层级的工程数（工程不会被删除）。 */
   detachedProjects: number;
 }
-
-export interface WorkflowTemplate {
-  id: string;
-  name: string;
-  description: string;
-  graph: WorkflowGraph;
-}

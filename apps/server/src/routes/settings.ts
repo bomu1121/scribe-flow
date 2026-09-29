@@ -5,7 +5,8 @@ import { isAbsolute, join, resolve } from "node:path";
 import { Hono } from "hono";
 import type { Context } from "hono";
 import { z } from "zod";
-import { GENERAL_LIMITS, PRUNE_TARGETS } from "@scribe-flow/shared";
+import { GENERAL_LIMITS, NODE_TYPE_ORDER, PRUNE_TARGETS } from "@scribe-flow/shared";
+import type { NodeType } from "@scribe-flow/shared";
 import type { AppDatabase } from "../db/client";
 import { chatCompletion, listAiModels, transcribeAudio } from "../lib/ai";
 import { getAiConfig, getAsrConfig, getNutstoreConfig, getSearchConfig, getSettings, updateSettings, withResolvedPaths } from "../lib/settings";
@@ -47,6 +48,12 @@ const updateSchema = z.object({
       retryBackoffSec: z.number().int().min(GENERAL_LIMITS.retryBackoffSec.min).max(GENERAL_LIMITS.retryBackoffSec.max).optional(),
       runEndNotify: z.boolean().optional(),
       runEndSound: z.boolean().optional(),
+    })
+    .optional(),
+  visibility: z
+    .object({
+      // 只认得出 NodeType 里的值：其余一律 400，别把拼错的类型悄悄写进库。
+      hiddenNodes: z.array(z.enum(NODE_TYPE_ORDER as [NodeType, ...NodeType[]])).max(64).optional(),
     })
     .optional(),
   obsidian: z
