@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { writeFile } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
 import { extname, join } from "node:path";
 import { Hono } from "hono";
 
@@ -33,6 +33,9 @@ export function filesApi(uploadsDir: string, maxUploadMb: number) {
     const fileId = randomUUID();
     const storedName = `${fileId}${extension}`;
     const storedPath = join(uploadsDir, storedName);
+    // 不假设上传目录已经存在：`loadEnv` 现在会建它，但把这件事留给启动路径意味着
+    // 目录被删掉（或换个入口装配 app）时，用户看到的是 500 加一条含绝对路径的错误。
+    await mkdir(uploadsDir, { recursive: true });
     await writeFile(storedPath, Buffer.from(await file.arrayBuffer()));
 
     return c.json({

@@ -2,14 +2,13 @@
 title: 信息溯源联网核查：来源权威度分级与 v3 模版
 class: decision
 status: accepted
-owner: 念前
-last_reviewed: 2026-09-24
 ---
+
 
 # 信息溯源联网核查：来源权威度分级与 v3 模版
 
 > 状态：已实现（2026-09-24）。
-> 关联：[trace-report-design.md](./trace-report-design.md)（结构化溯源报告与阅读器的原始方案，本方案在其之上扩展联网核查部分）。
+> 关联：trace-report-design.md（结构化溯源报告与阅读器的原始方案，本方案在其之上扩展联网核查部分）。
 
 ## 1. 问题
 

@@ -1,9 +1,8 @@
 ---
 title: 结果页 tab 切换：标准依据与实测对照
 class: research
-owner: 念前
-last_reviewed: 2026-09-10
 ---
+
 
 # 结果页 tab 切换：标准依据与实测对照
 

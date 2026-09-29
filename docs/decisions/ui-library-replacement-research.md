@@ -2,10 +2,8 @@
 title: UI 组件库替换调研（成熟库路线）
 class: decision
 status: accepted
-owner: 念前
-last_reviewed: 2026-08-28
-supersedes: docs/decisions/ui-framework-selection.md
 ---
+
 
 # UI 组件库替换调研（成熟库路线）
 
@@ -136,4 +134,4 @@ Element Plus 的样式几乎全部暴露为 CSS 变量，可把 `tokens.css` 继
 
 - 换库方向正确：同类产品中，**与本项目技术栈完全同源的 n8n 就是 Element Plus 用户**，这是"别的类似网站都在用"的硬证据，且版本组合（Vue Flow 1.48.x + Vue 3 + EP）与本项目当前依赖一致。
 - 建议：**Element Plus 2.14.x 作为通用组件唯一底座；Tailwind 保留布局与画布层；现有设计令牌通过 `--el-*` 变量继续作为唯一值源；reka-ui 按 n8n 方式保留补位。**
-- 已确认并按第 7 节实施完毕（现状见 [status.md](../status.md)）。
+- 已确认并按第 7 节实施完毕（现状见 status.md）。

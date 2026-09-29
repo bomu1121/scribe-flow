@@ -1,13 +1,12 @@
 ---
 title: ScribeFlow 功能工作流模块拓展 — 调研方案
 class: research
-owner: 念前
-last_reviewed: 2026-09-02
 ---
+
 
 # ScribeFlow 功能工作流模块拓展 — 调研方案
 
-> 状态：**R1 桌面研究 + R4/R5 差距分析与路线图 + M6 实施清单已完成**（2026-09-02）。R1 报告见 [r1-desktop-research.md](./r1-desktop-research.md)；模块拓展路线图见 [workflow-module-roadmap.md](../plans/workflow-module-roadmap.md)。R2 产品试用（JS 站点核实）待启动。
+> 状态：**R1 桌面研究 + R4/R5 差距分析与路线图 + M6 实施清单已完成**（2026-09-02）。R1 报告见 [r1-desktop-research.md](./r1-desktop-research.md)；模块拓展路线图见 workflow-module-roadmap.md。R2 产品试用（JS 站点核实）待启动。
 > 关联文档：[scribe-flow-proposal.md](../decisions/scribe-flow-proposal.md)（产品定义与范围）、[ui-library-replacement-research.md](../decisions/ui-library-replacement-research.md)
 > 调研原则：**先分类，后对标**——市面上工作流产品设计目的差异极大，不能拿 iPaaS 的功能清单直接套到内容加工流上；每个模块都要回答「它对 ScribeFlow 意味着什么」。
 

@@ -7,20 +7,21 @@
  * 用同一组样例断言两侧结果一致。改动任一侧都要跑它。
  */
 
-/** 文档的生命周期分类；目录与 class 一一对应，见 AGENTS.md。 */
-export type DocClass = "status" | "decision" | "plan" | "evidence" | "research";
+/** 文档的分类；目录与 class 一一对应，见 AGENTS.md。只有三类：现状说明、决策、调研。 */
+export type DocClass = "doc" | "decision" | "research";
 
+/**
+ * front matter 只有三个字段。
+ *
+ * 2026-09-30 之前还有 owner / last_reviewed / review_days / frozen_at / content_hash
+ * 五个字段，配套一条新鲜度告警、一条内容指纹校验与 `pnpm docs:freeze` 重冻流程。
+ * 那是给多人团队与审计场景设计的；单人仓库里的实际作用是每篇文档多五行手写元数据、
+ * 每次改动多一道摩擦。冻结本来也不需要专门机制——git 提交哈希就是不可伪造的冻结。
+ */
 export interface DocFrontMatter {
   title?: string;
   class?: string;
   status?: string;
-  owner?: string;
-  last_reviewed?: string;
-  review_days?: string;
-  frozen_at?: string;
-  content_hash?: string;
-  supersedes?: string;
-  superseded_by?: string;
 }
 
 export interface DocSummary {
@@ -73,19 +74,15 @@ export function docTitleFrom(text: string, fallback: string): string {
 
 /** 文档分类的中文名，界面与文档地图共用一套说法。 */
 export const DOC_CLASS_LABELS: Record<DocClass, string> = {
-  status: "现状",
+  doc: "现状",
   decision: "决策",
-  plan: "计划",
-  evidence: "证据",
   research: "调研",
 };
 
 /** 目录 → 分类。与 scripts/lib/docs-shared.mjs 的 DIRECTORY_CLASS 保持一致。 */
 export function docClassOfDir(dir: string): DocClass | null {
-  if (dir === "docs") return "status";
+  if (dir === "docs") return "doc";
   if (dir === "docs/decisions") return "decision";
-  if (dir === "docs/plans") return "plan";
-  if (dir === "docs/evidence") return "evidence";
   if (dir === "docs/research") return "research";
   return null;
 }

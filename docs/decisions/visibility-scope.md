@@ -2,9 +2,8 @@
 title: 展示范围：哪些节点放出来、哪些先收起来
 class: decision
 status: accepted
-owner: 念前
-last_reviewed: 2026-09-29
 ---
+
 
 # 展示范围：收起的入口，不是关掉的能力
 

@@ -1,9 +1,8 @@
 ---
 title: 使用说明
-class: status
-owner: 念前
-last_reviewed: 2026-09-26
+class: doc
 ---
+
 
 # 使用说明：从零到一份笔记
 
@@ -199,6 +198,6 @@ Windows 上可以双击 `start-dev.cmd`（同一个窗口跑前后端，Ctrl+C �
 只有真的要等（超过约 0.2 秒）才显示一个小的「正在读取…」。内容还没到时旧正文留在原位并整体变淡，
 不会先空白再重排。
 
-要判断「现在有什么、缺什么」看 [status.md](./status.md)；要判断「某个节点怎么配置」看 [nodes.md](./nodes.md)；
+要判断「现在有什么、缺什么」看 status.md；要判断「某个节点怎么配置」看 [nodes.md](./nodes.md)；
 要判断「代码怎么组织」看 [architecture.md](./architecture.md)。`docs/decisions/` 与 `docs/evidence/` 里的数字
 是当时的历史快照，**不代表现状**。

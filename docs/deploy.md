@@ -1,9 +1,8 @@
 ---
 title: ScribeFlow 部署说明
-class: status
-owner: 念前
-last_reviewed: 2026-09-10
+class: doc
 ---
+
 
 # ScribeFlow 部署说明
 

@@ -1,9 +1,8 @@
 ---
 title: 视频模块 P0 真实视频验证记录
 class: research
-owner: 念前
-last_reviewed: 2026-09-10
 ---
+
 
 # 视频模块 P0 真实视频验证记录
 

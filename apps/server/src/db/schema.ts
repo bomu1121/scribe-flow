@@ -38,7 +38,6 @@ export const biliSessions = sqliteTable("bili_sessions", {
   expiresAt: integer("expires_at").notNull(),
 });
 
-export type BiliSessionRow = typeof biliSessions.$inferSelect;
 
 /** B 站登录 Cookie（单用户；只存自托管服务端，禁止回传前端）。 */
 export const biliCookies = sqliteTable("bili_cookies", {
@@ -50,7 +49,6 @@ export const biliCookies = sqliteTable("bili_cookies", {
   updatedAt: integer("updated_at").notNull(),
 });
 
-export type BiliCookieRow = typeof biliCookies.$inferSelect;
 
 export const runs = sqliteTable("runs", {
   id: text("id").primaryKey(),
@@ -93,7 +91,6 @@ export const runNodeResults = sqliteTable("run_node_results", {
   updatedAt: integer("updated_at").notNull(),
 });
 
-export type RunNodeResultRow = typeof runNodeResults.$inferSelect;
 
 /** 运行节点输入明细：记录每个节点实际消费的输入（文本或音频转写结果），用于结果页单独查看。 */
 export const runNodeInputs = sqliteTable("run_node_inputs", {
@@ -114,7 +111,6 @@ export const runNodeInputs = sqliteTable("run_node_inputs", {
   createdAt: integer("created_at").notNull(),
 });
 
-export type RunNodeInputRow = typeof runNodeInputs.$inferSelect;
 
 /** 应用设置（key-value；密钥只存服务端，读取接口返回 hasKey）。 */
 export const appSettings = sqliteTable("app_settings", {
@@ -123,7 +119,6 @@ export const appSettings = sqliteTable("app_settings", {
   updatedAt: integer("updated_at").notNull(),
 });
 
-export type AppSettingRow = typeof appSettings.$inferSelect;
 
 /** 提示词块：内置块在 shared 中，这里只存自定义块。 */
 export const promptBlocks = sqliteTable("prompt_blocks", {
@@ -158,7 +153,6 @@ export const runNodeLogs = sqliteTable("run_node_logs", {
   createdAt: integer("created_at").notNull(),
 });
 
-export type RunNodeLogRow = typeof runNodeLogs.$inferSelect;
 
 /**
  * 媒体资产库：视频下载/归一化后的「内容寻址」文件 + 元数据。
@@ -200,7 +194,6 @@ export const runMedia = sqliteTable("run_media", {
   createdAt: integer("created_at").notNull(),
 });
 
-export type RunMediaRow = typeof runMedia.$inferSelect;
 
 /**
  * 「对照」的 AI 差异判读缓存。
@@ -222,4 +215,3 @@ export const compareReports = sqliteTable("compare_reports", {
   createdAt: integer("created_at").notNull(),
 });
 
-export type CompareReportRow = typeof compareReports.$inferSelect;

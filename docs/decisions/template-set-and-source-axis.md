@@ -2,9 +2,8 @@
 title: 内置链路改成「加工路径 × 来源」：9 条链路与两个新产出块
 class: decision
 status: accepted
-owner: 念前
-last_reviewed: 2026-09-29
 ---
+
 
 # 内置链路：改成「加工路径 × 来源」
 

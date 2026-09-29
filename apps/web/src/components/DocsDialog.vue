@@ -10,13 +10,11 @@ import { DOC_CLASS_LABELS, type DocClass, type DocSummary, docClassOfDir } from 
 
 interface DocDetail extends DocSummary {
   body: string;
-  archived: boolean;
 }
 
 /** 列表项：`body` 只在服务端支持聚合请求时一起回来（旧进程可能还没有）。 */
 interface DocEntry extends DocSummary {
   body?: string;
-  archived?: boolean;
 }
 
 interface Group {
@@ -75,22 +73,11 @@ const showPanePlaceholder = computed(() => showBusyHint.value && !detail.value);
 const GROUP_LABELS: Record<string, string> = {
   docs: "现状",
   "docs/decisions": "决策",
-  "docs/plans": "计划",
-  "docs/evidence": "证据",
   "docs/research": "调研",
-  "docs/research/raw": "调研原文（存档）",
   "docs/samples": "样例",
 };
 
-const GROUP_ORDER = [
-  "docs",
-  "docs/decisions",
-  "docs/plans",
-  "docs/evidence",
-  "docs/research",
-  "docs/samples",
-  "docs/research/raw",
-];
+const GROUP_ORDER = ["docs", "docs/decisions", "docs/research", "docs/samples"];
 
 const filtered = computed(() => {
   const kw = keyword.value.trim().toLowerCase();
@@ -163,20 +150,17 @@ function classLabel(item: DocSummary): string {
 /** 缺 front matter 是真实问题（门禁会报 R1），列表里直接标出来。 */
 const missingFrontMatter = (item: DocSummary) => !item.frontMatter;
 
-/** front matter 里的字段按关注度排序展示；空值不占位。 */
+/**
+ * front matter 里的字段按关注度排序展示；空值不占位。
+ * front matter 只有 title / class / status 三个字段（见 packages/shared/src/docs.ts）；
+ * 责任人、最后复核、内容指纹这些字段已随文档门禁瘦身删除，界面不再展示。
+ */
 const metaRows = computed(() => {
   const fm = detail.value?.frontMatter;
   if (!fm) return [];
   const rows: { label: string; value: string; mono?: boolean }[] = [];
   if (fm.title) rows.push({ label: "标题", value: fm.title });
-  if (fm.owner) rows.push({ label: "责任人", value: fm.owner });
   if (fm.status) rows.push({ label: "状态", value: fm.status, mono: true });
-  if (fm.last_reviewed) rows.push({ label: "最后复核", value: fm.last_reviewed, mono: true });
-  if (fm.review_days) rows.push({ label: "复核阈值", value: `${fm.review_days} 天`, mono: true });
-  if (fm.frozen_at) rows.push({ label: "冻结于", value: fm.frozen_at, mono: true });
-  if (fm.content_hash) rows.push({ label: "内容指纹", value: fm.content_hash, mono: true });
-  if (fm.supersedes) rows.push({ label: "取代", value: fm.supersedes, mono: true });
-  if (fm.superseded_by) rows.push({ label: "被取代", value: fm.superseded_by, mono: true });
   return rows;
 });
 
@@ -185,7 +169,7 @@ const metaRows = computed(() => {
  *
  * 「列表 + 逐篇取正文」是两次串行请求，而第二个请求通常要新建一条 TCP 连接——开发环境里对
  * `localhost:5173` 新建连接要等约 205 ms（Vite 只监听 IPv4，`localhost` 先解析到 `::1`，
- * 见 `docs/status.md` 的 P1 条目）。正文合计几百 KB 且全是纯文本，并进同一次请求几乎不加成本，
+ * 见 AGENTS.md 的「别踩的坑」）。正文合计几百 KB 且全是纯文本，并进同一次请求几乎不加成本，
  * 换来打开只剩一次请求、之后每次切换文档都是 0 次（实测打开到正文可读 355 → 62 ms）。
  */
 async function loadDocs() {

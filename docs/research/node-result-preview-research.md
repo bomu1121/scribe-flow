@@ -1,9 +1,8 @@
 ---
 title: 节点结果预览展示调研与方案
 class: research
-owner: 念前
-last_reviewed: 2026-09-06
 ---
+
 
 # 节点结果预览展示调研与方案
 

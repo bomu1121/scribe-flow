@@ -3,7 +3,7 @@
 本项目所有值得记录的变更都写在这里。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
 **维护约定（重要）**：条目在**引入变更的同一次提交里**追加到 `## [Unreleased]` 下，不要等到发版时
-回顾补写——那样会把写 changelog 变成考古，也必然漏。现状与进度看 [docs/status.md](./docs/status.md)，
+回顾补写——那样会把写 changelog 变成考古，也必然漏。现状与进度看 status.md，
 本文件只记录「什么时候改了什么」。
 
 **格式说明**：本项目尚未发布任何版本（无 git tag），因此所有条目都在 `## [Unreleased]` 下，
@@ -11,6 +11,81 @@
 `新增` / `变更` / `废弃` / `移除` / `修复` / `安全`。
 
 ## [Unreleased]
+
+### 2026-09-30
+
+#### 变更
+
+- **治理层瘦身：把「文档工程」从 12 条规则收到 6 条、从五类文档收到三类、从 8 个 front matter 字段收到 3 个。**
+  起因是 [repo-legibility-and-over-engineering.md](./docs/research/repo-legibility-and-over-engineering.md)
+  的调研结论——本仓最强的信号一直是它自己的元叙述，而不是产品本身；而门禁脚本 3027 行里有一半
+  （冒烟 898 + 分层 API 自检 666）从不在 CI 运行。本次按「能不能机器判 / 拦的是缺陷还是形式 /
+  有没有第二读者 / 会不会腐烂」四条判据逐条重判，结果如下。
+- **文档门禁 `scripts/docs-lint.mjs` 只留 6 条**：front matter 合法、生成块同步、文档地图覆盖、
+  废弃文档不得发号施令、死链、源码与正文里的文档路径存在。删掉的 6 条与理由写在脚本顶部注释里：
+  R2 双向 supersede（全仓只有一对）、R6 内容指纹（git 就是冻结）、R7 禁手写数字（数字块本身已删）、
+  R9 体积预算（与文档无关，见下）、R11 class 与目录一致（目录名已表达分类）、
+  R12 行号可解析（验不了语义，却让人以为验过了），外加新鲜度周扫。
+- **`docs/` 由五类收到三类**（现状 / 决策 / 调研）：删除 docs 根下的 `status.md`、`plans/`、
+  `evidence/`（共 8 个文件），`docs/decisions/` 由 22 份收敛到 7 份**不可逆选型**
+  （产品纲领、UI 底座、链路×来源轴、展示范围、来源权威度、检索渠道共用、M0–M5 决策汇编）。
+  里程碑与缺口改成 README 的「已知缺口」一节，只留能在源码里复现的安全/稳定性条目——
+  原来那份 186 行的现状文档在一个月内就有三处引用失效（`engine.ts:511` 已指到 `return true;`、
+  "routes 1800 行零测试"实际已有 4 个测试文件、"AGENTS.md 硬规则第 8 条"在只剩 7 条时悬空）。
+- **front matter 从 8 个字段收到 3 个**（`title` / `class` / `status`）：删除 `owner` / `last_reviewed` /
+  `review_days` / `frozen_at` / `content_hash`，48 份文档共减掉约 240 行手写元数据；
+  `pnpm docs:freeze` 与 `docs-freshness.yml` 周扫一并删除，验收快照的"不可改"交回给 git 提交哈希。
+  文档阅读器（`DocsDialog.vue`）不再展示责任人/复核日期/内容指纹，分组与分类标签同步收窄。
+- **指标数字块整体删除**：`docs-gen` 不再生成"测试用例数 / 冒烟项数 / API 自检项 / 内置块数 / 文档数"。
+  它们是"每加一个测试就要改两份文档"的根源，而口径本身还不准（数静态 `it(` 声明，循环生成的用例到不了），
+  文档里必须再写一段免责说明。生成块现在只留三类**结构性**内容：文档地图（移到 README）、
+  节点总表、接口清单。
+- **首屏体积预算从文档门禁移到 `scripts/size-budget.mjs`**：它本来就是构建产物断言，却藏在
+  `docs-lint` 里、本地没构建时静默跳过；现在由 CI 在 `pnpm build` 之后显式跑 `pnpm check:size`。
+- **`slop-lint` 分 error / warn 两级**：渐变、玻璃拟态、发光、装饰 emoji 仍是 error；
+  `scrollIntoView` 与主字体降为 warn——真正要拦的是"滚动带着整页跳"这个意图，而不是那个 API 本身。
+  装饰 emoji 的检查收窄到 `.vue` / `.css`（`.ts` 里的 emoji 可能是在处理用户内容）。
+- **`knip` 打开 `ignoreExportsUsedInFile`**：只在本文件内部使用的 export 不再算"未使用的导出"，
+  告警从 18 条降到 4 条——长期几十条的告警清单，实际效果是训练读者忽略输出。
+- **`AGENTS.md` 收敛到"只写推断不出来的"**：删掉颜色/z-index 令牌那一条（`lint:ui` 已机器强制，
+  报错信息自解释）、删掉"生成块里的数字是静态声明数"整段（数字块已不存在）、删掉仓库综述的逐条流程，
+  并把自研门禁写成带反条件的规则：**新检查先问已有测试或工具能否覆盖，自研脚本行数只降不升**。
+  README 里那份与硬规则重复的「设计约定」九条一并删除，只留一句指向 AGENTS.md。
+- **1 564 行"手工验收脚本"拆开：能本地复现的迁进 vitest，剩下三条明确标注为需要外部依赖。**
+  原先 m2/m3/m4/m6 四个分层 API 自检 + CDP 冒烟合计 1 564 行，全都要求先 `pnpm dev` 起一个真实服务，
+  于是**从不在 CI 运行**——里面写错的断言没人会发现（历史上 m4 就有一条硬编码断言静默失效了很久）。
+  现在文本链路、单节点重跑、SSE 契约、提示词块 CRUD、运行日志、数据账本、条件分支与文本工具、
+  未登录契约、上传校验这些**不需要外部凭据**的断言进了
+  `apps/server/src/routes/run-flows.test.ts` 与 `auth-upload.test.ts`（16 条，进程内跑，CI 每次执行）；
+  脚本里只留需要真实外部条件的 `check:api:bili`（B 站二维码，需联网）与 `check:api:drill`（需真实 AI 密钥）。
+- CI 不再需要 `fetch-depth: 0`（文档门禁已不再用 `git log` 取每份文档的最后提交日期），
+  并新增 build 之后的 `pnpm check:size` 步骤。
+- `knip` 的 project/entry 补上 `scripts/**/*.mts`：`scripts/sync-session-to-nutstore.mts` 这类
+  手工工具原先完全不在分析范围内，漂成死文件时没有任何信号。
+
+#### 修复
+
+- **上传接口不再假设上传目录已存在**：`POST /api/files/upload` 直接 `writeFile` 到 `uploadsDir`，
+  目录缺失时会以 500 收场，而 `app.onError` 会把含绝对路径的 `err.message` 原样回给客户端
+  （README 已知缺口里那条"错误信息泄漏"）。新增的集成测试第一次跑就复现了它，现在路由自己 `mkdir`。
+  这个 500 只在"目录被删掉或换个入口装配 app"时出现——启动路径 `loadEnv` 恰好会建目录，
+  所以它是那种"看起来对、换个装配方式就错"的问题。
+
+#### 移除
+
+- **分享会材料与竞品抓取存档移出仓库**：`sharing/`（35 个 tracked 文件，含 18 页 PPT 的生成器与
+  几何自检脚本）与 `docs/research/raw|txt|*.ps1`（27+ 个竞品页面的抓取原文与抓取脚本，
+  合计约 4 MB / 100+ 个 tracked 文件）移到仓库同级的 `scribe-flow-archive/`。
+  它们既不是产品的一部分，也不参与任何门禁，长期住在产品仓里只会稀释信号
+  （`docs/` 一度是仓库里字节数最大的目录，是产品代码的五倍）。
+  随之下线的还有为它们存在的代码：`docs` 阅读接口的 `archived` 字段与 `isArchivedDoc`、
+  门禁里的 `ARCHIVE_PREFIXES`、阅读器里的「调研原文（存档）」分组。
+- `scripts/m2-api-check.mjs`、`m3-api-check.mjs`、`m4-api-check.mjs`、`m6-api-check.mjs`
+  （断言已迁进 vitest）；`scripts/bili-api-check.mjs` 只承接需要联网的二维码生命周期。
+- `status.md`、`plans/`（2 份）、`evidence/`（6 份）、15 份非不可逆的决策文档、
+  `research/development-log.md`（存根，它的存在理由是为一份已删除的验收档案兜死链）。
+- `scripts/docs-freeze.mjs`、`.github/workflows/docs-freshness.yml`、
+  `scripts/docs-lint.mjs` 里的 R2 / R6 / R7 / R9 / R11 / R12 / 新鲜度，以及 `docs:freeze` 脚本项。
 
 ### 2026-09-29
 
@@ -50,7 +125,7 @@
     截断事实由服务端随结果返回（不信模型自述）。
   - 按钮上写明「会消耗一次模型调用」；未配 AI 密钥时按钮禁用并说明原因；页面常驻「AI 判读，可能不准；
     指标与逐行差异是机械统计，可作对照」。
-  - 取舍、缓存与边界见 [run-compare-view.md](./docs/decisions/run-compare-view.md)。
+  - 取舍、缓存与边界见 run-compare-view.md。
 - 结果页直达链接支持 `?tab=compare`。
 - **内置链路（工作流模板）重组为「加工路径 × 来源」：11 条降到 9 条，补齐 3 条缺形状、2 个缺产出**。
   模板不再按来源成对铺开，只描述从文稿开始的加工链，来源在新建工程时选（B站链接 / 本地文件 / 粘贴文稿），
@@ -196,7 +271,7 @@
 
 - **重复逻辑收口（第一批）：同名或逐字重复的实现合并到一处**。这一批选了 20 余处，
   全部是有测试兜底的纯函数、常量或样板；**刻意没碰需要抽组件/组合式函数的重构**——
-  `apps/web` 的 `.vue` 层零测试覆盖（现状见 [docs/status.md](./docs/status.md) 的 P1），
+  `apps/web` 的 `.vue` 层零测试覆盖（现状见 status.md 的 P1），
   那类合并的回归网只有 `pnpm smoke:ui`，风险与收益不成比例。
   - 服务端：`runFfmpeg`（3 份 → `lib/media.ts`）、`BILI_USER_AGENT`（3 份 → `lib/bilibili.ts`）、
     `sleep`（3 份 → 新增 `lib/sleep.ts`）、`normalizeRemote`/`normalizeRemotePath`（2 份 → `lib/nutstore.ts`）、
@@ -252,7 +327,7 @@
   会先被拦成「需要 B 站视频链接」，根本走不到解析接口。前端改用 shared 的 `extractBiliUrl` 判定；
   `routes/videos.ts` 的 BV 号规则同时与 shared 对齐（改为 `\bBV[0-9A-Za-z]{8,}\b`，原先不限长度）。
 
-- **`docs/status.md`「已知缺口」里的 `文件:行号` 引用按当前源码逐条重量**：28 处引用改了 23 处。归因做了
+- **`status.md`「已知缺口」里的 `文件:行号` 引用按当前源码逐条重量**：28 处引用改了 23 处。归因做了
   commit 级溯源，结论值得记一笔——**只有 2 处是本次删代码造成的**（`routes/videos.ts`、`lib/nutstore.ts`），
   其余 21 处在更早的改动里就已经漂了（`engine.ts` 那一批行号自 `7208547` 之后就没再跟过，
   `db/client.ts`、`db/schema.ts`、`lib/settings.ts`、`app.ts` 亦然）。顺带复核了这些条目的
@@ -330,8 +405,8 @@
   （前者是句子的一部分「视频转笔记：已完成」，后者是列表标签「成功」），两张表都是穷尽 `Record`，
   新增运行状态时 TypeScript 会强制两处都改，所以不必为「看起来只有一份」而压成一种文案。
   `playChime` 收回为模块私有（只在本文件用）。
-- `docs/status.md`：`last_reviewed` 更新为 2026-09-29，并新增「P1 · 功能与文档不一致」一节，
-  登记清理过程中发现的两条**代码与文档对不上**的事实，以及 `docs/status.md` 已知缺口里 28 处
+- `status.md`：`last_reviewed` 更新为 2026-09-29，并新增「P1 · 功能与文档不一致」一节，
+  登记清理过程中发现的两条**代码与文档对不上**的事实，以及 `status.md` 已知缺口里 28 处
   `文件:行号` 引用的重量结果（见下）。
 
 #### 移除
@@ -361,7 +436,7 @@
   `recipe.test.ts` 37 条全绿——但那三类差异**当前没有用例覆盖**，「通过」不能当作这次改动被验过；
   变宽是另跑一张对照表确认的（`Ａ`→`ａ`、`CASE`→`case`、`**bold**` 三例由「未命中」变「命中」，
   引号/破折号归一的例子前后都命中）。
-- `docs/status.md` 登记两条「代码与文档对不上」：**Obsidian「AI 打标签」从未接线**——
+- `status.md` 登记两条「代码与文档对不上」：**Obsidian「AI 打标签」从未接线**——
   设置页有四个控件、引擎里 `buildObsidianTags`（基础标签规则 + 受控词表 + AI 补全）也完整存在，
   但它没有任何调用点（`git log -S` 显示自功能提交 `7ff6ff9` 起只有定义处一处，从未被调用），
   而决策文档标为「已实施」；今天真正写进 frontmatter 的标签只来自节点自己的 `data.tags`。
@@ -398,7 +473,7 @@
   容器内返回 400 并说明原因）。改之前的页面在全量 2,368,258,317 字节（2.2 GB）里只展示
   391,986 字节（383 KB）的输出文件——体积最大的 `runs/`（2,350,410,990 字节，占 99.2%）
   一个字都没提。字节一律按 1024 进制显示，实测明细见
-  [data-ledger-and-cleanup.md](./docs/decisions/data-ledger-and-cleanup.md)。
+  data-ledger-and-cleanup.md。
 - 新增五类可回收空间与逐项/一键清理（`POST /api/settings/prune`，body `{ targets }`）：
   已结束的运行记录、孤立媒体资产（补上审计里「GC 没有全局清扫入口」）、孤立上传原件
   （`uploads/` 原本没有任何删除路径）、盘上孤立文件与目录、可回收的工程图备份
@@ -426,7 +501,7 @@
   **运行结束提醒**——系统通知与提示音两个开关（提示音用 WebAudio 现场合成，不引入音频资源文件）。
   默认值刻意与改动前逐字一致（并发 2 / 重试 2 次 / 等 3 秒 / 目录 `outputs` / 文件名只带工程名 / 通知开、提示音关），
   升级不改变任何既有工程的产物位置与名字，也不需要迁移。方案、取舍与诚实清单见
-  [general-settings.md](./docs/decisions/general-settings.md)——含一处**没有端到端验证到**的项（见该文件的诚实清单第一条）。
+  general-settings.md——含一处**没有端到端验证到**的项（见该文件的诚实清单第一条）。
 - 新增 `packages/shared/src/output.ts`：文件名模板的占位符表、`renderFileNameTemplate`、`sanitizeFileName`。
   放在 shared 是因为服务端要用它决定写到哪个文件、设置页要用它渲染预览——两边各写一份必然漂移。
   日期取**本地时间**（不用 `toISOString()`：那会换算 UTC，东八区晚上 8 点后会得到「昨天」的文件名）。
@@ -451,7 +526,7 @@
   系列名不得出现 `v数字` / 配方 / 内置 / 试点 / CASCADE / JSON。
 - `GET /api/settings/data` 的响应结构整体换成账本（旧字段 `runCount` / `finishedRunCount` /
   `outputFiles` / `outputBytes` 不再存在），字段语义见
-  [data-ledger-and-cleanup.md](./docs/decisions/data-ledger-and-cleanup.md)。唯一消费者是设置页前端，
+  data-ledger-and-cleanup.md。唯一消费者是设置页前端，
   已同步改完；M4 验收档案第 9 条对应该接口的旧结论按规矩不改。门禁计数随之变化：
   用例 266 → 289、冒烟检查项 56 → 59（59 静态 / 54 实跑）、m4 API 自检 12 → 19 项。
 - 工程图备份的保留份数抽成常量 `GRAPH_BACKUP_KEEP`（写入端 `routes/projects.ts` 与清理端
@@ -470,7 +545,7 @@
   不会在刷新页面时集体弹一遍；已取消的运行不提醒（那是用户自己点的停止，此时人就在屏幕前）。
 - 画布页两处几乎逐字重复的 `run.done` 收尾合并成 `handleRunDone`（`apps/web/src/views/ProjectEditorView.vue`）：
   原先加一句收尾动作要改两处，漏一处就变成「有时候生效有时候不生效」。
-- 门禁计数：用例 323 → **360**（`it(` 静态声明数口径，与 `docs/status.md` 一致；vitest 实跑 367，差 7 的原因见下），
+- 门禁计数：用例 323 → **360**（`it(` 静态声明数口径，与 `status.md` 一致；vitest 实跑 367，差 7 的原因见下），
   冒烟检查项 55 → **59**（脚本自报实跑数）。
 
 - 设置页的数值增减器统一成窄宽度（实测 120 × 36）。改之前「联网检索 → 每个检索词最多返回结果数」套着 `.sf-field-control`，
@@ -551,7 +626,7 @@
   （实测删掉一行即报 TS2741），与 `NODE_TYPE_LABELS` / `NODE_CARD_WIDTH` / `NODE_PORTS` 同一个套路。
   修复后实测 6 张卡的图标宽与标题缩进全部一致。
 
-- **`general.outputDir` 的解析彻底收口**（`docs/status.md` P0「路径校验可绕过或缺失」的一条，此前只收了数据账本那一条链路）。
+- **`general.outputDir` 的解析彻底收口**（`status.md` P0「路径校验可绕过或缺失」的一条，此前只收了数据账本那一条链路）。
   新增 `resolveOutputRoot`（`apps/server/src/lib/storage.ts`）作为**唯一**解析点：绝对路径原样采用、
   相对路径不允许 `..` 爬出数据目录（爬出回落默认目录）、空值回落 `outputs`；落盘（运行收尾与 `process.output`）、
   删除运行、账本扫描全部改走它，不再有第二处拼接。设置接口对「相对路径 + `..` 外爬」显式返回 400 并说明该怎么改，
@@ -743,7 +818,7 @@
 
 - `start-dev.cmd` 原先用 `pnpm --parallel`（即 `pnpm dev`）拉起前后端，实测在中文 Windows + pnpm 11.7
   下后端的 `tsx watch` 会静默卡在启动前，既不打印日志也不监听 8787；改为分别拉起两个包绕开并行器，
-  结论与代价记在 [docs/status.md](./docs/status.md) 的已知缺口里。
+  结论与代价记在 status.md 的已知缺口里。
 - 前端地址不再写死 5173：这台机器上多个项目的 dev server 会抢 5173，被占用时 Vite 静默退到 5174，
   于是「端口通不通」的探针和浏览器打开的目标都会落到别人的应用上。现在从 Vite 输出里读出真实端口，
   并用页面里的 `ScribeFlow` 标记确认那就是本项目的界面。
@@ -775,7 +850,7 @@
   配 `--strict` 供定时任务用。
 - `pnpm docs:gen`：从源码静态推导后注入 README / status 的数字块与文档地图，取代此前的数字手写。
 - `pnpm docs:freeze`：显式重新冻结验收档案的内容指纹（lint 不自动修复，避免"改了验收结论"被静默合法化）。
-- 现状权威来源 [docs/status.md](./docs/status.md)：里程碑进度、已知缺口清单与完整文档地图。
+- 现状权威来源 status.md：里程碑进度、已知缺口清单与完整文档地图。
 - [AGENTS.md](./AGENTS.md)：项目约定与文档生命周期规则（取代此前散落的说明）。
 - 左侧栏底部（设置按钮上方）新增「项目文档」入口，打开一个只读的文档阅读器：左栏按目录分组
   并支持搜索，右栏渲染正文，头部单独呈现 front matter（class / status / 责任人 / 最后复核 /
@@ -801,11 +876,11 @@
 #### 变更
 
 - `docs/` 按生命周期重排目录，目录名即分类信号：`docs/decisions/`（方案 / 选型 / 架构）、
-  `docs/plans/`（实施清单 / 路线图）、`docs/evidence/`（冻结快照，文件名带冻结日期）、
+  `plans/`（实施清单 / 路线图）、`evidence/`（冻结快照，文件名带冻结日期）、
   `docs/research/`（调研）。28 份文档迁移，全仓引用（含源码注释）同步重写。
 - 全部历史文档补齐 front matter 并归类。`supersedes` / `superseded_by` 改用仓库相对路径。
 - 拆分 `development-log.md`：决策流水 → [early-decisions.md](./docs/decisions/early-decisions.md)，
-  交付清单 → [2026-08-28-m0-m5-delivery.md](./docs/evidence/2026-08-28-m0-m5-delivery.md)，
+  交付清单 → 2026-08-28-m0-m5-delivery.md，
   逐日流水 → 本文件；原文件改为指向这三处的存根。
 - 文档阅读器正文复用结果页的 `.markdown-body` 排版，保证两处阅读体验一致；正文里的相对链接在
   阅读器内跳转，不把浏览器带去一个必然 404 的路径。部署镜像未包含 `docs/` 时接口返回
@@ -836,7 +911,7 @@
 
 - 视频下载与结果页播放（M9）：`media_assets` / `run_media` 表与幂等迁移、内容寻址去重与 GC、
   Range 流式与缺失重下、自研 `MediaPlayer`、来源节点高级设置里的 keepVideo 开关与清晰度段选。
-  验收见 [2026-09-10-video-module-acceptance.md](./docs/evidence/2026-09-10-video-module-acceptance.md)。
+  验收见 2026-09-10-video-module-acceptance.md。
 - 知识巩固节点 `process.drill`「练一练」：文字 → 知识点 + 题目 + 延伸，结果页可直接答题。
 - 多输入分段阅读：`utils/run-segments.ts` 作为唯一分段来源，结果页输出、结果页链路输入、
   画布结果预览浮层、运行日志弹窗四处入口全覆盖；`run_node_logs` 新增 `input_index` / `input_total`。
@@ -928,12 +1003,13 @@
 ### 2026-08-27 ~ 08-28 — M0–M5
 
 M0–M5 六个里程碑的开发、验收与发布过程。交付内容与当时的验证记录见
-[2026-08-28-m0-m5-delivery.md](./docs/evidence/2026-08-28-m0-m5-delivery.md)，
-分层验收标准见 `docs/evidence/2026-08-28-m{2,3,4,5}-acceptance.md`。
+2026-08-28-m0-m5-delivery.md，
+分层验收标准见 `evidence/2026-08-28-m{2,3,4,5}-acceptance.md`。
 其中的关键决策（含一次 UI 路线反转）见 [early-decisions.md](./docs/decisions/early-decisions.md)。
 
 ## 更早的历史
 
-本文件自 2026-09-11 启用。此前没有 changelog，变更流水记在 `docs/research/development-log.md` 里，
-与该文件的「现状快照」混在一起。2026-09-11 已按上表完成拆分，原文件只留存根。
+本文件自 2026-09-11 启用。此前没有 changelog，变更流水记在当时研究目录下的 `development-log.md` 里，
+与该文件的「现状快照」混在一起。2026-09-11 已按上表完成拆分，原文件只留存根；
+那份存根与其余过程产物一起在 2026-09-30 的文档收敛中删除。
 完整原文可在 git 历史里找到（拆分提交之前的那一版）。

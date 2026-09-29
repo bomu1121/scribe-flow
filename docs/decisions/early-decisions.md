@@ -2,13 +2,12 @@
 title: M0–M5 关键决策记录（含用户反馈修正）
 class: decision
 status: accepted
-owner: 念前
-last_reviewed: 2026-09-14
 ---
+
 
 # M0–M5 关键决策记录（含用户反馈修正）
 
-> 来源：从 `docs/research/development-log.md`（原 §5）拆出，2026-09-11。原文是 M0–M5 期间逐条累积的决策流水，
+> 来源：从当时研究目录下的 `development-log.md`（原 §5）拆出，2026-09-11。原文是 M0–M5 期间逐条累积的决策流水，
 > 与「现状快照」「逐日流水」混在同一份文件里。这里只保留决策本身，并补上每条**当前是否仍有效**。
 > 逐条的详细论证散落在 `docs/decisions/` 下各自的方案文档里，见每条末尾的指引。
 
@@ -32,7 +31,7 @@ last_reviewed: 2026-09-14
    废弃 shadcn-vue 复制件，通用控件全部改用 Element Plus，设计令牌通过 `--el-*` 变量桥接；
    遮罩加深至 0.55、控件描边用强档令牌、节点阴影分级。
    依据 → [ui-library-replacement-research.md](./ui-library-replacement-research.md)；被取代的旧选型 →
-   [ui-framework-selection.md](./ui-framework-selection.md)（`status: superseded`）
+   ui-framework-selection.md（`status: superseded`）
 10. **「订阅合集」口径（2026-08-28）**：B 站「订阅/收藏别人的合集」无稳定公开接口；
     经用户确认改为「我的合集」，走官方 `x/polymer/web-space/seasons_series_list` 稳定接口。
 11. **UI/交互主力参考（2026-09 用户确认）**：n8n、Langflow、ComfyUI 为后续视觉/交互设计的主参照系与验收基准；
@@ -71,14 +70,14 @@ last_reviewed: 2026-09-14
 - **阶段 A 已实施并验收**：Recipe 原语与确定性断言门在 `packages/shared/src/recipe.ts`，
   配方本体与内置块在 `packages/shared/src/prompt.ts`，步骤日志与 `node.step.*` 事件在
   `packages/shared/src/run.ts`。
-- **阶段 B/C 未做**：步骤级断点续跑与缓存依赖 M7 的缓存指纹，见 [status.md](../status.md) 的已知缺口。
+- **阶段 B/C 未做**：步骤级断点续跑与缓存依赖 M7 的缓存指纹，见 status.md 的已知缺口。
 - **当时计划的「v2 / v4 同稿 A/B 盲评建档」闸门未执行**：v4 与知识巩固都直接转正了。
   这条闸门不再作为约束，但「配方改版先做盲评」这个做法本身仍值得保留。
 
 ## 「素材挑选」（段级分流）的决策（2026-09-10）
 
-来源：`docs/research/development-log.md` 的 §15–§16.3 逐条流水（2026-09-11 合并另一侧工作后，该文件
-已按既定的拆分口径归档，逐日流水见 [CHANGELOG.md](../../CHANGELOG.md)）。决策已落入代码：
+来源：当时的开发记录（原 §15–§16.3）逐条流水（2026-09-11 合并另一侧工作后归档，逐日流水见
+[CHANGELOG.md](../../CHANGELOG.md)；那份记录 2026-09-30 已删除）。决策已落入代码：
 节点定义与端口在 `packages/shared/src/graph.ts`，段标识与挑选判定在 `packages/shared/src/segment.ts`，
 引擎侧过滤在 `apps/server/src/lib/engine.ts` 的 `resolveInputs`。
 

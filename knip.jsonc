@@ -1,12 +1,19 @@
 {
   // 查未使用的文件 / 依赖 / 导出
+  //
+  // 版本固定在 5.x，**不要升到 6**：6.x 换用 oxc-parser，要分配约 6 GiB 的单个 ArrayBuffer，
+  // 超过 V8 的 4 GiB 上限，本机实测必崩。升级前先复测。
   "$schema": "https://unpkg.com/knip@5/schema.json",
 
   // Vue SFC 必须开这个插件，否则 .vue 里 <script> 的 import 追踪不到，会产生大量误报
   "vue": true,
 
+  // 只在本文件内部使用的 export 不算"未使用的导出"——否则每个模块的内部常量
+  // 都要么去掉 export、要么被当成死代码。这是 knip 的标准做法，不是放水。
+  "ignoreExportsUsedInFile": true,
+
   // 严重级别：文件与依赖是确定性问题，卡住；导出/类型是清理项，先只告警，
-  // 避免一次要求清掉 41 处（其中一部分只是"应该去掉 export 关键字"）
+  // 但它需要保持**短**——一份长期几十条的告警清单，实际效果是训练读者忽略输出。
   "rules": {
     "files": "error",
     "dependencies": "error",
@@ -20,11 +27,13 @@
 
   "workspaces": {
     ".": {
-      // 自研门禁脚本靠人手动跑，不是被 import 的模块，必须显式声明为入口
-      "entry": ["scripts/*.mjs"],
+      // 自研门禁脚本靠人手动跑，不是被 import 的模块，必须显式声明为入口。
+      // 带上 *.mts：`scripts/sync-session-to-nutstore.mts` 这类手工工具如果不进 project，
+      // 它就完全不在分析范围内——漂成死文件时没有任何信号。
+      "entry": ["scripts/*.mjs", "scripts/*.mts"],
       // 必须限定 project：根 workspace 若不限定，knip 会去解析 apps/web/dist 里的打包产物
       // （element-plus 1MB / elk 1.4MB），白耗时间；这一步在 knip 6 上直接是 OOM 崩溃
-      "project": ["scripts/**/*.mjs"],
+      "project": ["scripts/**/*.mjs", "scripts/**/*.mts"],
       // vale 是系统级工具（winget/scoop 装，不在 npm 依赖里），不是未声明的 npm 包
       "ignoreBinaries": ["vale"]
     },

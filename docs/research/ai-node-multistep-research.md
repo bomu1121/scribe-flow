@@ -1,9 +1,8 @@
 ---
 title: AI 加工节点内部多步链：收益调研与进阶实现方案
 class: research
-owner: 念前
-last_reviewed: 2026-09-09
 ---
+
 
 # AI 加工节点内部多步链：收益调研与进阶实现方案
 
@@ -11,7 +10,7 @@ last_reviewed: 2026-09-09
 > 日期：2026-09-08
 > 范围口径（已与用户对齐）：把 `AI 加工` 节点族（`process.refine / process.prompt / process.chapter / process.mindmap`）的**节点内执行**从「一次 LLM 调用」升级为「内部多步骤的小编排流程」，图上仍是单个节点。**排除**画布级子流程、提示词块库重设计、引擎 durable 化——它们属于路线图 M8 P2 的另外立项。
 > 动机（已与用户对齐）：探索更先进形态；把验证有效的多步加工方法沉淀为可复用资产。
-> 关联文档：[scribe-flow-proposal.md](../decisions/scribe-flow-proposal.md)、[workflow-module-roadmap.md](../plans/workflow-module-roadmap.md)、[r1-desktop-research.md](./r1-desktop-research.md)、[node-result-preview-research.md](./node-result-preview-research.md)
+> 关联文档：[scribe-flow-proposal.md](../decisions/scribe-flow-proposal.md)、workflow-module-roadmap.md、[r1-desktop-research.md](./r1-desktop-research.md)、[node-result-preview-research.md](./node-result-preview-research.md)
 
 ---
 

@@ -14,14 +14,11 @@ import {
   type DocSummary,
 } from "@scribe-flow/shared";
 
-/** 生成门禁扫描时排除的抓取存档；阅读器仍可列出来。 */
-const ARCHIVE_PREFIX = "docs/research/raw/";
-
 /**
  * 阅读器只列这些目录下的文档。
  *
- * 决策、计划、验收快照、调研（含抓取原文）、样例都是仓库**内部的过程产物**：文件名带日期、
- * 只对当天成立，放进产品界面的阅读器里全是噪音——实测 65 篇里有 60 篇属于这类。
+ * 决策、调研、样例都是仓库**内部的过程产物**：文件名带日期、只对当天成立，
+ * 放进产品界面的阅读器里全是噪音——实测 65 篇里有 60 篇属于这类。
  * 要放开某一类，往这个集合里加目录即可（例如把 `docs/decisions` 加回来）。
  *
  * 注意：下面关于「只读文件头」的实测数字是在收窄之前、对全部文档测的，现在读的文件更少，
@@ -42,8 +39,9 @@ const READER_DIRS: ReadonlySet<string> = new Set(["docs"]);
  *
  * 注意测量局限：以上都是**页缓存已热**的数字。
  *
- * 12 篇抓取存档（`docs/research/raw/`）全文没有 H1，其中 9 篇超过 4096 字节，因此它们走退回
- * 路径（另有首个 H1 在 4 KB 之后的少数文档）。这是刻意选择：为了"省一次读"而放弃正确性不值当。
+ * 退回路径不是死代码：正文较长、首个 H1 落在 4 KB 之后的文档（以及没有 H1 的文档）仍然走它。
+ * 抓取原文存档（`docs/research/raw/`，其中多篇全文没有 H1）已于 2026-09-30 移出仓库，
+ * 但"宁可多读一次也不给出与整读不同的结果"这条约定不变。
  */
 const HEAD_BYTES = 4096;
 
@@ -251,5 +249,3 @@ export function readDoc(docsDir: string, rel: string): DocContent {
     body,
   };
 }
-
-export const isArchivedDoc = (repoPath: string) => repoPath.startsWith(ARCHIVE_PREFIX);

@@ -1,9 +1,8 @@
 ---
 title: 新功能该加一张卡片，还是加一个提示词
 class: research
-owner: 念前
-last_reviewed: 2026-09-28
 ---
+
 
 # 新功能该加一张卡片，还是加一个提示词
 

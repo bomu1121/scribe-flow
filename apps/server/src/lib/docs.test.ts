@@ -22,7 +22,7 @@ describe("文档读取：路径包含性", () => {
     mkdirSync(join(docs, "research", "raw"), { recursive: true });
     writeFileSync(
       join(docs, "status.md"),
-      "---\ntitle: 项目现状\nclass: status\nowner: 念前\nlast_reviewed: 2026-09-11\n---\n\n# 项目现状\n\n正文\n",
+      "---\ntitle: 项目现状\nclass: doc\n---\n\n# 项目现状\n\n正文\n",
       "utf8",
     );
     writeFileSync(join(docs, "decisions", "a.md"), "# 决策 A\n\n内容\n", "utf8");
@@ -123,7 +123,7 @@ describe("文档读取：列表与正文", () => {
     mkdirSync(join(docs, "decisions"), { recursive: true });
     writeFileSync(
       join(docs, "status.md"),
-      "---\ntitle: 项目现状\nclass: status\nowner: 念前\nlast_reviewed: 2026-09-11\n---\n\n# 项目现状\n\n正文\n",
+      "---\ntitle: 项目现状\nclass: doc\n---\n\n# 项目现状\n\n正文\n",
       "utf8",
     );
     writeFileSync(join(docs, "decisions", "b.md"), "# 决策 B\n\n无 front matter 的正文\n", "utf8");
@@ -140,7 +140,7 @@ describe("文档读取：列表与正文", () => {
     expect(items.every((i) => i.dir === "docs")).toBe(true);
     const status = items.find((i) => i.path === "docs/status.md");
     expect(status?.dir).toBe("docs");
-    expect(status?.frontMatter?.class).toBe("status");
+    expect(status?.frontMatter?.class).toBe("doc");
     expect(status?.title).toBe("项目现状");
   });
 
@@ -192,13 +192,13 @@ describe("文档读取：只读头部与整读等价", () => {
     // 2) front matter 未闭合 → 必须退回
     ["unclosed.md", `---\ntitle: 未闭合\n\n${"正文。\n".repeat(900)}`],
     // 3) 全文没有 H1 → 必须退回
-    ["no-h1.md", `---\ntitle: 无 H1\nclass: status\n---\n\n${"正文。\n".repeat(900)}`],
+    ["no-h1.md", `---\ntitle: 无 H1\nclass: doc\n---\n\n${"正文。\n".repeat(900)}`],
     // 4) 超长 front matter 把 H1 顶出头部 → 必须退回
     ["fat-front-matter.md", `---\ntitle: 超长元数据\n${"填充: 值\n".repeat(400)}---\n\n# 头之后的标题\n`],
     // 5) 头部正好把 H1 截断：`/^#\s+(.+)$/m` 会把截断的半行也匹配出来 → 必须退回
     ["cut-h1.md", `${"a".repeat(4090)}\n# ${"很长".repeat(80)}\n\n正文\n`],
     // 6) 短文件：整个文件都在头部里，直接采用头读结果
-    ["short.md", "---\ntitle: 短文档\nclass: plan\n---\n\n# 短文档\n\n正文\n"],
+    ["short.md", "---\ntitle: 短文档\nclass: research\n---\n\n# 短文档\n\n正文\n"],
   ];
 
   beforeAll(() => {
@@ -302,18 +302,17 @@ describe("文档接口", () => {
 describe("front matter 解析：与门禁脚本的实现对拍", () => {
   it("同一组样例下两侧结果一致", async () => {
     const shared = parseDocFrontMatter(
-      "---\ntitle: T\nclass: decision\nstatus: accepted\nowner: 念前\nlast_reviewed: 2026-09-11\n---\n\n# T\n\n正文\n",
+      "---\ntitle: T\nclass: decision\nstatus: accepted\n---\n\n# T\n\n正文\n",
     );
     expect(shared).not.toBeNull();
     expect(shared?.data.class).toBe("decision");
     expect(shared?.data.status).toBe("accepted");
-    expect(shared?.data.owner).toBe("念前");
     expect(shared?.body).toContain("# T");
 
     // 无 front matter / 未闭合 / 空值 / 引号包裹，四种边界的期望行为
     expect(parseDocFrontMatter("# 只有正文\n")).toBeNull();
     expect(parseDocFrontMatter("---\ntitle: T\n\n# 未闭合\n")).toBeNull();
-    expect(parseDocFrontMatter("---\ntitle:\nclass: status\n---\n\n# T\n")?.data.title).toBeUndefined();
+    expect(parseDocFrontMatter("---\ntitle:\nclass: doc\n---\n\n# T\n")?.data.title).toBeUndefined();
     expect(parseDocFrontMatter('---\ntitle: "带引号"\n---\n\n# T\n')?.data.title).toBe("带引号");
     // CRLF 归一
     expect(parseDocFrontMatter("---\r\ntitle: T\r\n---\r\n\r\n# T\r\n")?.data.title).toBe("T");

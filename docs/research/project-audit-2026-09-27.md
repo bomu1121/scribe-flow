@@ -1,9 +1,8 @@
 ---
 title: 全项目审计（2026-09-27）：七个区域逐文件走过一遍
 class: research
-owner: 念前
-last_reviewed: 2026-09-27
 ---
+
 
 # 全项目审计（2026-09-27）
 
@@ -31,7 +30,7 @@ last_reviewed: 2026-09-27
 - 【报告】= 子代理逐行读代码后报告的，我**没有**逐条复核；引用前建议先看它给的 `文件:行号`
 - 涉及数字的，标注是实测还是推导
 
-**与 `docs/status.md` 的关系**：那份清单里的条目本文不重复论证，只在 §6 给"是否成立 + 实际后果是否更重"的复核结论。
+**与 `当时的 status.md` 的关系**：那份清单里的条目本文不重复论证，只在 §6 给"是否成立 + 实际后果是否更重"的复核结论。
 
 ## 1. 覆盖地图
 
@@ -117,13 +116,13 @@ last_reviewed: 2026-09-27
 ### B1 未认证请求即可把库里保存的坚果云应用密码发往任意主机【报告，子代理称已用本地 mock 实测】
 
 `routes/nutstore.ts:101-110` 的 `POST /api/nutstore/test` 把请求体里的 `serverUrl` 与**回落自库里的** `account`/`password` 拼起来调 `lib/nutstore.ts:123` 的 Basic 认证头。攻击者只需一次 POST 并自带 URL，不需要先改设置。
-**同形还有一处**：`routes/settings.ts` 的 `/test/asr`（`resolveAsrTestConfig` 同样是"请求体 baseUrl + 已存密钥回落"）。`docs/status.md` 只记了 `/test/ai` 那一处。
+**同形还有一处**：`routes/settings.ts` 的 `/test/asr`（`resolveAsrTestConfig` 同样是"请求体 baseUrl + 已存密钥回落"）。`当时的 status.md` 只记了 `/test/ai` 那一处。
 **修法**：测试连接的接口只接受"本次请求里显式提供的凭据"，不允许回落已保存的密钥；或对这类接口要求一个本地令牌。
 
 ### B2 工程图里的 `filePath` 可越出数据目录读任意文件【复核了校验缺失，外泄链未复核】
 
 `packages/shared/src/schema.ts:50` 的 `filePath: z.string().optional()` 只校验类型；`engine.ts:1312` 直接 `resolve(this.dataDir, filePath)`。配合可改的 `asr.baseUrl` 与无鉴权的 `GET /api/media/:id/download`，构成"读任意文件 + 外泄"的链路。
-`docs/status.md` 的路径条目只提了媒体前缀比较、`runs.ts:312/325`、`outputDir` 写出，**没有这条读路径**。
+`当时的 status.md` 的路径条目只提了媒体前缀比较、`runs.ts:312/325`、`outputDir` 写出，**没有这条读路径**。
 **对照**：`lib/docs.ts:127-148` 是同一个仓库里写对的示范（`path.relative` 判包含性 + `realpath` + 强制前缀）。把那段抄过来即可。
 
 ### B3 上传先整段缓冲进内存，再判断大小上限【报告，子代理实测 RSS 58MB → 1465MB】
@@ -235,7 +234,7 @@ last_reviewed: 2026-09-27
 
 ---
 
-## 6. 对 `docs/status.md` 已知项的复核结论
+## 6. 对 `当时的 status.md` 已知项的复核结论
 
 | status.md 条目 | 结论 |
 | --- | --- |

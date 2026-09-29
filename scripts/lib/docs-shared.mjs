@@ -1,14 +1,18 @@
 /**
  * 文档门禁各脚本的共享工具。
  *
- * 三个脚本（docs-gen / docs-lint / docs-freeze）必须对「什么是正文」「front matter 长什么样」
- * 「CRLF 怎么处理」有一致的理解，否则生成块与校验会互相打架。所以这些定义只在这里写一份。
+ * docs-gen / docs-lint 必须对「什么是正文」「front matter 长什么样」「CRLF 怎么处理」有一致的理解，
+ * 所以这些定义只在这里写一份。
  *
  * 关键约定：所有文本读取都做 CRLF→LF 归一。Windows 检出（core.autocrlf）与 CI 的 ubuntu
  * 必须得到逐字节一致的结果。
+ *
+ * front matter 刻意只有三个字段（title / class / status）。2026-09-30 之前还有
+ * owner / last_reviewed / review_days / frozen_at / content_hash 五个字段，配一条新鲜度告警、
+ * 一条内容指纹校验与 pnpm docs:freeze 重冻流程——那是给多人团队与审计场景设计的，
+ * 单人仓库里的实际作用是：每篇文档多五行手写元数据、每次改动多一道摩擦。已删除。
+ * 冻结能力本来也不需要专门的机制：git 提交哈希就是不可伪造的冻结。
  */
-import { execFileSync } from "node:child_process";
-import { createHash } from "node:crypto";
 import { readFileSync, readdirSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -17,42 +21,38 @@ export const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..")
 
 export const SKIP_DIRS = new Set(["node_modules", "dist", ".git", ".tmp-shots", ".dsh-vision-router"]);
 
-/** 调研原文是抓取存档，不进入文档地图、不参与链接检查、不要求 front matter。 */
-export const ARCHIVE_PREFIXES = ["docs/research/raw/"];
-
-/** 每个 class 的必填键与新鲜度阈值。文档可用 front matter 的 review_days 覆盖阈值。 */
+/** 每个 class 的必填键。class 只有三种：现状说明、决策、调研。 */
 export const CLASS_RULES = {
-  status: { required: ["title", "class", "owner", "last_reviewed"], maxAgeDays: 90 },
-  decision: { required: ["title", "class", "status", "owner", "last_reviewed"], maxAgeDays: 180 },
-  plan: { required: ["title", "class", "status", "owner", "last_reviewed"], maxAgeDays: 90 },
-  evidence: { required: ["title", "class", "owner", "frozen_at", "content_hash"], maxAgeDays: null },
-  research: { required: ["title", "class", "owner", "last_reviewed"], maxAgeDays: 365 },
+  doc: { required: ["title", "class"] },
+  decision: { required: ["title", "class", "status"] },
+  research: { required: ["title", "class"] },
 };
 
 export const STATUS_ENUM = new Set(["proposed", "accepted", "superseded", "deprecated", "done"]);
 
 /**
- * front matter 的豁免路径：产物存档（样例稿、抓取原文）不是生命周期文档，不需要 front matter。
+ * front matter 的豁免路径：样例稿是产品输出的存档，不是生命周期文档。
  * 其余 docs 下的 markdown 一律强制要求——刻意全量强制，否则 front matter 被误删时无人发现。
+ *
+ * （原先还豁免 `docs/research/raw/` 的抓取原文；那批存档已于 2026-09-30 移出仓库。）
  */
-export const FRONT_MATTER_EXEMPT = [/^docs\/samples\//, /^docs\/research\/raw\//];
+export const FRONT_MATTER_EXEMPT = [/^docs\/samples\//];
 
 export const requiresFrontMatter = (path) =>
   path.startsWith("docs/") && !FRONT_MATTER_EXEMPT.some((re) => re.test(path));
 
 /**
- * 目录 ↔ class 的对应关系。目录名就是分类信号（见 AGENTS.md），R11 用它检查两者一致——
- * 这是「分类错误」里唯一能被机器判定的部分：判错 class 本身机器管不了，但放错目录能管。
+ * 目录 ↔ class 的对应关系。目录名就是分类信号（见 AGENTS.md）。
+ *
+ * 2026-09-30 之前还有 plans/ 与 evidence/ 两个目录，各配一条「class 必须与目录一致」的规则。
+ * 计划与验收快照属于时序信息：放进仓库就会腐烂，还要额外用指纹冻住才算「不可改」。
+ * 它们的内容由 CHANGELOG 与 git 历史承担，目录本身已删除，那条一致性规则也一并删除。
  */
 export const DIRECTORY_CLASS = [
-  { re: /^docs\/[^/]+\.md$/, cls: "status", label: "docs/ 根" },
+  { re: /^docs\/[^/]+\.md$/, cls: "doc", label: "docs/ 根" },
   { re: /^docs\/decisions\//, cls: "decision", label: "docs/decisions/" },
-  { re: /^docs\/plans\//, cls: "plan", label: "docs/plans/" },
-  { re: /^docs\/evidence\//, cls: "evidence", label: "docs/evidence/" },
   { re: /^docs\/research\//, cls: "research", label: "docs/research/" },
 ];
-
-export const DAY_MS = 86_400_000;
 
 export function walk(dir, filter, out = []) {
   for (const entry of readdirSync(join(ROOT, dir), { withFileTypes: true })) {
@@ -69,8 +69,6 @@ export function walk(dir, filter, out = []) {
 
 export const read = (p) => readFileSync(join(ROOT, p), "utf8").replace(/\r\n/g, "\n");
 
-export const isArchived = (p) => ARCHIVE_PREFIXES.some((prefix) => p.startsWith(prefix));
-
 /** 极简 front matter 解析：只支持 `key: value` 标量，够用且不引入 yaml 依赖。 */
 export function parseFrontMatter(text) {
   if (!text.startsWith("---\n")) return null;
@@ -86,29 +84,4 @@ export function parseFrontMatter(text) {
   return { data, body: text.slice(end + 4) };
 }
 
-/** 正文指纹：只忽略结尾空白（编辑器增删末尾换行不该算"改动内容"）。 */
-export const contentHash = (body) => createHash("sha256").update(body.replace(/\s+$/, ""), "utf8").digest("hex").slice(0, 16);
-
-export function lastCommitDate(path) {
-  try {
-    const out = execFileSync("git", ["log", "-1", "--format=%ad", "--date=short", "--", path], {
-      cwd: ROOT,
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "ignore"],
-    }).trim();
-    return out || "（未提交）";
-  } catch {
-    return "（未知）";
-  }
-}
-
-export function docTitle(path) {
-  const m = /^#\s+(.+)$/m.exec(read(path));
-  return m ? m[1].trim() : path;
-}
-
 export const blockRe = (name) => new RegExp(`(<!-- docs-gen:${name}:start -->)([\\s\\S]*?)(<!-- docs-gen:${name}:end -->)`);
-
-export function countRe(text, re) {
-  return (text.match(re) ?? []).length;
-}

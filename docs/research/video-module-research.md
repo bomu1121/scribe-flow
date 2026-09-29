@@ -1,13 +1,12 @@
 ---
 title: ScribeFlow 视频下载与结果页播放 —— 调研与设计
 class: research
-owner: 念前
-last_reviewed: 2026-09-10
 ---
+
 
 # ScribeFlow 视频下载与结果页播放 —— 调研与设计
 
-> 状态：**已实施（P0–P3）**，验收见 [2026-09-10-video-module-acceptance.md](../evidence/2026-09-10-video-module-acceptance.md)
+> 状态：**已实施（P0–P3）**，验收见 2026-09-10-video-module-acceptance.md
 > 范围：B站视频/本地视频 → 下载与归一化 → 结果页可流畅播放；存储采用「媒体缓存库 + 引用」；播放器为「原生 HTML5 video + 自研轻封装」。
 > 对应目标：让「带有下载视频的运行/工作流」在重启、备份恢复、换机后仍能正常浏览，同时不让大文件拖垮现有轻量备份（坚果云仅 SQLite）。
 
@@ -331,7 +330,7 @@ interface RunMediaView {
 
 ## 6. 分阶段实施与验收（M9 建议，评审通过后拆实施文档）
 
-> **实施状态（2026-09-09）**：P0 ✅（记录见 [video-module-poc.md](./video-module-poc.md)）→ P1 ✅ → P2 ✅ → 分层验收见 [2026-09-10-video-module-acceptance.md](../evidence/2026-09-10-video-module-acceptance.md)。MVP 已在真实环境跑通「下载 → 结果页播放 → 缺失一键重下」闭环，待 L0.5 build 与后续自动化 smoke 补录后整体定稿。
+> **实施状态（2026-09-09）**：P0 ✅（记录见 [video-module-poc.md](./video-module-poc.md)）→ P1 ✅ → P2 ✅ → 分层验收见 2026-09-10-video-module-acceptance.md。MVP 已在真实环境跑通「下载 → 结果页播放 → 缺失一键重下」闭环，待 L0.5 build 与后续自动化 smoke 补录后整体定稿。
 
 ### P0 选型 PoC（先做，风险最低）
 
@@ -370,8 +369,8 @@ interface RunMediaView {
 > 状态：文档与验收已落（2026-09-09）；`pnpm build` ✅。遗留：既有 `smoke:ui` 全量回归与播放器自动化用例补录、durl/仅 HEVC 样本补测（非阻塞）。
 
 - `pnpm typecheck && pnpm test && pnpm build` 全绿、smoke 37+ 回归；
-- 更新 `docs/deploy.md`（`/data/media`、备份矩阵、可选 `MEDIA_DIR`）、`CHANGELOG.md`（当时记在 `docs/research/development-log.md`，该文件 2026-09-11 已拆分）；
-- 按 L0–L4 模板落 `docs/evidence/2026-09-10-video-module-acceptance.md`。
+- 更新 `docs/deploy.md`（`/data/media`、备份矩阵、可选 `MEDIA_DIR`）、`CHANGELOG.md`（当时记在开发记录里，该文件 2026-09-11 已拆分、2026-09-30 已删除）；
+- 按 L0–L4 模板落一份验收档案（当时放在 `docs/evidence/`，该目录已于 2026-09-30 随文档收敛删除，验收结论保留在 CHANGELOG 与本文）。
 
 ### 不在本期（下一里程碑）
 

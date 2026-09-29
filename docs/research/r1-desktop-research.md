@@ -1,14 +1,13 @@
 ---
 title: R1 桌面研究报告：市场工作流产品功能地图 v1
 class: research
-owner: 念前
-last_reviewed: 2026-09-02
 ---
+
 
 # R1 桌面研究报告：市场工作流产品功能地图 v1
 
 > 调研日期：2026-09-02
-> 方法：官方文档/官网抓取（curl 原始 HTML 存 `docs/research/raw/`，去标签文本存 `docs/research/txt/`）
+> 方法：官方文档/官网抓取（curl 原始 HTML + 去标签文本，2026-09-30 已随仓库瘦身移出，见 §5）
 > 状态：**v1 可评审**；标注「待 R2 核实」的条目为 JS 渲染站点未抓全、以产品常识补充，需产品试用/真实浏览器复核。
 > 关联方案：[workflow-module-expansion-research.md](./workflow-module-expansion-research.md)
 
@@ -280,6 +279,8 @@ last_reviewed: 2026-09-02
 
 ## 5. 证据目录
 
-- 原始 HTML：`docs/research/raw/*.html`（27+ 个页面，2026-09-02 抓取）
-- 去标签文本：`docs/research/txt/*.txt`
-- 抓取脚本：`docs/research/fetch.ps1` / `fetch2.ps1` / `fetch3.ps1` / `strip.ps1`
+本报告的证据是 2026-09-02 抓取的 27+ 个竞品页面（原始 HTML、去标签文本）与四个抓取脚本。
+它们在 2026-09-30 的仓库瘦身中**移出仓库**（约 4 MB 的抓取存档长期住在 `docs/` 下，
+而它既不参与文档门禁、也不是产品的一部分），现存放于仓库同级的
+`scribe-flow-archive/research-fetch/`（`raw/`、`txt/`、`fetch*.ps1`、`strip.ps1`）。
+需要复核证据时去那里找；本报告的结论与引用页码不受影响。

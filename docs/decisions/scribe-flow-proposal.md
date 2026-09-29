@@ -2,13 +2,12 @@
 title: ScribeFlow 方案（v3）：笔记处理画布流
 class: decision
 status: accepted
-owner: 念前
-last_reviewed: 2026-09-04
 ---
+
 
 # ScribeFlow 方案（v3）：笔记处理画布流
 
-> 状态：**已按本方案实施**（M0–M5 依此落地；后续里程碑见 [status.md](../status.md)）
+> 状态：**已按本方案实施**（M0–M5 依此落地；后续里程碑见 status.md）
 > 目标仓库：https://github.com/bomu1121/scribe-flow.git
 > v3 修订要点（按用户补充意见）：
 > 1. 画布**最大化复用现成开源能力**：底层直接套 Vue Flow（MIT，n8n 编辑器同源），交互逐项照搬成熟开源画布流产品，不重新发明画布交互。
@@ -373,7 +372,7 @@ last_reviewed: 2026-09-04
 
 - 通用控件一律走 Element Plus（不自研、不手抄样式），设计令牌通过 `--el-*` 桥接同一套令牌。此处原按 shadcn-vue registry 手抄语义，**该路线已于 2026-08-28 被取代**，见 [ui-library-replacement-research.md](./ui-library-replacement-research.md)。
 - 每个交互组件必须覆盖：`hover`、`active`、`:focus-visible`、`[data-state=open]` 动画、`disabled` 降级；弹出层进入/退出使用 `--dur-*` 与 `--ease-out`。
-- 组件层使用 Tailwind 语义 utility（`bg-background / border-input / text-muted-foreground / ring-ring`），语义色在 `@theme inline` 中单一映射到设计令牌；详细代码级调研见 [ui-framework-selection.md](./ui-framework-selection.md)。
+- 组件层使用 Tailwind 语义 utility（`bg-background / border-input / text-muted-foreground / ring-ring`），语义色在 `@theme inline` 中单一映射到设计令牌；详细代码级调研见 ui-framework-selection.md。
 
 ---
 

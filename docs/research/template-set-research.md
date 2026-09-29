@@ -1,9 +1,8 @@
 ---
 title: 内置链路（模板）调研：用本机运行数据与同类产品对标决定该留什么
 class: research
-owner: 念前
-last_reviewed: 2026-09-29
 ---
+
 
 # 内置链路（模板）调研
 
