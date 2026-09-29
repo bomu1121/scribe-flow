@@ -229,6 +229,17 @@ export function ensureSchema(sqlite: Database.Database) {
       created_at INTEGER NOT NULL,
       updated_at INTEGER NOT NULL
     );
+
+    CREATE TABLE IF NOT EXISTS compare_reports (
+      id TEXT PRIMARY KEY,
+      content_hash TEXT NOT NULL UNIQUE,
+      model TEXT NOT NULL,
+      left_label TEXT NOT NULL,
+      right_label TEXT NOT NULL,
+      analysis_json TEXT NOT NULL,
+      meta_json TEXT NOT NULL,
+      created_at INTEGER NOT NULL
+    );
   `);
 
   // 幂等迁移：旧库 runs 表没有 graph_json 时补列。

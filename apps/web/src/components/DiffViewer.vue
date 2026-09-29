@@ -1,17 +1,13 @@
 <script setup lang="ts">
 import { computed } from "vue";
 import { DIFF_DELETE, DIFF_EQUAL, DIFF_INSERT, diff as diffMatch } from "diff-match-patch-es";
+import { diffLines, summarizeDiff, type DiffLine } from "@scribe-flow/shared";
 
 const props = defineProps<{ before: string; after: string; beforeLabel?: string; afterLabel?: string; sameMessage?: string }>();
 
 const resolvedBeforeLabel = computed(() => props.beforeLabel ?? "上游");
 const resolvedAfterLabel = computed(() => props.afterLabel ?? "当前");
 const resolvedSameMessage = computed(() => props.sameMessage ?? "与上游一致，没有内容变化");
-
-interface DiffRow {
-  type: "add" | "del";
-  text: string;
-}
 
 interface HighlightSegment {
   text: string;
@@ -25,56 +21,14 @@ interface VisualRow {
   newSegments?: HighlightSegment[];
 }
 
-const MAX_LINES = 800;
 const MAX_ROWS = 400;
+
+/** 行级 diff 与「删/增/重合率」都取自 shared 的同一份实现（对照视图用的是同一组数字）。 */
+const diff = computed<DiffLine[] | null>(() => diffLines(props.before, props.after));
+const stats = computed(() => (diff.value ? summarizeDiff(props.before, props.after, diff.value) : null));
 
 function countChars(text: string): number {
   return text.replace(/\s/g, "").length;
-}
-
-function splitLines(text: string): string[] {
-  return text.replace(/\r\n/g, "\n").replace(/\n$/, "").split("\n");
-}
-
-function lineDiff(before: string, after: string): DiffRow[] | null {
-  const a = splitLines(before);
-  const b = splitLines(after);
-  if (a.length > MAX_LINES || b.length > MAX_LINES) return null;
-
-  const n = a.length;
-  const m = b.length;
-  // dp[i][j] = LCS 长度（从后往前计算）
-  const dp: number[][] = Array.from({ length: n + 1 }, () => new Array<number>(m + 1).fill(0));
-  for (let i = n - 1; i >= 0; i -= 1) {
-    for (let j = m - 1; j >= 0; j -= 1) {
-      dp[i][j] = a[i] === b[j] ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1]);
-    }
-  }
-
-  const rows: DiffRow[] = [];
-  let i = 0;
-  let j = 0;
-  while (i < n && j < m) {
-    if (a[i] === b[j]) {
-      i += 1;
-      j += 1;
-    } else if (dp[i + 1][j] >= dp[i][j + 1]) {
-      rows.push({ type: "del", text: a[i] });
-      i += 1;
-    } else {
-      rows.push({ type: "add", text: b[j] });
-      j += 1;
-    }
-  }
-  while (i < n) {
-    rows.push({ type: "del", text: a[i] });
-    i += 1;
-  }
-  while (j < m) {
-    rows.push({ type: "add", text: b[j] });
-    j += 1;
-  }
-  return rows;
 }
 
 /** 对一对“替换行”使用 diff-match-patch 做精确字符级高亮。 */
@@ -97,7 +51,7 @@ function splitCommonEdits(oldText: string, newText: string): { oldSegments: High
 }
 
 /** 把“删/增”行配对成可做字符级高亮的 replace 行；无法配对的保留整行增删。 */
-function buildVisualRows(rows: DiffRow[]): VisualRow[] {
+function buildVisualRows(rows: DiffLine[]): VisualRow[] {
   const visual: VisualRow[] = [];
   for (let i = 0; i < rows.length; i += 1) {
     const current = rows[i];
@@ -117,11 +71,10 @@ function buildVisualRows(rows: DiffRow[]): VisualRow[] {
   return visual;
 }
 
-const diff = computed(() => lineDiff(props.before, props.after));
 const visualRows = computed(() => buildVisualRows(diff.value ?? []).slice(0, MAX_ROWS));
 const truncated = computed(() => (diff.value?.length ?? 0) > MAX_ROWS);
-const addedCount = computed(() => (diff.value ?? []).filter((row) => row.type === "add").length);
-const removedCount = computed(() => (diff.value ?? []).filter((row) => row.type === "del").length);
+const addedCount = computed(() => stats.value?.added ?? 0);
+const removedCount = computed(() => stats.value?.removed ?? 0);
 const beforeChars = computed(() => countChars(props.before));
 const afterChars = computed(() => countChars(props.after));
 const same = computed(() => (diff.value?.length ?? 0) === 0);

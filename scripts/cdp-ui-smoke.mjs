@@ -634,6 +634,45 @@ async function run() {
       check("日志查看器展示节点日志（≥2 条）", logItems, `${await evalJs("document.querySelectorAll('.rl-log-item').length")} 条`);
       await pressEscape();
       await waitFor("!document.querySelector('.rl-overlay')", 3000);
+
+      // 对照视图：本次运行有两份以上产物时出现，把两份并排比差异（多路对照这类并行链路不用合并节点也能看差异）
+      check("运行详情出现「对照」标签", await evalJs("!!document.querySelector('#rv-tab-compare')"), "两份产物：文本 + 合并");
+      await evalJs("document.querySelector('#rv-tab-compare')?.click(); true");
+      const cmpReady = await waitFor("document.querySelectorAll('#rv-panel-compare .el-table__row').length >= 8", 5000);
+      const cmpInfo = await evalJs(`(() => {
+        const panel = document.querySelector('#rv-panel-compare');
+        if (!panel) return null;
+        return {
+          sides: [...panel.querySelectorAll('.cmp-pick .el-select__selected-item')].map((e) => e.textContent.trim()).filter(Boolean),
+          rows: panel.querySelectorAll('.el-table__row').length,
+          metrics: [...panel.querySelectorAll('.cmp-panel-hint')].map((e) => e.textContent.replace(/\\s+/g, ' ').trim()),
+          diffLines: panel.querySelectorAll('.sf-diff-line').length,
+        };
+      })()`);
+      check(
+        "对照视图渲染两侧选择 + 指标表 + 逐行差异",
+        // 每个 el-select 会在 DOM 里留两个 selected-item 节点（可见的 + 用于测量的），所以按「非空项」判断，
+        // 而不是数节点个数。
+        cmpReady &&
+          (cmpInfo?.sides?.length ?? 0) === 2 &&
+          cmpInfo.sides[0] !== cmpInfo.sides[1] &&
+          (cmpInfo?.metrics ?? []).some((m) => m.includes("重合率")),
+        `两侧=[${cmpInfo?.sides?.join(" / ")}] 指标 ${cmpInfo?.rows} 行 · 差异 ${cmpInfo?.diffLines} 行 · ${(cmpInfo?.metrics ?? []).join(" | ")}`,
+      );
+      // AI 分析入口：只查控件本身（是不是真的 Element Plus 按钮、有没有被禁用），**不点击**——
+      // 点一下就是用户的一次模型调用、还要外网。这条用来拦「漏 import 组件」这类回归：
+      // 漏了 ElButton 时 <el-button> 会被当成未知元素渲染，有文字、没样式、点了没反应，肉眼看不出来。
+      const aiEntry = await evalJs(`(() => {
+        const panel = document.querySelector('#rv-panel-compare');
+        const btn = [...(panel?.querySelectorAll('.cmp-ai .el-button') ?? [])].find((b) => b.textContent.includes('分析差异'));
+        return { isElButton: !!btn, disabled: btn ? btn.classList.contains('is-disabled') : null };
+      })()`);
+      check(
+        "AI 差异分析入口是真实 Element Plus 按钮（未配密钥时才禁用）",
+        aiEntry?.isElButton === true && aiEntry?.disabled === false,
+        JSON.stringify(aiEntry),
+      );
+      await evalJs("document.querySelector('#rv-tab-result')?.click(); true");
     }
 
     // 设置页（独立路由 /settings，仍为 .sf-settings-* 结构）

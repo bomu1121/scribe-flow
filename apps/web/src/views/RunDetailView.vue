@@ -10,6 +10,7 @@ import {
   Download,
   Eye,
   FileText,
+  GitCompareArrows,
   ListTree,
   Maximize,
   Minimize,
@@ -34,20 +35,25 @@ import { api } from "@/lib/api";
 import { renderMarkdown } from "@/lib/markdown";
 import { runDisplayName, resolveRenameRequest } from "@/lib/run-meta";
 import { buildNodeSegments, type RunSegment } from "@/utils/run-segments";
+import { buildCompareOptions, pickDefaultComparePair } from "@/utils/run-compare";
+import { isDrillOutput, looksLikeTraceReport } from "@/utils/run-output";
 import { subscribeRunEvents } from "@/lib/sse";
 import { useProjectsStore } from "@/stores/projects";
 import { useRunsStore } from "@/stores/runs";
+import { useSettingsStore } from "@/stores/settings";
 import MindMapViewer from "@/components/MindMapViewer.vue";
 import DrillViewer from "@/components/DrillViewer.vue";
 import DiffViewer from "@/components/DiffViewer.vue";
 import RunLogDialog from "@/components/RunLogDialog.vue";
 import TraceReportViewer from "@/components/TraceReportViewer.vue";
+import CompareView from "@/components/CompareView.vue";
 import MediaPlayer from "@/components/media/MediaPlayer.vue";
 
 const route = useRoute();
 const router = useRouter();
 const projectsStore = useProjectsStore();
 const runsStore = useRunsStore();
+const settingsStore = useSettingsStore();
 const run = ref<RunDetail | null>(null);
 const loading = ref(false);
 const activeTab = ref<DetailTab>("result");
@@ -92,7 +98,7 @@ function recordDocScroll() {
 }
 
 // ---------- 顶部「结果 / 思维导图 / 节点流水」切换：滑动墨条 + 内容淡入 ----------
-type DetailTab = "result" | "nodes" | "mindmap" | "drill";
+type DetailTab = "result" | "nodes" | "mindmap" | "drill" | "compare";
 const tabsEl = ref<HTMLElement | null>(null);
 const tabRefs = ref<Partial<Record<DetailTab, HTMLButtonElement | null>>>({});
 /** 墨条位置（相对 tablist 容器），首次测量前隐藏，避免进场时从 0 滑一次。 */
@@ -102,11 +108,12 @@ let tabResizeObserver: ResizeObserver | null = null;
 
 const failedNodeCount = computed(() => (run.value?.nodeResults ?? []).filter((node) => node.status === "error").length);
 
-/** tablist 的可见顺序（思维导图只在有导图时才出现）。 */
+/** tablist 的可见顺序（思维导图只在有导图时出现；对照只在本次运行有两份以上可对照产物时出现）。 */
 const tabOrder = computed<DetailTab[]>(() => {
   const order: DetailTab[] = ["result"];
   if (drillNodes.value.length > 0) order.push("drill");
   if (mindMapNodes.value.length > 0) order.push("mindmap");
+  if (compareOptions.value.length >= 2) order.push("compare");
   order.push("nodes");
   return order;
 });
@@ -399,6 +406,42 @@ const mindMapNodes = computed<OutputDoc[]>(() => {
 });
 
 const currentMindMap = computed(() => mindMapNodes.value[selectedMindMapIndex.value] ?? null);
+
+// ---------- 对照 tab：把本次运行里的两份产物直接比差异（指标 + 逐行 diff）----------
+// 有了这个视图，并行分支就不必再用「合并」节点把两份内容首尾相接——那样只是拼在一起，看不出差异。
+const compareOptions = computed(() =>
+  buildCompareOptions(run.value?.nodeResults ?? [], run.value?.inputs ?? [], graph.value ?? undefined),
+);
+/** 没配 AI 密钥时「分析差异」按钮直接禁用并说明原因，别让用户点了才被拒。 */
+const aiReady = computed(() => Boolean(settingsStore.settings?.ai.hasKey));
+const compareLeftKey = ref("");
+const compareRightKey = ref("");
+
+function syncComparePair() {
+  const pair = pickDefaultComparePair(compareOptions.value);
+  compareLeftKey.value = pair.leftKey;
+  compareRightKey.value = pair.rightKey;
+}
+
+function swapCompareSides() {
+  const left = compareLeftKey.value;
+  compareLeftKey.value = compareRightKey.value;
+  compareRightKey.value = left;
+}
+
+/**
+ * 可选项变了（换运行、运行中产出新节点）时校正两侧：两边都还在就保持用户的选择，
+ * 否则回到默认的那一对（链路上最深的一组并行分支）。
+ */
+watch(
+  () => compareOptions.value.map((option) => option.key).join("|"),
+  () => {
+    const keys = new Set(compareOptions.value.map((option) => option.key));
+    if (keys.has(compareLeftKey.value) && keys.has(compareRightKey.value)) return;
+    syncComparePair();
+  },
+  { immediate: true },
+);
 
 // ---------- 知识巩固（练一练）tab：产物是结构化 JSON，由 DrillViewer 解析后交互答题 ----------
 const drillNodes = computed<OutputDoc[]>(() => {
@@ -914,21 +957,7 @@ function ensureActiveRailRowVisible() {
   else if (bottom > container.clientHeight) container.scrollTop += bottom - container.clientHeight + 6;
 }
 
-function looksLikeTraceReport(text: string): boolean {
-  // 知识巩固产物同样带 schema/items 根键，靠 kind 标记先排除，避免被当成溯源报告渲染成空表。
-  if (isDrillProduct(text)) return false;
-  return /"schema"\s*:\s*1/.test(text) && /"items"\s*:/.test(text);
-}
-
-/** 知识巩固产物（process.drill）识别：结果页由 DrillViewer 消费，不进入结果文档列表。 */
-function isDrillProduct(text: string): boolean {
-  return /"kind"\s*:\s*"drillSet"/.test(text);
-}
-
-function isDrillOutput(node: RunNodeResult): boolean {
-  return node.nodeType === "process.drill" || isDrillProduct(node.output?.text ?? "");
-}
-
+// 产物形态判定（溯源报告 / 练一练 / 结构化）统一在 utils/run-output.ts，与对照视图共用同一份实现。
 const isTraceOutput = computed(() =>
   Boolean(
     currentOutput.value &&
@@ -986,6 +1015,8 @@ const sourceSummary = computed(() => {
 
 onMounted(() => {
   void loadRun();
+  // 「对照」页的 AI 分析按钮要知道有没有配密钥，但它不保证用户进过设置页。
+  void settingsStore.ensureLoaded();
   document.addEventListener("fullscreenchange", onFullscreenChange);
   window.addEventListener("pointerdown", onTocOutsidePointerDown, true);
   window.addEventListener("resize", updateTabIndicator);
@@ -1064,6 +1095,9 @@ async function loadRun(showLoading = true) {
     } else if (activeTab.value === "mindmap" && mindMapNodes.value.length === 0) {
       setActiveTab("result");
     }
+    // ?tab=compare 直达对照视图（对照的两侧由默认配对决定，可再改）。
+    if (queryTab === "compare" && compareOptions.value.length >= 2) setActiveTab("compare");
+    else if (activeTab.value === "compare" && compareOptions.value.length < 2) setActiveTab("result");
     if (activeTab.value === "mindmap" && mindMapNodes.value.length > 0) {
       const mindIndex = Math.min(selectedMindMapIndex.value, mindMapNodes.value.length - 1);
       await loadMindMapContent(mindIndex);
@@ -1548,6 +1582,21 @@ async function commitRename() {
         <Network :size="14" /><span>思维导图</span>
       </button>
       <button
+        v-if="compareOptions.length >= 2"
+        :ref="(el) => setTabRef('compare', el)"
+        type="button"
+        role="tab"
+        id="rv-tab-compare"
+        aria-controls="rv-panel-compare"
+        :aria-selected="activeTab === 'compare'"
+        :tabindex="activeTab === 'compare' ? 0 : -1"
+        :class="{ active: activeTab === 'compare' }"
+        @click="setActiveTab('compare')"
+        @keydown="onTabKeydown($event, 'compare')"
+      >
+        <GitCompareArrows :size="14" /><span>对照</span>
+      </button>
+      <button
         :ref="(el) => setTabRef('nodes', el)"
         type="button"
         role="tab"
@@ -1683,6 +1732,24 @@ async function commitRename() {
             <div class="rv-empty-sub">运行完成后，思维导图会显示在这里。</div>
           </div>
         </div>
+      </div>
+
+      <div
+        v-show="activeTab === 'compare'"
+        id="rv-panel-compare"
+        role="tabpanel"
+        aria-labelledby="rv-tab-compare"
+        class="rv-panel rv-compare page-scroll"
+      >
+        <CompareView
+          :options="compareOptions"
+          :left-key="compareLeftKey"
+          :right-key="compareRightKey"
+          :ai-ready="aiReady"
+          @update:left-key="compareLeftKey = $event"
+          @update:right-key="compareRightKey = $event"
+          @swap="swapCompareSides"
+        />
       </div>
 
       <div
@@ -2479,6 +2546,18 @@ async function commitRename() {
   flex: 1;
   padding: 16px;
   overflow-y: auto;
+}
+
+/* 对照：两侧选择固定在顶部，差异明细自己滚 → 用与结果页一致的阅读留白 */
+.rv-compare {
+  flex: 1;
+  padding: 16px;
+  overflow-y: auto;
+}
+
+.rv-compare > :deep(.cmp) {
+  max-width: 1080px;
+  margin: 0 auto;
 }
 
 .rv-mindmap {

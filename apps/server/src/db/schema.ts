@@ -201,3 +201,25 @@ export const runMedia = sqliteTable("run_media", {
 });
 
 export type RunMediaRow = typeof runMedia.$inferSelect;
+
+/**
+ * 「对照」的 AI 差异判读缓存。
+ *
+ * 键是内容指纹（模型 + 两侧正文），不是运行 id：同一对产物换台机器/换次运行再打开也能直接读，
+ * 内容变了自然落到新键上。判读要花一次模型调用、几十秒，重开页面不该重新掏这份钱。
+ */
+export const compareReports = sqliteTable("compare_reports", {
+  id: text("id").primaryKey(),
+  /** sha256(模型 + 左侧标签/正文 + 右侧标签/正文)。 */
+  contentHash: text("content_hash").notNull().unique(),
+  model: text("model").notNull(),
+  leftLabel: text("left_label").notNull(),
+  rightLabel: text("right_label").notNull(),
+  /** CompareAnalysis 的 JSON。 */
+  analysisJson: text("analysis_json").notNull(),
+  /** CompareRunMeta 的 JSON（截断与体量等事实，与模型产出分开存）。 */
+  metaJson: text("meta_json").notNull(),
+  createdAt: integer("created_at").notNull(),
+});
+
+export type CompareReportRow = typeof compareReports.$inferSelect;

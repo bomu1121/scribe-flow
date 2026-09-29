@@ -11,6 +11,7 @@ import { filesApi } from "./routes/files";
 import { settingsApi } from "./routes/settings";
 import { nutstoreApi } from "./routes/nutstore";
 import { promptsApi } from "./routes/prompts";
+import { compareApi } from "./routes/compare";
 import { projectRunsApi, runsApi } from "./routes/runs";
 import { mediaApi } from "./routes/media";
 import { docsApi } from "./routes/docs";
@@ -51,6 +52,7 @@ export function createApp(db: AppDatabase, options: AppOptions) {
   app.route("/api/settings", settingsApi(db, engine, options.dataDir));
   app.route("/api/nutstore", nutstoreApi(db, engine, options.dataDir));
   app.route("/api/prompts", promptsApi(db));
+  app.route("/api/compare", compareApi(db));
   app.route("/api/media", mediaApi(db, options.dataDir));
   app.route("/api/docs", docsApi(options.docsDir));
 
