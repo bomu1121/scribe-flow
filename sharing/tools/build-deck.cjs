@@ -1,9 +1,14 @@
 /**
  * 生成分享会 PPT。
  *
- * 结构照 sharing/ROOM.md 的三段走（现场手册是执行稿，这份是它的投影版）：
- *   ① 节点编排画布（用了画布库也不省产品级画布的工作量）   ② 推送会撒谎，数据库不会   ③ 把 AI 的输出当成会坏的东西
- * 每条结论都对着仓库里的实际代码核过，出处写在各页页脚。
+ * 结构照 sharing/ROOM.md 三段走（现场手册是执行稿，这份是它的投影版）：
+ *   ① 它是什么、跟现成的差在哪（产品形态，4 页）
+ *   ② 跑的时候（用户会碰到的两件事之一）
+ *   ③ 读的时候（用户会碰到的两件事之二）
+ *
+ * 选题标准（这一版定的）：**每页的主角是"用户身上发生的事"**，而且要是屋里人自己也会碰到的事；
+ * 代码只作为答案出现，不作为标题。段一另给产品形态与差异化——项目介绍该做的事。
+ * 反面教材见 git 历史：`16 种节点只注册 1 个 nodeType` 那种"我们的架构取舍"，屋里没有人在意。
  *
  * 配色取自项目自己的设计令牌 apps/web/src/styles/tokens.css：
  * 墨色作主色、B 站蓝只作强调，呼应它「B 站蓝只用于交互信号」的规矩。
@@ -33,7 +38,7 @@ const lineH = (pt, lines) => (pt * 1.2 * 1.15 * lines) / 72 + 0.12;
 const pres = new pptxgen();
 pres.layout = "LAYOUT_WIDE";
 pres.author = "念前";
-pres.title = "前端技术分享：三件在这个产品里最难做的前端事";
+pres.title = "前端技术分享：一个画布式笔记工具，与用户会碰到的两类事";
 
 // 深色页与浅色页的次要文字色不同：同一支墨灰放到深底上只剩 2.6:1。
 // 由 light()/dark() 记录当前页底，眼睛、页脚、卡片正文一律走 DIM()，避免手写漏改。
@@ -164,7 +169,7 @@ const takeaway = (s, text, { y, pt = 16, h = 0.85 } = {}) => {
     x: M, y: 2.05, w: CW, h: 1.0,
     fontFace: FONT, fontSize: 50, bold: true, color: PAPER, margin: 0, valign: "middle",
   });
-  s.addText("三件在这个产品里最难做的前端事", {
+  s.addText("一个画布式笔记工具：产品形态，与用户会碰到的两类事", {
     x: M, y: 3.15, w: CW, h: 0.6,
     fontFace: FONT, fontSize: 22, color: MUTED, margin: 0, valign: "middle",
   });
@@ -188,7 +193,7 @@ const takeaway = (s, text, { y, pt = 16, h = 0.85 } = {}) => {
   const lines = [
     "我攒了几百个技术视频，看不完，但丢不掉。",
     "市面上的工具是「贴个链接、选个模板、出一份摘要」——模板是它给的，你改不了。",
-    "我想要的是把中间每一步都摊开：转写用什么、校对要不要、提炼用哪套提示词、最后要不要出题，我自己连。",
+    "我想要的是把中间每一步都摊开：转写用什么、校对要不要、提炼用哪套提示词、要不要出思维导图，我自己连。",
     "所以它是一张画布，不是一个网页应用。",
   ];
   lines.forEach((text, i) => {
@@ -198,403 +203,374 @@ const takeaway = (s, text, { y, pt = 16, h = 0.85 } = {}) => {
     });
   });
 
-  s.addText("下面讲的三件事，都是这张画布上用户看得见的界面", {
+  s.addText("先讲它是什么，再讲用户在界面上会碰到的两类事：跑的时候、读的时候", {
     x: M, y: 6.05, w: CW, h: 0.5,
-    fontFace: FONT, fontSize: 19, bold: true, color: ACCENT, margin: 0, valign: "middle",
+    fontFace: FONT, fontSize: 18, bold: true, color: ACCENT, margin: 0, valign: "middle",
   });
 
   source(s, "市场调研见 docs/research/r1-desktop-research.md：20 个产品、14 维功能矩阵、4 个 P0 全部已落地");
 }
 
-/* -------------------------------------------------------------- 03 三件事 */
-{
-  const s = pres.addSlide();
-  dark(s);
-  eyebrow(s, "今天讲三件事");
-  title(s, "都是产品的主体界面，不是工程配置", PAPER);
-
-  const rows = [
-    ["01", "节点编排画布", "16 种节点、5913 行代码，画布是这个产品的核心界面"],
-    ["02", "推送会撒谎，数据库不会", "一次运行可能跑十几分钟，中途断线、切页面、重启都是常态"],
-    ["03", "把 AI 的输出当成会坏的东西", "引擎给一份拼接产物，用户要按视频逐段读"],
-  ];
-  rows.forEach(([num, head, sub], i) => {
-    const y = 2.45 + i * 1.35;
-    s.addText(num, {
-      x: M, y, w: 0.95, h: 0.85,
-      fontFace: MONO, fontSize: 34, bold: true, color: ACCENT, margin: 0, valign: "middle",
-    });
-    s.addText(head, {
-      x: M + 1.05, y: y - 0.05, w: CW - 1.05, h: 0.5,
-      fontFace: FONT, fontSize: 22, bold: true, color: PAPER, margin: 0, valign: "middle",
-    });
-    s.addText(sub, {
-      x: M + 1.05, y: y + 0.42, w: CW - 1.05, h: 0.45,
-      fontFace: FONT, fontSize: 16, color: MUTED, margin: 0, valign: "middle",
-    });
-  });
-}
-
-/* ------------------------------------------------------------ 04 主题一过场 */
-{
-  const s = pres.addSlide();
-  section(s, "01 / 节点编排画布", "用了画布库", "也不省产品级画布的工作量");
-  s.addText("5913 行画布代码里，真正调库 API 的不到 200 行", {
-    x: M, y: 4.65, w: CW, h: 0.4,
-    fontFace: FONT, fontSize: 15, color: MUTED, margin: 0, valign: "middle",
-  });
-}
-
-/* ------------------------------------------------------ 05 一个 nodeType */
+/* ------------------------------------------------------------ 03 它长什么样 */
 {
   const s = pres.addSlide();
   light(s);
-  eyebrow(s, "01 / 节点编排画布");
-  title(s, "16 种节点，只注册 1 个 nodeType", INK);
-
-  s.addText("业务类型不放进画布的 type 字段，而是放进 data.nodeType；画布只认一个组件，卡片按类型分派。", {
-    x: M, y: 1.75, w: CW, h: lineH(16, 1),
-    fontFace: FONT, fontSize: 16, color: INK, margin: 0, valign: "middle",
-  });
-
-  const two = [
-    {
-      x: M, head: "收益", tone: INK,
-      body: "端口、右键菜单、运行按钮、状态条、悬停预览、只读控制只写一遍，16 种节点共用同一个外壳。",
-    },
-    {
-      x: M + CW / 2 + 0.2, head: "代价", tone: ERR,
-      body: "外壳文件长到 3028 行，卡片分派是一条 16 段的 v-if 链；只有 6 张卡片拆成了独立组件。",
-    },
-  ];
-  two.forEach((c) => {
-    const cw = CW / 2 - 0.2;
-    s.addShape(pres.shapes.RECTANGLE, {
-      x: c.x, y: 2.6, w: cw, h: 1.62,
-      fill: { color: BG }, line: { color: BORDER, width: 1 },
-    });
-    s.addText(c.head, {
-      x: c.x + 0.32, y: 2.8, w: cw - 0.64, h: 0.42,
-      fontFace: FONT, fontSize: 16, bold: true, color: c.tone, margin: 0, valign: "middle",
-    });
-    s.addText(c.body, {
-      x: c.x + 0.32, y: 3.32, w: cw - 0.64, h: lineH(15, 2),
-      fontFace: FONT, fontSize: 15, color: SUB, margin: 0, valign: "top",
-    });
-  });
-
-  s.addText("要决策的是边界：哪些该共享外壳，哪些该拆成卡片", {
-    x: M, y: 4.85, w: CW, h: 0.5,
-    fontFace: FONT, fontSize: 18, bold: true, color: INK, margin: 0, valign: "middle",
-  });
-
-  source(s, "FlowCanvas.vue 只注册 1 个 nodeType（:93）；卡片分派见 ScribeNode.vue（3028 行，:1014 起 16 段分支）");
-}
-
-/* -------------------------------------------------------- 06 撤销重做 */
-{
-  const s = pres.addSlide();
-  light(s);
-  eyebrow(s, "01 / 节点编排画布");
-  title(s, "快照式撤销，和它带来的两个副作用", INK);
-
-  s.addText("不记命令，直接存整图快照；上限 50 步，出图时把运行态字段剥掉，刷新后不会卡在运行中。", {
-    x: M, y: 1.75, w: CW, h: lineH(16, 1),
-    fontFace: FONT, fontSize: 16, color: INK, margin: 0, valign: "middle",
-  });
-  s.addText("提交走双通道：输入框逐字改图但不记历史，失焦时才提交一次历史。", {
-    x: M, y: 2.3, w: CW, h: lineH(18, 1),
-    fontFace: FONT, fontSize: 18, bold: true, color: INK, margin: 0, valign: "middle",
-  });
-
-  const two = [
-    {
-      x: M, head: "副作用一", tone: ERR,
-      body: "提交时不做去重，点进输入框再点空白会压入一模一样的快照，用户按撤销会觉得没反应。",
-    },
-    {
-      x: M + CW / 2 + 0.2, head: "副作用二", tone: ERR,
-      body: "视角本身也在快照里，所以撤销会顺带把镜头弹回当时的画面，这点容易被忽略。",
-    },
-  ];
-  two.forEach((c) => {
-    const cw = CW / 2 - 0.2;
-    s.addShape(pres.shapes.RECTANGLE, {
-      x: c.x, y: 3.05, w: cw, h: 1.62,
-      fill: { color: BG }, line: { color: BORDER, width: 1 },
-    });
-    s.addText(c.head, {
-      x: c.x + 0.32, y: 3.25, w: cw - 0.64, h: 0.42,
-      fontFace: FONT, fontSize: 16, bold: true, color: c.tone, margin: 0, valign: "middle",
-    });
-    s.addText(c.body, {
-      x: c.x + 0.32, y: 3.77, w: cw - 0.64, h: lineH(15, 2),
-      fontFace: FONT, fontSize: 15, color: SUB, margin: 0, valign: "top",
-    });
-  });
-
-  source(s, "快照与 50 步上限见 FlowCanvas.vue:82-111；失焦提交约定见 utils/flow.ts:39-40");
-}
-
-/* ------------------------------------------------------------ 07 浮层缩放 */
-{
-  const s = pres.addSlide();
-  light(s);
-  eyebrow(s, "01 / 节点编排画布");
-  title(s, "画布缩放之后，浮层怎么还对得上", INK);
+  eyebrow(s, "01 / 它是什么");
+  title(s, "一张画布，三个界面", INK);
 
   rowList(
     s,
     [
-      ["问题", "浮层被传送到 body，脱离了画布的缩放坐标系——画布缩到 60% 时，浮层还是原尺寸"],
-      ["解法", "从画布取当前缩放，沿组件树传给所有浮层，浮层用 CSS zoom 补偿"],
-      ["两个细节", "位置不用补（浮层库按屏幕矩形定位，缩放后矩形已经是对的），只有尺寸要补"],
-      ["为什么用 zoom", "CSS zoom 参与布局计算，而 transform: scale 会干扰浮层库自己的测量与定位原点"],
+      ["画布上放什么", "B 站链接（能选合集与多 P）、本地音视频、已有文稿——三种来源"],
+      ["中间接什么", "16 种节点：转写、AI 校对、AI 加工、章节切分、思维导图、Obsidian 笔记、练一练…"],
+      ["不用从零连", "内置 9 条常用链路（单线笔记、多路对照、思维导图、分章笔记…），名字与来源无关，也可以自己连"],
+      ["跑完看什么", "结果页：正文、按视频分段、思维导图、练一练、节点流水——后两个有产物才出现"],
     ],
-    { top: 1.85, step: 1.18, pt: 14, center: true },
+    { top: 1.8, step: 1.1, pt: 14, labelW: 2.6 },
   );
 
-  source(s, "补偿见 ScribeNode.vue:50-52 的 provide 与三个浮层容器；更麻烦的一处见 ModelSelect.vue（屏幕宽度要除以缩放才是节点局部宽度）");
-}
-
-/* ---------------------------------------------------------- 08 主题二过场 */
-{
-  const s = pres.addSlide();
-  section(s, "02 / 推送会撒谎，数据库不会", "一次运行跑十几分钟", "前端得一直说真话");
-  s.addText("转写和 AI 加工都可能很久，而且中途断线、切页面、服务重启都是常态", {
-    x: M, y: 4.65, w: CW, h: 0.4,
-    fontFace: FONT, fontSize: 15, color: MUTED, margin: 0, valign: "middle",
+  takeaway(s, "把视频和文稿放进画布，连出「转写 → 加工」，跑完得到一份能带走的 Markdown 笔记", {
+    y: 5.95, pt: 15,
   });
+
+  source(s, "16 种节点与三种来源见 packages/shared/src/graph.ts 的 NODE_TYPE_LABELS；9 条内置链路的名称见 packages/shared/src/templates.ts");
 }
 
-/* ---------------------------------------------------------------- 09 轮询 */
+/* ---------------------------------------------------------- 04 跟别人差在哪 */
 {
   const s = pres.addSlide();
   light(s);
-  eyebrow(s, "02 / 推送会撒谎，数据库不会");
-  title(s, "有了推送，反而更需要轮询", INK);
-
-  rowList(
-    s,
-    [
-      ["直觉", "已经有实时推送了，轮询是多余的老办法"],
-      ["实际", "推送是唯一会静默失效的通道：断线、丢帧、服务重启，它都不报错，只是不说话了"],
-      ["所以", "数据库是真相通道，推送只是加速通道；轮询不是推送的备份，是它的正确性校正器"],
-      ["四层兜底", "断线 2 秒重连、全局 5 秒轮询对账、运行结束补一次终局快照、进页面时恢复上次运行"],
-    ],
-    { top: 1.85, step: 1.18, pt: 14, center: true },
-  );
-
-  source(s, "重连见 sse.ts:37；轮询见 layouts/AppLayout.vue:37；对账与恢复见 ProjectEditorView.vue 的 resumeRun / reconcileActiveRun / restoreLastRun");
-}
-
-/* ------------------------------------------------------------ 10 放弃增量 */
-{
-  const s = pres.addSlide();
-  light(s);
-  eyebrow(s, "02 / 推送会撒谎，数据库不会");
-  title(s, "放弃增量更新，换来重连正确", INK);
+  eyebrow(s, "01 / 它是什么");
+  title(s, "它站在两类现成产品中间", INK);
 
   panels(
     s,
     [
       {
-        head: "增量更新 · 直觉做法",
+        head: "一类：AI 音视频转笔记",
         tone: INK,
-        body: "只传变化的那一点，看起来最省。\n但它要求「先收到全部前置事件」才算得对，于是重连就必须做事件重放——而这套系统的广播没有重放缓冲。",
+        body: "BibiGPT、通义听悟、飞书妙记、Ai好记——贴个链接、选个模板、出一份摘要，管线是固定的。",
       },
       {
-        head: "全量覆盖 · 实际做法",
+        head: "一类：工作流编排",
         tone: INK,
-        body: "每个事件构造补丁，整体覆盖字段。\n只给命中的节点建新对象，其余返回同一引用；重复、乱序的事件天然幂等，重连的正确性问题直接消失。",
+        body: "n8n、Dify、扣子、Flowise——有画布，但做的是自动化与 AI 应用，不是为了把视频变成笔记。",
       },
     ],
-    { top: 2.4, h: 2.0, bodyPt: 14 },
+    { top: 2.5, h: 1.85, bodyPt: 14 },
   );
 
-  takeaway(s, "直觉是增量更省，但增量把正确性押在「事件不会丢」上，而事件一定会丢", { y: 5.15, pt: 16 });
-
-  source(s, "事件到状态的映射见 FlowCanvas.vue:768 的 applyRunEvent；补丁只命中受影响节点见同文件 :751-766");
-}
-
-/* ---------------------------------------------------------- 11 建连补快照 */
-{
-  const s = pres.addSlide();
-  light(s);
-  eyebrow(s, "02 / 推送会撒谎，数据库不会");
-  title(s, "连接这个动作，必须自带状态同步", INK);
-
-  s.addText("后端的运行事件广播是一个内存集合，没有重放缓冲：运行结束 60 秒后整条记录就没了。", {
-    x: M, y: 1.8, w: CW, h: lineH(16, 2),
-    fontFace: FONT, fontSize: 16, color: INK, margin: 0, valign: "top",
-  });
-
-  s.addText("所以建连时服务端先补一份全量快照，再进增量流。", {
-    x: M, y: 2.75, w: CW, h: lineH(18, 1),
-    fontFace: FONT, fontSize: 18, bold: true, color: INK, margin: 0, valign: "middle",
-  });
-
-  const rows = [
-    ["已完成", "补成完成事件，并带上摘要与预览"],
-    ["失败", "补成失败事件，带上错误信息"],
-    ["进行中", "补一次「已开始」，否则重连后节点不再有动效"],
-    ["已结束", "补一条结束事件，然后直接断开"],
-  ];
-  rows.forEach(([k, v], i) => {
-    const y = 3.55 + i * 0.62;
-    s.addText(k, {
-      x: M + 0.3, y, w: 1.4, h: 0.5,
-      fontFace: FONT, fontSize: 14, bold: true, color: INK, margin: 0, valign: "middle",
-    });
-    s.addText(v, {
-      x: M + 1.8, y, w: CW - 1.8, h: 0.5,
-      fontFace: FONT, fontSize: 14, color: SUB, margin: 0, valign: "middle",
-    });
-  });
-
-  source(s, "建连补快照见 apps/server/src/routes/runs.ts:202；广播无重放见 engine.ts:2116（60 秒后删除运行态）");
-}
-
-/* ------------------------------------------------------------ 12 局部重跑 */
-{
-  const s = pres.addSlide();
-  light(s);
-  eyebrow(s, "02 / 推送会撒谎，数据库不会");
-  title(s, "局部重跑是一次新运行", INK);
-
-  s.addText("点「从此节点运行」不会复用旧运行，而是新开一次。这是结果合并存在的根本原因。", {
-    x: M, y: 1.85, w: CW, h: lineH(16, 1),
-    fontFace: FONT, fontSize: 16, color: INK, margin: 0, valign: "middle",
-  });
-
-  const steps = [
-    ["新运行", "每次运行都新开一个 id"],
-    ["结果不全", "只包含本次范围内的节点"],
-    ["视图回填", "从更早的成功运行补回缺失节点"],
-  ];
-  const gap = 0.65;
-  const bw = (CW - gap * 2) / 3;
-  steps.forEach(([head, body], i) => {
-    const x = M + i * (bw + gap);
-    s.addShape(pres.shapes.RECTANGLE, {
-      x, y: 2.6, w: bw, h: 1.35,
-      fill: { color: BG }, line: { color: BORDER, width: 1 },
-    });
-    s.addText(head, {
-      x: x + 0.3, y: 2.8, w: bw - 0.6, h: 0.45,
-      fontFace: FONT, fontSize: 17, bold: true, color: INK, margin: 0, valign: "middle",
-    });
-    s.addText(body, {
-      x: x + 0.3, y: 3.35, w: bw - 0.6, h: lineH(14, 1),
-      fontFace: FONT, fontSize: 14, color: SUB, margin: 0, valign: "top",
-    });
-    if (i < steps.length - 1) {
-      s.addShape(pres.shapes.LINE, {
-        x: x + bw + 0.08, y: 3.27, w: gap - 0.16, h: 0,
-        line: { color: ACCENT, width: 2, endArrowType: "triangle" },
-      });
-    }
-  });
-
-  s.addText("前端的解法：按时间倒序，从更早的成功运行里把缺失节点的完成结果回填到视图。", {
-    x: M, y: 4.45, w: CW, h: lineH(15, 1),
-    fontFace: FONT, fontSize: 15, color: SUB, margin: 0, valign: "middle",
-  });
-  s.addText("后端的对称做法：上游不在本次范围内时，从历史运行里取该节点的产物当输入。", {
-    x: M, y: 5.0, w: CW, h: lineH(15, 1),
-    fontFace: FONT, fontSize: 15, color: SUB, margin: 0, valign: "middle",
-  });
-
-  s.addText("把复杂度从「前端状态机」挪到了「纯函数式的快照合并」，能一眼看懂，也好写测试", {
-    x: M, y: 5.75, w: CW, h: 0.5,
+  s.addText("可编排的画布 × 音视频素材 × 产物是能带走的 Markdown——这个位置是空的", {
+    x: M, y: 4.6, w: CW, h: lineH(17, 1),
     fontFace: FONT, fontSize: 17, bold: true, color: INK, margin: 0, valign: "middle",
   });
 
-  source(s, "视图层合并见 ProjectEditorView.vue:424-443 与 utils/run-restore.ts:29；服务端对称做法见 engine.ts:779 的 previousOutputs");
+  takeaway(s, "差别不在功能清单上，而在两处：形态是固定管线还是你自己连；数据是别人的账号还是你自己的库", {
+    y: 5.5, pt: 15,
+  });
+
+  source(s, "对标结论见 docs/research/r1-desktop-research.md（20 个产品、14 维矩阵）与 sharing/ROOM.md 的「三个必答题」");
 }
 
-/* ---------------------------------------------------------- 13 主题三过场 */
+/* ------------------------------------------------------ 05 技术底座 */
 {
   const s = pres.addSlide();
-  section(s, "03 / 把 AI 的输出当成会坏的东西", "引擎给一份拼接产物", "用户要按视频逐段读");
-  s.addText("一张卡挂 8 个视频，引擎把它们拼成一份，人却要一个一个读", {
+  light(s);
+  eyebrow(s, "01 / 它是什么");
+  title(s, "这一类的技术底座，用的都是当下一线", INK);
+
+  rowList(
+    s,
+    [
+      ["前端与构建", "Vue 3 组合式 API、TypeScript 5.9、Vite 7；Pinia 管状态，路由按页面拆包"],
+      ["画布与布局", "画布用 Vue Flow 1.48；自动布局用 ELK 0.12，整块跑在 Web Worker 里"],
+      [
+        "组件与渲染",
+        "Element Plus 2 配 Reka UI 的无样式原语，颜色只有一份设计令牌；长文本走 marked 加 DOMPurify 渲染，进度用 SSE 推",
+      ],
+      ["服务端与数据", "Hono 4 + Drizzle ORM + SQLite；图模型的校验用 Zod 4，三个包共用同一份"],
+    ],
+    { top: 1.8, step: 1.25, pt: 14, labelW: 2.7 },
+  );
+
+  takeaway(s, "没有一处是十年前那套写法——jQuery、Options API、Webpack、手写主题色，都不在这个仓库里", {
+    y: 6.0, pt: 15,
+  });
+
+  source(s, "版本取自四个 package.json（2026-09-29）；图标与字体走 @fontsource 本地托管，不依赖外部 CDN");
+}
+
+/* ------------------------------------------------------ 06 别人也做了的，老实说 */
+{
+  const s = pres.addSlide();
+  light(s);
+  eyebrow(s, "01 / 它是什么");
+  title(s, "这些别人也做了，老实说", INK);
+
+  rowList(
+    s,
+    [
+      ["视频转写 + 摘要 + 章节 + 思维导图", "对，BibiGPT、通义听悟、飞书妙记都有，有些比我们成熟"],
+      ["导出 Obsidian、批量处理", "也有，BibiGPT 支持 Notion / Obsidian / flomo"],
+      ["条件分支、失败重试、定时触发", "这些是工作流产品的默认能力，n8n / Dify / Airflow 全都有"],
+      ["真正站得住的三条", "① 两类产品接起来的位置是空的 ② 多素材在编排里保持身份 ③ 逐节点产物 + 历史运行可重新分段"],
+    ],
+    { top: 1.8, step: 1.1, pt: 14, labelW: 3.4 },
+  );
+
+  takeaway(s, "别装成都是自己发明的——先把「别人也做了」认下来，后面讲「我怎么做的」才有人听", {
+    y: 5.95, pt: 15,
+  });
+
+  source(s, "承认表与三条差别见 sharing/ROOM.md；三个 P0（条件分支/失败重试/文本工具/章节切分）在代码里都能查到");
+}
+
+/* -------------------------------------------- 06 八个视频，只要其中三段 */
+{
+  const s = pres.addSlide();
+  light(s);
+  eyebrow(s, "01 / 它是什么");
+  title(s, "八个视频进同一条链路，我只要其中三段", INK);
+
+  rowList(
+    s,
+    [
+      ["别人怎么做", "要么每个视频单独跑一遍，要么全并成一份——挑不出来，也说不清用了哪几段"],
+      ["段身份怎么给", "bvid:分P / file:id / node:来源——只用素材自身的稳定信息，不掺数组下标"],
+      ["没配就是全选", "缺这个来源 = 全部选中（兼容旧工程）；空数组 = 全部排除，运行前会被拒绝"],
+      ["下游怎么解释", "结果页能按视频切开读，节点摘要会说清「8 段里的哪 3 段」"],
+    ],
+    { top: 1.8, step: 1.1, pt: 14, labelW: 2.7 },
+  );
+
+  takeaway(s, "增量下标是这里最容易埋的坑：上游改了选区，下游的挑选就会静默错位——所以标识只用素材自己的信息", {
+    y: 5.95, pt: 15,
+  });
+
+  source(s, "segmentKey 与「不掺下标」的理由见 packages/shared/src/segment.ts:17-29；pick 的两种语义见 graph.ts:215-218");
+}
+
+/* ------------------------------------------------------------ 07 段二过场 */
+{
+  const s = pres.addSlide();
+  section(s, "02 / 跑的时候", "最长的一次跑了 39 分钟", "界面得一直说真话");
+  s.addText("8 个视频那条链路：转写 23.6 分钟、AI 校对 9.3 分钟、下载 2.4 分钟——断线、刷新、重启都是常规情况", {
     x: M, y: 4.65, w: CW, h: 0.4,
     fontFace: FONT, fontSize: 15, color: MUTED, margin: 0, valign: "middle",
   });
 }
 
-/* ------------------------------------------------------------ 14 坏条目 */
+/* ------------------------------------------------- 08 进度停在半路 / 刷新 */
 {
   const s = pres.addSlide();
   light(s);
-  eyebrow(s, "03 / 把 AI 的输出当成会坏的东西");
-  title(s, "坏条目逐条丢弃，但原因必须是人话", INK);
+  eyebrow(s, "02 / 跑的时候");
+  title(s, "进度动到一半就不动了——刷新回来还算数吗", INK);
 
   rowList(
     s,
     [
-      ["逐条丢弃", "坏条目单独丢掉，但每一条都要给出人话原因；丢弃率本身当质量指标在看"],
-      ["不判两次死刑", "生成期严格校验，展示期只做结构解析——同一份数据不被两套标准各否一次"],
-      ["要有降级形态", "结构化 JSON 与可读 Markdown 互相兜底；引用定位不到时说人话，不报错"],
-      ["产物类型要嗅探", "靠内容特征判断类型，而且要写互斥规则——我们曾经把练习题渲染成了一张空的溯源表格"],
+      ["用户看到的", "进度停在某个节点不动；或者刷新之后，整屏回到「什么都没跑过」的样子"],
+      ["为什么会停", "推送是唯一会静默失效的通道：断线、丢帧、服务重启它都不报错，只是不说话了"],
+      ["怎么不撒谎", "推送只当加速，状态以列表与详情为准——断线 2 秒自动重连，另有全局 5 秒对账"],
+      ["刷新回来怎么算", "三条恢复路径走同一套规则，规则是 3 个纯函数（45 行，带单测）"],
     ],
-    { top: 1.85, step: 1.18, pt: 14, center: true },
+    { top: 1.8, step: 1.1, pt: 14, labelW: 2.7 },
   );
 
-  source(s, "解析与丢弃见 packages/shared/src/drill.ts；展示期不做二次校验见 apps/web/src/utils/drill.ts:9-11");
+  takeaway(s, "回填的三条纪律：不覆盖当前结果、只认画布上还在的节点、失败的运行里已完成的那几个照样算数", {
+    y: 5.95, pt: 15,
+  });
+
+  source(s, "重连 sse.ts:37；5 秒对账 AppLayout.vue:80；恢复规则 run-restore.ts（45 行 3 纯函数）；回填上限 200 条 ProjectEditorView.vue:425；时长实测自本机 114 次运行记录");
 }
 
-/* ------------------------------------------------------ 15 安全与渲染边界 */
+/* --------------------------------------------- 09 被记成「你取消了」 */
 {
   const s = pres.addSlide();
   light(s);
-  eyebrow(s, "03 / 把 AI 的输出当成会坏的东西");
-  title(s, "AI 的 Markdown 进 DOM 之前，必须过一遍", INK);
+  eyebrow(s, "02 / 跑的时候");
+  title(s, "服务重启，把跑了一半的运行记成「你取消了」", INK);
 
-  rowList(
-    s,
-    [
-      ["为什么危险", "AI 的产物是外部输入。它返回的 Markdown 直接插进页面，等于把远端内容当本地内容渲染"],
-      ["做法", "统一走 renderMarkdown：先过 DOMPurify.sanitize，再把结果插进 DOM，不让任何一处绕开"],
-      ["不止安全", "同一层还要兜住渲染失败：解析不出来时给一句人话，不把原始 JSON 摊给用户"],
-    ],
-    { top: 1.85, step: 1.3, pt: 15, labelW: 2.6 },
-  );
-
-  s.addShape(pres.shapes.RECTANGLE, {
-    x: M, y: 5.75, w: CW, h: 0.85,
-    fill: { color: BG }, line: { color: BORDER, width: 1 },
-  });
-  s.addText("这是全场唯一一条跟安全有关的结论，也是 AI 前端最容易漏的一处。", {
-    x: M + 0.35, y: 5.85, w: CW - 0.7, h: 0.65,
+  s.addText("用户看到的：一条明明产出过东西的运行，记录里写着「已取消」——像是自己点的。", {
+    x: M, y: 1.88, w: CW, h: lineH(15, 1),
     fontFace: FONT, fontSize: 15, color: INK, margin: 0, valign: "middle",
   });
 
-  source(s, "见 apps/web/src/lib/markdown.ts:34 的 DOMPurify.sanitize（:1 引入）；降级与丢弃见 utils/drill.ts");
+  panels(
+    s,
+    [
+      {
+        head: "已取消 · 人自己停的",
+        tone: INK,
+        body: "不该再提醒——用户知道刚才发生了什么，只需要记录留痕。",
+      },
+      {
+        head: "已中断 · 服务掐断的",
+        tone: ERR,
+        body: "要提醒，而且要让人一眼看出这次不是自己停的，产物还在。",
+      },
+    ],
+    { top: 2.55, h: 1.6, bodyPt: 14 },
+  );
+
+  s.addText("真实案例：run_3b007bff 里 4 个节点有 2 个已完成（2925 / 6558 字），2 个停在中途。", {
+    x: M, y: 4.42, w: CW, h: lineH(14, 1),
+    fontFace: FONT, fontSize: 14, color: SUB, margin: 0, valign: "middle",
+  });
+
+  takeaway(s, "运行记录也只写「名称 + 时间」：一列「成功 / 成功 / 已中断」里，成功每行重复等于没说", {
+    y: 5.5, pt: 15,
+  });
+
+  source(s, "两个状态的语义与提醒规则见 lib/run-meta.ts 与 utils/run-alert.ts；记录只写名称与时间去见 components/workspace/RunRow.vue；由来见 CHANGELOG 2026-09-28");
 }
 
-/* ---------------------------------------------------------- 16 分段是推出来的 */
+/* ------------------------------------------------- 10 换条运行，白一下 */
 {
   const s = pres.addSlide();
   light(s);
-  eyebrow(s, "03 / 把 AI 的输出当成会坏的东西");
-  title(s, "分段是推导出来的，不是存下来的", INK);
+  eyebrow(s, "02 / 跑的时候");
+  title(s, "换一条运行看，内容先消失、再出现", INK);
 
   rowList(
     s,
     [
-      ["引擎为什么拼", "用固定分隔符把多份产物接成一份，只服务下游节点与导出"],
-      ["前端怎么还原", "拿运行时记录的「每个输入一行」反推，于是历史运行不用重跑也能分段"],
-      ["为什么能读得懂", "分段标题要沿链路向上游回溯最多 12 层，去取原始视频的标题"],
-      ["三级优先级", "先看自己的输入行，再看它交付给同一下游的份数，最后兜底用自己的输入行"],
+      ["用户看到的", "点另一条运行，正文区先空一下再出内容——大约 100 毫秒的白"],
+      ["实测", "切换全程 533 次采样，阅读区消失 0 次、加载占位出现 0 次"],
+      ["根因", "请求只占 9 毫秒，其余全是渲染——所以「加个 loading」是错的解法"],
+      ["解法", "保留旧内容、压暗，新数据就绪后一次性替换；忙碌提示延迟 180 毫秒才出现"],
     ],
-    { top: 1.85, step: 1.18, pt: 14, center: true },
+    { top: 1.8, step: 1.1, pt: 14, labelW: 2.7 },
   );
 
-  source(s, "分段重建见 apps/web/src/utils/run-segments.ts（回溯上限 12 层见 :87 与 :131），被结果页、画布预览、日志弹窗四处共用");
+  takeaway(s, "同一个范式也用在设置弹窗：它原来要等 Obsidian 目录扫描 280–840 毫秒才填表，而设置本身只要 4–22 毫秒", {
+    y: 5.95, pt: 15,
+  });
+
+  source(s, "实测数据原文见 CHANGELOG.md 的 2026-09-29 段（作者实测记录，未在本机复现）；代码见 RunDetailView.vue:80 与 :1129、DocsDialog.vue:52");
 }
 
-/* ------------------------------------------------------------ 17 三个判断 */
+/* ---------------------------------------------------------- 11 段三过场 */
+{
+  const s = pres.addSlide();
+  section(s, "03 / 读的时候", "引擎给一份拼接产物", "人却要按视频逐段读");
+  s.addText("一张卡挂 8 个视频，读完要一段一段来；AI 的产物坏了也得有降级", {
+    x: M, y: 4.65, w: CW, h: 0.4,
+    fontFace: FONT, fontSize: 15, color: MUTED, margin: 0, valign: "middle",
+  });
+}
+
+/* ---------------------------------------------------- 12 八个视频自己找 */
+{
+  const s = pres.addSlide();
+  light(s);
+  eyebrow(s, "03 / 读的时候");
+  title(s, "八个视频，读的时候得一段一段自己找", INK);
+
+  rowList(
+    s,
+    [
+      ["用户看到的", "一份几万字的产物里混着 8 个视频的内容，只能靠滚轮找「下一个视频从哪开始」"],
+      ["分段哪来的", "不是后端存的，是拿运行时记录的「每个输入一行」反推——历史运行不用重跑也能切开读"],
+      ["标题怎么来的", "沿链路向上游回溯最多 12 层，取原始视频的名字"],
+      ["导航长什么样", "右侧常驻大纲 + ‹ 3/8 › 翻页 + ↑↓ / jk / Home / End 键盘；段数 > 12 才出现筛选框"],
+    ],
+    { top: 1.8, step: 1.1, pt: 14, labelW: 2.7 },
+  );
+
+  takeaway(s, "旧的「8 个横排胶囊」是被规范否掉的：Apple HIG 说分段控件上限 5，M3 说 tab 只用于并列内容", {
+    y: 5.95, pt: 15,
+  });
+
+  source(s, "分段重建见 apps/web/src/utils/run-segments.ts（回溯上限 12 见 :87 与 :131）；选型依据见 docs/research/segment-navigation-research.md；筛选阈值见 RunDetailView.vue:2094");
+}
+
+/* --------------------------------------------- 13 渲染错类型，空了 */
+{
+  const s = pres.addSlide();
+  light(s);
+  eyebrow(s, "03 / 读的时候");
+  title(s, "我们曾经把练习题渲染成一张空表格", INK);
+
+  rowList(
+    s,
+    [
+      ["用户看到的", "点开「练一练」标签页，是一张空的溯源表格——产品里其实有题，是渲染认错了类型"],
+      ["根因", "按内容特征嗅探产物类型，但一开始没写互斥规则，练习题被当成溯源报告渲染"],
+      ["现在怎么防", "先排除练习题、再判溯源；坏条目逐条丢弃，但每一条都要给出人话原因"],
+      ["一条安全底线", "AI 的产物是外部输入：Markdown 进 DOM 前统一过 DOMPurify（35 行单入口，四处共用）"],
+    ],
+    { top: 1.8, step: 1.1, pt: 14, labelW: 2.7 },
+  );
+
+  takeaway(s, "把 AI 的输出当成「会坏的东西」来设计展示层——能逐条成功、逐条给出原因，才敢上线", {
+    y: 5.95, pt: 15,
+  });
+
+  source(s, "类型嗅探见 apps/web/src/views/RunDetailView.vue:378；消毒见 lib/markdown.ts:32-34；逐条丢弃与原因见 packages/shared/src/drill.ts");
+}
+
+/* ------------------------------------------- 14 选字结果拖跑了节点 */
+{
+  const s = pres.addSlide();
+  light(s);
+  eyebrow(s, "03 / 读的时候");
+  title(s, "想在输入框里选一段字，结果把节点拖跑了", INK);
+
+  panels(
+    s,
+    [
+      {
+        head: "画布要能拖",
+        tone: INK,
+        body: "整张卡片默认跟随鼠标移动——这是画布该有的手感，n8n 也是这么做的。",
+      },
+      {
+        head: "表单要能填",
+        tone: INK,
+        body: "但卡片里还有输入框：要能选文字、要点得到光标、滚轮不该把画布缩放带走。",
+      },
+    ],
+    { top: 2.5, h: 1.85, bodyPt: 14 },
+  );
+
+  s.addText("解法：拖拽句柄收敛到卡片头部一处，表单区域标 nodrag，卡片内滚轮不穿透。", {
+    x: M, y: 4.6, w: CW, h: lineH(17, 1),
+    fontFace: FONT, fontSize: 17, bold: true, color: INK, margin: 0, valign: "middle",
+  });
+
+  takeaway(s, "顺带一条：一按运行整张卡片就变灰锁住，用的是 getter 不是快照——所以不用刷新，界面立刻变", {
+    y: 5.5, pt: 15,
+  });
+
+  source(s, "句柄选择器见 apps/web/src/utils/flow.ts:8；dragHandle 见 components/canvas/FlowCanvas.vue:397；只读态见 ScribeNode.vue:404");
+}
+
+/* ------------------------------------------- 15 粘过来的是分享文案 */
+{
+  const s = pres.addSlide();
+  light(s);
+  eyebrow(s, "03 / 读的时候");
+  title(s, "粘过来的是 App 分享文案，不是链接", INK);
+
+  rowList(
+    s,
+    [
+      ["用户看到的", "从 B 站 App 复制出来的是一整段话：标题、短链、口令混在一起，粘进去建不了工程"],
+      ["解法", "从这段文本里抠出链接与标题，链接再拆出分 P 号——粘进去就能用，四步并成一步"],
+      ["为什么值得单独做", "用户不会为了你先把粘贴内容清理干净；不接受他的输入格式，就是把他挡在门外"],
+      ["顺带", "短链（b23.tv）也要认，所以判定不能只看域名后缀"],
+    ],
+    { top: 1.8, step: 1.1, pt: 14, labelW: 2.9 },
+  );
+
+  takeaway(s, "前端最便宜的体验提升，往往就是把用户实际会粘的东西也当成合法输入", { y: 5.95, pt: 15 });
+
+  source(s, "见 packages/shared/src/bili.ts（87 行、3 个函数，11 条用例）与 components/workspace/QuickCreateDialog.vue");
+}
+
+/* ------------------------------------------------------------ 16 三个判断 */
 {
   const s = pres.addSlide();
   dark(s);
@@ -602,9 +578,9 @@ const takeaway = (s, text, { y, pt = 16, h = 0.85 } = {}) => {
   title(s, "下次遇到，先问这三句", PAPER);
 
   const rows = [
-    ["加实时通道之前，先问这条通道能不能丢", "能丢，就必须有一条数据库式的真相通道兜底"],
-    ["接 AI 的产物，先按「会坏一半」设计展示层", "能逐条成功、逐条给出原因，才敢上线"],
-    ["做画布或长列表之前，先问一次交互动多少 DOM", "一屏放不下 + 还在频繁更新，就是同一类问题"],
+    ["「别人也有」不可怕，接不上的位置才是你的位置", "固定管线和可编排之间，是两种产品的缝"],
+    ["用户说「卡住了 / 闪一下 / 没反应」，先别查网络", "这三句里至少有两句是渲染与状态的问题"],
+    ["每一段数据都要带着身份走完全程", "素材段不掺下标、状态不靠推送——都是同一件事"],
   ];
   rows.forEach(([q, a], i) => {
     const y = 2.6 + i * 1.5;
@@ -619,7 +595,7 @@ const takeaway = (s, text, { y, pt = 16, h = 0.85 } = {}) => {
   });
 }
 
-/* ------------------------------------------------------------ 18 没做好的 */
+/* ------------------------------------------------------------ 17 没做好的 */
 {
   const s = pres.addSlide();
   dark(s);
@@ -631,11 +607,11 @@ const takeaway = (s, text, { y, pt = 16, h = 0.85 } = {}) => {
     [
       [
         "提示没人接",
-        "画布抛提示的 3 处调用（节点已达上限两处、自动布局失败一处），父组件一个都没绑定，用户在界面上完全看不到这条反馈",
+        '画布有 3 处 emit("notice")（节点已达上限 2 处、自动布局失败 1 处），父组件一个都没绑定——用户在界面上完全看不到这条反馈',
       ],
       [
-        "规则分了三份",
-        "连线合法性有 canConnect / canConnectSpecs / isValidConnection 三处实现，最后那一处只被测试引用，已经不认多类型端口",
+        "长文档还是一次性渲染",
+        "几万字的正文一次全进 DOM，虚拟化没做；长列表滚动会是下一处要还的债",
       ],
       [
         "状态机小了一圈",
@@ -645,7 +621,7 @@ const takeaway = (s, text, { y, pt = 16, h = 0.85 } = {}) => {
     { top: 2.0, step: 1.35, pt: 14, headColor: ACCENT, bodyColor: MUTED, labelW: 3.0, center: true },
   );
 
-  source(s, "自查方式：搜 emit 的定义与父组件的绑定是否对得上；搜同一规则是否在多处重复实现");
+  source(s, "自查方式：搜 emit 的定义与父组件的绑定是否对得上；搜同一规则是否在多处重复实现；把契约的枚举与样式表对一遍");
 }
 
 const path = require("path");
