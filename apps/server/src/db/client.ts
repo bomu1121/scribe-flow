@@ -340,4 +340,36 @@ export function ensureSchema(sqlite: Database.Database) {
   if (assetColumns.length > 0 && !assetColumns.some((col) => col.name === "error")) {
     sqlite.exec("ALTER TABLE media_assets ADD COLUMN error TEXT");
   }
+
+  backfillRunNames(sqlite);
+}
+
+/** 运行记录默认名迁移的标记键。 */
+const RUN_NAME_MIGRATION_KEY = "migration.runs-default-name";
+
+/**
+ * 一次性数据迁移：给「还没起名」的历史运行补上默认名「第 N 次运行」（N 按工程内创建顺序）。
+ *
+ * 为什么要标记位：这是数据回填，不是加列——结构检查挡不住它重复执行。而没有标记位的话，
+ * 用户手动清空某个名字（「把这行交回给时间」是正当操作）之后，下次启动又会被重新命名。
+ * 名字只是给列表认人用的，覆盖用户的选择比留着空名字更糟。
+ */
+function backfillRunNames(sqlite: InstanceType<typeof Database>): void {
+  const done = sqlite.prepare("SELECT value FROM app_settings WHERE key = ?").get(RUN_NAME_MIGRATION_KEY);
+  if (done) return;
+
+  const rows = sqlite
+    .prepare("SELECT id, project_id, name FROM runs ORDER BY project_id ASC, created_at ASC, id ASC")
+    .all() as Array<{ id: string; project_id: string; name: string | null }>;
+  const ordinal = new Map<string, number>();
+  const update = sqlite.prepare("UPDATE runs SET name = ? WHERE id = ?");
+  for (const row of rows) {
+    const next = (ordinal.get(row.project_id) ?? 0) + 1;
+    ordinal.set(row.project_id, next);
+    // 已经有名字的（用户起过或新建时就带上）只占号，不覆盖。
+    if (!row.name || !row.name.trim()) update.run(`第 ${next} 次运行`, row.id);
+  }
+  sqlite
+    .prepare("INSERT INTO app_settings (key, value, updated_at) VALUES (?, '1', ?) ON CONFLICT(key) DO UPDATE SET value = '1', updated_at = excluded.updated_at")
+    .run(RUN_NAME_MIGRATION_KEY, Date.now());
 }

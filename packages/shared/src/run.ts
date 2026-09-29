@@ -24,8 +24,10 @@ export interface RunMeta {
   finishedAt?: number;
   elapsedMs?: number;
   /**
-   * 用户自己起的名字（笔记标题）。空表示没起过名，列表显示时间与状态。
-   * 与 `summary` 各管一件事：summary 是机器算出来的产物摘要，name 是人写下的标题。
+   * 运行记录的名字（笔记标题）。服务端在创建时就给默认名「第 N 次运行」，从某节点重跑时带
+   * `· 重跑「节点名」`（见 `apps/server/src/lib/run-name.ts`）；用户改名即覆盖，**只有手动清空才为空**，
+   * 那时列表只显示时间。
+   * 与 `summary` 各管一件事：summary 是机器算出来的产物摘要，name 是人能认的名字。
    */
   name?: string;
   /** 产出的文档摘要，如「视频转笔记 · 2.1k 字」。 */

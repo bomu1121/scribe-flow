@@ -19,6 +19,7 @@ import {
 import type { AppDatabase } from "../db/client";
 import { projects, runNodeLogs, runNodeResults, runs, type RunRow } from "../db/schema";
 import { nextRunId, type RunEngine } from "../lib/engine";
+import { defaultRunNameFor } from "../lib/run-name";
 import { resolveArtifactPath } from "../lib/storage";
 import { getAiConfig, getAsrConfig } from "../lib/settings";
 import { listRunMediaViews } from "../lib/media-store";
@@ -124,7 +125,11 @@ export function createRun(db: AppDatabase, projectId: string, scope: RunScope, n
 
   const id = nextRunId();
   const createdAt = Date.now();
-  db.insert(runs).values({ id, projectId, status: "running", scope, nodeId: scope === "all" ? undefined : nodeId, createdAt, graphJson: JSON.stringify(graph) }).run();
+  // 落库时就带上默认名：列表与详情页都靠它认人（用户可随时改名覆盖，见 lib/run-name.ts）。
+  const name = defaultRunNameFor(db, projectId, graph, scope, nodeId);
+  db.insert(runs)
+    .values({ id, projectId, status: "running", scope, nodeId: scope === "all" ? undefined : nodeId, createdAt, name, graphJson: JSON.stringify(graph) })
+    .run();
   return { id, graph };
 }
 

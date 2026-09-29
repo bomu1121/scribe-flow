@@ -23,7 +23,7 @@ const isActive = computed(
 
 /** 必须是 computed：同一个 id 的行会原地换状态（跑完、被停），算一次就不再更新了。 */
 const meta = computed(() => RUN_STATUS_META[props.run.status]);
-/** 只显示你起的名字。没起名就空着——左侧栏不报状态，理由见 runDisplayName 的注释。 */
+/** 名字由服务端在创建时给出（第 N 次运行 / 重跑「节点名」），用户可改名；手动清空后只剩时间。 */
 const name = computed(() => runDisplayName(props.run));
 const time = computed(() => formatRunTime(props.run.createdAt));
 /**

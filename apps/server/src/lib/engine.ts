@@ -2348,6 +2348,8 @@ ${JSON.stringify(taxonomyTags)}`;
       createdAt: row.createdAt,
       finishedAt: row.finishedAt ?? undefined,
       elapsedMs: row.elapsedMs ?? undefined,
+      // name 必须带上：详情页刷新后要显示原名（漏了它，改过名的运行一刷新就退回「运行结果」）。
+      name: row.name ?? undefined,
       summary: row.summary ?? undefined,
       error: row.error ?? undefined,
     };
