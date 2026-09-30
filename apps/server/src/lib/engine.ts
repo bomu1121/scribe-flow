@@ -232,6 +232,36 @@ function appendSkippedNote(summary: string | undefined, kept: number, skipped: n
 }
 
 /**
+ * 校对节点的默认系统提示词。
+ *
+ * 后两条规则是为「ASR 不认识的新专有名词」准备的：实测一个刚发布的新模型名，转写稿里
+ * 同时出现两种拼法（Jave 16 次 / Java 15 次，正确拼写一次都没有），校对节点在没有任何
+ * 依据的情况下把少数派统一成了多数派——错误从「不稳定」变成「全篇一致」，反而更像对的。
+ * 正确拼写就写在源卡标题里（见 withSourceMetaHint），所以这里要求以素材信息为准。
+ */
+const REFINE_DEFAULT_SYSTEM = [
+  "你是文字校对编辑。修正转写文稿中的错别字、重复与语气词，保持原意与信息完整，只输出校对后的文稿。",
+  "专有名词（产品名、模型名、人名、机构名）以原文写法为准：同一个专有名词在文稿里有多种拼法时，按「当前素材信息」里的标题统一；拿不准就保留原文，不要替换成读音相近的常见词。",
+  "「当前素材信息」只用来校订专有名词，不要据此补充文稿中没有的内容。",
+].join("\n");
+
+/** 逐项加工节点的兜底提示词（节点既没选提示词块、也没写覆盖提示词时用它）。 */
+const DEFAULT_EDIT_SYSTEM = "你是内容编辑。按用户要求整理文稿，只输出整理结果。";
+
+/**
+ * 把来源元信息附到系统提示词末尾，给逐项加工的 AI 一个校字依据。
+ *
+ * 校对节点原本只看得到转写稿本身，遇到 ASR 自己都没把握的新词就只能靠猜。来源标签
+ * （`InputSourceMeta.label`，形如 `《视频标题》 P1 · UP：xxx · 链接`）是**素材自己的
+ * 元信息**，不是模型补的背景知识，所以用它校字与内置块里那条「不添加原文没有的知识」
+ * 不冲突——提示词里也写明了它的用途只限于校订专有名词。
+ */
+function withSourceMetaHint(system: string, sourceMeta: InputSourceMeta | undefined): string {
+  const label = sourceMeta?.label?.trim();
+  return label ? `${system}\n\n当前素材信息：${label}` : system;
+}
+
+/**
  * 把输入项与产出项配对，把素材身份传给下游。
  *
  * 采用「下标优先 + 唯一匹配兜底」：顺序一致时精确配对，数量不一致时（例如文本工具
@@ -1474,18 +1504,22 @@ export class RunEngine {
         if (override.trim() && builtin?.recipe) {
           await this.log(active, node.id, "info", "自定义提示词覆盖配方，按单步执行");
         }
-        const system =
-          override.trim() ||
-          builtin?.prompt ||
-          (node.type === "process.refine"
-            ? "你是文字校对编辑。修正转写文稿中的错别字、重复与语气词，保持原意与信息完整，只输出校对后的文稿。"
-            : "你是内容编辑。按用户要求整理文稿，只输出整理结果。");
+        const defaultSystem = node.type === "process.refine" ? REFINE_DEFAULT_SYSTEM : DEFAULT_EDIT_SYSTEM;
+        const baseSystem = override.trim() || builtin?.prompt || defaultSystem;
+        /**
+         * 只有走引擎默认提示词的校对节点才追加素材信息。
+         *
+         * 用户自己写的覆盖提示词、或选中提示词块时都不追加：那两种情况下的指令是用户/内置块
+         * 自己的事，引擎往里塞内容会出现「我明明覆盖了提示词，它却还在加东西」。
+         */
+        const attachSourceMeta = node.type === "process.refine" && !override.trim() && !builtin?.prompt;
         const model = aiConfig.model;
         const parts: string[] = [];
         for (let i = 0; i < textItems.length; i += 1) {
           const item = textItems[i];
           const inputRef = { index: item.position, total: textItems.length };
           const inputText = item.output.text?.trim() ?? "";
+          const system = attachSourceMeta ? withSourceMetaHint(baseSystem, item.sourceMeta) : baseSystem;
           await this.progress(active, node.id, Math.round(10 + (i / textItems.length) * 80), `处理输入 ${i + 1}/${textItems.length}`);
           await this.log(active, node.id, "input", inputText, undefined, inputRef);
           await this.log(active, node.id, "ai-request", `${model}\n\n${system}`, undefined, inputRef);

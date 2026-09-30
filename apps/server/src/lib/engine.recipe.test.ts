@@ -32,6 +32,9 @@ let drillExtraItem = false;
  */
 let insightQuoteMode: "ok" | "first-bad" | "always-bad" = "ok";
 
+/** 校对节点用例：mock 收到的最后一条校对 system 提示词（用来断言素材信息有没有进去）。 */
+let lastRefineSystem = "";
+
 function reply(res: ServerResponse, content: string): void {
   res.setHeader("Content-Type", "application/json");
   res.end(JSON.stringify({ choices: [{ message: { role: "assistant", content } }] }));
@@ -56,7 +59,11 @@ beforeAll(async () => {
       const messages = (body.messages as Array<{ role: string; content: string }>) ?? [];
       const system = String(messages[0]?.content ?? "");
       const user = String(messages.at(-1)?.content ?? "");
-      if (system.includes("只输出攻略要素拆解 JSON")) {
+      lastRefineSystem = system.includes("你是文字校对编辑") ? system : lastRefineSystem;
+      if (system.includes("你是文字校对编辑")) {
+        // 模拟「拿到素材标题后改正专有名词」：把两种错拼统一成标题里的写法。
+        reply(res, user.replace(/Jave|Java/g, "Jev"));
+      } else if (system.includes("只输出攻略要素拆解 JSON")) {
         reply(
           res,
           JSON.stringify({
@@ -719,5 +726,95 @@ describe("知识巩固节点（process.drill）", () => {
     expect(nodeRow?.summary).toBe("1 个考察点 · 1 题 · 0 条延伸");
     const product = JSON.parse(nodeRow?.outputText ?? "{}") as { extensions?: unknown[] };
     expect(product.extensions).toEqual([]);
+  });
+});
+
+/**
+ * 校对节点（`process.refine`）的素材信息注入（`withSourceMetaHint`）。
+ *
+ * 起因是一次实测：一个刚发布的新模型名被 ASR 转写成两种错拼（Jave 16 次 / Java 15 次，
+ * 正确拼写一次都没有），校对节点在没有任何依据的情况下把少数派统一成了多数派——
+ * 错误从「不稳定」变成「全篇一致」，反而更像对的；而正确拼写当时只写在源卡标题里，
+ * 从头到尾没进过提示词。
+ *
+ * 这里用 `source.text` 的 `label` 充当素材标题（B 站卡走 `data.items[].title` → 同一个
+ * `InputSourceMetaItem.title`），验的是「来源标签进 system」这条接线，不是 B 站标题抽取本身。
+ */
+describe("AI 校对节点的素材信息注入", () => {
+  const TITLE = "全网刷屏的 Jev 模型正式开放！保姆级教程 + 实战测评";
+  /** 形状照抄真实转写稿：同一个专有名词出现两种错拼。 */
+  const ASR_TEXT = "最近被一个很特别的新模型 Jave 刷屏了。配好之后，AI 才会帮你调用Java。";
+
+  async function setupRefine(dataDir: string, runId: string, refineData: Record<string, unknown> = {}) {
+    const db = createDatabase(dataDir);
+    const now = Date.now();
+    const projectId = "prj_refine";
+    for (const [key, value] of [
+      ["ai.provider", "custom"],
+      ["ai.baseUrl", baseUrl.replace(/\/+$/, "")],
+      ["ai.model", "mock-model"],
+      ["ai.apiKey", "mock-key"],
+    ] as const) {
+      db.insert(appSettings).values({ key, value, updatedAt: now }).run();
+    }
+    const graph = parseGraph({
+      schemaVersion: 1,
+      nodes: [
+        { id: "n_text", type: "source.text", position: { x: 0, y: 0 }, data: { label: TITLE, text: ASR_TEXT } },
+        { id: "n_refine", type: "process.refine", position: { x: 400, y: 0 }, data: { label: "AI 校对", ...refineData } },
+      ],
+      edges: [{ id: "e1", source: "n_text", target: "n_refine", sourceHandle: "transcript", targetHandle: "transcript" }],
+      viewport: { x: 0, y: 0, zoom: 1 },
+    });
+    db.insert(projects)
+      .values({ id: projectId, name: "校对节点用例", description: "", graphJson: JSON.stringify(graph), schemaVersion: 1, createdAt: now, updatedAt: now })
+      .run();
+    db.insert(runs).values({ id: runId, projectId, status: "running", scope: "all", createdAt: now, graphJson: JSON.stringify(graph) }).run();
+    const engine = new RunEngine(db, dataDir);
+    return { db, engine, graph };
+  }
+
+  it("默认提示词带上素材标题与专有名词规则，改回来的名字真的落进产物", async () => {
+    chatCalls = 0;
+    lastRefineSystem = "";
+    const dataDir = await mkdtemp(join(tmpdir(), "scribe-refine-"));
+    tmpDirs.push(dataDir);
+    const runId = "run_refine_meta";
+    const { db, engine, graph } = await setupRefine(dataDir, runId);
+
+    runWith(engine, runId, graph);
+    await waitFinished(db, runId);
+
+    expect(db.select().from(runs).where(eq(runs.id, runId)).get()?.status).toBe("success");
+    // 规则与素材信息都进了 system
+    expect(lastRefineSystem).toContain("专有名词");
+    expect(lastRefineSystem).toContain("当前素材信息");
+    expect(lastRefineSystem).toContain(TITLE);
+    // ai-request 日志记的是真正发出去的那份 system（结果页要能回看送了什么）
+    const logs = db.select().from(runNodeLogs).where(eq(runNodeLogs.runId, runId)).all();
+    const request = logs.find((row) => row.kind === "ai-request" && row.nodeId === "n_refine");
+    expect(request?.content).toContain(TITLE);
+    // 产物：两种错拼都被改回标题里的写法
+    const output = db.select().from(runNodeResults).where(eq(runNodeResults.nodeId, "n_refine")).get()?.outputText ?? "";
+    expect(output).toContain("Jev");
+    expect(output).not.toContain("Jave");
+    expect(output).not.toContain("Java");
+  });
+
+  it("用户覆盖提示词时不追加素材信息（覆盖就是覆盖）", async () => {
+    chatCalls = 0;
+    lastRefineSystem = "";
+    const dataDir = await mkdtemp(join(tmpdir(), "scribe-refine-own-"));
+    tmpDirs.push(dataDir);
+    const runId = "run_refine_override";
+    const { db, engine, graph } = await setupRefine(dataDir, runId, { promptOverride: "你是文字校对编辑。只改标点，其余一字不动。" });
+
+    runWith(engine, runId, graph);
+    await waitFinished(db, runId);
+
+    expect(db.select().from(runs).where(eq(runs.id, runId)).get()?.status).toBe("success");
+    expect(lastRefineSystem).toContain("只改标点");
+    expect(lastRefineSystem).not.toContain("当前素材信息");
+    expect(lastRefineSystem).not.toContain(TITLE);
   });
 });
