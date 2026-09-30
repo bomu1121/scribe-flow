@@ -14,10 +14,11 @@ import {
 import { Background } from "@vue-flow/background";
 import { Controls } from "@vue-flow/controls";
 import { MiniMap } from "@vue-flow/minimap";
-import { NODE_CARD_WIDTH, NODE_PORTS, canConnectSpecs, nextEdgeId, nextNodeId, type BiliSourceItem, type NodeType, type PortSpec, type ResultDelta, type RunNodeResult, type WorkflowGraph } from "@scribe-flow/shared";
+import { NODE_CARD_WIDTH, NODE_PORTS, canConnectSpecs, nextEdgeId, nextNodeId, type NodeType, type PortSpec, type ResultDelta, type RunNodeResult, type WorkflowGraph } from "@scribe-flow/shared";
 import ScribeNode from "./ScribeNode.vue";
 import FlowEdge from "./FlowEdge.vue";
 import { POPUP_SELECTORS } from "@/lib/dropdown-modal";
+import { biliSourceData, multiSourcePatch, sourceItemsFor } from "@/utils/bili-source";
 import {
   cloneGraph,
   emptyNodeData,
@@ -481,57 +482,6 @@ function commitHistory() {
   pushHistory();
 }
 
-function sourcePatchFor(video: import("@scribe-flow/shared").SourceVideoItem): Record<string, unknown> {
-  const patch: Record<string, unknown> = {
-    url: `https://www.bilibili.com/video/${video.bvid}`,
-    bvid: video.bvid,
-    title: video.title,
-    cover: video.cover,
-    uploader: video.uploader,
-    duration: video.duration,
-  };
-  const firstPage = video.pages?.find((p) => p.cid) ?? video.pages?.[0];
-  if (firstPage?.cid) {
-    patch.pageInfo = firstPage;
-  } else if (video.cid) {
-    patch.pageInfo = { cid: video.cid, page: 1, part: "", duration: video.duration };
-  }
-  return patch;
-}
-
-function sourceItemFor(video: import("@scribe-flow/shared").SourceVideoItem): BiliSourceItem {
-  const page = video.pages?.find((p) => p.cid) ?? video.pages?.[0] ?? (video.cid ? { cid: video.cid, page: 1, part: "", duration: video.duration } : undefined);
-  return {
-    bvid: video.bvid,
-    cid: page?.cid ?? 0,
-    page: page?.page ?? 1,
-    part: page?.part ?? "",
-    title: video.title,
-    cover: video.cover,
-    uploader: video.uploader,
-    duration: page?.duration ?? video.duration,
-  };
-}
-
-function sourceItemsFor(videos: import("@scribe-flow/shared").SourceVideoItem[]): BiliSourceItem[] {
-  return videos.map(sourceItemFor);
-}
-
-function multiSourcePatch(items: BiliSourceItem[], label = "B站多选"): Record<string, unknown> {
-  const first = items[0];
-  return {
-    label,
-    items,
-    url: `https://www.bilibili.com/video/${first.bvid}`,
-    bvid: first.bvid,
-    title: first.title,
-    cover: first.cover,
-    uploader: first.uploader,
-    duration: first.duration,
-    pageInfo: { cid: first.cid, page: first.page, part: first.part, duration: first.duration ?? 0 },
-  };
-}
-
 /**
  * 多选合并：把多个 B 站视频/分P 写入当前节点，生成一张“多选卡片”。
  * 后续运行逻辑仍按每个 item 逐个产出音频，等价于多张独立来源卡片。
@@ -557,7 +507,7 @@ function addBiliVideos(videos: import("@scribe-flow/shared").SourceVideoItem[]) 
   }
   const base = centerPosition();
   const node = makeNode("source.bili", { x: base.x, y: base.y });
-  const patch = videos.length === 1 ? sourcePatchFor(videos[0]) : multiSourcePatch(sourceItemsFor(videos), "B站收藏");
+  const patch = biliSourceData(videos, "B站收藏");
   node.data = { ...node.data, ...patch, ctx: ctxFor(node.id) } as ScribeFlowNode["data"];
   nodesRef.value = [...nodesRef.value, node];
   pushHistory();

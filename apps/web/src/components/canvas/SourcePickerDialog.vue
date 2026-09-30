@@ -8,7 +8,17 @@ import type { SourceCollection, SourceVideoItem, VideoPreview } from "@scribe-fl
 import ModelSelect from "../ModelSelect.vue";
 import { api } from "@/lib/api";
 
-const props = defineProps<{ open: boolean }>();
+const props = withDefaults(
+  defineProps<{
+    open: boolean;
+    /**
+     * 打开它的位置上还有 Element Plus 弹窗（z-index 2000+）时置 true，本层抬到浮层顶层。
+     * 新建工程对话框里选「B站收藏」就是这种情况：不抬的话选择器会开在弹窗底下，看不见也点不到。
+     */
+    raised?: boolean;
+  }>(),
+  { raised: false },
+);
 const emit = defineEmits<{ "update:open": [value: boolean]; confirm: [items: SourceVideoItem[]] }>();
 
 type TabKey = "fav" | "season" | "toview" | "history";
@@ -311,7 +321,7 @@ onBeforeUnmount(() => {
 <template>
   <Teleport to="body">
     <Transition name="sp-fade">
-      <div v-if="dialogVisible" class="sp-overlay" @click.self="close">
+      <div v-if="dialogVisible" class="sp-overlay" :class="{ 'sp-overlay--raised': raised }" @click.self="close">
         <section class="sp-panel" role="dialog" aria-modal="true" aria-label="从我的 B 站选择视频">
           <header class="sp-header">
             <span class="sp-header-icon"><FolderHeart :size="18" /></span>
@@ -443,6 +453,11 @@ onBeforeUnmount(() => {
   justify-content: center;
   padding: 24px;
   background: var(--el-overlay-color-lighter);
+}
+
+/* 叠在 Element Plus 弹窗上时用「浮层顶层」档：EP 弹窗自己从 2000 起算，--z-modal 会压在它下面。 */
+.sp-overlay--raised {
+  z-index: var(--z-dropdown-modal);
 }
 
 .sp-panel {

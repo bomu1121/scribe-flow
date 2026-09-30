@@ -372,8 +372,9 @@ async function run() {
     Boolean(epInDialog?.brand) && epInDialog?.brand.toLowerCase() !== "#409eff",
     `--el-color-primary=${epInDialog?.brand}`,
   );
-  // 来源轴（templates.ts 的「模板只画加工链，来源在新建时选」）：三个来源单选 + 分组标题，
+  // 来源轴（templates.ts 的「模板只画加工链，来源在新建时选」）：来源单选 + 分组标题，
   // 且切换来源后只对音视频成立的链路（选段加工）必须消失——这是这次模板改造的核心行为。
+  // 「B站收藏」是建工程前先挑视频的 B 站来源（落到图上同样是 source.bili），所以排在三者之前紧跟 B站链接。
   const sourceAxis = await evalJs(`(() => {
     const d = [...document.querySelectorAll('.el-overlay')].find((o) => getComputedStyle(o).display !== 'none')?.querySelector('.el-dialog');
     if (!d) return null;
@@ -383,8 +384,8 @@ async function run() {
     };
   })()`);
   check(
-    "新建工程对话框按来源组织（B站链接 / 本地文件 / 粘贴文稿 + 通用/垂直分组）",
-    sourceAxis?.radios.join("、") === "B站链接、本地文件、粘贴文稿" && (sourceAxis?.groups.length ?? 0) >= 2,
+    "新建工程对话框按来源组织（B站链接 / B站收藏 / 本地文件 / 粘贴文稿 + 通用/垂直分组）",
+    sourceAxis?.radios.join("、") === "B站链接、B站收藏、本地文件、粘贴文稿" && (sourceAxis?.groups.length ?? 0) >= 2,
     `来源=[${sourceAxis?.radios?.join("、")}] 分组=[${sourceAxis?.groups?.join("、")}]`,
   );
   await evalJs(`(() => {
