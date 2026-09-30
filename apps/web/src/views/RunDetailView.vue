@@ -18,8 +18,6 @@ import {
   PanelLeftClose,
   PanelLeftOpen,
   PenLine,
-  PanelRightClose,
-  PanelRightOpen,
   Pencil,
   RefreshCw,
   RotateCcw,
@@ -43,6 +41,7 @@ import { documentHeadings, renderMarkdown, slugify } from "@/lib/markdown";
 import { formatBytes } from "@/lib/bytes";
 import { RUN_STATUS_META, runDisplayName, resolveRenameRequest } from "@/lib/run-meta";
 import { buildNodeSegments, fmtCharCount, fmtDuration, type RunSegment } from "@/utils/run-segments";
+import { chainRowMeta, chainStageTitle, chainTypeSuffix } from "@/utils/run-chain";
 import { buildCompareOptions, pickDefaultComparePair } from "@/utils/run-compare";
 import { isDrillOutput, looksLikeTraceReport } from "@/utils/run-output";
 import { subscribeRunEvents } from "@/lib/sse";
@@ -235,12 +234,14 @@ const isRunning = computed(() => run.value?.status === "running");
 
 /**
  * 状态文案。RunStatus 的五个键与运行记录列表共用 `@/lib/run-meta` 的 `RUN_STATUS_META`
- * （同一个状态在两处不能有两种说法），这里只补「只会出现在节点结果里」的两个键。
+ * （同一个状态在两处不能有两种说法），这里只补「只会出现在节点结果里」的三个键。
  */
 const statusMeta: Record<string, { label: string }> = {
   ...RUN_STATUS_META,
   done: { label: "完成" },
+  queued: { label: "排队中" },
   skipped: { label: "跳过" },
+  idle: { label: "未运行" },
 };
 
 interface SourceInfo {
@@ -309,31 +310,21 @@ function chainTypeShort(nodeType: string): string {
   return CHAIN_TYPE_SHORT[nodeType] ?? NODE_TYPE_LABELS[nodeType as keyof typeof NODE_TYPE_LABELS] ?? nodeType;
 }
 
-function textCharCount(text?: string): number {
-  return (text ?? "").replace(/\s/g, "").length;
-}
-
-/** 链路卡片副标题：把类型、元信息、字数/状态压缩成一行，避免“点击查看”这类赘余提示。 */
-function chainCardMeta(input: InputItem): string {
-  const parts: string[] = [];
-  if (input.summary) {
-    parts.push(input.summary);
-  } else {
-    if (input.nodeType === "source.bili") {
-      if (input.items && input.items.length > 1) parts.push(`${input.items.length} 个视频`);
-      else if (input.title) parts.push(input.title);
-      if (input.uploader) parts.push(input.uploader);
-      if (input.duration) parts.push(fmtDuration(input.duration));
-    } else if (input.nodeType === "source.file") {
-      if (input.fileName) parts.push(input.fileName);
-      if (input.size) parts.push(formatBytes(input.size));
-    } else if (input.text) {
-      const chars = textCharCount(input.text);
-      if (chars > 0) parts.push(`${chars} 字`);
-    }
-  }
-  if (input.status === "error" && input.error) parts.push(input.error);
-  return parts.length > 0 ? parts.join(" · ") : input.nodeType === "source.text" ? "空文稿" : "—";
+/** 计算副标题的字段透传给 `run-chain.ts`（那边只管文案规则，不认识视图里的 InputItem）。 */
+function chainMetaOf(input: InputItem): string {
+  return chainRowMeta({
+    nodeType: input.nodeType,
+    summary: input.summary,
+    status: input.status,
+    error: input.error,
+    items: input.items,
+    title: input.title,
+    uploader: input.uploader,
+    duration: input.duration,
+    fileName: input.fileName,
+    size: input.size,
+    text: input.text,
+  });
 }
 
 const graph = computed<WorkflowGraph | undefined>(() => run.value?.graph);
@@ -681,15 +672,7 @@ const chainStages = computed(() => {
   for (let depth = 0; depth <= maxDepth; depth += 1) {
     const stageItems = inputItems.value.filter((item) => item.depth === depth);
     if (stageItems.length === 0) continue;
-    const title =
-      depth === 0
-        ? "原始素材"
-        : depth === maxDepth
-          ? maxDepth === 1
-            ? "加工结果"
-            : "最终输入"
-          : `加工步骤 ${depth}`;
-    groups.push({ key: `chain-${depth}`, title, items: stageItems });
+    groups.push({ key: `chain-${depth}`, title: chainStageTitle(depth, maxDepth), items: stageItems });
   }
   return groups;
 });
@@ -811,10 +794,10 @@ const inputCompareText = computed(() => {
 // ---------- 多输入分段阅读：一个节点处理 8 个视频时，按视频切开而不是首尾相接 ----------
 /** -1 = 合并全文；>=0 = 选中第 N 段。 */
 const segmentIndex = ref(-1);
-/** 右侧「分段大纲」栏的收起状态与筛选词（段数多时用）。 */
-const railCollapsed = ref(false);
+/** 分段筛选词（段数多时用）。 */
 const segmentFilter = ref("");
-const railListRef = ref<HTMLElement | null>(null);
+const segmentListRef = ref<HTMLElement | null>(null);
+const sideContentRef = ref<HTMLElement | null>(null);
 
 /** 当前输出文档的可分段内容（如「输出」节点由 8 个视频的笔记汇成）。 */
 const docSegments = computed<RunSegment[]>(() =>
@@ -830,6 +813,121 @@ const visibleSegments = computed(() => {
   const keyword = segmentFilter.value.trim().toLowerCase();
   if (!keyword) return activeSegments.value;
   return activeSegments.value.filter((segment) => `${segment.label} ${segment.meta}`.toLowerCase().includes(keyword));
+});
+
+// ---------- 链路面板的行模型：素材行、加工行、输出行用同一套渲染 ----------
+/** 面板里的一行。来源节点与输出文档字段不同，但不该因此变成两套视觉语言。 */
+interface ChainRow {
+  /** 面板内唯一：列表 key 与「谁是分段宿主」的比对都用它（`in:<节点 id>` / `out:<序号>`）。 */
+  id: string;
+  kind: "input" | "output";
+  /** 点击要打开的输入节点（仅输入行用）。 */
+  nodeId?: string;
+  /** 点击要打开的产物序号（仅输出行用）。 */
+  outputIndex?: number;
+  label: string;
+  /** 类型后缀；与节点名重复时为空串（见 `chainTypeSuffix`）。 */
+  typeSuffix: string;
+  /** 副标题；取不到信息时为空串，模板里整行省略。 */
+  meta: string;
+  error?: string;
+  /** 信息溯源节点的产物，行上带「溯源」标记。 */
+  trace: boolean;
+  /**
+   * 行尾的处境标记：产物来自更早运行的「复用」，或失败/运行中等真实状态；跑过且成功时为空。
+   *
+   * 原来这里是一个状态色圆点，绿色与灰色实际上在说「本次跑了 / 产物是复用的」，
+   * 但绿灰是状态色，用户读成「成功 / 失败或跳过」——所以改成一个词，不再靠颜色。
+   */
+  marker: string;
+  /** 标记的语气：错误 / 警告（中断）/ 进行中 / 中性（复用、已取消）。 */
+  markerKind: "error" | "warn" | "live" | "muted";
+  active: boolean;
+  /** 正在阅读的那一份才有：挂在它自己下面的分段大纲。 */
+  segments?: RunSegment[];
+}
+
+/**
+ * 分段大纲挂在**正在阅读的那一行**下面：看输出时挂输出行，看输入时挂该输入行。
+ *
+ * 全页只有这一份大纲（右侧那一栏已去掉，结果页把宽度让给正文），所以它必须挨着
+ * 「这份内容是谁的」——挂在别的行下面会让人以为大纲属于那一份。
+ */
+const segmentHostKey = computed(() => {
+  if (activeSegments.value.length <= 1 || editing.value || comparingDiff.value) return "";
+  return viewingInput.value ? `in:${selectedInputKey.value}` : `out:${selectedOutputIndex.value}`;
+});
+
+/** 本次运行真的跑过的节点。不在里面的产物来自更早的运行——从某节点重跑时上游就是这样。 */
+const executedNodeIds = computed(() => new Set((run.value?.nodeResults ?? []).map((node) => node.nodeId)));
+
+/**
+ * 行的处境标记：不是「本次运行跑出来的」就说「复用」，状态不是成功就把状态词写出来。
+ *
+ * 只有部分运行（`scope` 不是 `all`）才可能出现复用行：整跑时每一行都是本次产物，
+ * 没跑到的节点会带 `skipped` / `idle` 这类状态，走状态词那条路。
+ */
+function chainRowMark(status: RunNodeResult["status"] | undefined, executed: boolean): { text: string; kind: ChainRow["markerKind"] } {
+  if (!status || status === "done") {
+    // 只有部分运行（scope 不是 all）才会出现「复用」行：整跑时每一行都是本次产物。
+    const reused = !executed && run.value?.scope !== "all";
+    return reused ? { text: "复用", kind: "muted" } : { text: "", kind: "muted" };
+  }
+  const kind = status === "error" ? "error" : status === "running" || status === "queued" ? "live" : "muted";
+  return { text: statusMeta[status]?.label ?? "", kind };
+}
+
+/** 面板要渲染的全部分组：加工阶段（含原始素材与最终输入）在前，输出文档收尾。 */
+const chainGroups = computed(() => {
+  const host = segmentHostKey.value;
+  const groups: { key: string; title: string; rows: ChainRow[] }[] = chainStages.value.map((stage) => ({
+    key: stage.key,
+    title: stage.title,
+    rows: stage.items.map((item) => {
+      const id = `in:${item.key}`;
+      const mark = chainRowMark(item.status, executedNodeIds.value.has(item.key));
+      return {
+        id,
+        kind: "input" as const,
+        nodeId: item.key,
+        label: item.label,
+        typeSuffix: chainTypeSuffix(item.label, item.typeLabel),
+        meta: chainMetaOf(item),
+        error: item.error,
+        trace: false,
+        marker: mark.text,
+        markerKind: mark.kind,
+        active: selectedInputKey.value === item.key,
+        segments: host === id ? activeSegments.value : undefined,
+      };
+    }),
+  }));
+  if (outputNodes.value.length > 0) {
+    groups.push({
+      key: "chain-output",
+      title: "输出文档",
+      rows: outputNodes.value.map((doc, index) => {
+        const id = `out:${index}`;
+        const title = doc.title;
+        const mark = chainRowMark(doc.node.status, executedNodeIds.value.has(doc.node.nodeId));
+        return {
+          id,
+          kind: "output" as const,
+          outputIndex: index,
+          label: title,
+          typeSuffix: chainTypeSuffix(title, chainTypeShort(doc.node.nodeType)),
+          meta: doc.node.summary || "",
+          error: doc.node.error,
+          trace: traceNodeIds.value.has(doc.node.nodeId),
+          marker: mark.text,
+          markerKind: mark.kind,
+          active: !viewingInput.value && index === selectedOutputIndex.value,
+          segments: host === id ? activeSegments.value : undefined,
+        };
+      }),
+    });
+  }
+  return groups;
 });
 /** 「全文」那一行的字数：分段视图取当前视图的合并正文。 */
 const fullBodyChars = computed(() => (viewingInput.value ? inputCompareText.value : currentMarkdown.value).replace(/\s/g, "").length);
@@ -894,7 +992,7 @@ function stepSegment(delta: number) {
 }
 
 /** 大纲内的键盘导航：↑↓ / j k / Home End，焦点跟着选中项走。 */
-function onRailKeydown(event: KeyboardEvent, index: number) {
+function onSegmentKeydown(event: KeyboardEvent, index: number) {
   const keys = ["ArrowDown", "ArrowUp", "Home", "End", "j", "k"];
   if (!keys.includes(event.key)) return;
   event.preventDefault();
@@ -908,19 +1006,23 @@ function onRailKeydown(event: KeyboardEvent, index: number) {
   if (target === index) return;
   selectSegment(target);
   void nextTick(() => {
-    railListRef.value?.querySelector<HTMLElement>(`[data-seg-index="${target}"]`)?.focus();
+    segmentListRef.value?.querySelector<HTMLElement>(`[data-seg-index="${target}"]`)?.focus();
   });
 }
 
 // 换段后把当前项滚进可视区（深链直达第 7 段时不至于还停在列表顶部）。
 watch([segmentIndex, segmentScope, visibleSegments], () => {
-  void nextTick(ensureActiveRailRowVisible);
+  void nextTick(ensureActiveSegmentVisible);
 });
 
-/** 只用大纲容器自身的滚动，避免整页被带着跳（因此不用 scrollIntoView）。 */
-function ensureActiveRailRowVisible() {
-  const container = railListRef.value;
-  const row = container?.querySelector<HTMLElement>(".rv-rail-row.on");
+/**
+ * 用面板自身的滚动把当前段带进视野，避免整页被带着跳（因此不用 scrollIntoView）。
+ *
+ * 大纲嵌在链路面板里，滚动容器是面板而不是列表自身：只让它动，链路其余部分不跟着位移。
+ */
+function ensureActiveSegmentVisible() {
+  const container = sideContentRef.value;
+  const row = segmentListRef.value?.querySelector<HTMLElement>(".rv-chain-seg.on");
   if (!container || !row) return;
   const delta = row.getBoundingClientRect().top - container.getBoundingClientRect().top;
   const bottom = delta + row.offsetHeight;
@@ -1731,57 +1833,121 @@ async function commitRename() {
             <span class="rv-side-title">链路输入</span>
           </div>
 
-          <div class="rv-side-content" :inert="sideCollapsed">
-            <template v-if="chainStages.length > 0">
-              <section v-for="stage in chainStages" :key="stage.key" class="rv-chain-stage">
-                <div class="rv-stage-head">
-                  <span class="rv-stage-title">{{ stage.title }}</span>
-                  <span class="rv-stage-count tnum">{{ stage.items.length }}</span>
-                </div>
-                <div class="rv-chain-list">
+          <div ref="sideContentRef" class="rv-side-content" :inert="sideCollapsed">
+            <div v-if="chainStages.length === 0" class="rv-side-empty">本次结果没有可追溯的输入素材</div>
+            <section v-for="group in chainGroups" :key="group.key" class="rv-chain-stage">
+              <div class="rv-stage-head">
+                <span class="rv-stage-title">{{ group.title }}</span>
+                <span v-if="group.rows.length > 1" class="rv-stage-count tnum">{{ group.rows.length }} 项</span>
+                <span class="rv-stage-rule" />
+              </div>
+              <div class="rv-chain-list">
+                <div v-for="row in group.rows" :key="row.id" class="rv-chain-item">
                   <button
-                    v-for="input in stage.items"
-                    :key="input.key"
                     type="button"
                     class="rv-chain-row"
-                    :class="{ active: selectedInputKey === input.key, [`is-${input.status}`]: input.status }"
-                    @click="selectInput(input.key)"
+                    :class="{ active: row.active }"
+                    @click="row.kind === 'output' ? selectOutput(row.outputIndex ?? 0) : selectInput(row.nodeId ?? '')"
                   >
-                    <span
-                      class="rv-chain-row-dot"
-                      :class="`is-${input.status}`"
-                      :title="input.status ? statusMeta[input.status]?.label ?? input.status : undefined"
-                    />
                     <span class="rv-chain-row-main">
-                      <span class="rv-chain-row-label">{{ input.label }}</span>
-                      <span class="rv-chain-row-meta">{{ chainCardMeta(input) }}</span>
-                      <span v-if="input.error" class="rv-chain-row-error">{{ input.error }}</span>
+                      <span class="rv-chain-row-title">
+                        <span class="rv-chain-row-label">{{ row.label }}</span>
+                        <span v-if="row.typeSuffix" class="rv-chain-row-type">{{ row.typeSuffix }}</span>
+                        <span v-if="row.trace" class="rv-output-badge">溯源</span>
+                        <span
+                          v-if="row.marker"
+                          class="rv-chain-row-mark"
+                          :class="`is-${row.markerKind}`"
+                          :title="row.marker === '复用' ? '这一份是更早运行的产物，本次没有重跑它' : undefined"
+                          >{{ row.marker }}</span
+                        >
+                      </span>
+                      <span v-if="row.meta" class="rv-chain-row-meta" :title="row.meta">{{ row.meta }}</span>
+                      <span v-if="row.error" class="rv-chain-row-error">{{ row.error }}</span>
                     </span>
-                    <span class="rv-chain-row-type">{{ input.typeLabel }}</span>
                   </button>
-                </div>
-              </section>
-            </template>
-            <div v-else class="rv-side-empty">本次结果没有可追溯的输入素材</div>
 
-            <div class="rv-side-section-title">输出文档</div>
-            <div v-if="outputNodes.length > 0" class="rv-output-list">
-              <button
-                v-for="(doc, index) in outputNodes"
-                :key="doc.node.nodeId"
-                type="button"
-                class="rv-output-item"
-                :class="{ active: !viewingInput && index === selectedOutputIndex }"
-                @click="selectOutput(index)"
-              >
-                <span class="rv-output-name">
-                  {{ doc.title }}
-                  <span v-if="traceNodeIds.has(doc.node.nodeId)" class="rv-output-badge">溯源</span>
-                </span>
-                <span class="rv-output-meta tnum">{{ doc.node.summary || "—" }}</span>
-              </button>
-            </div>
-            <div v-else class="rv-side-empty">没有可展示的输出</div>
+                  <!-- 分段大纲：这份内容有 N 段时挂在它自己下面，位置即归属 -->
+                  <div v-if="row.segments" class="rv-chain-segs">
+                    <div class="rv-chain-segs-head">
+                      <span class="rv-chain-segs-title">分段 · {{ row.segments.length }} 段</span>
+                      <div class="rv-seg-pager">
+                        <button
+                          type="button"
+                          class="rv-seg-pager-btn"
+                          aria-label="上一段"
+                          title="上一段（↑）"
+                          :disabled="segmentIndex <= -1"
+                          @click="stepSegment(-1)"
+                        >
+                          ‹
+                        </button>
+                        <span class="rv-seg-pager-pos tnum">{{ segmentPositionLabel }}</span>
+                        <button
+                          type="button"
+                          class="rv-seg-pager-btn"
+                          aria-label="下一段"
+                          title="下一段（↓）"
+                          :disabled="segmentIndex >= row.segments.length - 1"
+                          @click="stepSegment(1)"
+                        >
+                          ›
+                        </button>
+                      </div>
+                    </div>
+                    <input
+                      v-if="row.segments.length > 12"
+                      v-model="segmentFilter"
+                      type="search"
+                      class="rv-chain-segs-filter"
+                      placeholder="筛选分段标题…"
+                      aria-label="筛选分段标题"
+                    />
+                    <div ref="segmentListRef" class="rv-chain-seg-list" role="listbox" aria-label="分段大纲">
+                      <button
+                        type="button"
+                        role="option"
+                        class="rv-chain-seg"
+                        :class="{ on: segmentIndex < 0 }"
+                        :aria-selected="segmentIndex < 0"
+                        data-seg-index="-1"
+                        @click="selectSegment(-1)"
+                        @keydown="onSegmentKeydown($event, -1)"
+                      >
+                        <span class="rv-chain-seg-idx tnum">—</span>
+                        <span class="rv-chain-seg-body">
+                          <span class="rv-chain-seg-label">全文（{{ row.segments.length }} 段合并）</span>
+                          <span class="rv-chain-seg-meta tnum">{{ fmtCharCount(fullBodyChars) }}</span>
+                        </span>
+                      </button>
+                      <button
+                        v-for="segment in visibleSegments"
+                        :key="segment.inputId"
+                        type="button"
+                        role="option"
+                        class="rv-chain-seg"
+                        :class="{ on: segment.index === segmentIndex }"
+                        :aria-selected="segment.index === segmentIndex"
+                        :data-seg-index="segment.index"
+                        @click="selectSegment(segment.index)"
+                        @keydown="onSegmentKeydown($event, segment.index)"
+                      >
+                        <span class="rv-chain-seg-idx tnum">{{ String(segment.index + 1).padStart(2, "0") }}</span>
+                        <span class="rv-chain-seg-body">
+                          <span class="rv-chain-seg-label" :title="segment.label">{{ segment.label }}</span>
+                          <span class="rv-chain-seg-meta tnum">
+                            <span v-if="segment.size">{{ fmtCharCount(segment.size) }}</span>
+                            <span v-if="segment.meta">{{ segment.meta }}</span>
+                          </span>
+                        </span>
+                      </button>
+                      <p v-if="visibleSegments.length === 0" class="rv-chain-segs-empty">没有匹配的分段</p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </section>
+            <div v-if="outputNodes.length === 0" class="rv-side-empty">没有可展示的输出</div>
           </div>
         </aside>
 
@@ -1791,21 +1957,11 @@ async function commitRename() {
               <button
                 type="button"
                 class="rv-tool-btn"
-                :title="sideCollapsed ? '展开链路面板' : '收起链路面板'"
+                :title="sideCollapsed ? '展开链路面板（分段大纲在里面）' : '收起链路面板'"
                 @click="sideCollapsed = !sideCollapsed"
               >
                 <PanelLeftOpen v-if="sideCollapsed" :size="14" />
                 <PanelLeftClose v-else :size="14" />
-              </button>
-              <button
-                v-if="activeSegments.length > 1"
-                type="button"
-                class="rv-tool-btn rv-rail-toggle"
-                :title="railCollapsed ? '展开分段大纲' : '收起分段大纲'"
-                @click="railCollapsed = !railCollapsed"
-              >
-                <PanelRightOpen v-if="railCollapsed" :size="14" />
-                <PanelRightClose v-else :size="14" />
               </button>
               <span class="rv-tool-divider" />
               <button type="button" class="rv-tool-btn" title="缩小" @click="setZoom(-10)"><ZoomOut :size="14" /></button>
@@ -1895,8 +2051,12 @@ async function commitRename() {
             </div>
           </div>
 
-          <!-- 窄屏（<1280px）降级：单行标题 + 下拉 + 翻页，不铺开 N 个按钮 -->
-          <div v-if="activeSegments.length > 1 && !editing && !comparingDiff" class="rv-segbar">
+          <!-- 面板收起（或窄屏面板被挤掉）时的降级：单行切段，不铺开 N 个按钮 -->
+          <div
+            v-if="activeSegments.length > 1 && !editing && !comparingDiff"
+            class="rv-segbar"
+            :class="{ 'is-forced': sideCollapsed }"
+          >
             <button type="button" class="rv-segbar-arrow" aria-label="上一段" :disabled="segmentIndex <= -1" @click="stepSegment(-1)">‹</button>
             <el-select
               :model-value="segmentIndex"
@@ -2118,73 +2278,6 @@ async function commitRename() {
               </section>
             </template>
           </div>
-
-          <!-- 分段大纲（≥1280px）：顺序内容用列表而不是平级标签；当前段左侧墨色标记 -->
-          <aside v-if="activeSegments.length > 1 && !railCollapsed && !editing && !comparingDiff" class="rv-rail">
-            <div class="rv-rail-head">
-              <span class="rv-rail-title">分段</span>
-              <span class="rv-rail-count tnum">共 {{ activeSegments.length }} 段</span>
-            </div>
-            <div v-if="activeSegments.length > 12" class="rv-rail-search">
-              <input v-model="segmentFilter" type="search" placeholder="筛选分段标题…" aria-label="筛选分段标题" />
-            </div>
-            <div ref="railListRef" class="rv-rail-list" role="listbox" aria-label="分段大纲">
-              <button
-                type="button"
-                role="option"
-                class="rv-rail-row"
-                :class="{ on: segmentIndex < 0 }"
-                :aria-selected="segmentIndex < 0"
-                data-seg-index="-1"
-                @click="selectSegment(-1)"
-                @keydown="onRailKeydown($event, -1)"
-              >
-                <span class="rv-rail-idx tnum">—</span>
-                <span class="rv-rail-body">
-                  <span class="rv-rail-label">全文（{{ activeSegments.length }} 段合并）</span>
-                  <span class="rv-rail-meta tnum">{{ fmtCharCount(fullBodyChars) }}</span>
-                </span>
-              </button>
-              <button
-                v-for="segment in visibleSegments"
-                :key="segment.inputId"
-                type="button"
-                role="option"
-                class="rv-rail-row"
-                :class="{ on: segment.index === segmentIndex }"
-                :aria-selected="segment.index === segmentIndex"
-                :data-seg-index="segment.index"
-                @click="selectSegment(segment.index)"
-                @keydown="onRailKeydown($event, segment.index)"
-              >
-                <span class="rv-rail-idx tnum">{{ String(segment.index + 1).padStart(2, "0") }}</span>
-                <span class="rv-rail-body">
-                  <span class="rv-rail-label" :title="segment.label">{{ segment.label }}</span>
-                  <span class="rv-rail-meta tnum">
-                    <span v-if="segment.size">{{ fmtCharCount(segment.size) }}</span>
-                    <span v-if="segment.meta">{{ segment.meta }}</span>
-                  </span>
-                </span>
-              </button>
-              <p v-if="visibleSegments.length === 0" class="rv-rail-empty">没有匹配的分段</p>
-            </div>
-            <div class="rv-rail-foot">
-              <div class="rv-rail-pager">
-                <button type="button" class="rv-rail-pager-btn" aria-label="上一段" :disabled="segmentIndex <= -1" @click="stepSegment(-1)">‹</button>
-                <span class="rv-rail-pos tnum">{{ segmentPositionLabel }}</span>
-                <button
-                  type="button"
-                  class="rv-rail-pager-btn"
-                  aria-label="下一段"
-                  :disabled="segmentIndex >= activeSegments.length - 1"
-                  @click="stepSegment(1)"
-                >
-                  ›
-                </button>
-              </div>
-              <span class="rv-rail-hint tnum">↑↓ 切段</span>
-            </div>
-          </aside>
         </div>
         </section>
       </div>
@@ -2678,32 +2771,39 @@ async function commitRename() {
   padding: 10px;
 }
 
+/* 链路面板：阶段标题 + 一行一个节点；素材行、加工行、输出行共用这套语言 */
 .rv-chain-stage + .rv-chain-stage {
-  margin-top: 14px;
+  margin-top: 16px;
 }
 
 .rv-stage-head {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 6px;
-  margin: 0 2px 6px;
+  gap: 8px;
+  margin: 0 2px 8px;
 }
 
 .rv-stage-title {
+  flex-shrink: 0;
   font-size: 11px;
   font-weight: 600;
   color: var(--color-text-secondary);
   letter-spacing: 0.02em;
 }
 
+/* 计数只在同一步有多个节点时出现：每步都挂一个「1」只是噪音 */
 .rv-stage-count {
-  padding: 1px 6px;
-  border-radius: 999px;
-  background: var(--color-ink-soft);
+  flex-shrink: 0;
+  font-size: 10.5px;
   color: var(--color-text-tertiary);
-  font-size: 10px;
-  line-height: 1.6;
+}
+
+/* 阶段标题后面的分隔线：铺满剩余宽度，替代原来右对齐的计数药丸 */
+.rv-stage-rule {
+  flex: 1;
+  min-width: 8px;
+  height: 1px;
+  background: var(--color-border);
 }
 
 .rv-chain-list {
@@ -2712,13 +2812,17 @@ async function commitRename() {
   gap: 2px;
 }
 
+.rv-chain-item {
+  min-width: 0;
+}
+
 .rv-chain-row {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 8px;
   width: 100%;
   min-width: 0;
-  padding: 6px 8px;
+  padding: 7px 8px;
   border: none;
   border-radius: var(--radius-sm);
   background: transparent;
@@ -2734,34 +2838,6 @@ async function commitRename() {
   background: var(--color-ink-soft);
 }
 
-.rv-chain-row-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--color-text-tertiary);
-  flex-shrink: 0;
-}
-
-.rv-chain-row-dot.is-running {
-  background: var(--color-text);
-  animation: wp-pulse 1.5s var(--ease-out) infinite;
-}
-
-.rv-chain-row-dot.is-success,
-.rv-chain-row-dot.is-done {
-  background: var(--color-success);
-}
-
-.rv-chain-row-dot.is-error {
-  background: var(--color-error);
-}
-
-.rv-chain-row-dot.is-cancelled,
-.rv-chain-row-dot.is-skipped,
-.rv-chain-row-dot.is-idle {
-  background: var(--color-text-tertiary);
-}
-
 .rv-chain-row-main {
   flex: 1;
   min-width: 0;
@@ -2770,92 +2846,248 @@ async function commitRename() {
   gap: 1px;
 }
 
+.rv-chain-row-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
 .rv-chain-row-label {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 12px;
+  font-size: 12.5px;
   font-weight: 500;
   color: var(--color-text);
 }
 
-.rv-chain-row-meta {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 10.5px;
-  line-height: 1.4;
-  color: var(--color-text-tertiary);
-}
-
-.rv-chain-row-error {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: var(--color-error);
-  font-size: 10.5px;
-  line-height: 1.4;
-}
-
+/* 类型跟在节点名后面，只在它补充了名字没说的东西时出现——不占单独一列，也就没有左右对称 */
 .rv-chain-row-type {
   flex-shrink: 0;
   font-size: 10px;
   color: var(--color-text-tertiary);
 }
 
-.rv-side-section-title {
-  margin: 14px 2px 6px;
-  font-size: 12px;
+/*
+ * 行尾的处境标记（复用 / 失败 / 运行中 …）：贴在标题行右侧，不占独立列。
+ *
+ * 这里原来是状态色圆点，「本次跑了」和「产物是复用的」被画成绿与灰——绿灰是状态色，
+ * 用户读成「成功 / 失败或跳过」。改成词之后颜色只用来分轻重，语义由字面负责。
+ */
+.rv-chain-row-mark {
+  flex: 0 0 auto;
+  margin-left: auto;
+  padding-left: 8px;
+  font-size: 10px;
+  line-height: 1.6;
+  color: var(--color-text-tertiary);
+}
+
+.rv-chain-row-mark.is-error {
+  color: var(--color-error);
+}
+
+.rv-chain-row-mark.is-warn {
+  color: var(--color-warning);
+}
+
+.rv-chain-row-mark.is-live {
+  color: var(--color-brand);
+}
+
+/* 副标题允许两行：来源卡的身份 + 状态拼起来会超一行，截断会比换行丢更多信息 */
+.rv-chain-row-meta {
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--color-text-tertiary);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.rv-chain-row-error {
+  color: var(--color-error);
+  font-size: 11px;
+  line-height: 1.45;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* 分段大纲：挂在正在阅读的那一份下面，缩进 + 一条竖线表示归属 */
+.rv-chain-segs {
+  margin: 2px 0 8px 22px;
+  padding-left: 9px;
+  border-left: 1px solid var(--color-border);
+}
+
+.rv-chain-segs-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  padding: 2px 0 6px;
+}
+
+.rv-chain-segs-title {
+  font-size: 10.5px;
   font-weight: 600;
+  color: var(--color-text-secondary);
+  letter-spacing: 0.02em;
+}
+
+.rv-seg-pager {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.rv-seg-pager-btn {
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--control-radius-sm);
+  background: var(--color-surface);
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.rv-seg-pager-btn:hover:not(:disabled) {
+  background: var(--color-ink-soft);
   color: var(--color-text);
 }
 
-.rv-output-list {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
+.rv-seg-pager-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
 }
 
-.rv-output-item {
+.rv-seg-pager-pos {
+  min-width: 42px;
+  text-align: center;
+  font-size: 10.5px;
+  color: var(--color-text-tertiary);
+}
+
+.rv-chain-segs-filter {
+  width: 100%;
+  height: 26px;
+  margin-bottom: 4px;
+  padding: 0 8px;
+  border: 1px solid var(--color-control-border);
+  border-radius: var(--control-radius-sm);
+  background: var(--color-surface);
+  color: var(--color-text);
+  font-family: inherit;
+  font-size: 11.5px;
+}
+
+.rv-chain-segs-filter::placeholder {
+  color: var(--color-control-placeholder);
+}
+
+.rv-chain-seg-list {
   display: flex;
   flex-direction: column;
-  align-items: flex-start;
   gap: 1px;
+}
+
+.rv-chain-seg {
+  position: relative;
+  display: flex;
+  gap: 7px;
   width: 100%;
   min-width: 0;
-  padding: 6px 8px;
+  padding: 5px 6px;
   border: none;
   border-radius: var(--radius-sm);
   background: transparent;
-  color: var(--color-text);
+  color: inherit;
   font-family: inherit;
   text-align: left;
   cursor: pointer;
   transition: background-color var(--dur-1) var(--ease-out);
 }
 
-.rv-output-item:hover,
-.rv-output-item.active {
+.rv-chain-seg:hover,
+.rv-chain-seg.on {
   background: var(--color-ink-soft);
 }
 
-.rv-output-name,
-.rv-output-meta {
-  width: 100%;
+/* 当前段：墨色标记压在缩进那条竖线上，位置即「正在读第几段」 */
+.rv-chain-seg.on::before {
+  content: "";
+  position: absolute;
+  left: -10px;
+  top: 6px;
+  bottom: 6px;
+  width: 2px;
+  border-radius: 2px;
+  background: var(--color-text);
+}
+
+.rv-chain-seg:focus-visible {
+  outline: 2px solid var(--color-border-strong);
+  outline-offset: -2px;
+}
+
+.rv-chain-seg-idx {
+  width: 15px;
+  flex-shrink: 0;
+  padding-top: 1px;
+  font-size: 10.5px;
+  color: var(--color-text-tertiary);
+}
+
+.rv-chain-seg.on .rv-chain-seg-idx {
+  color: var(--color-text);
+}
+
+.rv-chain-seg-body {
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.rv-output-name {
+  flex: 1;
   display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 12px;
-  font-weight: 500;
+  flex-direction: column;
 }
 
+.rv-chain-seg-label {
+  font-size: 12px;
+  line-height: 1.35;
+  color: var(--color-text-secondary);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.rv-chain-seg.on .rv-chain-seg-label {
+  font-weight: 500;
+  color: var(--color-text);
+}
+
+.rv-chain-seg-meta {
+  margin-top: 2px;
+  display: flex;
+  gap: 7px;
+  font-size: 10.5px;
+  color: var(--color-text-tertiary);
+}
+
+.rv-chain-segs-empty {
+  margin: 8px 4px;
+  font-size: 11.5px;
+  color: var(--color-text-tertiary);
+}
+
+/* 「溯源」标记：产出是结构化报告的输出行，跟在节点名后面 */
 .rv-output-badge {
   flex: 0 0 auto;
   padding: 1px 5px;
@@ -2865,11 +3097,6 @@ async function commitRename() {
   font-size: 10px;
   font-weight: 600;
   line-height: 1.5;
-}
-
-.rv-output-meta {
-  font-size: 10.5px;
-  color: var(--color-text-tertiary);
 }
 
 .rv-side-empty {
@@ -3234,7 +3461,7 @@ async function commitRename() {
   margin: 4px 0;
 }
 
-/* 多输入分段：宽屏走右侧「分段大纲」，窄屏降级为单行标题 + 下拉 */
+/* 分段：大纲在左侧链路面板里；面板收起（或窄屏放不下）时这里降级为单行切段 */
 .rv-doc-area {
   flex: 1;
   min-height: 0;
@@ -3280,208 +3507,14 @@ async function commitRename() {
   min-width: 0;
 }
 
-/* 分段大纲栏：顺序内容用列表（而非平级标签），段数到 20+ 也不会退化成轮播 */
-.rv-rail {
-  width: 268px;
-  min-width: 268px;
+/* 面板收起时（任何宽度都）走单行切段：分段大纲藏在面板里，收起后总得留一个入口 */
+.rv-segbar.is-forced {
   display: flex;
-  flex-direction: column;
-  border-left: 1px solid var(--color-border);
-  background: var(--color-surface);
-  min-height: 0;
-}
-
-.rv-rail-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  padding: 10px 12px 8px;
-  flex-shrink: 0;
-}
-
-.rv-rail-title {
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--color-text);
-}
-
-.rv-rail-count {
-  font-size: 11px;
-  color: var(--color-text-tertiary);
-}
-
-.rv-rail-search {
-  padding: 0 12px 8px;
-  flex-shrink: 0;
-}
-
-.rv-rail-search input {
-  width: 100%;
-  height: 28px;
-  padding: 0 8px;
-  border: 1px solid var(--color-control-border);
-  border-radius: var(--control-radius-sm);
-  background: var(--color-surface);
-  color: var(--color-text);
-  font-family: inherit;
-  font-size: 12px;
-}
-
-.rv-rail-search input::placeholder {
-  color: var(--color-control-placeholder);
-}
-
-.rv-rail-list {
-  flex: 1;
-  min-height: 0;
-  overflow-y: auto;
-  padding: 0 8px 8px;
-}
-
-.rv-rail-row {
-  display: flex;
-  gap: 9px;
-  width: 100%;
-  padding: 7px 8px 7px 10px;
-  border: none;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: inherit;
-  font-family: inherit;
-  text-align: left;
-  cursor: pointer;
-  position: relative;
-}
-
-.rv-rail-row:hover,
-.rv-rail-row.on {
-  background: var(--color-ink-soft);
-}
-
-.rv-rail-row.on::before {
-  content: "";
-  position: absolute;
-  left: 2px;
-  top: 8px;
-  bottom: 8px;
-  width: 2px;
-  border-radius: 2px;
-  background: var(--color-text);
-}
-
-.rv-rail-row:focus-visible {
-  outline: 2px solid var(--color-border-strong);
-  outline-offset: -2px;
-}
-
-.rv-rail-idx {
-  width: 18px;
-  flex-shrink: 0;
-  padding-top: 1px;
-  font-size: 11px;
-  color: var(--color-text-tertiary);
-}
-
-.rv-rail-row.on .rv-rail-idx {
-  color: var(--color-text);
-}
-
-.rv-rail-body {
-  min-width: 0;
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-}
-
-.rv-rail-label {
-  font-size: 12.5px;
-  font-weight: 500;
-  line-height: 1.35;
-  color: var(--color-text);
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-}
-
-.rv-rail-meta {
-  margin-top: 2px;
-  display: flex;
-  gap: 8px;
-  font-size: 10.5px;
-  color: var(--color-text-tertiary);
-}
-
-.rv-rail-empty {
-  margin: 12px 4px;
-  font-size: 12px;
-  color: var(--color-text-tertiary);
-}
-
-.rv-rail-foot {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  padding: 8px 10px;
-  border-top: 1px solid var(--color-border);
-  flex-shrink: 0;
-}
-
-.rv-rail-pager {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.rv-rail-pager-btn {
-  display: grid;
-  place-items: center;
-  width: 24px;
-  height: 24px;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm);
-  background: var(--color-surface);
-  color: var(--color-text-secondary);
-  font-size: 13px;
-  cursor: pointer;
-}
-
-.rv-rail-pager-btn:hover:not(:disabled) {
-  background: var(--color-ink-soft);
-  color: var(--color-text);
-}
-
-.rv-rail-pager-btn:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
-}
-
-.rv-rail-pos {
-  min-width: 54px;
-  text-align: center;
-  font-size: 11.5px;
-  color: var(--color-text-secondary);
-}
-
-.rv-rail-hint {
-  font-size: 10.5px;
-  color: var(--color-text-tertiary);
 }
 
 @media (max-width: 1280px) {
   .rv-side {
     --rv-side-w: 260px;
-  }
-
-  .rv-rail,
-  .rv-rail-toggle {
-    display: none;
-  }
-
-  .rv-segbar {
-    display: flex;
   }
 }
 
