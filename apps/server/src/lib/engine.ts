@@ -4,11 +4,13 @@ import { join, resolve } from "node:path";
 import { and, desc, eq, inArray, notInArray } from "drizzle-orm";
 import {
   BUILTIN_PROMPT_BLOCKS,
+  DERIVED_ITEM_KEY_PREFIX,
   MULTI_PRODUCT_SEPARATOR,
   NODE_TYPE_LABELS,
   fileSegmentKey,
   isSourceOutputNeeded,
   maybeDrillToMarkdown,
+  originSourceNodeId,
   passesPick,
   renderFileNameTemplate,
   sanitizeFileName,
@@ -162,6 +164,8 @@ interface InputSourceMeta {
 
 interface ResolvedInput {
   sourceNodeId: string;
+  /** 该产物回溯到的来源卡节点 id；挑选表按这个 id 记键（见 originSourceNodeId）。 */
+  originNodeId: string;
   output: NodeOutput;
   position: number;
   /** 该输入对应的原始素材来源；用于溯源配方在 JSON 中写明“哪条视频/文稿/哪一段”。 */
@@ -190,7 +194,7 @@ function nodePick(node: GraphNode): NodePick | undefined {
  * 下游再按标识挑选时就选不中了（标识会变成产出方的 position）。
  */
 function derivedItemKey(sourceNodeId: string, position: number, explicit?: string): string {
-  return explicit ?? `pos:${sourceNodeId}:${position}`;
+  return explicit ?? `${DERIVED_ITEM_KEY_PREFIX}${sourceNodeId}:${position}`;
 }
 
 /**
@@ -779,7 +783,9 @@ export class RunEngine {
         const outputs: NodeOutput[] = [];
         for (const inputRow of inputRows) {
           const text = inputRow.resultText ?? inputRow.text;
-          if (text) outputs.push({ kind, text, size: text.length });
+          // 段身份要一起还原：不带它，下游只剩下「本节点的第 i 个产物」这种派生标识，
+          // 挂在更下游的挑选就会一段都匹配不上（3 个 bvid 键全落空 → 全部被排除 → 直接报错）。
+          if (text) outputs.push({ kind, text, size: text.length, itemKey: inputRow.itemKey ?? undefined });
         }
         if (outputs.length > 0) return outputs;
       }
@@ -943,24 +949,31 @@ export class RunEngine {
       const sourceMeta = this.describeInputSource(active, source.id);
       for (const output of outputs) {
         const position = items.length;
+        // 产物自带身份时沿用；否则按「来源+产出顺序」派生。转写/AI 等节点逐个素材产出，
+        // 这个顺序与来源 items 的顺序一致，因此派生标识在下游可稳定匹配。
+        const itemKey = derivedItemKey(source.id, position, output.itemKey);
         items.push({
           sourceNodeId: source.id,
+          // 挑选表的键是来源卡 id，不是直接上游：`B站链接 → 转写 → 挑选` 里挑选的上游是转写，
+          // 按转写 id 查表必然落空，而落空的语义是「全选」——挑选会静默失效。
+          originNodeId: originSourceNodeId(active.graph, source.id, itemKey) ?? source.id,
           output,
           position,
           sourceMeta,
-          // 产物自带身份时沿用；否则按「来源+产出顺序」派生。转写/AI 等节点逐个素材产出，
-          // 这个顺序与来源 items 的顺序一致，因此派生标识在下游可稳定匹配。
-          itemKey: derivedItemKey(source.id, position, output.itemKey),
+          itemKey,
         });
       }
     }
 
     // 素材挑选：未选中的素材不进入本节点，其下游因拿不到数据而一并跳过。
+    // 优先按来源卡 id 查（界面写入的口径）；该来源在挑选表里没有条目时退回直接上游 id，
+    // 好让「来源卡直连挑选」这类旧工程的配置照旧生效。
     const pick = nodePick(node);
     const kept: ResolvedInput[] = [];
     const excluded: { sourceNodeId: string; itemKey: string }[] = [];
     for (const item of items) {
-      if (passesPick(pick, item.sourceNodeId, item.itemKey)) kept.push(item);
+      const pickNodeId = pick?.[item.originNodeId] !== undefined ? item.originNodeId : item.sourceNodeId;
+      if (passesPick(pick, pickNodeId, item.itemKey)) kept.push(item);
       else excluded.push({ sourceNodeId: item.sourceNodeId, itemKey: item.itemKey ?? "" });
     }
     if (excluded.length > 0) {

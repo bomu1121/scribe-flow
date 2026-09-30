@@ -28,6 +28,16 @@ export function segmentKey(originNodeId: string, item: { bvid?: string; page?: n
   return `node:${originNodeId}`;
 }
 
+/**
+ * 「派生兜底标识」的前缀，形如 `pos:<产出节点 id>:<第几个>`。
+ *
+ * 产物自己没带段标识时（例如压平后的整篇文档、按入边顺序派生的兜底身份）由引擎补上。
+ * 它表示「第 N 个产物」，**不代表素材身份**——界面永远不写这种键，所以拿它去查挑选表
+ * 必然落空。识别来源时必须把它和「没有标识」同等对待：否则会把一个说不清身份的产物
+ * 错当成某张来源卡的素材，轻则误排除、重则整节点报「没有选中任何素材」。
+ */
+export const DERIVED_ITEM_KEY_PREFIX = "pos:";
+
 /** 本地文件素材的段标识：优先 fileId，其次文件名，最后路径。 */
 export function fileSegmentKey(item: { fileId?: string; fileName?: string; filePath?: string }): string {
   const id = String(item.fileId ?? "").trim();
@@ -210,6 +220,46 @@ export function collectSegmentOptions(graph: WorkflowGraph, targetNodeId: string
   // 单张卡承载 8 个素材是有余地的；一张卡一个素材（单链接卡 / 单个文件）则挑与不挑等价。
   const options = cards.flat();
   return options.length > 1 ? options : [];
+}
+
+/**
+ * 一个产物在挑选表里的键：把它的产出方回溯到**承载它的来源卡**。
+ *
+ * 挑选表（`NodeBase.data.pick`）的键是来源卡节点 id——界面用 `collectSegmentOptions` 的
+ * `originNodeId` 写进去，运行时必须按**同一个口径**读回来。产物的直接上游常常不是来源卡
+ * （`B站链接 → 转写 → 校对 → 挑选` 里，挑选的直接上游是校对），所以要沿「一个输入一份结果」
+ * 的链路往回走到来源卡，否则查表落空的语义恰好是「全选」，挑选会静默失效。
+ *
+ * 走到多张来源卡时用段标识消歧：`node:<卡 id>` 自带来源，`bvid:` / `file:` 与该卡自己的
+ * 段标识逐字比对。仍无法唯一确定就返回 `undefined`——调用方按「不可筛选」处理，
+ * 宁可漏筛（全放行）也不能错筛（把别的卡的素材误排除）。
+ */
+export function originSourceNodeId(graph: WorkflowGraph, nodeId: string, itemKey?: string): string | undefined {
+  // 派生兜底标识不代表素材身份（见 DERIVED_ITEM_KEY_PREFIX），不参与来源回溯。
+  if (!itemKey || itemKey.startsWith(DERIVED_ITEM_KEY_PREFIX)) return undefined;
+  const candidates: GraphNode[] = [];
+  const visited = new Set<string>();
+  const visit = (id: string) => {
+    if (visited.has(id)) return;
+    visited.add(id);
+    const node = graph.nodes.find((n) => n.id === id);
+    if (!node) return;
+    if (node.type.startsWith("source.")) {
+      candidates.push(node);
+      return;
+    }
+    // 压平型模块（合并 / 输出 / 章节切分 / 导图）的身份到此为止：它的产物与上游素材没有
+    // 一一对应关系，继续往回追会把「整篇文档」当成某一段素材。
+    if (!PER_INPUT_NODE_TYPES.has(node.type)) return;
+    for (const edge of graph.edges) {
+      if (edge.target === id) visit(edge.source);
+    }
+  };
+  visit(nodeId);
+  if (candidates.length === 0) return undefined;
+  if (candidates.length === 1) return candidates[0].id;
+  const matched = candidates.filter((card) => sourceCardSegments(card).some((option) => option.key === itemKey));
+  return matched.length === 1 ? matched[0].id : undefined;
 }
 
 /** 按来源节点分组，供选择器渲染分组标题。 */

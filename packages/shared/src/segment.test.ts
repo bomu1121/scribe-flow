@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { parseGraph } from "./schema";
-import { collectSegmentOptions, groupSegmentOptions, stalePickKeys } from "./segment";
+import { collectSegmentOptions, groupSegmentOptions, originSourceNodeId, stalePickKeys } from "./segment";
 
 /**
  * 素材挑选的「连接时识别」。
@@ -112,5 +112,76 @@ describe("挑选节点：识别上游集合", () => {
     expect(options.map((o) => o.key)).toContain("bvid:BV1x1:1");
     expect(stalePickKeys(options, { n_src: ["bvid:BV1x1:1"] })).toEqual([]);
     expect(stalePickKeys(options, { n_src: ["bvid:BV1x1:1", "bvid:ZZZ:9"] })).toEqual(["bvid:ZZZ:9"]);
+  });
+});
+
+/**
+ * 挑选表（`NodeBase.data.pick`）的键是**来源卡** id——界面按 `originNodeId` 写，
+ * 引擎必须按同一口径读回来。两边一旦对不上，查表落空的语义恰好是「全选」，
+ * 挑选会静默失效（节点上还写着「放行 3/3 段」）。
+ */
+describe("挑选表查表键：回溯到来源卡", () => {
+  /** 一条「挑选接在中间模块之后」的链路：B 站多选卡 → 转写 → 校对 → 挑选。 */
+  const chainedBili = () =>
+    graphOf(
+      [biliCard(8), asrNode, refineNode, pickNode],
+      [
+        edge("e1", "n_src", "n_asr", "audio", "audio"),
+        edge("e2", "n_asr", "n_refine", "transcript", "transcript"),
+        edge("e3", "n_refine", "n_pick", "transcript", "in"),
+      ],
+    );
+
+  const twoTextCards = () =>
+    graphOf(
+      [
+        { id: "n_a", type: "source.text" as const, position: { x: 0, y: 0 }, data: { label: "甲稿", text: "甲" } },
+        { id: "n_b", type: "source.text" as const, position: { x: 0, y: 100 }, data: { label: "乙稿", text: "乙" } },
+        refineNode,
+        pickNode,
+      ],
+      [
+        edge("e1", "n_a", "n_refine", "transcript", "transcript"),
+        edge("e2", "n_b", "n_refine", "transcript", "transcript"),
+        edge("e3", "n_refine", "n_pick", "transcript", "in"),
+      ],
+    );
+
+  it("对拍：界面列出的每个素材，回溯出的来源卡都等于它的 originNodeId", () => {
+    const cases: { graph: ReturnType<typeof graphOf>; producer: string }[] = [
+      { graph: chainedBili(), producer: "n_refine" },
+      { graph: twoTextCards(), producer: "n_refine" },
+      { graph: graphOf([biliCard(8), pickNode], [edge("e1", "n_src", "n_pick", "audio", "in")]), producer: "n_src" },
+    ];
+    for (const { graph, producer } of cases) {
+      const options = collectSegmentOptions(graph, "n_pick");
+      expect(options.length).toBeGreaterThan(1);
+      for (const option of options) {
+        expect(originSourceNodeId(graph, producer, option.key)).toBe(option.originNodeId);
+      }
+    }
+  });
+
+  it("多张来源卡时按段标识消歧；说不清来源的一律不回溯", () => {
+    const graph = twoTextCards();
+    expect(originSourceNodeId(graph, "n_refine", "node:n_a")).toBe("n_a");
+    expect(originSourceNodeId(graph, "n_refine", "node:n_b")).toBe("n_b");
+    // 派生的位置键不带出处（界面从不写这种键），不能猜成某一张卡
+    expect(originSourceNodeId(graph, "n_refine", "pos:n_refine:0")).toBeUndefined();
+    expect(originSourceNodeId(graph, "n_refine", undefined)).toBeUndefined();
+    // 图上没有的段标识也不猜
+    expect(originSourceNodeId(graph, "n_refine", "bvid:BVNotFound:1")).toBeUndefined();
+  });
+
+  it("压平型模块（合并）不穿透：它的产物没有素材身份", () => {
+    const graph = graphOf(
+      [biliCard(8), asrNode, mergeNode, pickNode],
+      [
+        edge("e1", "n_src", "n_asr", "audio", "audio"),
+        edge("e2", "n_asr", "n_merge", "transcript", "noteBlock"),
+        edge("e3", "n_merge", "n_pick", "noteDoc", "in"),
+      ],
+    );
+    expect(originSourceNodeId(graph, "n_merge", "bvid:BV1x1:1")).toBeUndefined();
   });
 });

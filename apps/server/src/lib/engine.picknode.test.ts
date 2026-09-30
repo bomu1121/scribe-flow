@@ -219,3 +219,179 @@ describe("素材挑选节点：连接时就识别上游集合", () => {
     expect(options.map((o) => o.title)).toEqual(["第一份", "第二份", "第三份"]);
   });
 });
+
+/** 「一个输入一份结果」的中间模块（文本工具）；用来把挑选与来源卡隔开一层。 */
+const textToolNode = (id: string, x = 320) => ({
+  id,
+  type: "process.text" as const,
+  position: { x, y: 120 },
+  data: { label: "文本工具", operation: "cleanup" },
+});
+
+/** 同上，但换成 AI 校对——与用户真实工程的形状一致（`B站链接 → 转写 → … → 挑选`）。 */
+const refineNode = (id: string, x = 320) => ({
+  id,
+  type: "process.refine" as const,
+  position: { x, y: 120 },
+  data: { label: "AI 校对" },
+});
+
+/**
+ * 挑选与来源卡之间隔着中间模块——这是真实工程的形状（用户的工程是「B站合集 → 转写 → 挑选 → 校对」）。
+ *
+ * 界面写进挑选表的是**来源卡**的 id（`collectSegmentOptions` 的 `originNodeId`），
+ * 而运行时的直接上游是中间模块；引擎若按直接上游查表就会落空，
+ * 落空的语义恰好是「全选」——挑选静默失效，节点上还写着「放行 3/3 段」。
+ */
+describe("素材挑选节点：与来源卡之间隔着中间模块", () => {
+  const chainedNodes = () => [
+    ...textSources(),
+    textToolNode("n_text"),
+    pickNode("n_pick", undefined, 620),
+    mergeNode("n_merge", undefined, 900),
+    outputNode(),
+  ];
+  const chainedEdges = [
+    { id: "e1", source: "n_1", target: "n_text", sourceHandle: "transcript", targetHandle: "in" },
+    { id: "e2", source: "n_2", target: "n_text", sourceHandle: "transcript", targetHandle: "in" },
+    { id: "e3", source: "n_3", target: "n_text", sourceHandle: "transcript", targetHandle: "in" },
+    { id: "et", source: "n_text", target: "n_pick", sourceHandle: "out", targetHandle: "in" },
+    { id: "ep", source: "n_pick", target: "n_merge", sourceHandle: "out", targetHandle: "noteBlock" },
+    { id: "eo", source: "n_merge", target: "n_out", sourceHandle: "noteDoc", targetHandle: "noteDoc" },
+  ];
+
+  it("按来源卡查表：取消第二张卡后只放行 2/3 段", async () => {
+    const nodes = chainedNodes();
+    // 挑选表由界面那套 API 生成（PickCard.vue 的 writePick 就是这么写）：键是来源卡 id，
+    // 被取消的那张卡写空数组。这里顺带断言「界面看到的是三张来源卡，不是文本工具」。
+    const options = collectSegmentOptions(
+      parseGraph({ schemaVersion: 1, nodes, edges: chainedEdges, viewport: { x: 0, y: 0, zoom: 1 } }),
+      "n_pick",
+    );
+    expect(options.map((o) => o.originNodeId)).toEqual(["n_1", "n_2", "n_3"]);
+    nodes[4].data = { label: "素材挑选", pick: { n_2: [] } };
+
+    const { db, runId } = await runGraph(nodes, chainedEdges, "picknode-chained");
+
+    const pickRow = db.select().from(runNodeResults).where(and(eq(runNodeResults.runId, runId), eq(runNodeResults.nodeId, "n_pick"))).get();
+    expect(pickRow?.status).toBe("done");
+    expect(pickRow?.summary).toContain("放行 2/3 段");
+
+    const mergeInputs = db
+      .select()
+      .from(runNodeInputs)
+      .where(and(eq(runNodeInputs.runId, runId), eq(runNodeInputs.targetNodeId, "n_merge")))
+      .all();
+    expect(mergeInputs.map((r) => r.itemKey)).toEqual(["node:n_1", "node:n_3"]);
+
+    // 被排除的那段：记的是**直接上游**（文本工具），而挑选表的键是来源卡 n_2——两者不同正是这个用例的意义
+    const excluded = db
+      .select()
+      .from(runNodeInputs)
+      .where(and(eq(runNodeInputs.runId, runId), eq(runNodeInputs.targetNodeId, "n_pick"), eq(runNodeInputs.excluded, true)))
+      .all();
+    expect(excluded.map((r) => [r.sourceNodeId, r.itemKey])).toEqual([["n_text", "node:n_2"]]);
+  });
+
+  it("从挑选节点单独重跑（scope=fromNode）：上游产物的段身份仍能还原，挑选照旧生效", async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), "scribe-picknode-from-"));
+    tmpDirs.push(dataDir);
+    const db = createDatabase(dataDir);
+    const projectId = "prj_picknode_from";
+    const now = Date.now();
+
+    const graph = parseGraph({
+      schemaVersion: 1,
+      nodes: [
+        ...textSources(),
+        refineNode("n_refine"),
+        // 与真实工程同形：挑选表按来源卡记键（未配置的来源=全选，所以「都不要」写空数组）
+        pickNode("n_pick", { n_1: ["node:n_1"], n_2: [], n_3: ["node:n_3"] }, 620),
+        mergeNode("n_merge", undefined, 900),
+        outputNode(),
+      ],
+      edges: [
+        { id: "e1", source: "n_1", target: "n_refine", sourceHandle: "transcript", targetHandle: "transcript" },
+        { id: "e2", source: "n_2", target: "n_refine", sourceHandle: "transcript", targetHandle: "transcript" },
+        { id: "e3", source: "n_3", target: "n_refine", sourceHandle: "transcript", targetHandle: "transcript" },
+        { id: "et", source: "n_refine", target: "n_pick", sourceHandle: "transcript", targetHandle: "in" },
+        { id: "ep", source: "n_pick", target: "n_merge", sourceHandle: "out", targetHandle: "noteBlock" },
+        { id: "eo", source: "n_merge", target: "n_out", sourceHandle: "noteDoc", targetHandle: "noteDoc" },
+      ],
+      viewport: { x: 0, y: 0, zoom: 1 },
+    });
+    db.insert(projects)
+      .values({ id: projectId, name: "挑选 fromNode", description: "", graphJson: JSON.stringify(graph), schemaVersion: 1, createdAt: now, updatedAt: now })
+      .run();
+
+    // 造一次「上次跑过」的记录：fromNode 路径就是从这两张表还原上游产物，
+    // 所以这里种的是转写/校对那类节点真实会落下的行（不真跑，省掉 AI 调用）。
+    const seededRun = "run_picknode_seed";
+    db.insert(runs).values({ id: seededRun, projectId, status: "success", scope: "all", createdAt: now, finishedAt: now + 1, graphJson: JSON.stringify(graph) }).run();
+    db.insert(runNodeResults)
+      .values({
+        id: "res_seed_refine",
+        runId: seededRun,
+        nodeId: "n_refine",
+        nodeType: "process.refine",
+        status: "done",
+        outputKind: "text",
+        outputText: "一：第一份校对稿。\n\n二：第二份校对稿。\n\n三：第三份校对稿。",
+        updatedAt: now,
+      })
+      .run();
+    ["node:n_1", "node:n_2", "node:n_3"].forEach((itemKey, position) => {
+      db.insert(runNodeInputs)
+        .values({
+          id: `in_seed_${position}`,
+          runId: seededRun,
+          targetNodeId: "n_refine",
+          sourceNodeId: `n_${position + 1}`,
+          kind: "text",
+          text: `第 ${position + 1} 份转写稿`,
+          resultText: `第 ${position + 1} 份校对稿`,
+          size: 8,
+          position,
+          itemKey,
+          excluded: false,
+          createdAt: now,
+        })
+        .run();
+    });
+
+    const runFrom = "run_picknode_from";
+    db.insert(runs).values({ id: runFrom, projectId, status: "running", scope: "fromNode", nodeId: "n_pick", createdAt: now + 2, graphJson: JSON.stringify(graph) }).run();
+    new RunEngine(db, dataDir).start(runFrom, projectId, graph, "fromNode", "n_pick");
+    const deadline = Date.now() + 8000;
+    let runRow = db.select().from(runs).where(eq(runs.id, runFrom)).get();
+    while ((!runRow || runRow.status === "running") && Date.now() < deadline) {
+      await sleep(25);
+      runRow = db.select().from(runs).where(eq(runs.id, runFrom)).get();
+    }
+    expect(runRow?.status).not.toBe("running");
+
+    // 上游三份被还原成三份（而不是一份合并产物），且带着原始段标识——
+    // 少了段标识，挑选表里那两个键一个都匹配不上，会退化成「全选」把三份全放行。
+    const pickedInputs = db
+      .select()
+      .from(runNodeInputs)
+      .where(and(eq(runNodeInputs.runId, runFrom), eq(runNodeInputs.targetNodeId, "n_pick")))
+      .orderBy(runNodeInputs.position)
+      .all();
+    expect(pickedInputs.map((r) => r.itemKey).sort()).toEqual(["node:n_1", "node:n_2", "node:n_3"]);
+    // 放行顺序与来源顺序一致；被排除那段记在案（位置排在放行的之后）
+    expect(pickedInputs.filter((r) => !r.excluded).map((r) => r.itemKey)).toEqual(["node:n_1", "node:n_3"]);
+    expect(pickedInputs.filter((r) => r.excluded).map((r) => r.itemKey)).toEqual(["node:n_2"]);
+
+    const pickRow = db.select().from(runNodeResults).where(and(eq(runNodeResults.runId, runFrom), eq(runNodeResults.nodeId, "n_pick"))).get();
+    expect(pickRow?.status).toBe("done");
+    expect(pickRow?.summary).toContain("放行 2/3 段");
+
+    const mergeInputs = db
+      .select()
+      .from(runNodeInputs)
+      .where(and(eq(runNodeInputs.runId, runFrom), eq(runNodeInputs.targetNodeId, "n_merge")))
+      .all();
+    expect(mergeInputs.map((r) => r.itemKey)).toEqual(["node:n_1", "node:n_3"]);
+  });
+});
