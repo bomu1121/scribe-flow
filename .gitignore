@@ -46,3 +46,6 @@ playwright-report/
 .delivery-evidence-*/
 .tmp-evidence-*/
 .tmp-v4-verify/
+
+# ZCode 会话产物（计划模式留下的 plan-sess_*.md），不是仓库内容
+.zcode/
