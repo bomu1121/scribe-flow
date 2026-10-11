@@ -11,6 +11,20 @@ const emit = defineEmits<{ update: [value: { folder?: string }] }>();
 const store = useSettingsStore();
 const folders = computed(() => store.obsidianFolders);
 const refreshing = ref(false);
+/**
+ * 设置页里的默认保存目录：节点留空时实际写到这儿。
+ *
+ * 占位文案必须说的是这件事——早先写死成「默认 00-Inbox」，而 00-Inbox 只是产品默认值，
+ * 用户改了设置之后卡片仍显示这个名字，看起来像"它擅自放了一个我库里没有的目录"。
+ */
+const defaultFolder = computed(() => store.settings?.obsidian.folder || "");
+
+const hint = computed(() => {
+  if (folders.value.length === 0) return "目录列表为空，请先到设置页读取 Obsidian 目录";
+  return defaultFolder.value
+    ? `留空即跟随设置里的默认目录（${defaultFolder.value}）；标题 / 来源 / 作者 / 链接自动从上游获取`
+    : "留空即跟随设置里的默认目录；标题 / 来源 / 作者 / 链接自动从上游获取";
+});
 
 async function refreshFolders() {
   refreshing.value = true;
@@ -29,10 +43,7 @@ function onFolderChange(value: string | number | undefined) {
 <template>
   <div class="sf-obsidian-card">
     <div class="sf-node-field">
-      <NodeFieldLabel
-        label="保存目录"
-        :hint="folders.length === 0 ? '目录列表为空，请先到设置页读取 Obsidian 目录' : '标题 / 来源 / 作者 / 链接自动从上游获取，无需填写'"
-      />
+      <NodeFieldLabel label="保存目录" :hint="hint" />
       <div class="sf-obsidian-folder-row">
         <ElSelect
           :model-value="folder || ''"
@@ -41,7 +52,7 @@ function onFolderChange(value: string | number | undefined) {
           clearable
           filterable
           :loading="refreshing"
-          placeholder="选择目录（默认 00-Inbox）"
+          :placeholder="defaultFolder ? `跟随设置：${defaultFolder}` : '跟随设置'"
           @update:model-value="onFolderChange"
         >
           <ElOption v-for="dir in folders" :key="dir" :label="dir" :value="dir" />

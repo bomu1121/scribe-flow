@@ -213,6 +213,24 @@ describe("buildTemplateGraph", () => {
     expect(branches.map((node) => node.data.label)).toEqual(["AI 加工 A", "AI 加工 B"]);
   });
 
+  /**
+   * 模板不许把「保存目录」写进节点数据。
+   *
+   * 节点上写了就以节点为准（引擎优先 `data.folder`），于是设置页的「笔记写进库里哪个文件夹」被永久压住：
+   * 用户改成 `未分类` 也仍写进 `00-Inbox`（一个他库里可能并不存在的目录），而卡片上显示着这个名字，
+   * 看起来像"它擅自放了一个目录"。留空才是跟随设置。
+   */
+  it("Obsidian 链路不写死保存目录（写了会压住设置页的默认目录）", () => {
+    for (const { template, source, graph } of allGraphs()) {
+      for (const node of graph.nodes) {
+        if (node.type !== "process.obsidian") continue;
+        expect(node.data.folder ?? "").toBe("");
+        expect(template.id).toBe("template.obsidian");
+        expect(source).toBeTruthy();
+      }
+    }
+  });
+
   it("多路对照不在末端合并：差异由结果页的「对照」标签页承担", () => {
     const graph = buildTemplateGraph("template.multi-branch", { source: "text" })!;
     expect(graph.nodes.some((node) => node.type === "process.merge")).toBe(false);

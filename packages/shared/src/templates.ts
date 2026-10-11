@@ -106,7 +106,10 @@ export const WORKFLOW_TEMPLATES: WorkflowTemplate[] = [
     stages: [
       { key: "refine", type: "process.refine" },
       { key: "prompt", type: "process.prompt" },
-      { key: "obsidian", type: "process.obsidian", data: { folder: "00-Inbox" } },
+      // 不写 data.folder：节点上写了就以节点为准，会把设置页的「笔记写进库里哪个文件夹」永久压住
+      // ——用户改了设置却仍写进 00-Inbox（一个他库里可能并不存在的目录），卡片上还显示着这个名字。
+      // 留空＝跟随设置，卡片会把实际会用的目录显示出来。
+      { key: "obsidian", type: "process.obsidian" },
     ],
   },
   {
