@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { and, desc, eq, inArray, notInArray } from "drizzle-orm";
 import {
@@ -7,14 +7,19 @@ import {
   DERIVED_ITEM_KEY_PREFIX,
   MULTI_PRODUCT_SEPARATOR,
   NODE_TYPE_LABELS,
+  UP_TAXONOMY_GROUP,
+  addTagToTaxonomy,
   fileSegmentKey,
   isSourceOutputNeeded,
   maybeDrillToMarkdown,
+  normalizeTagSegment,
   originSourceNodeId,
   passesPick,
   renderFileNameTemplate,
   sanitizeFileName,
   segmentKey,
+  tagPathGroup,
+  topicManagedTags,
   type GraphNode,
   type NodeOutput,
   type NodePick,
@@ -27,6 +32,7 @@ import {
   type RunNodeResult,
   type RunScope,
   type RunStatus,
+  type TagTaxonomy,
   type TraceExternalSource,
   type WorkflowGraph,
 } from "@scribe-flow/shared";
@@ -46,9 +52,11 @@ import {
   gcMediaAssets,
 } from "./media-store";
 import { ensureRemoteDirectory, scanRemoteMarkdown, writeRemoteFile, type NutstoreConfig } from "./nutstore";
+import { parseNoteTags, parseYamlFieldList, upsertFrontMatterTags, walkMarkdownFiles } from "./note-markdown";
 import { appendAllOutput, assertStepOutput, parseJsonLoose, readSearchQueries, renderStepSystem } from "./recipe";
-import { getAiConfig, getAsrConfig, getGeneralSettings, getNutstoreConfig, getSearchConfig, getSettings } from "./settings";
+import { getAiConfig, getAsrConfig, getGeneralSettings, getNutstoreConfig, getSearchConfig, getSettings, updateSettings } from "./settings";
 import { sleep } from "./sleep";
+import { rememberNoteTags, tagNoteContent } from "./tagging";
 import { resolveArtifactPath, resolveOutputRoot, toStoredArtifactPath } from "./storage";
 import {
   enrichTraceReportWithExternalChecks,
@@ -284,85 +292,41 @@ function escapePathName(value: string): string {
   return sanitizeFileName(value);
 }
 
-/** 解析 AI 返回的 JSON 标签数组；失败返回空数组。 */
-function parseTagArray(raw: string): string[] {
-  const start = raw.indexOf("[");
-  const end = raw.lastIndexOf("]");
-  if (start < 0 || end <= start) return [];
-  try {
-    const parsed = JSON.parse(raw.slice(start, end + 1));
-    if (Array.isArray(parsed)) {
-      return parsed
-        .map((item) => String(item).trim())
-        .filter((tag) => tag && !/\s/.test(tag));
-    }
-  } catch {
-    // 忽略解析失败，由调用方降级
-  }
-  return [];
-}
-
-/** 解析 AI 返回的人物/事件/时期 JSON。 */
-function parseHistoryEntities(raw: string): { persons: string[]; events: string[]; periods: string[] } {
-  const empty = { persons: [], events: [], periods: [] };
+/**
+ * 解析 AI 返回的「属性名 → 值数组」JSON。
+ * 键来自用户配置的抽取字段，所以这里按传入的字段名逐个取，不写死任何一类。
+ */
+function parseExtractEntities(raw: string, fields: string[]): Record<string, string[]> {
+  const empty: Record<string, string[]> = {};
   const start = raw.indexOf("{");
   const end = raw.lastIndexOf("}");
   if (start < 0 || end <= start) return empty;
   try {
     const parsed = JSON.parse(raw.slice(start, end + 1)) as Record<string, unknown>;
-    const toList = (value: unknown) =>
-      Array.isArray(value)
+    const out: Record<string, string[]> = {};
+    for (const field of fields) {
+      const value = parsed[field];
+      const list = Array.isArray(value)
         ? value
             .map((item) => String(item).trim())
-            .filter((item) => item)
+            .filter(Boolean)
             .slice(0, 5)
         : typeof value === "string" && value.trim()
           ? [value.trim()]
           : [];
-    return {
-      persons: toList(parsed["人物"]),
-      events: toList(parsed["事件"]),
-      periods: toList(parsed["时期"]),
-    };
+      out[field] = list;
+    }
+    return out;
   } catch {
     return empty;
   }
 }
 
-/** 解析 YAML frontmatter 中的列表字段（如人物/事件）。 */
-function parseYamlFieldList(content: string, field: string): string[] {
-  const match = content.match(/^---\n([\s\S]*?)\n---/);
-  if (!match) return [];
-  const yaml = match[1];
-  const lines = yaml.split(/\r?\n/);
-  const result: string[] = [];
-  let inField = false;
-  for (const line of lines) {
-    const trimmed = line.trim();
-    if (new RegExp(`^${field}:\\s*$`, "i").test(trimmed)) {
-      inField = true;
-      continue;
-    }
-    if (inField) {
-      if (/^[^-\s]/.test(trimmed)) {
-        inField = false;
-      } else {
-        const item = trimmed.match(/^-\s*(.+)$/);
-        if (item) result.push(item[1].trim().replace(/^["']|["']$/g, ""));
-        continue;
-      }
-    }
-    const inline = trimmed.match(new RegExp(`^${field}:\\s*(.+)$`, "i"));
-    if (inline) {
-      result.push(
-        ...inline[1]
-          .split(/[,，\s]+/)
-          .map((value) => value.trim().replace(/^["']|["']$/g, ""))
-          .filter(Boolean),
-      );
-    }
-  }
-  return result.filter((value) => value);
+/** 从笔记正文里按字段名取出已写好的属性值（关联笔记的比较依据）。 */
+function pickFields(content: string, fields: string[]): Record<string, string[]> {
+  const out: Record<string, string[]> = {};
+  for (const field of fields) out[field] = parseYamlFieldList(content, field);
+  return out;
 }
 
 function previewFor(output: NodeOutput): string | undefined {
@@ -1748,12 +1712,51 @@ export class RunEngine {
         const noteType = source === "文本" ? "学习笔记" : source === "B站" || source === "本地文件" ? "视频笔记" : "笔记";
         const explicitTags = String(data.tags ?? "")
           .split(/[,，\s]+/)
-          .map((tag) => tag.trim())
+          .map((tag) => normalizeTagSegment(tag))
           .filter(Boolean);
-        // 简单历史知识库模式：AI 只提取人物/事件/时期，不做精细标签。
-        const entities = settings.obsidian.autoTagEnabled
-          ? await this.extractHistoryEntities(text, signal)
-          : { persons: [], events: [], periods: [] };
+        // 额外属性：按设置里配置的字段名抽（默认是历史笔记那三个，可换成任意字段；留空则不抽）。
+        const extractFields = settings.obsidian.extractFields;
+        const entities =
+          settings.obsidian.autoTagEnabled && extractFields.length > 0
+            ? await this.extractEntities(text, extractFields, signal)
+            : {};
+        const body = text.startsWith("# ") ? text : `# ${title}\n\n${text}`;
+        const fileName = `${escapePathName(title)}.md`;
+        const outPath = nutstoreMode ? `${remoteDir}/${fileName}` : join(dir, fileName);
+
+        // 标签两个来源：UP 主来自来源元数据（确定性，不花模型钱），话题标签由词库 + AI 判定。
+        const upName = normalizeTagSegment(author);
+        let taxonomy = settings.obsidian.tagTaxonomy;
+        let topicTags: string[] = [];
+        if (settings.obsidian.autoTagEnabled && Object.keys(taxonomy).length > 0) {
+          const aiConfig = getAiConfig(this.db);
+          if (aiConfig.apiKey) {
+            const tagged = await tagNoteContent(aiConfig, taxonomy, {
+              key: "note",
+              fileName: title,
+              content: body,
+              allowNewTags: settings.obsidian.allowNewTags,
+              signal,
+            });
+            topicTags = tagged.topicTags;
+            if (tagged.error) await this.log(active, node.id, "info", `话题标签判定失败，本次只写 UP 标签：${tagged.error}`);
+            if (tagged.learnedTags.length > 0) {
+              taxonomy = await this.learnTags(tagged.learnedTags);
+              // 词库是聚合口径，被 AI 补了叶子必须留痕——悄悄变化比变化本身更糟。
+              await this.log(active, node.id, "info", `词库新增标签：${tagged.learnedTags.join("、")}`);
+            }
+          }
+        }
+        // 入库是"再写一次"：目标文件已存在时，保留人手补过的标签，别把人的劳动抹掉。
+        const existing = nutstoreMode ? "" : await readFile(outPath, "utf8").catch(() => "");
+        const ours = new Set(topicManagedTags(taxonomy).map((tag) => tag.toLowerCase()));
+        const humanTags = existing
+          ? parseNoteTags(existing).frontmatter.filter(
+              (tag) => !ours.has(tag.toLowerCase()) && tagPathGroup(tag) !== UP_TAXONOMY_GROUP,
+            )
+          : [];
+        const tags = [...new Set([...explicitTags, ...humanTags, ...(upName ? [`${UP_TAXONOMY_GROUP}/${upName}`] : []), ...topicTags])];
+
         const frontmatterLines = [
           "---",
           `标题: ${title}`,
@@ -1762,31 +1765,28 @@ export class RunEngine {
           author ? `作者: ${author}` : undefined,
           url ? `原始链接: ${url}` : undefined,
           `创建日期: ${created}`,
-          ...(explicitTags.length > 0 ? ["tags:", ...explicitTags.map((tag) => `  - ${tag}`)] : []),
-          ...(entities.persons.length > 0 ? ["人物:", ...entities.persons.map((person) => `  - ${person}`)] : []),
-          ...(entities.events.length > 0 ? ["事件:", ...entities.events.map((event) => `  - ${event}`)] : []),
-          ...(entities.periods.length > 0 ? [`时期: ${entities.periods[0]}`] : []),
+          // 抽取出来的属性一律写成列表：字段名是用户配的，不该再为"某个字段是单值"写特例。
+          ...extractFields.flatMap((field) =>
+            (entities[field] ?? []).length > 0 ? [`${field}:`, ...(entities[field] ?? []).map((value) => `  - ${value}`)] : [],
+          ),
           "---",
         ].filter((line): line is string => typeof line === "string");
-        const body = text.startsWith("# ") ? text : `# ${title}\n\n${text}`;
         let markdown = `${frontmatterLines.join("\n")}\n\n${body}\n`;
-        const fileName = `${escapePathName(title)}.md`;
-        const outPath = nutstoreMode ? `${remoteDir}/${fileName}` : join(dir, fileName);
+        // 走 upsert 而不是在这里手拼 YAML：它带写完自校验，也负责必要的引号。
+        if (tags.length > 0) {
+          const applied = upsertFrontMatterTags(markdown, tags);
+          if (applied.ok) markdown = applied.content;
+          else await this.log(active, node.id, "info", `标签未写入 front matter（${applied.reason}），笔记仍已保存`);
+        }
 
-        // 自动关联：只按人物/事件/时期判断相关性，找到后写入 [[链接]]。
+        // 自动关联：按设置里配置的抽取字段在库里找相关笔记（字段留空时没有可比的东西，自然不关联）。
         let relatedNames: string[] = [];
-        if (settings.obsidian.autoLinkEnabled && settings.obsidian.autoLinkMax > 0) {
-          let existingNotes: Array<{ absPath: string; name: string; persons: string[]; events: string[]; periods: string[]; content: string }>;
-          if (nutstoreMode && config) {
-            existingNotes = await this.scanRemoteObsidianNotes(config, remoteObsidianRoot);
-          } else {
-            existingNotes = await this.scanObsidianNotes(vaultPath, outPath);
-          }
-          relatedNames = this.findRelatedNoteNames(
-            { persons: entities.persons, events: entities.events, periods: entities.periods, title },
-            existingNotes,
-            settings.obsidian.autoLinkMax || 5,
-          );
+        if (settings.obsidian.autoLinkEnabled && settings.obsidian.autoLinkMax > 0 && extractFields.length > 0) {
+          const existingNotes =
+            nutstoreMode && config
+              ? await this.scanRemoteObsidianNotes(config, remoteObsidianRoot, extractFields)
+              : await this.scanObsidianNotes(vaultPath, outPath, extractFields);
+          relatedNames = this.findRelatedNoteNames({ fields: entities, title }, existingNotes, settings.obsidian.autoLinkMax || 5);
           if (relatedNames.length > 0) {
             markdown += `\n## 相关笔记\n${relatedNames.map((name) => `- [[${name}]]`).join("\n")}\n`;
           }
@@ -1798,11 +1798,16 @@ export class RunEngine {
         } else {
           await writeFile(outPath, markdown, "utf8");
           await this.log(active, node.id, "info", `已写入 Obsidian：${outPath}`);
+          // 记下判定指纹，全库重打标时才能跳过这一篇（没有它会把刚入库的笔记重判一遍）。
+          if (vaultPath && tags.length > 0) {
+            rememberNoteTags(this.db, vaultPath, [...segments, fileName].join("/"), markdown, tags, taxonomy);
+          }
         }
         const linkText = relatedNames.length > 0 ? ` · 关联 ${relatedNames.length} 篇` : "";
+        const tagText = tags.length > 0 ? ` · ${tags.length} 个标签` : "";
         return {
           outputs: [{ kind: "noteDoc", text: markdown, size: markdown.length, path: outPath }],
-          summary: `已保存到 ${nutstoreMode ? "坚果云 Obsidian" : "Obsidian"}：${folder}/${fileName}${linkText}`,
+          summary: `已保存到 ${nutstoreMode ? "坚果云 Obsidian" : "Obsidian"}：${folder}/${fileName}${tagText}${linkText}`,
         };
       }
 
@@ -1811,162 +1816,105 @@ export class RunEngine {
     }
   }
 
-  /** AI 从正文提取历史笔记需要的人物/事件/时期。 */
-  private async extractHistoryEntities(text: string, signal?: AbortSignal): Promise<{ persons: string[]; events: string[]; periods: string[] }> {
-    const empty = { persons: [], events: [], periods: [] };
+  /**
+   * AI 从正文抽取用户配置的那些属性。
+   *
+   * 字段名完全来自设置（默认是历史笔记那三个，可换成任意词），提示词里不写死任何一类——
+   * 早先这里写死了「人物/事件/时期」，是因为当时只有历史笔记；门类放开后那段就成了别的门类的噪音。
+   */
+  private async extractEntities(text: string, fields: string[], signal?: AbortSignal): Promise<Record<string, string[]>> {
     try {
       const aiConfig = getAiConfig(this.db);
-      if (!aiConfig.apiKey) return empty;
-      const system = `你是历史笔记结构化助手。请从下面的笔记中提取三类信息：
-1. 人物：提到的重要历史人物，使用规范姓名；
-2. 事件：涉及的历史事件/事迹；
-3. 时期：历史时期或朝代。
+      if (!aiConfig.apiKey) return {};
+      const list = fields.map((field, index) => `${index + 1}. ${field}`).join("\n");
+      const shape = `{${fields.map((field) => `"${field}":["..."]`).join(",")}}`;
+      const system = `你是笔记结构化助手。请从下面的笔记中，按给定字段名各抽取最多 5 条：
+${list}
 
-只输出 JSON，不要解释，格式：{"人物":["..."],"事件":["..."],"时期":["..."]}。每个字段最多 5 个。`;
+只输出 JSON，不要解释，格式：${shape}。某个字段抽不到就给它空数组。`;
       const result = await chatCompletion({ ...aiConfig }, system, text.slice(0, 12000), signal);
-      return parseHistoryEntities(result);
+      return parseExtractEntities(result, fields);
     } catch {
-      return empty;
+      return {};
     }
   }
 
-  /** 根据受控词表 + AI 生成 Obsidian 标签。 */
-  private async buildObsidianTags(input: { text: string; source: string; noteType: string; explicitTags: string[]; signal?: AbortSignal }): Promise<string[]> {
-    const obsidian = getSettings(this.db).obsidian;
-    const min = Math.max(1, obsidian.tagMinCount || 5);
-    const max = Math.max(min, obsidian.tagMaxCount || 10);
-    const taxonomyTags = Object.values(obsidian.tagTaxonomy ?? {})
-      .flat()
-      .map((tag) => tag.trim())
-      .filter(Boolean);
-    const taxonomyLower = new Set(taxonomyTags.map((tag) => tag.toLowerCase()));
-    const tags = [...input.explicitTags.map((tag) => tag.trim()).filter(Boolean)];
-
-    const addTag = (tag: string) => {
-      const value = tag.trim();
-      if (value && !tags.some((existing) => existing.toLowerCase() === value.toLowerCase())) tags.push(value);
-    };
-
-    if (input.source === "B站") addTag("B站");
-    else if (input.source === "文本") addTag("文稿");
-    else if (input.source === "本地文件") addTag("本地视频");
-    else if (input.source) addTag(input.source);
-
-    if (input.noteType === "学习笔记") addTag("学习笔记");
-    else if (input.noteType === "视频笔记") addTag("视频笔记");
-    addTag("未整理");
-
-    if (obsidian.autoTagEnabled && tags.length < min) {
-      try {
-        const aiConfig = getAiConfig(this.db);
-        if (aiConfig.apiKey) {
-          const system = `你是知识库打标助手。请根据下面的笔记内容，为 Obsidian 笔记生成标签。
-要求：
-1. 优先从“可用标签”中选择；
-2. 如果确实需要，最多新增 3 个不在可用标签中的标签；
-3. 最终输出 ${min}-${max} 个标签；
-4. 不要解释，只输出 JSON 数组；
-5. 标签不能包含空格。
-
-可用标签：
-${JSON.stringify(taxonomyTags)}`;
-          const result = await chatCompletion({ ...aiConfig }, system, input.text.slice(0, 12000), input.signal);
-          const generated = parseTagArray(result);
-          let addedNew = 0;
-          for (const tag of generated) {
-            if (tags.length >= max) break;
-            if (taxonomyLower.has(tag.toLowerCase())) {
-              addTag(tag);
-            } else if (addedNew < 3) {
-              addTag(tag);
-              addedNew += 1;
-            }
-          }
-        }
-      } catch {
-        // AI 打标失败不阻塞保存
+  /**
+   * 把 AI 补出来的新叶子标签并回词库，返回更新后的词库。
+   *
+   * 一级结构由人在设置页定，模型只能补二级——`tagging.ts` 已经过滤过一遍，这里再守着"分组必须已存在"。
+   * 落库是必须的：不落库，下次全库重打标会把它当成"已从词库删掉的标签"从笔记里清掉。
+   */
+  private async learnTags(tags: string[]): Promise<TagTaxonomy> {
+    let taxonomy = getSettings(this.db).obsidian.tagTaxonomy;
+    const accepted: string[] = [];
+    for (const tag of tags) {
+      const group = tagPathGroup(tag);
+      const leaf = tag.split("/").slice(1).join("/");
+      if (!group || !leaf || !Object.prototype.hasOwnProperty.call(taxonomy, group)) continue;
+      const next = addTagToTaxonomy(taxonomy, group, leaf);
+      if (next !== taxonomy) {
+        taxonomy = next;
+        accepted.push(tag);
       }
     }
-
-    if (tags.length === 0) addTag("笔记");
-    return tags.slice(0, max);
+    if (accepted.length > 0) updateSettings(this.db, { obsidian: { tagTaxonomy: taxonomy } });
+    return taxonomy;
   }
 
   /** 扫描 Obsidian 库内已有笔记（跳过模板/附件/隐藏目录）。 */
   private async scanObsidianNotes(
     vaultPath: string,
     excludePath: string,
-  ): Promise<Array<{ absPath: string; name: string; persons: string[]; events: string[]; periods: string[]; content: string }>> {
-    const results: Array<{ absPath: string; name: string; persons: string[]; events: string[]; periods: string[]; content: string }> = [];
-    const walk = async (dir: string, rel: string) => {
-      const entries = await readdir(dir, { withFileTypes: true }).catch(() => []);
-      for (const entry of entries) {
-        if (entry.name.startsWith(".")) continue;
-        if (entry.isDirectory()) {
-          if (entry.name === "90-Templates" || entry.name === "Attachments") continue;
-          await walk(join(dir, entry.name), rel ? `${rel}/${entry.name}` : entry.name);
-        } else if (entry.isFile() && entry.name.endsWith(".md")) {
-          const abs = join(dir, entry.name);
-          if (resolve(abs) === resolve(excludePath)) continue;
-          const content = await readFile(abs, "utf8").catch(() => "");
-          if (!content.trim()) continue;
-          results.push({
-            absPath: abs,
-            name: entry.name.replace(/\.md$/, ""),
-            persons: parseYamlFieldList(content, "人物"),
-            events: parseYamlFieldList(content, "事件"),
-            periods: parseYamlFieldList(content, "时期"),
-            content,
-          });
-        }
-      }
-    };
-    await walk(vaultPath, "");
-    return results;
+    fields: string[],
+  ): Promise<Array<{ absPath: string; name: string; fields: Record<string, string[]>; content: string }>> {
+    // 遍历本身与打标共用 `walkMarkdownFiles`，免得两处各自漏掉同一个目录。
+    const files = await walkMarkdownFiles(vaultPath, { excludePaths: [excludePath] });
+    return files.map((file) => ({
+      absPath: file.absPath,
+      name: file.fileName,
+      fields: pickFields(file.content, fields),
+      content: file.content,
+    }));
   }
 
   /** 扫描坚果云远程 Obsidian 库内已有笔记（内容只用于相关性判断）。 */
   private async scanRemoteObsidianNotes(
     config: NutstoreConfig,
     remoteRoot: string,
-  ): Promise<Array<{ absPath: string; name: string; persons: string[]; events: string[]; periods: string[]; content: string }>> {
+    fields: string[],
+  ): Promise<Array<{ absPath: string; name: string; fields: Record<string, string[]>; content: string }>> {
     const notes = await scanRemoteMarkdown(config, remoteRoot, { maxFiles: 2000, maxFileBytes: 1024 * 1024 });
     return notes.map((note) => ({
       absPath: note.path,
       name: note.name.replace(/\.md$/, ""),
-      persons: parseYamlFieldList(note.content, "人物"),
-      events: parseYamlFieldList(note.content, "事件"),
-      periods: parseYamlFieldList(note.content, "时期"),
+      fields: pickFields(note.content, fields),
       content: note.content,
     }));
   }
 
-  /** 根据当前笔记的人物/事件/时期，找出库内相关笔记名。 */
+  /**
+   * 按配置的字段名，找出库内相关笔记名。
+   *
+   * 打分对**每个字段一视同仁**：早先给「人物/事件」权重 4、「时期」权重 3，那是历史笔记的领域知识，
+   * 换到别的门类只会造成偏差。命中同一字段的值是最强信号，出现在标题/正文里依次递减。
+   */
   private findRelatedNoteNames(
-    current: { persons: string[]; events: string[]; periods: string[]; title: string },
-    notes: Array<{ name: string; persons: string[]; events: string[]; periods: string[]; content: string }>,
+    current: { fields: Record<string, string[]>; title: string },
+    notes: Array<{ name: string; fields: Record<string, string[]>; content: string }>,
     max: number,
   ): string[] {
     const scored: Array<{ name: string; score: number }> = [];
     for (const note of notes) {
       let score = 0;
-      for (const person of current.persons) {
-        const lower = person.toLowerCase();
-        if (note.persons.some((candidate) => candidate.toLowerCase() === lower)) score += 4;
-        if (note.name.toLowerCase().includes(lower)) score += 2;
-        if (note.content.toLowerCase().includes(lower)) score += 1;
-      }
-      for (const event of current.events) {
-        const lower = event.toLowerCase();
-        if (note.events.some((candidate) => candidate.toLowerCase() === lower)) score += 4;
-        if (note.name.toLowerCase().includes(lower)) score += 2;
-        if (note.content.toLowerCase().includes(lower)) score += 1;
-      }
-      for (const period of current.periods) {
-        const lower = period.toLowerCase();
-        if (note.periods.some((candidate) => candidate.toLowerCase() === lower)) score += 3;
-        if (note.name.toLowerCase().includes(lower)) score += 1;
-        if (note.content.toLowerCase().includes(lower)) score += 1;
+      for (const [field, values] of Object.entries(current.fields)) {
+        for (const value of values) {
+          if (!value) continue;
+          const lower = value.toLowerCase();
+          if ((note.fields[field] ?? []).some((candidate) => candidate.toLowerCase() === lower)) score += 4;
+          if (note.name.toLowerCase().includes(lower)) score += 2;
+          if (note.content.toLowerCase().includes(lower)) score += 1;
+        }
       }
       if (current.title && note.name.toLowerCase().includes(current.title.toLowerCase())) score += 2;
       // 至少达到强相关阈值才认为相关，避免误连。

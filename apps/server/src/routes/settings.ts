@@ -1,17 +1,19 @@
 import { spawn } from "node:child_process";
-import { mkdir, mkdtemp, readdir, rm } from "node:fs/promises";
+import { constants } from "node:fs";
+import { access, mkdir, mkdtemp, readdir, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { isAbsolute, join, resolve } from "node:path";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 import { Hono } from "hono";
 import type { Context } from "hono";
 import { z } from "zod";
-import { GENERAL_LIMITS, NODE_TYPE_ORDER, PRUNE_TARGETS } from "@scribe-flow/shared";
-import type { NodeType } from "@scribe-flow/shared";
+import { GENERAL_LIMITS, MAX_EXTRACT_FIELDS, NODE_TYPE_ORDER, PRUNE_TARGETS } from "@scribe-flow/shared";
+import type { NodeType, ObsidianVaultCheck } from "@scribe-flow/shared";
 import type { AppDatabase } from "../db/client";
 import { chatCompletion, listAiModels, transcribeAudio } from "../lib/ai";
 import { getAiConfig, getAsrConfig, getNutstoreConfig, getSearchConfig, getSettings, updateSettings, withResolvedPaths } from "../lib/settings";
 import { badRequest } from "../lib/bad-request";
 import { runFfmpeg } from "../lib/media";
+import { countMarkdownFiles } from "../lib/note-markdown";
 import { listRemoteDirectories } from "../lib/nutstore";
 import { buildDataOverview, fileManagerCommand, isInsideDataDir, pruneStorage, resolveOutputRoot, type StorageDeps } from "../lib/storage";
 import { collectSources } from "../lib/traceExternal";
@@ -64,6 +66,8 @@ const updateSchema = z.object({
       folder: z.string().trim().max(200).optional(),
       tagTaxonomy: z.record(z.string(), z.array(z.string())).optional(),
       autoTagEnabled: z.boolean().optional(),
+      allowNewTags: z.boolean().optional(),
+      extractFields: z.array(z.string()).max(MAX_EXTRACT_FIELDS).optional(),
       tagMinCount: z.number().int().min(1).max(20).optional(),
       tagMaxCount: z.number().int().min(1).max(30).optional(),
       autoLinkEnabled: z.boolean().optional(),
@@ -76,7 +80,7 @@ const updateSchema = z.object({
       serverUrl: z.string().trim().max(500).optional(),
       account: z.string().trim().max(300).optional(),
       password: z.string().max(500).optional(),
-      remoteRoot: z.string().trim().max(500).optional(),
+      backupDir: z.string().trim().max(500).optional(),
       obsidianRemotePath: z.string().trim().max(500).optional(),
       obsidianMode: z.boolean().optional(),
     })
@@ -275,6 +279,58 @@ export function settingsApi(db: AppDatabase, engine: RunEngine, dataDir: string)
     await walk(vaultPath, "", 0);
     items.sort((a, b) => a.localeCompare(b, "zh-CN"));
     return c.json({ items });
+  });
+
+  /**
+   * 检查 Obsidian 库：这一页最重要的反馈。
+   *
+   * 「填了一个路径」和「笔记真能写进去」是两件事，之前只有前者可见——路径写错要等到运行到该节点才失败。
+   * 这里纯本地检查（数文件、看权限），不联网不花钱，界面据此给出结论卡而不是让用户自己猜。
+   */
+  api.get("/obsidian/check", async (c) => {
+    const settings = getSettings(db);
+    const input = (c.req.query("vaultPath") ?? settings.obsidian.vaultPath).trim();
+    const folder = (c.req.query("folder") ?? settings.obsidian.folder).trim();
+    const segments = folder.split(/[\\/]+/).filter((segment) => segment && segment !== ".");
+    const resolved = input ? resolve(input) : "";
+    const targetDir = resolved ? join(resolved, ...segments) : "";
+
+    const base: ObsidianVaultCheck = {
+      input,
+      resolved,
+      exists: false,
+      isDirectory: false,
+      noteCount: 0,
+      noteCountCapped: false,
+      targetDir,
+      writable: false,
+      syncFolder: /nutstore|坚果云/i.test(resolved) ? "nutstore" : "unknown",
+      insideDataDir: resolved ? isInsideDataDir(dataDir, resolved) : false,
+    };
+
+    if (!input) {
+      return c.json({ ...base, problem: "还没填库文件夹。运行到「Obsidian 笔记」节点时会失败——先填这一项。" });
+    }
+    const info = await stat(resolved).catch(() => null);
+    if (!info?.isDirectory()) {
+      return c.json({ ...base, problem: `找不到这个文件夹：${resolved}。检查一下路径，或者先在资源管理器里把它建出来。` });
+    }
+    // 目标文件夹可能还不存在（节点会 mkdir），所以用「最近的存在祖先」判可写。
+    let ancestor = targetDir;
+    let ancestorInfo = await stat(ancestor).catch(() => null);
+    while (!ancestorInfo && ancestor !== dirname(ancestor)) {
+      ancestor = dirname(ancestor);
+      ancestorInfo = await stat(ancestor).catch(() => null);
+    }
+    const writable = ancestorInfo ? await access(ancestor, constants.W_OK).then(() => true, () => false) : false;
+    const { count, capped } = await countMarkdownFiles(resolved);
+
+    const problem = !writable
+      ? `这个文件夹目前不可写（${ancestor}），笔记会写不进去。`
+      : base.insideDataDir
+        ? "库放在了应用自己的数据目录里。清理数据时容易连带受影响，建议挪到别处。"
+        : undefined;
+    return c.json({ ...base, exists: true, isDirectory: true, noteCount: count, noteCountCapped: capped, writable, problem } satisfies ObsidianVaultCheck);
   });
 
   api.get("/data", async (c) => c.json(await buildDataOverview(storageDeps())));

@@ -7,12 +7,36 @@ export interface NutstoreSettings {
   account: string;
   /** 是否已保存应用密码；密钥只存在服务端，读取接口不返回明文。 */
   hasPassword: boolean;
-  /** 本应用数据备份/同步根目录，例如 /ScribeFlow */
-  remoteRoot: string;
-  /** Obsidian 笔记云端目录，例如 /ScribeFlow/Obsidian */
+  /**
+   * 备份目录。**填本地文件夹就走坚果云客户端同步（不需要账号密码），填云端路径就走 WebDAV 直连**——
+   * 由路径形状自动判定，没有"模式开关"。这是刻意的：少一个开关就少一处能配错的地方。
+   */
+  backupDir: string;
+  /** Obsidian 笔记云端目录，例如 /ScribeFlow/Obsidian（只有「Obsidian 直连云端」会用到）。 */
   obsidianRemotePath: string;
   /** 是否把 process.obsidian 节点的读写目标切到坚果云 WebDAV。 */
   obsidianMode: boolean;
+}
+
+/** 备份落点：本地文件夹 或 云端 WebDAV 路径。 */
+export type BackupLocation = "local" | "remote";
+
+/**
+ * 判一个备份目录是本地还是云端。
+ *
+ * 依据是**形状**：Windows 盘符绝对路径（`D:\...`）或 UNC（`\\server\share`）算本地，
+ * 其余（含 `/我的坚果云/...` 这种以 `/` 开头的云端路径）算云端。
+ */
+export function backupLocationOf(dir: string): BackupLocation {
+  const value = dir.trim();
+  return /^[A-Za-z]:[\\/]/.test(value) || value.startsWith("\\\\") ? "local" : "remote";
+}
+
+/** 拼备份子路径：本地用 `\`、云端用 `/`，免得在 Windows 上混写。 */
+export function joinBackupPath(base: string, child: string): string {
+  const trimmed = base.trim().replace(/[\\/]+$/, "");
+  if (!trimmed) return child;
+  return backupLocationOf(base) === "local" ? `${trimmed}\\${child}` : `${trimmed}/${child}`;
 }
 
 export type NutstoreEntryType = "folder" | "file";
@@ -75,17 +99,20 @@ export interface NutstoreBackupItem {
 }
 
 export interface NutstoreBackupResult {
-  remotePath: string;
+  /** 这次备份落在哪：本地文件夹路径，或云端逻辑路径。 */
+  dir: string;
+  /** 落点是本地还是云端。 */
+  location: BackupLocation;
   files: string[];
   uploadedAt: number;
 }
 
 export interface NutstoreRestoreResult {
   ok: true;
-  /** 恢复前自动备份当前库时生成的云端目录（后悔药）。 */
+  /** 恢复前自动备份当前库时生成的目录（后悔药）。 */
   autoBackupPath: string;
-  /** 被恢复的云端备份目录。 */
-  remotePath: string;
+  /** 被恢复的备份目录。 */
+  restoredPath: string;
   restoredAt: number;
   /** 参与整库热替换的数据表。 */
   tables: string[];

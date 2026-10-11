@@ -1,15 +1,16 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from "vue";
 import { useRoute } from "vue-router";
-import { ElInput, ElInputNumber, ElMessageBox, ElOption, ElSelect, ElSwitch } from "element-plus";
-import { Cloud, Download, ExternalLink, FolderOpen, Mic, PlugZap, RefreshCw, RotateCcw, Save, Trash2, Upload } from "lucide-vue-next";
+import { ElCollapse, ElCollapseItem, ElInput, ElInputNumber, ElMessageBox, ElOption, ElSelect, ElSwitch } from "element-plus";
+import { CircleAlert, CircleCheck, Cloud, Download, ExternalLink, FolderOpen, ListChecks, Loader2, Mic, PlugZap, RefreshCw, RotateCcw, Save, Trash2, Upload } from "lucide-vue-next";
 import { toast } from "@/lib/toast";
 import { ensureNotifyPermission } from "@/utils/run-alert";
 import { formatBytes } from "@/lib/bytes";
 import ModelSelect from "../components/ModelSelect.vue";
 import PromptBlockDiffDialog from "../components/PromptBlockDiffDialog.vue";
-import type { AiProvider, AsrEngine, DataOverview, NodeType, PruneItem, PruneOutcome, PruneTarget, PromptBlock, SearchProvider } from "@scribe-flow/shared";
-import { FILE_NAME_TOKENS, GENERAL_LIMITS, NODE_TYPE_LABELS, NODE_TYPE_ORDER, TRACE_SOURCE_AUTHORITY_LABELS, renderFileNameTemplate } from "@scribe-flow/shared";
+import StableText from "../components/StableText.vue";
+import type { AiProvider, AsrEngine, DataOverview, NodeType, ObsidianVaultCheck, PruneItem, PruneOutcome, PruneTarget, PromptBlock, RetagJobView, RetagPlanView, SearchProvider, TagTaxonomy } from "@scribe-flow/shared";
+import { EXTRACT_FIELD_PRESETS, FILE_NAME_TOKENS, GENERAL_LIMITS, NODE_TYPE_LABELS, NODE_TYPE_ORDER, TRACE_SOURCE_AUTHORITY_LABELS, UP_TAXONOMY_GROUP, addTagToTaxonomy, backupLocationOf, normalizeTagSegment, renderFileNameTemplate, writableTags } from "@scribe-flow/shared";
 import { api } from "@/lib/api";
 import { copyText } from "@/lib/clipboard";
 import { useSettingsStore } from "@/stores/settings";
@@ -58,8 +59,9 @@ const form = reactive({
   hiddenNodes: [] as NodeType[],
   obsidianVaultPath: "",
   obsidianFolder: "00-Inbox",
-  obsidianTagTaxonomyText: "{}",
   obsidianAutoTagEnabled: true,
+  obsidianAllowNewTags: false,
+  obsidianExtractFields: [] as string[],
   obsidianTagMinCount: 5,
   obsidianTagMaxCount: 10,
   obsidianAutoLinkEnabled: true,
@@ -68,7 +70,7 @@ const form = reactive({
   nutstoreServerUrl: "https://dav.jianguoyun.com/dav/",
   nutstoreAccount: "",
   nutstorePassword: "",
-  nutstoreRemoteRoot: "/我的坚果云/ScribeFlow",
+  nutstoreBackupDir: "/我的坚果云/ScribeFlow/backups",
   nutstoreObsidianRemotePath: "/我的坚果云/ScribeFlow/Obsidian",
   nutstoreObsidianMode: false,
 });
@@ -142,6 +144,279 @@ const nutstoreResult = ref<{
   errors?: Array<{ path: string; message: string }>;
   items?: string[];
 } | null>(null);
+
+/* ---------------------------------------------------- 标签词库与全库重打标 */
+
+const taxonomy = ref<TagTaxonomy>({});
+/** 每个一级下面「新增二级」输入框的草稿，键是一级名。 */
+const newChildDraft = reactive<Record<string, string>>({});
+const newGroupName = ref("");
+const retagDeep = ref(false);
+const retagPlanning = ref(false);
+const retagRunning = ref(false);
+const retagPlan = ref<RetagPlanView | null>(null);
+const retagJob = ref<RetagJobView | null>(null);
+
+/** 词库或库路径有未保存的改动：服务端读的是已保存的设置，没保存就重打标会用错口径。 */
+const obsidianDirty = computed(() => {
+  const saved = store.settings?.obsidian;
+  if (!saved) return false;
+  return (
+    form.obsidianVaultPath.trim() !== saved.vaultPath.trim() ||
+    JSON.stringify(taxonomy.value) !== JSON.stringify(saved.tagTaxonomy ?? {})
+  );
+});
+
+function addGroup(): void {
+  const name = normalizeTagSegment(newGroupName.value);
+  if (!name) {
+    toast.error("一级名称不能为空，也不能是纯数字（Obsidian 不把纯数字当标签）");
+    return;
+  }
+  if (Object.prototype.hasOwnProperty.call(taxonomy.value, name)) {
+    toast.error(`一级「${name}」已存在`);
+    return;
+  }
+  taxonomy.value = { ...taxonomy.value, [name]: [] };
+  newGroupName.value = "";
+}
+
+function removeGroup(group: string): void {
+  const next = { ...taxonomy.value };
+  delete next[group];
+  taxonomy.value = next;
+}
+
+function addChild(group: string): void {
+  const name = normalizeTagSegment(newChildDraft[group] ?? "");
+  if (!name) {
+    toast.error("二级名称不能为空，也不能是纯数字");
+    return;
+  }
+  const next = addTagToTaxonomy(taxonomy.value, group, name);
+  if (next === taxonomy.value) {
+    toast.error(`「${group}/${name}」已存在`);
+    return;
+  }
+  taxonomy.value = next;
+  newChildDraft[group] = "";
+}
+
+function removeChild(group: string, child: string): void {
+  taxonomy.value = { ...taxonomy.value, [group]: (taxonomy.value[group] ?? []).filter((item) => item !== child) };
+}
+
+/**
+ * 复制一个标签在 Obsidian 里的搜索串。
+ *
+ * 「合集」不在这个工具里做：Obsidian 的标签搜索本身就是合集（零配置、不用装插件）。
+ * 用户卡在"我该在 Obsidian 里输什么"，所以把这条串直接给到手上。
+ */
+async function copyTagSearch(group: string, child?: string): Promise<void> {
+  const tag = child ? `${group}/${child}` : group;
+  await copyText(`tag:#${tag}`, `已复制：tag:#${tag}`);
+}
+
+async function refreshRetagPlan(): Promise<void> {
+  retagPlanning.value = true;
+  retagPlan.value = null;
+  try {
+    retagPlan.value = await api.post<RetagPlanView>("/api/taxonomy/plan", { deep: retagDeep.value });
+  } catch (err) {
+    toast.error(err instanceof Error ? err.message : "预估失败");
+  } finally {
+    retagPlanning.value = false;
+  }
+}
+
+async function startRetag(): Promise<void> {
+  retagRunning.value = true;
+  retagJob.value = null;
+  try {
+    const created = await api.post<{ jobId: string }>("/api/taxonomy/run", { deep: retagDeep.value });
+    await pollRetag(created.jobId);
+  } catch (err) {
+    toast.error(err instanceof Error ? err.message : "重打标启动失败");
+    retagRunning.value = false;
+  }
+}
+
+/**
+ * 轮询重打标进度。仓库里 SSE 只服务「运行」，这个任务照 media 的 jobId 轮询形态做，
+ * 不为了它新开一条事件通道。
+ */
+async function pollRetag(jobId: string): Promise<void> {
+  const deadline = Date.now() + 30 * 60_000;
+  let failure: string | null = null;
+  while (Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 1200));
+    let job: RetagJobView;
+    try {
+      job = await api.get<RetagJobView>(`/api/taxonomy/jobs/${jobId}`);
+    } catch (err) {
+      failure = err instanceof Error ? err.message : "查询重打标进度失败";
+      break;
+    }
+    retagJob.value = job;
+    if (job.status === "running") continue;
+    retagRunning.value = false;
+    if (job.status === "done") {
+      toast.success(job.message);
+      // 词库可能被 AI 补了叶子，得把服务端的最新状态取回来。
+      await store.load();
+      fillForm();
+      await refreshRetagPlan();
+    } else {
+      toast.error(job.error ?? "重打标失败");
+    }
+    return;
+  }
+  retagRunning.value = false;
+  if (failure) toast.error(failure);
+  else if (retagJob.value?.status === "running") toast.error("重打标超过 30 分钟仍未结束，请稍后重试");
+}
+
+/* ---------------------------------------- 库自检与笔记预览（「存到哪」的反馈） */
+
+const vaultCheck = ref<ObsidianVaultCheck | null>(null);
+const vaultChecking = ref(false);
+
+/** 备份目录填本地还是云端，由输入形状自动判定（没有模式开关）。 */
+const nutstoreBackupLocation = computed(() => backupLocationOf(form.nutstoreBackupDir));
+
+/** 当前抽取字段是否就是某个预设——预设 chip 高亮它，用户一眼知道"我现在用的是哪套"。 */
+function presetActive(preset: { fields: string[] }): boolean {
+  return JSON.stringify(preset.fields) === JSON.stringify(form.obsidianExtractFields);
+}
+/** 「高级」折叠区的展开状态。 */
+const nutstoreAdvancedOpen = ref<string[]>([]);
+
+/**
+ * 折叠区标题上的状态摘要。
+ *
+ * 收起不等于"藏起来"——有功能就得有入口，所以标题自己说明里面配了什么、什么开着。
+ * 这样即使折叠着，用户也能一眼看出"直连是不是开着"。
+ */
+const nutstoreAdvancedSummary = computed(() => {
+  const bits = [form.nutstoreAccount.trim() ? "账号已配" : "账号未配"];
+  bits.push(store.settings?.nutstore.hasPassword ? "密码已存" : "密码未存");
+  bits.push(form.nutstoreObsidianMode ? "笔记直连已开" : "笔记直连未开");
+  return bits.join(" · ");
+});
+
+/** 转圈只在检查真的慢时才出现：本地检查通常几十毫秒，闪现一下比不显示更烦。 */
+const vaultSpinnerVisible = ref(false);
+let vaultSpinnerTimer: number | undefined;
+/** 连发检查时丢弃过期结果：慢的那个后回来会把新结果盖掉，等于给出错误结论。 */
+let vaultCheckSeq = 0;
+
+/**
+ * 只由"上一次结论"决定，**不看 `vaultChecking`**。
+ *
+ * 早先这里把"正在检查"也算成未知，于是失焦重检时绿色对勾会先消失再出现（实测序列：绿勾 → 空 → 绿勾），
+ * 闪一下。本地检查太快，旧结论在拿到新结论前保持可见才是对的；只有检查真的慢（>180ms）时才用转圈顶替它。
+ */
+const vaultState = computed<"unknown" | "ok" | "bad">(() => {
+  if (!vaultCheck.value) return "unknown";
+  return vaultCheck.value.problem ? "bad" : "ok";
+});
+
+/**
+ * 检查库：纯本地（数文件、看权限），不联网不花钱。
+ *
+ * 刻意**不挂按钮**：这是本地操作、几十毫秒就完，做成"点一下 → 文案变一下 → 结果出现在别处"
+ * 只会让人以为点了没反应。改成输入框自带状态（转圈 / 打勾 / 警告），改路径或离开输入框都自动跑。
+ */
+async function checkVault(): Promise<void> {
+  const seq = ++vaultCheckSeq;
+  vaultChecking.value = true;
+  window.clearTimeout(vaultSpinnerTimer);
+  vaultSpinnerTimer = window.setTimeout(() => {
+    if (vaultChecking.value) vaultSpinnerVisible.value = true;
+  }, 180);
+  try {
+    const query = new URLSearchParams({ vaultPath: form.obsidianVaultPath, folder: form.obsidianFolder });
+    const result = await api.get<ObsidianVaultCheck>(`/api/settings/obsidian/check?${query.toString()}`);
+    if (seq !== vaultCheckSeq) return; // 有更新的检查在跑，这次结果作废
+    vaultCheck.value = result;
+    // 库能用就顺手刷新文件夹列表，省掉一个「刷新目录」按钮。
+    if (!result.problem) void store.loadObsidianFolders();
+  } catch (err) {
+    if (seq !== vaultCheckSeq) return;
+    vaultCheck.value = null;
+    toast.error(err instanceof Error ? err.message : "检查库失败");
+  } finally {
+    if (seq === vaultCheckSeq) {
+      vaultChecking.value = false;
+      vaultSpinnerVisible.value = false;
+      window.clearTimeout(vaultSpinnerTimer);
+    }
+  }
+}
+
+/** 「重新检查」：检查与文件夹列表一起重来（给"我就是想再按一下"的安全感）。 */
+async function recheckVault(): Promise<void> {
+  await Promise.all([checkVault(), store.loadObsidianFolders()]);
+}
+
+const vaultCardTitle = computed(() => {
+  if (vaultState.value === "bad") return "现在还存不进去";
+  if (!vaultCheck.value) return "还没检查这个库文件夹";
+  return `可以保存：笔记会写进「${form.obsidianFolder || "00-Inbox"}」`;
+});
+
+/**
+ * 笔记头部的预览。用当前词库的真实标签拼出来，所以改词库、开关 AI，预览跟着变——
+ * 「保存流程」这件事，看一眼样例比读三行说明有用。
+ */
+const notePreview = computed(() => {
+  // 例子里优先用「话题」那一支：它才是这个功能的主角，来源/类型那些是兜底分类，
+  // 拿它们当示例会让人以为标签就该长这样。
+  const topics = taxonomy.value["话题"] ?? [];
+  const owned = form.obsidianAutoTagEnabled
+    ? topics.length > 0
+      ? topics.slice(0, 2).map((name) => `话题/${name}`)
+      : writableTags(taxonomy.value).slice(0, 2)
+    : [];
+  const tags = [`${UP_TAXONOMY_GROUP}/某某-UP`, ...owned];
+  return [
+    "---",
+    "标题: 〈视频标题〉",
+    "类型: 视频笔记",
+    "来源: B站",
+    "作者: 某某 UP",
+    "原始链接: https://www.bilibili.com/video/BV1xxxxxxxxx",
+    "创建日期: 2026-10-11",
+    // 抽取属性按配置的字段名生成，跟着用户在 ② 里改——预览要复现真实写出的形状。
+    ...(form.obsidianAutoTagEnabled ? form.obsidianExtractFields.slice(0, 3).flatMap((field) => [`${field}:`, "  - 〈示例〉"]) : []),
+    "tags:",
+    ...tags.map((tag) => `  - ${tag}`),
+    "---",
+    "",
+    "# 〈视频标题〉",
+    "",
+    "（AI 整理出来的正文）",
+  ].join("\n");
+});
+
+// 切到这一栏（或直接落在这一栏）就自动检查一次；之后改库路径/子目录也自动重跑，400ms 防抖。
+watch(
+  active,
+  (key) => {
+    if (key === "obsidian") void checkVault();
+  },
+  { immediate: true },
+);
+
+let vaultDebounce: number | undefined;
+watch(
+  () => [form.obsidianVaultPath, form.obsidianFolder],
+  () => {
+    if (active.value !== "obsidian") return;
+    window.clearTimeout(vaultDebounce);
+    vaultDebounce = window.setTimeout(() => void checkVault(), 400);
+  },
+);
 
 const seriesFilter = ref("all");
 const versionFilter = ref("all");
@@ -411,8 +686,10 @@ function fillForm() {
   form.hiddenNodes = [...(store.settings.visibility?.hiddenNodes ?? [])];
   form.obsidianVaultPath = store.settings.obsidian.vaultPath;
   form.obsidianFolder = store.settings.obsidian.folder;
-  form.obsidianTagTaxonomyText = JSON.stringify(store.settings.obsidian.tagTaxonomy ?? {}, null, 2);
   form.obsidianAutoTagEnabled = store.settings.obsidian.autoTagEnabled;
+  form.obsidianAllowNewTags = store.settings.obsidian.allowNewTags;
+  form.obsidianExtractFields = [...store.settings.obsidian.extractFields];
+  taxonomy.value = JSON.parse(JSON.stringify(store.settings.obsidian.tagTaxonomy ?? {})) as TagTaxonomy;
   form.obsidianTagMinCount = store.settings.obsidian.tagMinCount;
   form.obsidianTagMaxCount = store.settings.obsidian.tagMaxCount;
   form.obsidianAutoLinkEnabled = store.settings.obsidian.autoLinkEnabled;
@@ -420,7 +697,9 @@ function fillForm() {
   form.obsidianAutoLinkBidirectional = store.settings.obsidian.autoLinkBidirectional;
   form.nutstoreServerUrl = store.settings.nutstore.serverUrl;
   form.nutstoreAccount = store.settings.nutstore.account;
-  form.nutstoreRemoteRoot = store.settings.nutstore.remoteRoot;
+  form.nutstoreBackupDir = store.settings.nutstore.backupDir;
+  // 直连开着就把高级区展开：正在生效的配置不该被折叠藏起来。
+  nutstoreAdvancedOpen.value = store.settings.nutstore.obsidianMode ? ["advanced"] : [];
   form.nutstoreObsidianRemotePath = store.settings.nutstore.obsidianRemotePath;
   form.nutstoreObsidianMode = store.settings.nutstore.obsidianMode;
   form.aiKey = store.aiKeyDraft || "";
@@ -478,13 +757,6 @@ function switchAsr(engine: AsrEngine) {
 }
 
 async function saveAll() {
-  let tagTaxonomy: Record<string, string[]>;
-  try {
-    tagTaxonomy = JSON.parse(form.obsidianTagTaxonomyText || "{}") as Record<string, string[]>;
-  } catch {
-    toast.error("标签词表不是合法 JSON，请检查格式");
-    return;
-  }
   try {
     if (form.aiProvider === "deepseek") await refreshAiModels();
     await store.save({
@@ -504,8 +776,10 @@ async function saveAll() {
       obsidian: {
         vaultPath: form.obsidianVaultPath,
         folder: form.obsidianFolder,
-        tagTaxonomy,
+        tagTaxonomy: taxonomy.value,
         autoTagEnabled: form.obsidianAutoTagEnabled,
+        allowNewTags: form.obsidianAllowNewTags,
+        extractFields: form.obsidianExtractFields,
         tagMinCount: form.obsidianTagMinCount,
         tagMaxCount: form.obsidianTagMaxCount,
         autoLinkEnabled: form.obsidianAutoLinkEnabled,
@@ -516,7 +790,7 @@ async function saveAll() {
         serverUrl: form.nutstoreServerUrl,
         account: form.nutstoreAccount,
         password: form.nutstorePassword || undefined,
-        remoteRoot: form.nutstoreRemoteRoot,
+        backupDir: form.nutstoreBackupDir,
         obsidianRemotePath: form.nutstoreObsidianRemotePath,
         obsidianMode: form.nutstoreObsidianMode,
       },
@@ -710,8 +984,9 @@ async function backupToNutstore() {
   try {
     const result = await store.backupNutstore();
     nutstoreBackups.value = await store.listNutstoreBackups();
-    nutstoreResult.value = { action: "备份到坚果云", detail: `备份完成：${result.remotePath}`, items: result.files };
-    toast.success(`已备份到坚果云：${result.remotePath}`);
+    const where = result.location === "local" ? "本地文件夹" : "坚果云云端";
+    nutstoreResult.value = { action: `备份到${where}`, detail: `备份完成：${result.dir}`, items: result.files };
+    toast.success(`已备份到${where}：${result.dir}`);
   } catch (err) {
     nutstoreResult.value = { action: "备份到坚果云", errors: [{ path: "", message: err instanceof Error ? err.message : "备份失败" }] };
     toast.error(err instanceof Error ? err.message : "备份失败");
@@ -725,7 +1000,7 @@ async function loadNutstoreBackups() {
   try {
     nutstoreBackups.value = await store.listNutstoreBackups();
     nutstoreBackupFiles.value = [];
-    nutstoreResult.value = { action: "读取备份列表", detail: `读取到 ${nutstoreBackups.value.length} 个云端备份` };
+    nutstoreResult.value = { action: "读取备份列表", detail: `读取到 ${nutstoreBackups.value.length} 个备份（${nutstoreBackupLocation.value === "local" ? "本地文件夹" : "云端"}）` };
   } catch (err) {
     nutstoreResult.value = { action: "读取备份列表", errors: [{ path: "", message: err instanceof Error ? err.message : "读取备份列表失败" }] };
     toast.error(err instanceof Error ? err.message : "读取备份列表失败");
@@ -754,10 +1029,11 @@ async function loadNutstoreBackupFiles(backupPath: string) {
 }
 
 async function restoreNutstoreBackup(backup: { path: string; name: string }) {
+  const where = nutstoreBackupLocation.value === "local" ? "本地备份文件夹" : "坚果云云端";
   try {
     await ElMessageBox.confirm(
-      `用备份「${backup.name}」覆盖本机全部数据（项目/文件夹/运行记录/设置/提示词块）？恢复前会自动把当前数据再备份一份到坚果云；此操作不可撤销。`,
-      "从坚果云恢复",
+      `用备份「${backup.name}」覆盖本机全部数据（项目/文件夹/运行记录/设置/提示词块）？恢复前会自动把当前数据再备份一份到${where}；此操作不可撤销。`,
+      "从备份恢复",
       {
         confirmButtonText: "恢复",
         cancelButtonText: "取消",
@@ -772,7 +1048,7 @@ async function restoreNutstoreBackup(backup: { path: string; name: string }) {
   try {
     const result = await store.restoreNutstore(backup.path);
     nutstoreResult.value = {
-      action: "从坚果云恢复",
+      action: "从备份恢复",
       detail: `已恢复备份 ${backup.name}（${result.tables.length} 张表）；恢复前自动备份：${result.autoBackupPath}`,
       items: result.tables,
     };
@@ -839,7 +1115,7 @@ async function restoreNutstoreBackup(backup: { path: string; name: string }) {
             <el-input v-model="form.aiKey" type="password" show-password class="sf-field-control" :placeholder="store.settings?.ai.hasKey ? '已保存，留空则不修改' : 'sk-…'" />
           </label>
           <div class="sf-settings-actions">
-            <button type="button" class="sf-btn" :disabled="aiTesting" @click="testAi"><PlugZap :size="14" /><span>{{ aiTesting ? "测试中…" : "测试连接" }}</span></button>
+            <button type="button" class="sf-btn" :disabled="aiTesting" @click="testAi"><PlugZap :size="14" /><StableText :idle="'测试连接'" :busy="'测试中…'" :active="aiTesting" /></button>
             <button type="button" class="sf-btn sf-btn--primary" @click="saveAll"><span>保存设置</span></button>
           </div>
         </div>
@@ -876,7 +1152,7 @@ async function restoreNutstoreBackup(backup: { path: string; name: string }) {
             <el-input v-model="form.asrKey" type="password" show-password class="sf-field-control" :placeholder="store.settings?.asr.hasKey ? '已保存，留空则不修改' : 'API Key'" />
           </label>
           <div class="sf-settings-actions">
-            <button type="button" class="sf-btn" :disabled="asrTesting" @click="testAsr"><PlugZap :size="14" /><span>{{ asrTesting ? "测试中…" : "测试连接" }}</span></button>
+            <button type="button" class="sf-btn" :disabled="asrTesting" @click="testAsr"><PlugZap :size="14" /><StableText :idle="'测试连接'" :busy="'测试中…'" :active="asrTesting" /></button>
             <button type="button" class="sf-btn sf-btn--primary" @click="saveAll"><span>保存设置</span></button>
           </div>
         </div>
@@ -924,7 +1200,7 @@ async function restoreNutstoreBackup(backup: { path: string; name: string }) {
             调大能拿到更多候选，也更慢、更贵。
           </p>
           <div class="sf-settings-actions">
-            <button type="button" class="sf-btn" :disabled="searchTesting" @click="testSearch"><PlugZap :size="14" /><span>{{ searchTesting ? "测试中…" : "测试连接" }}</span></button>
+            <button type="button" class="sf-btn" :disabled="searchTesting" @click="testSearch"><PlugZap :size="14" /><StableText :idle="'测试连接'" :busy="'测试中…'" :active="searchTesting" /></button>
             <button type="button" class="sf-btn sf-btn--primary" @click="saveAll"><span>保存设置</span></button>
           </div>
         </div>
@@ -1040,36 +1316,290 @@ async function restoreNutstoreBackup(backup: { path: string; name: string }) {
 
       <template v-else-if="active === 'obsidian'">
         <h2 class="sf-settings-title">Obsidian</h2>
-        <p class="sf-settings-desc">配置 Obsidian 库、自动打标与自动关联；Obsidian 笔记节点会自动保存到这里。</p>
+        <p class="sf-settings-desc">
+          「Obsidian 笔记」节点把跑出来的笔记写进你的 Obsidian 库。这一页只有三件事要你确认，从上往下看一遍就懂了。
+        </p>
         <div class="sf-settings-form">
+          <div class="sf-settings-divider">① 存到哪</div>
           <label class="sf-field">
-            <span class="sf-field-label">Obsidian 库路径</span>
-            <el-input v-model="form.obsidianVaultPath" class="sf-field-control" placeholder="D:\知识库" />
+            <span class="sf-field-label">Obsidian 库文件夹 <span class="sf-tag-required">必填</span></span>
+            <el-input
+              v-model="form.obsidianVaultPath"
+              class="sf-field-control"
+              placeholder="例如 D:\知识库，或坚果云同步文件夹"
+              @blur="checkVault"
+            >
+              <template #suffix>
+                <Loader2 v-if="vaultSpinnerVisible" :size="14" class="sf-spin" />
+                <CircleCheck v-else-if="vaultState === 'ok'" :size="14" class="sf-state sf-state--ok" />
+                <CircleAlert v-else-if="vaultState === 'bad'" :size="14" class="sf-state sf-state--bad" />
+              </template>
+            </el-input>
+            <p class="sf-field-hint">改完这个路径会<strong>自动检查</strong>（只读本地文件、不联网），不用点按钮。</p>
           </label>
-          <label class="sf-field">
-            <span class="sf-field-label">默认保存目录</span>
-            <el-input v-model="form.obsidianFolder" class="sf-field-control" placeholder="00-Inbox" />
-          </label>
-          <div class="sf-settings-actions">
-            <button type="button" class="sf-btn" @click="store.loadObsidianFolders()"><span>读取目录</span></button>
-          </div>
-          <p class="sf-settings-desc">当前已读取目录：{{ store.obsidianFolders.length }} 个</p>
 
-          <div class="sf-settings-divider">AI 结构化提取</div>
+          <div class="sf-vault" :class="`sf-vault--${vaultState === 'bad' ? 'bad' : vaultState === 'ok' ? 'ok' : 'idle'}`">
+            <div class="sf-vault-head">
+              <component :is="vaultState === 'bad' ? CircleAlert : CircleCheck" :size="15" class="sf-vault-icon" />
+              <span class="sf-vault-title">{{ vaultCardTitle }}</span>
+              <button type="button" class="sf-text-btn sf-vault-recheck" @click="recheckVault">
+                <RefreshCw :size="12" /><span>重新检查</span>
+              </button>
+            </div>
+            <p v-if="vaultCheck?.problem" class="sf-vault-problem">{{ vaultCheck.problem }}</p>
+            <dl v-else-if="vaultCheck" class="sf-vault-rows">
+              <div class="sf-vault-row">
+                <dt>库里笔记</dt>
+                <dd>{{ vaultCheck.noteCount }}{{ vaultCheck.noteCountCapped ? "+" : "" }} 篇</dd>
+              </div>
+              <div class="sf-vault-row">
+                <dt>云端同步</dt>
+                <dd>{{ vaultCheck.syncFolder === "nutstore" ? "坚果云同步文件夹，客户端会自动上云" : "不在同步文件夹，笔记只留在本机" }}</dd>
+              </div>
+            </dl>
+            <p v-else class="sf-vault-problem">填入库文件夹后会自动检查——路径写错的话，到运行该节点时才报错就晚了。</p>
+          </div>
+
+          <label class="sf-field">
+            <span class="sf-field-label">笔记写进库里哪个文件夹</span>
+            <el-select
+              v-model="form.obsidianFolder"
+              class="sf-field-control"
+              filterable
+              allow-create
+              default-first-option
+              placeholder="00-Inbox"
+            >
+              <el-option v-for="dir in store.obsidianFolders" :key="dir" :label="dir" :value="dir" />
+            </el-select>
+            <p class="sf-field-hint">
+              库已读到 {{ store.obsidianFolders.length }} 个文件夹，跟着库路径自动刷新；也可以直接输入一个新名字。
+            </p>
+          </label>
+
+          <div class="sf-settings-divider">② 笔记里有什么</div>
           <label class="sf-field sf-field-row">
-            <span class="sf-field-label">自动提取 人物 / 事件 / 时期</span>
+            <span class="sf-field-label">让 AI 读一遍笔记，补上话题标签与属性</span>
             <el-switch v-model="form.obsidianAutoTagEnabled" />
           </label>
 
-          <div class="sf-settings-divider">自动关联相关笔记</div>
+          <!-- 开关的从属块：缩进 + 左侧竖线，让"这块归上面那个开关管"看得见，而不是靠变灰暗示。 -->
+          <div v-if="form.obsidianAutoTagEnabled" class="sf-subblock">
+            <label class="sf-field">
+              <span class="sf-field-label">抽取哪些属性<em class="sf-field-note">属性名由你定</em></span>
+              <el-select
+                v-model="form.obsidianExtractFields"
+                class="sf-field-control"
+                multiple
+                filterable
+                allow-create
+                default-first-option
+                placeholder="输入属性名后回车，可填多个"
+              >
+                <el-option v-for="field in form.obsidianExtractFields" :key="field" :label="field" :value="field" />
+              </el-select>
+            </label>
+            <div class="sf-preset-row">
+              <span class="sf-settings-hint">换成：</span>
+              <button
+                v-for="preset in EXTRACT_FIELD_PRESETS"
+                :key="preset.id"
+                type="button"
+                class="sf-preset"
+                :class="{ 'sf-preset--active': presetActive(preset) }"
+                @click="form.obsidianExtractFields = [...preset.fields]"
+              >
+                {{ preset.label }}
+              </button>
+            </div>
+            <p class="sf-settings-hint">
+              这些属性会写进笔记头部（列表形式），也是「关联相关笔记」的比较依据；<strong>留空就不抽</strong>。
+            </p>
+          </div>
+          <p v-else class="sf-settings-hint">
+            关闭时：笔记照样保存，带 UP 主与话题标签，不抽额外属性、也不做关联。
+          </p>
+
+          <p class="sf-settings-desc">每篇保存出来的笔记，头部会长这样（下面这段是模板，不是你已有的笔记）：</p>
+          <pre class="sf-note-preview">{{ notePreview }}</pre>
+          <p class="sf-settings-hint">
+            UP 主与话题标签是自动加的，<strong>你自己写的标签不会被改</strong>。标签只写二级（如 <code>话题/AI泡沫</code>）——
+            Obsidian 里按一级筛选会自动带上它下面所有二级。标签从哪来看下面的词库。
+          </p>
+
+          <div class="sf-settings-divider">③ 词库：决定笔记带什么标签，也决定你怎么找回来</div>
+          <p class="sf-settings-desc">
+            一级是分类、二级是具体标签。标签不能含空格，保存时会自动换成 <code>-</code>。
+          </p>
+          <p class="sf-settings-hint">
+            <strong>这一栏怎么填，取决于你想按什么找笔记。</strong>想要「某个话题大家怎么说」，就建一个
+            <code>话题</code> 一级，把想追踪的议题一个个加成二级（如 <code>话题/平台抽成</code>）。
+            <code>UP主名称</code> 那一支<strong>不用手填</strong>，入库时按视频信息自动写。完整上手步骤见左栏
+            「项目文档」里的《标签与合集：怎么用》。
+          </p>
+          <div class="sf-tag-tree">
+            <div v-for="group in Object.keys(taxonomy)" :key="group" class="sf-tag-group">
+              <div class="sf-tag-group-head">
+                <button
+                  type="button"
+                  class="sf-tag-group-name sf-copyable"
+                  :title="`点击复制在 Obsidian 里的搜索串：tag:#${group}`"
+                  @click="copyTagSearch(group)"
+                >
+                  {{ group }}
+                </button>
+                <span class="sf-tag-group-count">{{ (taxonomy[group] ?? []).length }} 个二级</span>
+                <button type="button" class="sf-btn sf-btn--danger" @click="removeGroup(group)">
+                  <Trash2 :size="13" /><span>删除一级</span>
+                </button>
+              </div>
+              <div class="sf-tag-children">
+                <span v-for="child in taxonomy[group] ?? []" :key="child" class="sf-tag-chip">
+                  <button
+                    type="button"
+                    class="sf-tag-chip-name sf-copyable"
+                    :title="`点击复制搜索串：tag:#${group}/${child}`"
+                    @click="copyTagSearch(group, child)"
+                  >
+                    {{ group }}/{{ child }}
+                  </button>
+                  <button type="button" class="sf-tag-chip-remove" :title="`移除 ${group}/${child}`" @click="removeChild(group, child)">×</button>
+                </span>
+                <span v-if="!(taxonomy[group] ?? []).length" class="sf-settings-hint">暂无二级（一级本身也可直接当标签用）</span>
+              </div>
+              <div class="sf-tag-add">
+                <el-input
+                  v-model="newChildDraft[group]"
+                  size="small"
+                  placeholder="新增二级，回车确认"
+                  @keyup.enter="addChild(group)"
+                />
+                <button type="button" class="sf-btn" @click="addChild(group)"><span>添加</span></button>
+              </div>
+            </div>
+            <div class="sf-tag-add sf-tag-add--group">
+              <el-input v-model="newGroupName" size="small" placeholder="新增一级分类，回车确认" @keyup.enter="addGroup" />
+              <button type="button" class="sf-btn" @click="addGroup"><span>添加一级</span></button>
+            </div>
+          </div>
           <label class="sf-field sf-field-row">
-            <span class="sf-field-label">写入后自动关联相关笔记</span>
+            <span class="sf-field-label">允许 AI 自己补二级标签</span>
+            <el-switch v-model="form.obsidianAllowNewTags" />
+          </label>
+          <p class="sf-settings-hint">
+            关掉时模型只能从上面这棵树里挑——好处是<strong>同一个话题全库只有一个名字</strong>，搜出来才是完整的合集。
+            打开后它能补二级（一级结构始终由你定），补进去的会出现在上面这棵树里。
+          </p>
+          <p class="sf-settings-hint">
+            点任意一级或二级的名字，就复制它在 Obsidian 里的搜索串（如 <code>tag:#话题/AI泡沫</code>）。
+            在 Obsidian 里搜这条串、或把它加进「书签」，<strong>就是那个话题的合集</strong>——不用在这个工具里另做什么。
+            搜 <code>tag:#UP主名称/某某UP</code> 就是某个人的合集。
+          </p>
+          <label class="sf-field sf-field-row">
+            <span class="sf-field-label">额外：让同题材的旧笔记互相链接</span>
             <el-switch v-model="form.obsidianAutoLinkEnabled" />
           </label>
-          <label class="sf-field">
-            <span class="sf-field-label">最多关联篇数</span>
+          <p class="sf-settings-hint">
+            按上面配置的<strong>抽取字段</strong>在库里找相关笔记（值相同的算强相关），在文末加一段 <code>[[链接]]</code>。
+            字段留空就没有可比较的东西，自然不会关联——所以这个开关单独打开也不会有副产物。
+          </p>
+          <label v-if="form.obsidianAutoLinkEnabled" class="sf-field">
+            <span class="sf-field-label">每篇最多关联几篇</span>
             <el-input-number v-model="form.obsidianAutoLinkMax" :min="0" :max="20" />
           </label>
+
+          <div class="sf-settings-divider">词库改了，回补旧笔记</div>
+          <p class="sf-settings-desc">
+            加了新话题之后，<strong>只有新笔记</strong>会带上它；已经存在的笔记要跑一次这里才会补上。平时不用跑。
+          </p>
+          <p class="sf-settings-hint">
+            先点「先看要动多少」，它<strong>不调模型、不花钱</strong>，只告诉你这一轮要动多少篇、大约几次调用。
+            <strong>只改词库里的标签</strong>，你自己写的标签不碰；读不出结构的文件会跳过并列出，不会被覆盖。
+          </p>
+          <p v-if="obsidianDirty" class="sf-settings-desc sf-settings-desc--warn">
+            词库或库路径有未保存的改动——先点「保存设置」，否则这一轮用的是旧词库。
+          </p>
+          <div class="sf-settings-actions">
+            <button
+              type="button"
+              class="sf-btn"
+              :disabled="retagPlanning || retagRunning || obsidianDirty"
+              @click="refreshRetagPlan"
+            >
+              <ListChecks :size="14" /><StableText :idle="'先看要动多少（不花钱）'" :busy="'正在看…'" :active="retagPlanning" />
+            </button>
+            <button
+              type="button"
+              class="sf-btn sf-btn--primary"
+              :disabled="retagRunning || obsidianDirty || !retagPlan"
+              @click="startRetag"
+            >
+              <RefreshCw :size="14" /><StableText :idle="'开始回补'" :busy="'回补中…'" :active="retagRunning" />
+            </button>
+          </div>
+          <label class="sf-field sf-field-row">
+            <span class="sf-field-label">深度重扫（更贵：能补上"换个说法"的笔记）</span>
+            <el-switch v-model="retagDeep" />
+          </label>
+          <p class="sf-settings-hint">
+            默认只把「正文里出现过标签名」的笔记送去判定，这是省钱的主要来源；代价是换个说法的笔记会漏。
+            比如新标签叫「平台经济」而笔记里只写了「抽成」，默认扫不到——这时再开深度重扫补一次。
+          </p>
+
+          <div v-if="retagPlan" class="sf-nutstore-result">
+            <h3 class="sf-nutstore-result-title">这一轮要动多少：全库 {{ retagPlan.totalNotes }} 篇</h3>
+            <div class="sf-nutstore-result-stats">
+              <span>要重新判定 <strong>{{ retagPlan.fullCount }}</strong></span>
+              <span>只判新标签 <strong>{{ retagPlan.incrementalCount }}</strong></span>
+              <span>只补写/清理标签 <strong>{{ retagPlan.cleanupCount }}</strong></span>
+              <span>不用动 <strong>{{ retagPlan.unchanged }}</strong></span>
+              <span>预计调用 <strong>{{ retagPlan.estimatedCalls }}</strong> 次</span>
+            </div>
+            <p v-if="retagPlan.addedTags.length > 0" class="sf-nutstore-result-detail">
+              词库新增：{{ retagPlan.addedTags.join("、") }}
+            </p>
+            <p v-if="retagPlan.removedTags.length > 0" class="sf-nutstore-result-detail">
+              词库已删（会从笔记里清掉）：{{ retagPlan.removedTags.join("、") }}
+            </p>
+            <ul v-if="retagPlan.unparsable.length > 0" class="sf-nutstore-result-list sf-nutstore-result-list--error">
+              <li v-for="item in retagPlan.unparsable.slice(0, 20)" :key="item.relPath">
+                <span class="sf-nutstore-result-path">{{ item.relPath }}</span>
+                <span class="sf-nutstore-result-reason">{{ item.reason }}</span>
+              </li>
+              <li v-if="retagPlan.unparsable.length > 20" class="sf-nutstore-result-more">
+                …… 还有 {{ retagPlan.unparsable.length - 20 }} 条未展示
+              </li>
+            </ul>
+          </div>
+
+          <div v-if="retagJob" class="sf-nutstore-result">
+            <h3 class="sf-nutstore-result-title">
+              回补：{{ retagJob.status === "running" ? retagJob.message : retagJob.status === "done" ? "完成" : "失败" }}
+            </h3>
+            <p v-if="retagJob.status === 'running'" class="sf-nutstore-result-detail">
+              阶段 {{ retagJob.stage }} · {{ retagJob.processed }}/{{ retagJob.total }}
+            </p>
+            <p v-else-if="retagJob.error" class="sf-nutstore-result-detail">{{ retagJob.error }}</p>
+            <template v-if="retagJob.report">
+              <div class="sf-nutstore-result-stats">
+                <span>写入 <strong>{{ retagJob.report.written }}</strong></span>
+                <span>未变 <strong>{{ retagJob.report.unchanged }}</strong></span>
+                <span>调用 <strong>{{ retagJob.report.calls }}</strong> 次</span>
+                <span>输入 <strong>{{ retagJob.report.usage.promptTokens }}</strong> tokens</span>
+                <span>命中缓存 <strong>{{ retagJob.report.usage.cachedTokens }}</strong></span>
+                <span v-if="retagJob.report.failed.length > 0">失败 <strong>{{ retagJob.report.failed.length }}</strong></span>
+              </div>
+              <p v-if="retagJob.report.learnedTags.length > 0" class="sf-nutstore-result-detail">
+                本次词库新增：{{ retagJob.report.learnedTags.join("、") }}
+              </p>
+              <ul v-if="retagJob.report.failed.length > 0" class="sf-nutstore-result-list sf-nutstore-result-list--error">
+                <li v-for="(item, index) in retagJob.report.failed.slice(0, 20)" :key="`${item.relPath}-${index}`">
+                  <span class="sf-nutstore-result-path">{{ item.relPath }}</span>
+                  <span class="sf-nutstore-result-reason">{{ item.reason }}</span>
+                </li>
+              </ul>
+            </template>
+          </div>
 
           <div class="sf-settings-actions">
             <button type="button" class="sf-btn sf-btn--primary" @click="saveAll"><span>保存设置</span></button>
@@ -1079,80 +1609,23 @@ async function restoreNutstoreBackup(backup: { path: string; name: string }) {
 
       <template v-else-if="active === 'nutstore'">
         <h2 class="sf-settings-title">坚果云</h2>
-        <p class="sf-settings-desc">通过 WebDAV 使用坚果云：读取云端 Obsidian 笔记、本地 ↔ 云端推送/拉取、应用数据备份。应用密码只保存在服务端。</p>
+        <p class="sf-settings-desc">
+          日常只需要上边这一项——<strong>备份目录</strong>。把它填成坚果云同步文件夹里的路径，备份就交给客户端上传，不需要账号密码。
+          下面「高级」里是给<strong>没装坚果云客户端</strong>的部署（Docker、另一台机器）用的：云端直连、云端浏览、笔记推送/拉取。
+        </p>
         <div class="sf-settings-form">
           <label class="sf-field">
-            <span class="sf-field-label">WebDAV 服务器</span>
-            <el-input v-model="form.nutstoreServerUrl" class="sf-field-control" placeholder="https://dav.jianguoyun.com/dav/" />
-          </label>
-          <label class="sf-field">
-            <span class="sf-field-label">账号（邮箱）</span>
-            <el-input v-model="form.nutstoreAccount" class="sf-field-control" placeholder="you@example.com" />
-          </label>
-          <label class="sf-field">
-            <span class="sf-field-label">
-              应用密码
-              <span v-if="store.settings?.nutstore.hasPassword" class="sf-chip sf-chip--success">已保存</span>
-              <span v-else class="sf-chip sf-chip--warning">未配置</span>
-            </span>
-            <el-input v-model="form.nutstorePassword" type="password" show-password class="sf-field-control" :placeholder="store.settings?.nutstore.hasPassword ? '已保存，留空则不修改' : '粘贴坚果云生成的应用密码'" />
+            <span class="sf-field-label">备份目录</span>
+            <el-input v-model="form.nutstoreBackupDir" class="sf-field-control" placeholder="D:\我的坚果云\ScribeFlow\backups 或 /我的坚果云/ScribeFlow/backups" />
             <p class="sf-field-hint">
-              坚果云应用密码在<strong>网页版</strong>生成：右上角头像 → 账户信息 → 安全选项 → 第三方应用管理 → 添加应用密码。
-              <a href="https://help.jianguoyun.com/?p=2064" target="_blank" rel="noreferrer">查看官方说明</a>
+              <strong>填本地文件夹</strong>（如 <code>D:\我的坚果云\ScribeFlow\backups</code>）→ 备份写进坚果云同步文件夹，由客户端上传，
+              <strong>不需要账号密码</strong>；<strong>填云端路径</strong>（以 <code>/</code> 开头）→ 由本应用用 WebDAV 直连上传。
+              当前识别为：<strong>{{ nutstoreBackupLocation === "local" ? "本地文件夹（客户端同步）" : "云端路径（WebDAV 直连）" }}</strong>
             </p>
           </label>
-          <label class="sf-field">
-            <span class="sf-field-label">数据根目录</span>
-            <el-input v-model="form.nutstoreRemoteRoot" class="sf-field-control" placeholder="/我的坚果云/ScribeFlow" />
-          </label>
-          <label class="sf-field">
-            <span class="sf-field-label">Obsidian 云端目录</span>
-            <el-input v-model="form.nutstoreObsidianRemotePath" class="sf-field-control" placeholder="/我的坚果云/ScribeFlow/Obsidian" />
-            <p class="sf-field-hint">想让文件出现在本地坚果云客户端，请把路径放在你的同步文件夹下，例如 <strong>/我的坚果云/ScribeFlow</strong>；不要直接填 <strong>/ScribeFlow</strong>。</p>
-          </label>
-          <label class="sf-field sf-field-row">
-            <span class="sf-field-label">Obsidian 笔记节点直接读写坚果云</span>
-            <el-switch v-model="form.nutstoreObsidianMode" />
-          </label>
-          <p class="sf-settings-desc">开启后，Obsidian 节点写入与自动关联扫描都会走坚果云远程目录；目录下拉也会读取云端目录。</p>
-          <div class="sf-settings-actions">
-            <button type="button" class="sf-btn" :disabled="nutstoreTesting" @click="testNutstore"><PlugZap :size="14" /><span>{{ nutstoreTesting ? "测试中…" : "测试连接" }}</span></button>
-            <button type="button" class="sf-btn sf-btn--primary" @click="saveAll"><span>保存设置</span></button>
-          </div>
 
-          <div class="sf-settings-divider">读取云端</div>
           <div class="sf-settings-actions">
-            <button type="button" class="sf-btn" :disabled="nutstoreReading" @click="loadNutstoreFolders"><FolderOpen :size="14" /><span>{{ nutstoreReading ? "读取中…" : "读取云端目录" }}</span></button>
-            <button type="button" class="sf-btn" :disabled="nutstoreReading" @click="loadNutstoreFiles"><RefreshCw :size="14" /><span>{{ nutstoreReading ? "读取中…" : "读取云端文件" }}</span></button>
-          </div>
-          <p class="sf-settings-desc">已读取目录：{{ nutstoreRemoteFolders.length }} 个；目录按“{{ form.nutstoreObsidianRemotePath || '/我的坚果云/ScribeFlow/Obsidian' }}”为根递归最多 3 层。</p>
-          <div v-if="nutstoreRemoteFolders.length > 0" class="sf-nutstore-list">
-            <span v-for="dir in nutstoreRemoteFolders.slice(0, 30)" :key="dir" class="sf-nutstore-tag">{{ dir }}</span>
-            <span v-if="nutstoreRemoteFolders.length > 30" class="sf-nutstore-tag sf-nutstore-more">+{{ nutstoreRemoteFolders.length - 30 }}</span>
-          </div>
-          <div v-if="nutstoreRemoteFiles.length > 0" class="sf-nutstore-list">
-            <button
-              v-for="file in nutstoreRemoteFiles.filter((f) => f.type === 'file' && f.name.endsWith('.md')).slice(0, 20)"
-              :key="file.path"
-              type="button"
-              class="sf-text-btn"
-              @click="previewRemoteFile(file.path)"
-            >
-              <Cloud :size="13" /><span>{{ file.name }}</span>
-            </button>
-          </div>
-          <p v-if="remotePreview" class="sf-nutstore-preview">{{ remotePreview.content.slice(0, 800) }}{{ remotePreview.content.length > 800 ? "…" : "" }}</p>
-
-          <div class="sf-settings-divider">本地 Obsidian ↔ 坚果云</div>
-          <p class="sf-settings-desc">以 Obsidian 设置页里的“Obsidian 库路径”为本地端；只同步 .md 笔记。遇到不一致时会跳过并显示在下方「最近操作结果」中，不会自动覆盖对端较新的文件。</p>
-          <div class="sf-settings-actions">
-            <button type="button" class="sf-btn" :disabled="nutstoreSyncing" @click="pushObsidian"><Upload :size="14" /><span>{{ nutstoreSyncing ? "同步中…" : "推送本地到坚果云" }}</span></button>
-            <button type="button" class="sf-btn" :disabled="nutstoreSyncing" @click="pullObsidian"><Download :size="14" /><span>{{ nutstoreSyncing ? "同步中…" : "拉取坚果云到本地" }}</span></button>
-          </div>
-
-          <div class="sf-settings-divider">应用数据备份</div>
-          <div class="sf-settings-actions">
-            <button type="button" class="sf-btn" :disabled="nutstoreBackingUp" @click="backupToNutstore"><Save :size="14" /><span>{{ nutstoreBackingUp ? "备份中…" : "备份数据到坚果云" }}</span></button>
+            <button type="button" class="sf-btn" :disabled="nutstoreBackingUp" @click="backupToNutstore"><Save :size="14" /><StableText :idle="`备份数据到${nutstoreBackupLocation === 'local' ? '本地文件夹' : '坚果云云端'}`" :busy="'备份中…'" :active="nutstoreBackingUp" /></button>
             <button type="button" class="sf-btn" :disabled="nutstoreBackingUp" @click="loadNutstoreBackups"><RefreshCw :size="14" /><span>读取备份列表</span></button>
           </div>
           <div v-if="nutstoreBackups.length > 0" class="sf-nutstore-backup-list">
@@ -1166,7 +1639,7 @@ async function restoreNutstoreBackup(backup: { path: string; name: string }) {
                 @click="restoreNutstoreBackup(backup)"
               >
                 <RotateCcw :size="13" />
-                <span>{{ nutstoreRestoring ? "恢复中…" : "恢复" }}</span>
+                <StableText :idle="'恢复'" :busy="'恢复中…'" :active="nutstoreRestoring" />
               </button>
             </div>
             <span v-if="nutstoreBackups.length > 10" class="sf-settings-desc">…… 还有 {{ nutstoreBackups.length - 10 }} 个备份未展示</span>
@@ -1185,6 +1658,83 @@ async function restoreNutstoreBackup(backup: { path: string; name: string }) {
             </button>
             <p class="sf-settings-desc">提示：backup.json 可点击预览；scribe-flow.sqlite 是 SQLite 数据库文件，请用本地坚果云客户端或数据库工具打开。</p>
           </div>
+
+          <el-collapse v-model="nutstoreAdvancedOpen" class="sf-advanced">
+            <el-collapse-item name="advanced">
+              <template #title>
+                <span class="sf-advanced-title">高级：云端口令与直连</span>
+                <span class="sf-advanced-status">{{ nutstoreAdvancedSummary }}</span>
+              </template>
+              <p class="sf-settings-desc">
+                只有「备份目录填云端路径」「让笔记直接写云端」「用推送/拉取代替客户端同步」这三种用法才需要这里的账号密码。
+                库放在同步文件夹里的话，这些都可以不管。
+              </p>
+              <label class="sf-field">
+                <span class="sf-field-label">WebDAV 服务器</span>
+                <el-input v-model="form.nutstoreServerUrl" class="sf-field-control" placeholder="https://dav.jianguoyun.com/dav/" />
+              </label>
+              <label class="sf-field">
+                <span class="sf-field-label">账号（邮箱）</span>
+                <el-input v-model="form.nutstoreAccount" class="sf-field-control" placeholder="you@example.com" />
+              </label>
+              <label class="sf-field">
+                <span class="sf-field-label">
+                  应用密码
+                  <span v-if="store.settings?.nutstore.hasPassword" class="sf-chip sf-chip--success">已保存</span>
+                  <span v-else class="sf-chip sf-chip--warning">未配置</span>
+                </span>
+                <el-input v-model="form.nutstorePassword" type="password" show-password class="sf-field-control" :placeholder="store.settings?.nutstore.hasPassword ? '已保存，留空则不修改' : '粘贴坚果云生成的应用密码'" />
+                <p class="sf-field-hint">
+                  坚果云应用密码在<strong>网页版</strong>生成：右上角头像 → 账户信息 → 安全选项 → 第三方应用管理 → 添加应用密码。
+                  <a href="https://help.jianguoyun.com/?p=2064" target="_blank" rel="noreferrer">查看官方说明</a>
+                </p>
+              </label>
+              <div class="sf-settings-actions">
+                <button type="button" class="sf-btn" :disabled="nutstoreTesting" @click="testNutstore"><PlugZap :size="14" /><StableText :idle="'测试连接'" :busy="'测试中…'" :active="nutstoreTesting" /></button>
+              </div>
+
+              <label class="sf-field">
+                <span class="sf-field-label">Obsidian 云端目录</span>
+                <el-input v-model="form.nutstoreObsidianRemotePath" class="sf-field-control" placeholder="/我的坚果云/ScribeFlow/Obsidian" />
+                <p class="sf-field-hint">想让文件出现在本地坚果云客户端，请把路径放在你的同步文件夹下，例如 <strong>/我的坚果云/ScribeFlow</strong>；不要直接填 <strong>/ScribeFlow</strong>。</p>
+              </label>
+              <label class="sf-field sf-field-row">
+                <span class="sf-field-label">Obsidian 笔记节点直接读写坚果云</span>
+                <el-switch v-model="form.nutstoreObsidianMode" />
+              </label>
+              <p class="sf-settings-desc">开启后，Obsidian 节点写入与自动关联扫描都会走坚果云远程目录；目录下拉也会读取云端目录。</p>
+
+              <div class="sf-settings-divider">读取云端</div>
+              <div class="sf-settings-actions">
+                <button type="button" class="sf-btn" :disabled="nutstoreReading" @click="loadNutstoreFolders"><FolderOpen :size="14" /><StableText :idle="'读取云端目录'" :busy="'读取中…'" :active="nutstoreReading" /></button>
+                <button type="button" class="sf-btn" :disabled="nutstoreReading" @click="loadNutstoreFiles"><RefreshCw :size="14" /><StableText :idle="'读取云端文件'" :busy="'读取中…'" :active="nutstoreReading" /></button>
+              </div>
+              <p class="sf-settings-desc">已读取目录：{{ nutstoreRemoteFolders.length }} 个；目录按“{{ form.nutstoreObsidianRemotePath || '/我的坚果云/ScribeFlow/Obsidian' }}”为根递归最多 3 层。</p>
+              <div v-if="nutstoreRemoteFolders.length > 0" class="sf-nutstore-list">
+                <span v-for="dir in nutstoreRemoteFolders.slice(0, 30)" :key="dir" class="sf-nutstore-tag">{{ dir }}</span>
+                <span v-if="nutstoreRemoteFolders.length > 30" class="sf-nutstore-tag sf-nutstore-more">+{{ nutstoreRemoteFolders.length - 30 }}</span>
+              </div>
+              <div v-if="nutstoreRemoteFiles.length > 0" class="sf-nutstore-list">
+                <button
+                  v-for="file in nutstoreRemoteFiles.filter((f) => f.type === 'file' && f.name.endsWith('.md')).slice(0, 20)"
+                  :key="file.path"
+                  type="button"
+                  class="sf-text-btn"
+                  @click="previewRemoteFile(file.path)"
+                >
+                  <Cloud :size="13" /><span>{{ file.name }}</span>
+                </button>
+              </div>
+              <p v-if="remotePreview" class="sf-nutstore-preview">{{ remotePreview.content.slice(0, 800) }}{{ remotePreview.content.length > 800 ? "…" : "" }}</p>
+
+              <div class="sf-settings-divider">本地 Obsidian ↔ 坚果云</div>
+              <p class="sf-settings-desc">以 Obsidian 设置页里的“Obsidian 库路径”为本地端；只同步 .md 笔记。遇到不一致时会跳过并显示在下方「最近操作结果」中，不会自动覆盖对端较新的文件。库放在同步文件夹里时不需要它。</p>
+              <div class="sf-settings-actions">
+                <button type="button" class="sf-btn" :disabled="nutstoreSyncing" @click="pushObsidian"><Upload :size="14" /><StableText :idle="'推送本地到坚果云'" :busy="'同步中…'" :active="nutstoreSyncing" /></button>
+                <button type="button" class="sf-btn" :disabled="nutstoreSyncing" @click="pullObsidian"><Download :size="14" /><StableText :idle="'拉取坚果云到本地'" :busy="'同步中…'" :active="nutstoreSyncing" /></button>
+              </div>
+            </el-collapse-item>
+          </el-collapse>
 
           <div v-if="nutstoreResult" class="sf-nutstore-result">
             <h3 class="sf-nutstore-result-title">最近操作结果：{{ nutstoreResult.action }}</h3>
@@ -1214,6 +1764,10 @@ async function restoreNutstoreBackup(backup: { path: string; name: string }) {
               </li>
               <li v-if="nutstoreResult.items.length > 20" class="sf-nutstore-result-more">…… 还有 {{ nutstoreResult.items.length - 20 }} 条未展示</li>
             </ul>
+          </div>
+
+          <div class="sf-settings-actions">
+            <button type="button" class="sf-btn sf-btn--primary" @click="saveAll"><span>保存设置</span></button>
           </div>
         </div>
       </template>
@@ -1310,7 +1864,7 @@ async function restoreNutstoreBackup(backup: { path: string; name: string }) {
           </div>
           <div class="sf-settings-actions sf-storage-head-actions">
             <button type="button" class="sf-btn" :disabled="revealTesting" @click="revealDataDir"><ExternalLink :size="14" /><span>打开数据目录</span></button>
-            <button type="button" class="sf-btn" :disabled="dataLoading" @click="loadDataInfo"><RefreshCw :size="14" /><span>{{ dataLoading ? "刷新中…" : "刷新" }}</span></button>
+            <button type="button" class="sf-btn" :disabled="dataLoading" @click="loadDataInfo"><RefreshCw :size="14" /><StableText :idle="'刷新'" :busy="'刷新中…'" :active="dataLoading" /></button>
           </div>
         </div>
         <p v-if="dataError" class="sf-storage-error">{{ dataError }}</p>
@@ -1368,13 +1922,17 @@ async function restoreNutstoreBackup(backup: { path: string; name: string }) {
               :disabled="item.count === 0 || pruneRunning !== ''"
               @click="runPrune([item.target], item.target)"
             >
-              {{ pruneRunning === item.target ? "清理中…" : "清理" }}
+              <StableText :idle="'清理'" :busy="'清理中…'" :active="pruneRunning === item.target" />
             </button>
           </div>
         </div>
         <div class="sf-settings-actions">
           <button type="button" class="sf-btn sf-btn--danger" :disabled="!hasReclaimable || pruneRunning !== ''" @click="runPrune(pruneAllTargets, 'all')">
-            {{ pruneRunning === "all" ? "清理中…" : `清理全部可回收项（释放 ${formatBytes(dataInfo?.reclaimableBytes ?? 0)}）` }}
+            <StableText
+              :idle="`清理全部可回收项（释放 ${formatBytes(dataInfo?.reclaimableBytes ?? 0)}）`"
+              :busy="'清理中…'"
+              :active="pruneRunning === 'all'"
+            />
           </button>
         </div>
 
@@ -1500,6 +2058,26 @@ async function restoreNutstoreBackup(backup: { path: string; name: string }) {
 
 .sf-field-control {
   width: 100%;
+}
+
+/* 输入框里的自检状态：转圈 / 打勾 / 警告。 */
+.sf-spin {
+  color: var(--color-text-tertiary);
+  animation: sf-spin 900ms linear infinite;
+}
+
+@keyframes sf-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.sf-state--ok {
+  color: var(--color-success);
+}
+
+.sf-state--bad {
+  color: var(--color-warning);
 }
 
 /*
@@ -2013,15 +2591,329 @@ async function restoreNutstoreBackup(backup: { path: string; name: string }) {
   color: var(--color-text-secondary);
 }
 
+.sf-advanced {
+  margin-top: 4px;
+  border-top: 1px solid var(--color-border);
+  --el-collapse-header-bg-color: transparent;
+  --el-collapse-header-text-color: var(--color-text);
+  --el-collapse-border-color: var(--color-border);
+}
+
+.sf-advanced :deep(.el-collapse-item__header) {
+  gap: 8px;
+  height: 40px;
+  background: transparent;
+}
+
+.sf-advanced-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.sf-advanced-status {
+  flex: 1;
+  font-size: 11px;
+  color: var(--color-text-tertiary);
+}
+
+/*
+ * 库自检结果卡。
+ *
+ * 三条约束，都是踩过才写下的：
+ * 1. **高度尽量不随内容变** —— 它下面是「笔记写进哪个文件夹」和 ②③ 两段，卡片一长高就顶着它们跳。
+ *    所以这里不放会折行的东西（完整路径不重复显示：它就在上面那个输入框里），每行文字都短到一行放得下。
+ * 2. **标签与值分列**，不写成"完整路径 D:\…"这种一行到底的句子 —— 那既看不清值从哪开始，也没法对齐。
+ * 3. hover 用 `.sf-text-btn` 那套中性色（灰底 + 文字加深），不要覆盖成品牌色：绿卡上出现蓝字是冲突的。
+ */
+.sf-vault {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+}
+
+.sf-vault--ok {
+  border-color: var(--color-success-border);
+  background: var(--color-success-soft);
+}
+
+.sf-vault--bad {
+  border-color: var(--color-warning-border);
+  background: var(--color-warning-soft);
+}
+
+.sf-vault-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 22px;
+}
+
+.sf-vault-icon {
+  flex: none;
+}
+
+.sf-vault--ok .sf-vault-icon {
+  color: var(--color-success);
+}
+
+.sf-vault--bad .sf-vault-icon {
+  color: var(--color-warning);
+}
+
+.sf-vault--idle .sf-vault-icon {
+  color: var(--color-text-tertiary);
+}
+
+.sf-vault-title {
+  flex: 1;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.sf-vault-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin: 0;
+  /* 41px = 两行 rows 的实测高度（见下方 .sf-vault-problem 的说明） */
+  min-height: 41px;
+}
+
+.sf-vault-row {
+  display: grid;
+  grid-template-columns: 60px 1fr;
+  gap: 8px;
+  align-items: baseline;
+}
+
+.sf-vault-row dt {
+  font-size: 12px;
+  color: var(--color-text-tertiary);
+}
+
+.sf-vault-row dd {
+  margin: 0;
+  font-size: 12px;
+  color: var(--color-text-secondary);
+}
+
+.sf-vault-problem {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--color-text-secondary);
+  /*
+   * 42px = 「能存」状态下两行 rows 的实测高度 + 1（两种状态渲染取整差 1px）。
+   * 写死这个数只为让"能存 / 不能存"两种结论下卡片一样高——不定高时实测差 22px（93 vs 71），
+   * 结论一变就把下面的控件顶着走。文字超过两行时仍会变高，那是该给的（错误信息得说清）。
+   */
+  min-height: 42px;
+}
+
+.sf-vault-recheck {
+  flex: none;
+  font-size: 11px;
+  color: var(--color-text-tertiary);
+}
+
+/*
+ * 开关的从属块：缩进 + 左侧竖线。比"把控件变灰"清楚——灰控件看不出是"归上面管"还是"坏了"。
+ */
+.sf-subblock {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 2px;
+  padding-left: 12px;
+  border-left: 2px solid var(--color-border);
+}
+
+.sf-field-note {
+  margin-left: 6px;
+  color: var(--color-text-tertiary);
+  font-size: 11px;
+  font-style: normal;
+}
+
+/* 预设 chip：看得出能点、也看得出当前选的是哪个。 */
+.sf-preset-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.sf-preset {
+  height: 22px;
+  padding: 0 10px;
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  background: var(--color-surface);
+  color: var(--color-text-secondary);
+  font-family: inherit;
+  font-size: 11px;
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    background-color var(--dur-1) var(--ease-out),
+    border-color var(--dur-1) var(--ease-out),
+    color var(--dur-1) var(--ease-out);
+}
+
+.sf-preset:hover {
+  border-color: var(--color-text-tertiary);
+  color: var(--color-text);
+}
+
+.sf-preset--active {
+  border-color: var(--color-ink);
+  background: var(--color-ink-soft);
+  color: var(--color-text);
+  font-weight: 600;
+}
+
+.sf-tag-required {
+  margin-left: 6px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--color-warning-soft);
+  color: var(--color-warning);
+  font-size: 10px;
+  font-weight: 500;
+  line-height: 16px;
+}
+
+.sf-note-preview {
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-muted);
+  color: var(--color-text-secondary);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.7;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.sf-tag-tree {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 4px 0 2px;
+}
+
+.sf-tag-group {
+  padding: 10px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+}
+
+.sf-tag-group-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.sf-tag-group-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+/** 可点击复制的文字：看起来像文字，鼠标移上去才露出可点。 */
+.sf-copyable {
+  border: none;
+  background: transparent;
+  padding: 0;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  border-bottom: 1px dashed var(--color-border);
+}
+
+.sf-copyable:hover {
+  color: var(--color-brand);
+  border-bottom-color: var(--color-brand);
+}
+
+.sf-tag-group-count {
+  flex: 1;
+  font-size: 11px;
+  color: var(--color-text-tertiary);
+}
+
+.sf-tag-children {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.sf-tag-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 22px;
+  padding: 0 4px 0 8px;
+  border-radius: 999px;
+  background: var(--color-surface-muted);
+  color: var(--color-text-secondary);
+  font-size: 11px;
+  line-height: 1;
+}
+
+.sf-tag-chip-name {
+  font-size: 11px;
+  color: var(--color-text-secondary);
+}
+
+.sf-tag-chip-remove {
+  border: none;
+  background: transparent;
+  color: var(--color-text-tertiary);
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 2px;
+}
+
+.sf-tag-chip-remove:hover {
+  color: var(--color-error);
+}
+
+.sf-tag-add {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.sf-tag-add--group {
+  margin-top: 0;
+}
+
+.sf-settings-desc--warn {
+  color: var(--color-warning);
+}
+
 .sf-nutstore-result {
   margin-top: 8px;
   padding: 12px 14px;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
   background: var(--color-surface);
-}
-
-.sf-nutstore-result-title {
+}.sf-nutstore-result-title {
   margin: 0 0 6px;
   font-size: 13px;
   font-weight: 600;

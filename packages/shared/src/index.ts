@@ -12,6 +12,8 @@ export * from "./prompt";
 export * from "./recipe";
 export * from "./templates";
 export * from "./visibility";
+export * from "./taxonomy";
+export * from "./obsidian";
 export * from "./video";
 export * from "./media";
 export * from "./bili";

@@ -240,6 +240,19 @@ export function ensureSchema(sqlite: Database.Database) {
       meta_json TEXT NOT NULL,
       created_at INTEGER NOT NULL
     );
+
+    CREATE TABLE IF NOT EXISTS note_tag_fingerprints (
+      id TEXT PRIMARY KEY,
+      vault_path TEXT NOT NULL,
+      note_path TEXT NOT NULL,
+      content_hash TEXT NOT NULL,
+      taxonomy_hash TEXT NOT NULL,
+      tags_json TEXT NOT NULL,
+      updated_at INTEGER NOT NULL,
+      created_at INTEGER NOT NULL
+    );
+
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_note_tag_fingerprint_key ON note_tag_fingerprints(vault_path, note_path);
   `);
 
   // 幂等迁移：旧库 runs 表没有 graph_json 时补列。

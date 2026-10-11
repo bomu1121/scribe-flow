@@ -217,7 +217,7 @@ ASR 支持两种引擎——MiMo 走 `input_audio` data URL（超过 7MB 自动�
 <!-- docs-gen:api:start -->
 <!-- 由 `pnpm docs:gen` 从 app.ts 与 routes/*.ts 生成，请勿手改 -->
 
-共 **77** 条接口。路径即挂载后的完整路径，可直接调用（Hono 会把子应用的 `/` 合并为前缀本身，故无尾斜杠）；
+共 **81** 条接口。路径即挂载后的完整路径，可直接调用（Hono 会把子应用的 `/` 合并为前缀本身，故无尾斜杠）；
 本服务**没有任何认证中间件**，CORS 默认放开，仅适合自托管或本机使用。
 
 | 方法 | 路径 | 实现 |
@@ -294,10 +294,14 @@ ASR 支持两种引擎——MiMo 走 `input_audio` data URL（超过 7MB 自动�
 | POST | `/api/settings/test/asr` | `routes/settings.ts` 的 `settingsApi` |
 | POST | `/api/settings/test/search` | `routes/settings.ts` 的 `settingsApi` |
 | GET | `/api/settings/obsidian/folders` | `routes/settings.ts` 的 `settingsApi` |
+| GET | `/api/settings/obsidian/check` | `routes/settings.ts` 的 `settingsApi` |
 | GET | `/api/settings/data` | `routes/settings.ts` 的 `settingsApi` |
 | POST | `/api/settings/prune` | `routes/settings.ts` 的 `settingsApi` |
 | POST | `/api/settings/reveal-data-dir` | `routes/settings.ts` 的 `settingsApi` |
 | POST | `/api/settings/reveal-output-dir` | `routes/settings.ts` 的 `settingsApi` |
+| POST | `/api/taxonomy/plan` | `routes/taxonomy.ts` 的 `taxonomyApi` |
+| POST | `/api/taxonomy/run` | `routes/taxonomy.ts` 的 `taxonomyApi` |
+| GET | `/api/taxonomy/jobs/:jobId` | `routes/taxonomy.ts` 的 `taxonomyApi` |
 | POST | `/api/videos/preview` | `routes/videos.ts` 的 `videosApi` |
 <!-- docs-gen:api:end -->
 

@@ -16,13 +16,34 @@ export interface AsrConfig {
   apiKey: string;
 }
 
+/** 一次对话调用的 token 用量；形状定义在 shared/taxonomy.ts（设置页也要读同一份）。 */
+import type { ChatUsage } from "@scribe-flow/shared";
+export type { ChatUsage };
+
+export interface ChatResult {
+  content: string;
+  usage: ChatUsage;
+}
+
+interface ChatResponseBody {
+  choices?: { message?: { content?: string } }[];
+  error?: { message?: string };
+  message?: string;
+  usage?: {
+    prompt_tokens?: number;
+    completion_tokens?: number;
+    total_tokens?: number;
+    prompt_cache_hit_tokens?: number;
+  };
+}
+
 function withTimeout(signal: AbortSignal | undefined, ms: number): AbortSignal {
   if (!signal) return AbortSignal.timeout(ms);
   return AbortSignal.any([signal, AbortSignal.timeout(ms)]);
 }
 
-export function chatCompletion(config: AiConfig, system: string, user: string, signal?: AbortSignal): Promise<string> {
-  return fetch(`${config.baseUrl.replace(/\/+$/, "")}/chat/completions`, {
+async function requestChat(config: AiConfig, system: string, user: string, signal?: AbortSignal): Promise<ChatResponseBody> {
+  const res = await fetch(`${config.baseUrl.replace(/\/+$/, "")}/chat/completions`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -37,7 +58,37 @@ export function chatCompletion(config: AiConfig, system: string, user: string, s
       temperature: 0.3,
     }),
     signal: withTimeout(signal, 300_000),
-  }).then(handleChatResponse);
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`AI 接口请求失败（${res.status}）${text.slice(0, 200)}`);
+  }
+  const body = (await res.json()) as ChatResponseBody;
+  if (body.error?.message) throw new Error(body.error.message);
+  return body;
+}
+
+function contentOf(body: ChatResponseBody): string {
+  const content = body.choices?.[0]?.message?.content?.trim();
+  if (!content) throw new Error("AI 接口没有返回内容");
+  return content;
+}
+
+export function chatCompletion(config: AiConfig, system: string, user: string, signal?: AbortSignal): Promise<string> {
+  return requestChat(config, system, user, signal).then(contentOf);
+}
+
+/** 与 `chatCompletion` 同一请求，但把用量一并带回来（打标要按它统计实际花费）。 */
+export function chatCompletionWithUsage(config: AiConfig, system: string, user: string, signal?: AbortSignal): Promise<ChatResult> {
+  return requestChat(config, system, user, signal).then((body) => ({
+    content: contentOf(body),
+    usage: {
+      promptTokens: body.usage?.prompt_tokens ?? 0,
+      completionTokens: body.usage?.completion_tokens ?? 0,
+      totalTokens: body.usage?.total_tokens ?? 0,
+      cachedTokens: body.usage?.prompt_cache_hit_tokens ?? 0,
+    },
+  }));
 }
 
 /** 拉取 OpenAI 兼容接口的可用模型列表。 */

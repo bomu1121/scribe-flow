@@ -215,3 +215,28 @@ export const compareReports = sqliteTable("compare_reports", {
   createdAt: integer("created_at").notNull(),
 });
 
+/**
+ * 笔记打标的指纹：让「重打标」能跳过没变的笔记，从而不重复花模型钱。
+ *
+ * 为什么不把指纹写进笔记的 front matter：这个功能要动**整个库**（含用户手写的笔记），
+ * 往别人笔记里塞一个工具专用字段太侵入；而且指纹放这儿，用户手改笔记标签会让
+ * `content_hash` 自然失效、触发重判，不需要额外监听。
+ *
+ * 键是「库路径 + 库内相对路径」，所以整个库被搬走不会导致全部重打。
+ */
+export const noteTagFingerprints = sqliteTable("note_tag_fingerprints", {
+  id: text("id").primaryKey(),
+  /** Obsidian 库根目录（绝对路径，做规范化后存）。 */
+  vaultPath: text("vault_path").notNull(),
+  /** 笔记在库内的相对路径（`/` 分隔）。 */
+  notePath: text("note_path").notNull(),
+  /** stableHash(分类特征 + 当前标签集合)：笔记内容或标签被人改过就失效。 */
+  contentHash: text("content_hash").notNull(),
+  /** 判定时用的词库指纹；词库变了但这条没变，走「只判断新增标签」的增量路径。 */
+  taxonomyHash: text("taxonomy_hash").notNull(),
+  /** 本功能当时写进去的标签（JSON 数组），用于区分「工具写的」与「人写的」。 */
+  tagsJson: text("tags_json").notNull(),
+  updatedAt: integer("updated_at").notNull(),
+  createdAt: integer("created_at").notNull(),
+});
+

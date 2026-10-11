@@ -83,6 +83,7 @@ pnpm check:api:drill # 知识巩固链路（需真实 AI 密钥，会真的调�
 - [架构与实现总览](./docs/architecture.md)
 - [ScribeFlow 部署说明](./docs/deploy.md)
 - [节点手册](./docs/nodes.md)
+- [标签与合集：怎么用](./docs/tagging.md)
 - [使用说明：从零到一份笔记](./docs/usage.md)
 
 **决策（拍过板的方案与选型）**（`docs/decisions/`）
@@ -98,6 +99,7 @@ pnpm check:api:drill # 知识巩固链路（需真实 AI 密钥，会真的调�
 **调研**（`docs/research/`）
 
 - [AI 加工节点内部多步链：收益调研与进阶实现方案](./docs/research/ai-node-multistep-research.md)
+- [双维度知识库：按「UP」与按「议题」检索](./docs/research/dual-axis-knowledge-base.md)
 - [节点结果预览展示调研与方案](./docs/research/node-result-preview-research.md)
 - [新功能该加一张卡片，还是加一个提示词](./docs/research/node-vs-prompt-block-boundary.md)
 - [全项目审计（2026-09-27）](./docs/research/project-audit-2026-09-27.md)

@@ -14,6 +14,7 @@ import { promptsApi } from "./routes/prompts";
 import { compareApi } from "./routes/compare";
 import { projectRunsApi, runsApi } from "./routes/runs";
 import { mediaApi } from "./routes/media";
+import { taxonomyApi } from "./routes/taxonomy";
 import { docsApi } from "./routes/docs";
 import { RunEngine } from "./lib/engine";
 import type { AppDatabase } from "./db/client";
@@ -54,6 +55,7 @@ export function createApp(db: AppDatabase, options: AppOptions) {
   app.route("/api/prompts", promptsApi(db));
   app.route("/api/compare", compareApi(db));
   app.route("/api/media", mediaApi(db, options.dataDir));
+  app.route("/api/taxonomy", taxonomyApi(db, engine));
   app.route("/api/docs", docsApi(options.docsDir));
 
   app.notFound((c) => c.json({ error: "接口不存在" }, 404));

@@ -1,6 +1,6 @@
 import { eq } from "drizzle-orm";
 import type { AiSettings, AppSettings, AsrSettings, GeneralSettings, NodeType, SearchProvider, UpdateSettingsRequest } from "@scribe-flow/shared";
-import { DEFAULT_FILE_NAME_TEMPLATE, DEFAULT_OUTPUT_DIR, GENERAL_LIMITS, NODE_TYPE_ORDER } from "@scribe-flow/shared";
+import { DEFAULT_EXTRACT_FIELDS, DEFAULT_FILE_NAME_TEMPLATE, DEFAULT_OUTPUT_DIR, GENERAL_LIMITS, NODE_TYPE_ORDER, UP_TAXONOMY_GROUP, backupLocationOf, joinBackupPath, sanitizeExtractFields, sanitizeTaxonomy } from "@scribe-flow/shared";
 import type { AppDatabase } from "../db/client";
 import { appSettings } from "../db/schema";
 import type { AiConfig, AsrConfig } from "./ai";
@@ -38,6 +38,8 @@ const OBSIDIAN_DEFAULTS: Record<string, string> = {
   "obsidian.vaultPath": "",
   "obsidian.folder": "00-Inbox",
   "obsidian.autoTagEnabled": "true",
+  "obsidian.allowNewTags": "false",
+  "obsidian.extractFields": JSON.stringify(DEFAULT_EXTRACT_FIELDS),
   "obsidian.tagMinCount": "5",
   "obsidian.tagMaxCount": "10",
   "obsidian.autoLinkEnabled": "true",
@@ -48,10 +50,13 @@ const OBSIDIAN_DEFAULTS: Record<string, string> = {
 const NUTSTORE_DEFAULTS: Record<string, string> = {
   "nutstore.serverUrl": "https://dav.jianguoyun.com/dav/",
   "nutstore.account": "",
-  "nutstore.remoteRoot": "/我的坚果云/ScribeFlow",
+  "nutstore.backupDir": "/我的坚果云/ScribeFlow/backups",
   "nutstore.obsidianRemotePath": "/我的坚果云/ScribeFlow/Obsidian",
   "nutstore.obsidianMode": "false",
 };
+
+/** 旧键：以前这里存的是「备份根目录」，实际备份落在它下面的 `backups/`。 */
+const LEGACY_BACKUP_ROOT_KEY = "nutstore.remoteRoot";
 
 const DEFAULT_TAG_TAXONOMY: Record<string, string[]> = {
   来源: ["B站", "文稿", "本地视频", "网页", "播客"],
@@ -59,6 +64,7 @@ const DEFAULT_TAG_TAXONOMY: Record<string, string[]> = {
   领域: ["历史", "AI", "编程", "效率", "心理", "知识管理"],
   概念: ["Obsidian", "PARA", "Zettelkasten", "RAG", "双链", "Templater", "Dataview"],
   状态: ["未整理", "已整理"],
+  UP主名称: [],
 };
 
 function raw(db: AppDatabase, key: string, fallback: string): string {
@@ -98,6 +104,35 @@ function searchProviderOf(db: AppDatabase): SearchProvider {
   return raw(db, "search.apiKey", "") ? "tavily" : (SEARCH_DEFAULTS["search.provider"] as SearchProvider);
 }
 
+/**
+ * 词库读取时的收口：规范化 + 保证保留分组在。
+ *
+ * 保留分组要在**老安装**上也出现——`obsidian.tagTaxonomy` 早就被保存过（设置页会整表回写），
+ * 所以新增默认值对它不生效；而 UP 标签写的就是 `UP主名称/<UP 名>`，界面上看不到这一支会让人不明白
+ * 那些标签从哪来、去哪删。
+ */
+function readTagTaxonomy(db: AppDatabase): Record<string, string[]> {
+  const taxonomy = sanitizeTaxonomy(rawJson<Record<string, string[]>>(db, "obsidian.tagTaxonomy", DEFAULT_TAG_TAXONOMY));
+  if (!Object.prototype.hasOwnProperty.call(taxonomy, UP_TAXONOMY_GROUP)) {
+    return { ...taxonomy, [UP_TAXONOMY_GROUP]: [] };
+  }
+  return taxonomy;
+}
+
+/**
+ * 读备份目录。
+ *
+ * 老键 `nutstore.remoteRoot` 存的是"根目录"，当时备份落在它下面的 `backups/`；
+ * 迁移时把这个落点保留下来（补上 `/backups`），否则升级后备份会跑到别处去。
+ */
+function readBackupDir(db: AppDatabase): string {
+  const stored = raw(db, "nutstore.backupDir", "").trim();
+  if (stored) return stored;
+  const legacy = raw(db, LEGACY_BACKUP_ROOT_KEY, "").trim();
+  if (!legacy) return NUTSTORE_DEFAULTS["nutstore.backupDir"] as string;
+  return joinBackupPath(migrateNutstorePath(legacy, "/我的坚果云/ScribeFlow"), "backups");
+}
+
 export function getSettings(db: AppDatabase): AppSettings {
   return {
     ai: {
@@ -132,8 +167,10 @@ export function getSettings(db: AppDatabase): AppSettings {
     obsidian: {
       vaultPath: raw(db, "obsidian.vaultPath", OBSIDIAN_DEFAULTS["obsidian.vaultPath"]) ?? "",
       folder: raw(db, "obsidian.folder", OBSIDIAN_DEFAULTS["obsidian.folder"]) ?? "00-Inbox",
-      tagTaxonomy: rawJson<Record<string, string[]>>(db, "obsidian.tagTaxonomy", DEFAULT_TAG_TAXONOMY),
+      tagTaxonomy: readTagTaxonomy(db),
       autoTagEnabled: raw(db, "obsidian.autoTagEnabled", OBSIDIAN_DEFAULTS["obsidian.autoTagEnabled"]) === "true",
+      allowNewTags: raw(db, "obsidian.allowNewTags", OBSIDIAN_DEFAULTS["obsidian.allowNewTags"]) === "true",
+      extractFields: sanitizeExtractFields(rawJson<unknown>(db, "obsidian.extractFields", DEFAULT_EXTRACT_FIELDS)),
       tagMinCount: Number(raw(db, "obsidian.tagMinCount", OBSIDIAN_DEFAULTS["obsidian.tagMinCount"]) ?? 5) || 5,
       tagMaxCount: Number(raw(db, "obsidian.tagMaxCount", OBSIDIAN_DEFAULTS["obsidian.tagMaxCount"]) ?? 10) || 10,
       autoLinkEnabled: raw(db, "obsidian.autoLinkEnabled", OBSIDIAN_DEFAULTS["obsidian.autoLinkEnabled"]) === "true",
@@ -144,7 +181,7 @@ export function getSettings(db: AppDatabase): AppSettings {
       serverUrl: raw(db, "nutstore.serverUrl", NUTSTORE_DEFAULTS["nutstore.serverUrl"]) ?? "https://dav.jianguoyun.com/dav/",
       account: raw(db, "nutstore.account", NUTSTORE_DEFAULTS["nutstore.account"]) ?? "",
       hasPassword: Boolean(raw(db, "nutstore.password", "")),
-      remoteRoot: migrateNutstorePath(raw(db, "nutstore.remoteRoot", NUTSTORE_DEFAULTS["nutstore.remoteRoot"]) ?? "/我的坚果云/ScribeFlow", "/我的坚果云/ScribeFlow"),
+      backupDir: readBackupDir(db),
       obsidianRemotePath: migrateNutstorePath(raw(db, "nutstore.obsidianRemotePath", NUTSTORE_DEFAULTS["nutstore.obsidianRemotePath"]) ?? "/我的坚果云/ScribeFlow/Obsidian", "/我的坚果云/ScribeFlow/Obsidian"),
       obsidianMode: raw(db, "nutstore.obsidianMode", NUTSTORE_DEFAULTS["nutstore.obsidianMode"]) === "true",
     },
@@ -284,8 +321,13 @@ export function updateSettings(db: AppDatabase, patch: UpdateSettingsRequest) {
   if (patch.obsidian) {
     if (patch.obsidian.vaultPath !== undefined) set(db, "obsidian.vaultPath", patch.obsidian.vaultPath.trim().replace(/[\\/]+$/, ""));
     if (patch.obsidian.folder !== undefined) set(db, "obsidian.folder", patch.obsidian.folder.trim().replace(/^[\\/]+|[\\/]+$/g, "") || "00-Inbox");
-    if (patch.obsidian.tagTaxonomy !== undefined) set(db, "obsidian.tagTaxonomy", JSON.stringify(patch.obsidian.tagTaxonomy));
+    if (patch.obsidian.tagTaxonomy !== undefined) set(db, "obsidian.tagTaxonomy", JSON.stringify(sanitizeTaxonomy(patch.obsidian.tagTaxonomy)));
     if (patch.obsidian.autoTagEnabled !== undefined) set(db, "obsidian.autoTagEnabled", patch.obsidian.autoTagEnabled ? "true" : "false");
+    if (patch.obsidian.allowNewTags !== undefined) set(db, "obsidian.allowNewTags", patch.obsidian.allowNewTags ? "true" : "false");
+    // 空数组是合法值（＝不抽），但 set() 会跳过空串，所以这里序列化成 "[]" 才存得进去。
+    if (patch.obsidian.extractFields !== undefined) {
+      set(db, "obsidian.extractFields", JSON.stringify(sanitizeExtractFields(patch.obsidian.extractFields)));
+    }
     if (patch.obsidian.tagMinCount !== undefined) set(db, "obsidian.tagMinCount", String(Math.max(1, Math.min(20, patch.obsidian.tagMinCount))));
     if (patch.obsidian.tagMaxCount !== undefined) set(db, "obsidian.tagMaxCount", String(Math.max(1, Math.min(30, patch.obsidian.tagMaxCount))));
     if (patch.obsidian.autoLinkEnabled !== undefined) set(db, "obsidian.autoLinkEnabled", patch.obsidian.autoLinkEnabled ? "true" : "false");
@@ -299,9 +341,13 @@ export function updateSettings(db: AppDatabase, patch: UpdateSettingsRequest) {
     }
     if (patch.nutstore.account !== undefined) set(db, "nutstore.account", patch.nutstore.account.trim());
     if (patch.nutstore.password !== undefined && patch.nutstore.password.trim()) set(db, "nutstore.password", patch.nutstore.password.trim());
-    if (patch.nutstore.remoteRoot !== undefined) {
-      const value = patch.nutstore.remoteRoot.trim().replace(/\/+$/, "");
-      set(db, "nutstore.remoteRoot", value ? (value.startsWith("/") ? value : `/${value}`) : "/我的坚果云/ScribeFlow");
+    if (patch.nutstore.backupDir !== undefined) {
+      // 本地路径原样保留（去尾分隔符）；云端路径补上开头的 /。空串回落默认值。
+      const value = patch.nutstore.backupDir.trim().replace(/[\\/]+$/, "");
+      const fallback = NUTSTORE_DEFAULTS["nutstore.backupDir"] as string;
+      if (!value) set(db, "nutstore.backupDir", fallback);
+      else if (backupLocationOf(value) === "local") set(db, "nutstore.backupDir", value);
+      else set(db, "nutstore.backupDir", value.startsWith("/") ? value : `/${value}`);
     }
     if (patch.nutstore.obsidianRemotePath !== undefined) {
       const value = patch.nutstore.obsidianRemotePath.trim().replace(/\/+$/, "");

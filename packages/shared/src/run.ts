@@ -244,6 +244,16 @@ export interface AppSettings {
     tagTaxonomy: Record<string, string[]>;
     /** 是否启用 AI 自动补全标签。 */
     autoTagEnabled: boolean;
+    /**
+     * 允许 AI 往词库里**新增**标签（默认关）。
+     * 关掉时模型只能从词库里挑——聚合口径不会被模型自己长出来的新写法冲散。
+     */
+    allowNewTags: boolean;
+    /**
+     * 从正文额外抽取的属性名（如「人物」「机构」）。AI 会把它们写进笔记的 front matter，
+     * 也是「关联相关笔记」的比较依据。留空则不抽。默认是历史笔记那三个，可改成任意字段。
+     */
+    extractFields: string[];
     /** 最少标签数。 */
     tagMinCount: number;
     /** 最多标签数。 */
@@ -294,6 +304,9 @@ export interface UpdateSettingsRequest {
     folder?: string;
     tagTaxonomy?: Record<string, string[]>;
     autoTagEnabled?: boolean;
+    allowNewTags?: boolean;
+    /** 从正文额外抽取的属性名；空数组表示不抽。 */
+    extractFields?: string[];
     tagMinCount?: number;
     tagMaxCount?: number;
     autoLinkEnabled?: boolean;
@@ -305,7 +318,8 @@ export interface UpdateSettingsRequest {
     account?: string;
     /** 只写密钥；留空表示不修改。 */
     password?: string;
-    remoteRoot?: string;
+    /** 备份目录：本地文件夹 或 云端路径，按形状自动判定。 */
+    backupDir?: string;
     obsidianRemotePath?: string;
     obsidianMode?: boolean;
   };
