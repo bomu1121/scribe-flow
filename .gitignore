@@ -49,3 +49,6 @@ playwright-report/
 
 # ZCode 会话产物（计划模式留下的 plan-sess_*.md），不是仓库内容
 .zcode/
+
+# 分享会材料（历史上已移出仓库到同级 scribe-flow-archive/，见 CHANGELOG），留在本地不进仓库
+sharing/

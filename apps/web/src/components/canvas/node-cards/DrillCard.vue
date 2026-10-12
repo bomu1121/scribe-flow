@@ -1,6 +1,9 @@
 <script setup lang="ts">
 import { computed } from "vue";
-import { ElCheckbox, ElInput, ElInputNumber, ElSwitch } from "element-plus";
+import { ElCheckbox } from "element-plus/es/components/checkbox/index.mjs";
+import { ElInput } from "element-plus/es/components/input/index.mjs";
+import { ElInputNumber } from "element-plus/es/components/input-number/index.mjs";
+import { ElSwitch } from "element-plus/es/components/switch/index.mjs";
 import { DEFAULT_DRILL_KINDS, DRILL_KINDS, DRILL_KIND_LABELS, type DrillDifficulty, type DrillKind } from "@scribe-flow/shared";
 import ModelSelect from "../../ModelSelect.vue";
 import NodeFieldLabel from "../NodeFieldLabel.vue";

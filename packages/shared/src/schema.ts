@@ -114,6 +114,7 @@ const nodeDataByType = {
     author: z.string().optional(),
     url: z.string().optional(),
     folder: z.string().optional(),
+    overwrite: z.boolean().optional(),
   }),
   drill: baseDataSchema.extend({
     pointCount: z.number().int().min(3).max(12).optional(),

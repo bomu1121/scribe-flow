@@ -33,6 +33,30 @@ export function createApp(db: AppDatabase, options: AppOptions) {
   const app = new Hono();
   const engine = new RunEngine(db, options.dataDir);
 
+  // 跨站防线：本服务无应用层认证，全靠「只有本机前端会调它」这一假设；但浏览器里
+  // 任何网页都能对 127.0.0.1:8787 发 fetch（CORS 只影响能否读到响应，拦不住 POST 副作用）。
+  // 放行口径：无 Origin（curl / 服务端调用 / 同源 GET 导航）、与请求 Host 同源、
+  // 本机开发前端（Vite 5173 / preview 4173）、以及 CORS_ORIGIN 里显式配置的来源。
+  // 注意 CORS_ORIGIN 设成 "*" 只放开响应头，不放开这道门——要跨域访问请写具体来源。
+  app.use("*", async (c, next) => {
+    const origin = c.req.header("Origin");
+    if (origin) {
+      const normalized = origin.toLowerCase();
+      const host = (c.req.header("Host") ?? "").toLowerCase();
+      const sameOrigin = host !== "" && (normalized === `http://${host}` || normalized === `https://${host}`);
+      const devOrigin = normalized === "http://localhost:5173" || normalized === "http://127.0.0.1:5173" || normalized === "http://localhost:4173" || normalized === "http://127.0.0.1:4173";
+      const configured = (process.env.CORS_ORIGIN ?? "")
+        .split(",")
+        .map((item) => item.trim().toLowerCase())
+        .filter(Boolean)
+        .includes(normalized);
+      if (!sameOrigin && !devOrigin && !configured) {
+        return c.json({ error: "跨站请求被拒绝：本服务仅限本机使用，跨域访问需在服务端配置 CORS_ORIGIN" }, 403);
+      }
+    }
+    return next();
+  });
+
   app.use(
     "*",
     cors({

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from "vue";
-import { ElInput } from "element-plus";
+import { ElInput } from "element-plus/es/components/input/index.mjs";
 import ModelSelect from "../../ModelSelect.vue";
 import NodeFieldLabel from "../NodeFieldLabel.vue";
 

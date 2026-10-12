@@ -197,6 +197,31 @@ function matchesAfterTrimmedLead(normInput: string, normQuote: string): boolean 
   return candidates.some((candidate) => normInput.includes(candidate));
 }
 
+/**
+ * 把相邻重复的同一个字折叠成一个（`对对` → `对`）。
+ *
+ * 这条是被一次真实失败逼出来的，不是预防性设计：那条视频里，转写把作者的话记成
+ * 「美国文化里**面对对抗**的一种想象」——多出一个「对」（读起来仍然通顺，所以校对节点照原样留下了）。
+ * 模型引用时按正常中文写成「文化里**面对抗**」，逐字比对判未命中、重问一次仍栽在同一条，整个节点作废。
+ * 旁证是**两个互不相干的块（成文版 / 速览与速查）都独立地少写了那个「对」**，
+ * 说明这不是模型抄错，是转写在该处重复了一个字。
+ *
+ * 折叠是**对称的**（原文与引用两边同规则），所以它只让「只差一个重复字」的两串相等；
+ * 实质不同的句子折叠后依然不等。判定顺序仍是先逐字、再虚词、最后才折叠。
+ */
+function collapseDoubledChars(text: string): string {
+  return text.replace(/(.)\1+/g, "$1");
+}
+
+/** 引用命中判定：逐字优先；再容忍「开头虚词被改写」；最后容忍「转写重复了一个字」。 */
+function citationMatch(normInput: string, normQuote: string): boolean {
+  if (normInput.includes(normQuote)) return true;
+  if (matchesAfterTrimmedLead(normInput, normQuote)) return true;
+  const foldedInput = collapseDoubledChars(normInput);
+  const foldedQuote = collapseDoubledChars(normQuote);
+  return foldedInput.includes(foldedQuote) || matchesAfterTrimmedLead(foldedInput, foldedQuote);
+}
+
 export interface AssertResult {
   ok: boolean;
   errors: string[];
@@ -263,7 +288,7 @@ export function evaluateAsserts(step: RecipeStep, outputText: string, ctx: StepC
           const raw = quote.trim();
           if (!raw || raw.length < 6 || raw.endsWith("…") || raw.endsWith("...") || raw.endsWith("……")) continue;
           const normQuote = normalizeForCitation(raw);
-          if (!inputNorm.includes(normQuote) && !matchesAfterTrimmedLead(inputNorm, normQuote)) {
+          if (!citationMatch(inputNorm, normQuote)) {
             misses.push(raw.length > 40 ? `${raw.slice(0, 40)}…` : raw);
           }
         }

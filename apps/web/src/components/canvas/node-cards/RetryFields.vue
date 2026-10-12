@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ElInputNumber } from "element-plus";
+import { ElInputNumber } from "element-plus/es/components/input-number/index.mjs";
 
 const props = defineProps<{ retry?: { maxRetries?: number; backoffMs?: number } }>();
 const emit = defineEmits<{ update: [value: { maxRetries?: number; backoffMs?: number }] }>();

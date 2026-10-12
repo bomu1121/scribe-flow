@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
-import { ElDropdown, ElDropdownItem, ElDropdownMenu, ElMessageBox } from "element-plus";
+import { ElDropdown, ElDropdownItem, ElDropdownMenu } from "element-plus/es/components/dropdown/index.mjs";
+import { ElMessageBox } from "element-plus/es/components/message-box/index.mjs";
 import { toast } from "@/lib/toast";
 import { Activity, Check, Copy, Download, History, LayoutPanelTop, Maximize, MoreHorizontal, Play, Redo2, StopCircle, Undo2 } from "lucide-vue-next";
 import { emptyGraph, type NodeType, type RunDetail, type RunMeta, type RunNodeResult, type RunStatus, type SourceVideoItem, type WorkflowGraph } from "@scribe-flow/shared";

@@ -1,6 +1,9 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
-import { ElButton, ElCollapse, ElCollapseItem, ElOption, ElSelect, ElTable, ElTableColumn } from "element-plus";
+import { ElButton } from "element-plus/es/components/button/index.mjs";
+import { ElCollapse, ElCollapseItem } from "element-plus/es/components/collapse/index.mjs";
+import { ElOption, ElSelect } from "element-plus/es/components/select/index.mjs";
+import { ElTable, ElTableColumn } from "element-plus/es/components/table/index.mjs";
 import { ArrowLeftRight, Bot, Copy, RefreshCw, TriangleAlert } from "lucide-vue-next";
 import {
   DIFF_MAX_LINES,

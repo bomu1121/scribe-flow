@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
-import { ElButton, ElOption, ElSelect } from "element-plus";
+import { ElButton } from "element-plus/es/components/button/index.mjs";
+import { ElOption, ElSelect } from "element-plus/es/components/select/index.mjs";
 import { RefreshCw } from "lucide-vue-next";
 import { useSettingsStore } from "@/stores/settings";
 import NodeFieldLabel from "../NodeFieldLabel.vue";

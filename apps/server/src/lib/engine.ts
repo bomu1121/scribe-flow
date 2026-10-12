@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { and, desc, eq, inArray, notInArray } from "drizzle-orm";
 import {
@@ -20,6 +20,7 @@ import {
   segmentKey,
   tagPathGroup,
   topicManagedTags,
+  uniqueNoteFileName,
   type GraphNode,
   type NodeOutput,
   type NodePick,
@@ -51,7 +52,7 @@ import {
   ensureFileVideoAsset,
   gcMediaAssets,
 } from "./media-store";
-import { ensureRemoteDirectory, scanRemoteMarkdown, writeRemoteFile, type NutstoreConfig } from "./nutstore";
+import { ensureRemoteDirectory, listRemoteDirectory, NUTSTORE_PROPFIND_LIMIT, scanRemoteMarkdown, writeRemoteFile, type NutstoreConfig } from "./nutstore";
 import { parseNoteTags, parseYamlFieldList, upsertFrontMatterTags, walkMarkdownFiles } from "./note-markdown";
 import { appendAllOutput, assertStepOutput, parseJsonLoose, readSearchQueries, renderStepSystem } from "./recipe";
 import { getAiConfig, getAsrConfig, getGeneralSettings, getNutstoreConfig, getSearchConfig, getSettings, updateSettings } from "./settings";
@@ -147,6 +148,8 @@ interface ActiveRun {
   nodeIds: Set<string>;
   order: string[];
   cancelled: boolean;
+  /** 收尾是否已发生：强制结束会立即写库并发 run.done，runLoop 随后的 finishRun 不得再重复一次。 */
+  finished: boolean;
   listeners: Set<(event: RunEvent) => void>;
   outputs: Map<string, NodeOutput[]>;
   /** 条件分支节点执行后的分支结果（true/false），用于下游按 handle 取数与跳过。 */
@@ -489,6 +492,7 @@ export class RunEngine {
       nodeIds,
       order,
       cancelled: false,
+      finished: false,
       listeners: new Set(),
       outputs: new Map(),
       branches: new Map(),
@@ -531,6 +535,10 @@ export class RunEngine {
       .run();
     if (active) {
       this.emit(active, { type: "run.done", runId, status: "cancelled" });
+      // 收尾已在这里完成；不设标志的话 runLoop 随后会再走一次 finishRun——
+      // run.done 发两次，「已手动强制结束」的文案也会被 finishRun 的收尾覆盖掉。
+      active.finished = true;
+      setTimeout(() => this.actives.delete(runId), 60_000);
     }
     return true;
   }
@@ -1714,6 +1722,16 @@ export class RunEngine {
           .split(/[,，\s]+/)
           .map((tag) => normalizeTagSegment(tag))
           .filter(Boolean);
+        // 先定文件名：「同名覆盖」关着时它会退让成「标题 (2).md」。名字必须在写盘前定死——
+        // 下面的读旧标签、关联扫描、记指纹三处都按最终名走，等到写盘那一刻才改名，前面就都落在旧名上。
+        const stem = escapePathName(title);
+        let fileName = `${stem}.md`;
+        if (data.overwrite === false) {
+          const taken = await this.takenNoteNames(nutstoreMode && config ? { config, remoteDir } : undefined, dir);
+          fileName = uniqueNoteFileName(stem, (name) => taken.has(name));
+        }
+        const outPath = nutstoreMode ? `${remoteDir}/${fileName}` : join(dir, fileName);
+
         // 额外属性：按设置里配置的字段名抽（默认是历史笔记那三个，可换成任意字段；留空则不抽）。
         const extractFields = settings.obsidian.extractFields;
         const entities =
@@ -1721,8 +1739,6 @@ export class RunEngine {
             ? await this.extractEntities(text, extractFields, signal)
             : {};
         const body = text.startsWith("# ") ? text : `# ${title}\n\n${text}`;
-        const fileName = `${escapePathName(title)}.md`;
-        const outPath = nutstoreMode ? `${remoteDir}/${fileName}` : join(dir, fileName);
 
         // 标签两个来源：UP 主来自来源元数据（确定性，不花模型钱），话题标签由词库 + AI 判定。
         const upName = normalizeTagSegment(author);
@@ -1863,6 +1879,23 @@ ${list}
   }
 
   /** 扫描 Obsidian 库内已有笔记（跳过模板/附件/隐藏目录）。 */
+  /**
+   * 「同名不覆盖」时的文件名占用表：本地列一遍保存目录，坚果云列一遍远端目录。
+   *
+   * 一次列全而不是逐个探测，顺带能看见列表被截断的情况——坚果云单次 PROPFIND 上限 750 项，
+   * 名字没列全就可能撞上没看见的那一篇，而"避开同名"正是关掉覆盖时要做到的事，所以这里宁可报错。
+   */
+  private async takenNoteNames(nutstore: { config: NutstoreConfig; remoteDir: string } | undefined, dir: string): Promise<Set<string>> {
+    if (!nutstore) return new Set(await readdir(dir));
+    const listing = await listRemoteDirectory(nutstore.config, nutstore.remoteDir);
+    if (listing.truncated) {
+      throw new Error(
+        `坚果云目录“${nutstore.remoteDir}”单次超过 ${NUTSTORE_PROPFIND_LIMIT} 项，无法确认是否已有同名笔记。请先拆分该目录，或到节点高级设置打开「同名笔记直接覆盖」。`,
+      );
+    }
+    return new Set(listing.items.map((item) => item.name));
+  }
+
   private async scanObsidianNotes(
     vaultPath: string,
     excludePath: string,
@@ -2136,6 +2169,8 @@ ${list}
   }
 
   private async finishRun(active: ActiveRun, status: RunStatus, error?: string) {
+    if (active.finished) return;
+    active.finished = true;
     const elapsed = Date.now() - active.startedAt;
     const rows = this.db.select().from(runNodeResults).where(eq(runNodeResults.runId, active.id)).all();
     const doneCount = rows.filter((r) => r.status === "done").length;

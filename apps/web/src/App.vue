@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { RouterView } from "vue-router";
-import { ElConfigProvider } from "element-plus";
+import { ElConfigProvider } from "element-plus/es/components/config-provider/index.mjs";
 import zhCn from "element-plus/es/locale/lang/zh-cn";
 import AppLayout from "@/layouts/AppLayout.vue";
 import DocsDialog from "@/components/DocsDialog.vue";

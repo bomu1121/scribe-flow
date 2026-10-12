@@ -310,6 +310,11 @@ export function ensureSchema(sqlite: Database.Database) {
     sqlite.exec("ALTER TABLE runs ADD COLUMN folder_id TEXT");
   }
   sqlite.exec("CREATE INDEX IF NOT EXISTS idx_runs_folder ON runs(folder_id)");
+  // 运行详情按 run_id 取节点结果与日志（SSE 快照回放、结果页加载都走），列表按工程取运行记录；
+  // 单机数据量下全表扫也能撑，但索引是幂等的一行语句，补上让增长曲线不背债。
+  sqlite.exec("CREATE INDEX IF NOT EXISTS idx_runs_project ON runs(project_id)");
+  sqlite.exec("CREATE INDEX IF NOT EXISTS idx_run_node_results_run ON run_node_results(run_id)");
+  sqlite.exec("CREATE INDEX IF NOT EXISTS idx_run_node_logs_run ON run_node_logs(run_id)");
 
   // 幂等迁移：旧库 run_node_inputs 表没有 result_text 时补列。
   const inputColumns = sqlite.prepare("PRAGMA table_info(run_node_inputs)").all() as Array<{ name: string }>;

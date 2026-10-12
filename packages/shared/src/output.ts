@@ -77,3 +77,25 @@ export function renderFileNameTemplate(template: string, ctx: FileNameContext): 
   const stem = sanitizeFileName(rendered).replace(/\.md$/i, "");
   return stem || sanitizeFileName(ctx.project) || "笔记";
 }
+
+/** 「同名不覆盖」时最多退让到第几号。到顶还撞就报错——目录里真堆到这个数，该让人去整理了。 */
+const MAX_SAME_NAME_SUFFIX = 99;
+
+/**
+ * 挑一个没被占用的笔记文件名：`标题.md` → `标题 (2).md` → `标题 (3).md`……
+ *
+ * 括号用半角，跟文件管理器（资源管理器 / 访达）的形状一致；标题里自带的括号多是全角，
+ * 两者挨着出现时不会混。`isTaken` 由调用方给——本地是列一遍保存目录，坚果云是把远端目录列一次——
+ * 这里只管挑名字，不碰文件系统，所以能直接对拍。
+ *
+ * 到 `MAX_SAME_NAME_SUFFIX` 还撞就抛错，而不是继续往下试：真出现这种情况说明保存目录已经乱了，
+ * 报错让人去整理，比悄悄再写一篇更有用。
+ */
+export function uniqueNoteFileName(stem: string, isTaken: (fileName: string) => boolean): string {
+  if (!isTaken(`${stem}.md`)) return `${stem}.md`;
+  for (let suffix = 2; suffix <= MAX_SAME_NAME_SUFFIX; suffix += 1) {
+    const candidate = `${stem} (${suffix}).md`;
+    if (!isTaken(candidate)) return candidate;
+  }
+  throw new Error(`保存目录里的同名笔记已排到「${stem} (${MAX_SAME_NAME_SUFFIX}).md」，请先整理该目录`);
+}

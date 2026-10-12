@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
-import { ElMessageBox } from "element-plus";
+import { ElMessageBox } from "element-plus/es/components/message-box/index.mjs";
 import { toast } from "@/lib/toast";
 import { Folder as FolderIcon, History, Pencil, Trash2, Workflow } from "lucide-vue-next";
 import type { ProjectFolder, ProjectListItem } from "@scribe-flow/shared";

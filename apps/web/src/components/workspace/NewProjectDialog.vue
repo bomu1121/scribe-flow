@@ -1,6 +1,9 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
-import { ElButton, ElDialog, ElInput, ElRadioButton, ElRadioGroup } from "element-plus";
+import { ElButton } from "element-plus/es/components/button/index.mjs";
+import { ElDialog } from "element-plus/es/components/dialog/index.mjs";
+import { ElInput } from "element-plus/es/components/input/index.mjs";
+import { ElRadioButton, ElRadioGroup } from "element-plus/es/components/radio/index.mjs";
 import { toast } from "@/lib/toast";
 import { Plus } from "lucide-vue-next";
 import {

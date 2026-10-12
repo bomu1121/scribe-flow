@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { DEFAULT_FILE_NAME_TEMPLATE, FILE_NAME_TOKENS, renderFileNameTemplate, sanitizeFileName } from "./output";
+import { DEFAULT_FILE_NAME_TEMPLATE, FILE_NAME_TOKENS, renderFileNameTemplate, sanitizeFileName, uniqueNoteFileName } from "./output";
 
 /** 本地时间 2026-09-28 14:30:05（月份是 0 基，所以 8 = 九月）。 */
 const at = new Date(2026, 8, 28, 14, 30, 5);
@@ -49,5 +49,25 @@ describe("sanitizeFileName", () => {
   it("只替换文件系统不接受的字符，收敛到 80 字符", () => {
     expect(sanitizeFileName("  正常名字  ")).toBe("正常名字");
     expect(sanitizeFileName("x".repeat(200))).toHaveLength(80);
+  });
+});
+
+describe("uniqueNoteFileName", () => {
+  it("没被占用就用原名", () => {
+    expect(uniqueNoteFileName("某期视频", () => false)).toBe("某期视频.md");
+  });
+
+  it("被占用时排 (2)、(3)：连着被占就一直往下排", () => {
+    const taken = new Set(["某期视频.md", "某期视频 (2).md", "某期视频 (3).md"]);
+    expect(uniqueNoteFileName("某期视频", (name) => taken.has(name))).toBe("某期视频 (4).md");
+  });
+
+  it("只认同名的占用：别篇笔记的 (2) 不影响自己", () => {
+    const taken = new Set(["别的笔记 (2).md"]);
+    expect(uniqueNoteFileName("某期视频", (name) => taken.has(name))).toBe("某期视频.md");
+  });
+
+  it("排到上限还撞就抛错，不无限往下试", () => {
+    expect(() => uniqueNoteFileName("某期视频", () => true)).toThrow(/同名笔记/);
   });
 });

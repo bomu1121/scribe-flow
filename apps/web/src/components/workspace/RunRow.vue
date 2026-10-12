@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, ref } from "vue";
 import { useRoute, useRouter } from "vue-router";
-import { ElMessageBox } from "element-plus";
+import { ElMessageBox } from "element-plus/es/components/message-box/index.mjs";
 import { toast } from "@/lib/toast";
 import { Pencil, Trash2, Workflow } from "lucide-vue-next";
 import { RUN_NAME_MAX_LENGTH, type RunMeta } from "@scribe-flow/shared";

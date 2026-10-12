@@ -99,6 +99,7 @@ pnpm check:api:drill # 知识巩固链路（需真实 AI 密钥，会真的调�
 **调研**（`docs/research/`）
 
 - [AI 加工节点内部多步链：收益调研与进阶实现方案](./docs/research/ai-node-multistep-research.md)
+- [BibiGPT 的视频笔记提示词工程：原文提取、槽位框架与实测对照](./docs/research/bibigpt-note-prompt-engineering.md)
 - [双维度知识库：按「UP」与按「议题」检索](./docs/research/dual-axis-knowledge-base.md)
 - [节点结果预览展示调研与方案](./docs/research/node-result-preview-research.md)
 - [新功能该加一张卡片，还是加一个提示词](./docs/research/node-vs-prompt-block-boundary.md)

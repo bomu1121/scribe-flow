@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from "vue";
-import { ElButton, ElInput } from "element-plus";
+import { ElButton } from "element-plus/es/components/button/index.mjs";
+import { ElInput } from "element-plus/es/components/input/index.mjs";
 import { useBodyScrollLock } from "@/composables/useBodyScrollLock";
 import { toast } from "@/lib/toast";
 import { Check, Clock3, FolderHeart, ListVideo, PlaySquare, RotateCw, Search, X } from "lucide-vue-next";

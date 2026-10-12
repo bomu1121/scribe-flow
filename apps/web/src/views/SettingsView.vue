@@ -1,7 +1,12 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from "vue";
 import { useRoute } from "vue-router";
-import { ElCollapse, ElCollapseItem, ElInput, ElInputNumber, ElMessageBox, ElOption, ElSelect, ElSwitch } from "element-plus";
+import { ElCollapse, ElCollapseItem } from "element-plus/es/components/collapse/index.mjs";
+import { ElInput } from "element-plus/es/components/input/index.mjs";
+import { ElInputNumber } from "element-plus/es/components/input-number/index.mjs";
+import { ElMessageBox } from "element-plus/es/components/message-box/index.mjs";
+import { ElOption, ElSelect } from "element-plus/es/components/select/index.mjs";
+import { ElSwitch } from "element-plus/es/components/switch/index.mjs";
 import { CircleAlert, CircleCheck, Cloud, Download, ExternalLink, FolderOpen, ListChecks, Loader2, Mic, PlugZap, RefreshCw, RotateCcw, Save, Trash2, Upload } from "lucide-vue-next";
 import { toast } from "@/lib/toast";
 import { ensureNotifyPermission } from "@/utils/run-alert";

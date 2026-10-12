@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { onMounted, ref } from "vue";
-import { ElDropdown, ElDropdownItem, ElDropdownMenu, ElMessageBox } from "element-plus";
+import { ElDropdown, ElDropdownItem, ElDropdownMenu } from "element-plus/es/components/dropdown/index.mjs";
+import { ElMessageBox } from "element-plus/es/components/message-box/index.mjs";
 import { CircleUserRound, LogOut } from "lucide-vue-next";
 import { toast } from "@/lib/toast";
 import { useAuthStore } from "@/stores/auth";

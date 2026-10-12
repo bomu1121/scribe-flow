@@ -1,6 +1,6 @@
 import { createApp } from "vue";
 import { createPinia } from "pinia";
-import { ElLoading } from "element-plus";
+import { ElLoading } from "element-plus/es/components/loading/index.mjs";
 import App from "./App.vue";
 import router from "./router";
 import { initDropdownModal } from "./lib/dropdown-modal";
@@ -15,7 +15,24 @@ import "@vue-flow/core/dist/theme-default.css";
 import "@vue-flow/controls/dist/style.css";
 import "@vue-flow/minimap/dist/style.css";
 import "./styles/tokens.css";
-import "element-plus/dist/index.css";
+// Element Plus 样式按组件引入（组件 JS 本来就是显式按需 import，别再引 dist/index.css 全量包）。
+// 每个入口自带 base 与依赖组件的样式链（如 dialog → overlay）。新用了别的组件就在这里补一行，
+// 漏了的症状是那个组件完全没有样式。
+import "element-plus/es/components/button/style/css.mjs";
+import "element-plus/es/components/checkbox/style/css.mjs";
+import "element-plus/es/components/collapse/style/css.mjs";
+import "element-plus/es/components/dialog/style/css.mjs";
+import "element-plus/es/components/dropdown/style/css.mjs";
+import "element-plus/es/components/input/style/css.mjs";
+import "element-plus/es/components/input-number/style/css.mjs";
+import "element-plus/es/components/loading/style/css.mjs";
+import "element-plus/es/components/message-box/style/css.mjs";
+import "element-plus/es/components/radio/style/css.mjs";
+import "element-plus/es/components/select/style/css.mjs";
+import "element-plus/es/components/switch/style/css.mjs";
+import "element-plus/es/components/table/style/css.mjs";
+import "element-plus/es/components/tooltip/style/css.mjs";
+import "element-plus/es/components/upload/style/css.mjs";
 import "./styles/element-theme.css";
 import "./styles/app.css";
 import "./styles/markdown.css";

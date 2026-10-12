@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
-import { ElButton, ElInput } from "element-plus";
+import { ElButton } from "element-plus/es/components/button/index.mjs";
+import { ElInput } from "element-plus/es/components/input/index.mjs";
 import { Check, ChevronDown, Download, RotateCcw } from "lucide-vue-next";
 import {
   DRILL_KIND_LABELS,

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from "vue";
-import { ElCheckbox } from "element-plus";
+import { ElCheckbox } from "element-plus/es/components/checkbox/index.mjs";
 import type { NodePick, SegmentOption } from "@scribe-flow/shared";
 import { fmtMinutesSeconds } from "@/utils/run-segments";
 

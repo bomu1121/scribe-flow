@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from "vue";
-import { ElButton, ElDialog } from "element-plus";
+import { ElButton } from "element-plus/es/components/button/index.mjs";
+import { ElDialog } from "element-plus/es/components/dialog/index.mjs";
 import { RefreshCw } from "lucide-vue-next";
 import { toast } from "@/lib/toast";
 import { useAuthStore } from "@/stores/auth";

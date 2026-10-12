@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from "vue";
-import { ElButton, ElDialog, ElInput } from "element-plus";
+import { ElButton } from "element-plus/es/components/button/index.mjs";
+import { ElDialog } from "element-plus/es/components/dialog/index.mjs";
+import { ElInput } from "element-plus/es/components/input/index.mjs";
 import { Folder, FolderOpen, FolderPlus, Inbox } from "lucide-vue-next";
 import type { ProjectFolder } from "@scribe-flow/shared";
 import { toast } from "@/lib/toast";

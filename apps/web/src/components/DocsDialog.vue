@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from "vue";
 import { BookText, FileWarning, RefreshCw, Search } from "lucide-vue-next";
-import { ElInput } from "element-plus";
+import { ElInput } from "element-plus/es/components/input/index.mjs";
 import { api } from "@/lib/api";
 import { renderMarkdown } from "@/lib/markdown";
 import { formatBytes } from "@/lib/bytes";

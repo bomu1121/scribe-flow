@@ -79,6 +79,8 @@ export interface ScribeNodeData {
   source?: string;
   author?: string;
   folder?: string;
+  /** 保存目录里已有同名笔记时是否直接覆盖；缺省覆盖，关掉则退让成「标题 (2).md」。 */
+  overwrite?: boolean;
   retry?: { maxRetries?: number; backoffMs?: number };
   /** 素材挑选：来源节点 id → 选中的素材段标识（未配置即全选）。 */
   pick?: Record<string, string[]>;

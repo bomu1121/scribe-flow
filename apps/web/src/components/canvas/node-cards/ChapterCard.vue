@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ElInputNumber } from "element-plus";
+import { ElInputNumber } from "element-plus/es/components/input-number/index.mjs";
 import ModelSelect from "../../ModelSelect.vue";
 import NodeFieldLabel from "../NodeFieldLabel.vue";
 

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
-import { ElOption, ElSelect } from "element-plus";
+import { ElOption, ElSelect } from "element-plus/es/components/select/index.mjs";
 import { Copy, X } from "lucide-vue-next";
 import type { PromptBlock } from "@scribe-flow/shared";
 import { useBodyScrollLock } from "@/composables/useBodyScrollLock";

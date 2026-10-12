@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ElTooltip } from "element-plus";
+import { ElTooltip } from "element-plus/es/components/tooltip/index.mjs";
 import { CircleHelp } from "lucide-vue-next";
 
 defineProps<{

@@ -3,6 +3,7 @@ import { z } from "zod";
 import type { PageRef, UgcSeasonInfo, VideoPreview } from "@scribe-flow/shared";
 import { badRequest } from "../lib/bad-request";
 import { BILI_USER_AGENT } from "../lib/bilibili";
+import { isBlockedFetchTarget } from "../lib/url-guard";
 
 const PREVIEW_CACHE_TTL = 5 * 60 * 1000;
 const PREVIEW_CACHE_MAX = 30;
@@ -44,9 +45,12 @@ async function resolveBvid(input: string): Promise<string | null> {
   const direct = extractBvid(input);
   if (direct) return direct;
 
-  // b23.tv / 短链：跟随重定向后取最终地址
+  // b23.tv / 短链：跟随重定向后取最终地址。
+  // 输入来自任意客户端，先挡掉私网与非法协议目标，不让服务端变成内网探测器。
   try {
-    const res = await fetch(input, { method: "GET", redirect: "follow", headers: { "User-Agent": BILI_USER_AGENT }, signal: AbortSignal.timeout(8000) });
+    const target = new URL(input);
+    if (isBlockedFetchTarget(target)) return null;
+    const res = await fetch(target, { method: "GET", redirect: "follow", headers: { "User-Agent": BILI_USER_AGENT }, signal: AbortSignal.timeout(8000) });
     return extractBvid(res.url);
   } catch {
     return null;

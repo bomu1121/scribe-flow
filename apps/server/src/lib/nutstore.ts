@@ -131,6 +131,8 @@ async function davFetch(config: NutstoreConfig, options: DavRequestOptions, retr
       method: options.method,
       headers,
       body,
+      // 60s 覆盖慢上行下的整库备份上传；超时按网络错误处理，进入下方退避重试。
+      signal: AbortSignal.timeout(60_000),
       // WebDAV 服务端通常不信任浏览器 CORS，这里由 Node 后端直接请求，不受浏览器限制。
     }).catch((err: unknown) => {
       lastError = err;

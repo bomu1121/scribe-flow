@@ -216,6 +216,47 @@ describe("assertStepOutput", () => {
     expect(() => assertStepOutput(s, '{"items":[{"quote":"作者把这一段叫做“生产力陷阱”，并解释了三层防线。"}]}', quoteCtx)).not.toThrow();
   });
 
+  it("citationsInOriginal 宽容规则：转写重复了一个字时，引用按正常写法仍算命中（实测回归）", () => {
+    // 真实事故：转写把作者的话记成「美国文化里面对对抗的一种想象」（多一个「对」，读起来仍通顺，
+    // 所以校对节点照原样留下了）；模型引用时按正常中文写成「文化里面对抗」，逐字比对判未命中、
+    // 重问一次仍栽在同一条，整个节点作废。旁证：两个互不相干的块（成文版 / 速览与速查）
+    // 都独立地少写了那个「对」——说明是转写重复了一个字，不是模型抄错。
+    const realCtx = {
+      input:
+        "但是，这个速胜，我那天和范永鹏老师聊天，似乎是美国文化里面对对抗的一种想象，就像二丫干掉异鬼那样，毕其功于一役，甚至是一刀入魂打败对手。",
+      prev: "",
+      all: "",
+    };
+    const s = step({
+      kind: "json",
+      asserts: [{ op: "citationsInOriginal", field: "items[].quote", maxMiss: 0 }],
+    });
+    expect(() =>
+      assertStepOutput(
+        s,
+        '{"items":[{"quote":"这个速胜，我那天和范永鹏老师聊天，似乎是美国文化里面对抗的一种想象，就像二丫干掉异鬼那样"}]}',
+        realCtx,
+      ),
+    ).not.toThrow();
+  });
+
+  it("citationsInOriginal：折叠重复字之后仍不同的引用照旧判失败（宽容不越界）", () => {
+    const realCtx = {
+      input:
+        "但是，这个速胜，我那天和范永鹏老师聊天，似乎是美国文化里面对对抗的一种想象，就像二丫干掉异鬼那样，毕其功于一役。",
+      prev: "",
+      all: "",
+    };
+    const s = step({
+      kind: "json",
+      asserts: [{ op: "citationsInOriginal", field: "items[].quote", maxMiss: 0 }],
+    });
+    // 「那样」被换成「似的」——不是重复字问题，折叠救不了，必须仍然判失败
+    expect(() => assertStepOutput(s, '{"items":[{"quote":"就像二丫干掉异鬼似的，毕其功于一役"}]}', realCtx)).toThrow(
+      /未在原文找到/,
+    );
+  });
+
   it("kind=json 输出非 JSON 时先于断言失败", () => {
     const s = step({ kind: "json", asserts: [{ op: "jsonRootKeys", value: ["items"] }] });
     expect(() => assertStepOutput(s, "没有围栏的说明文字", ctx)).toThrow(/不是合法 JSON/);

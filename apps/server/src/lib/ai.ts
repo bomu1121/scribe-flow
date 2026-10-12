@@ -1,4 +1,5 @@
-import { readFile } from "node:fs/promises";
+import { openAsBlob } from "node:fs";
+import { open, readFile } from "node:fs/promises";
 import { basename } from "node:path";
 import type { AsrEngine } from "@scribe-flow/shared";
 
@@ -139,47 +140,69 @@ export async function transcribeAudio(config: AsrConfig, audioPath: string, sign
 // 按原始 PCM 7MB（base64 约 9.3MB）切块，留出 data URL 前缀余量。
 const MIMO_MAX_AUDIO_BYTES = 7 * 1024 * 1024;
 
-function splitWav(buffer: Buffer, maxDataBytes: number): Buffer[] {
-  if (buffer.length < 12 || buffer.toString("ascii", 0, 4) !== "RIFF" || buffer.toString("ascii", 8, 12) !== "WAVE") {
-    return [buffer];
-  }
+/** WAV 头部探测窗口：ffmpeg 产出的头远小于这个值；超出视为非常规 WAV，退回整读。 */
+const WAV_HEADER_PROBE_BYTES = 64 * 1024;
 
-  let offset = 12;
-  let dataOffset = -1;
-  let dataSize = 0;
-  while (offset + 8 <= buffer.length) {
-    const id = buffer.toString("ascii", offset, offset + 4);
-    const size = buffer.readUInt32LE(offset + 4);
-    if (id === "data") {
-      dataOffset = offset + 8;
-      dataSize = size;
-      break;
+/**
+ * 从盘上按块读 WAV：找 data 区后逐块「复制头部 + 读一段 PCM」，内存里同一时刻只有一个块。
+ * 三种情况退回整读（与旧的整文件行为一致）：小文件、非标准 WAV、头部长得探测不到 data 区。
+ */
+async function* mimoAudioChunks(audioPath: string, maxDataBytes: number): AsyncGenerator<Buffer> {
+  const handle = await open(audioPath, "r");
+  try {
+    const fileSize = (await handle.stat()).size;
+    if (fileSize <= maxDataBytes) {
+      yield await readFile(audioPath);
+      return;
     }
-    offset += 8 + size + (size % 2);
+    const probe = Buffer.alloc(WAV_HEADER_PROBE_BYTES);
+    const { bytesRead } = await handle.read(probe, 0, probe.length, 0);
+    const head = probe.subarray(0, bytesRead);
+    if (head.length < 12 || head.toString("ascii", 0, 4) !== "RIFF" || head.toString("ascii", 8, 12) !== "WAVE") {
+      yield await readFile(audioPath);
+      return;
+    }
+    let offset = 12;
+    let dataOffset = -1;
+    while (offset + 8 <= head.length) {
+      const id = head.toString("ascii", offset, offset + 4);
+      const size = head.readUInt32LE(offset + 4);
+      if (id === "data") {
+        dataOffset = offset + 8;
+        break;
+      }
+      offset += 8 + size + (size % 2);
+    }
+    if (dataOffset < 0) {
+      yield await readFile(audioPath);
+      return;
+    }
+    const dataSize = Math.min(head.readUInt32LE(dataOffset - 4), fileSize - dataOffset);
+    if (dataSize <= 0) {
+      yield await readFile(audioPath);
+      return;
+    }
+    const header = Buffer.alloc(dataOffset);
+    await handle.read(header, 0, dataOffset, 0);
+    for (let start = 0; start < dataSize; start += maxDataBytes) {
+      const chunkLength = Math.min(maxDataBytes, dataSize - start);
+      // 每块仍是合法 WAV：头部照抄，RIFF 与 data 长度字段按本块改写
+      const out = Buffer.alloc(header.length + chunkLength);
+      header.copy(out, 0);
+      out.writeUInt32LE(header.length + chunkLength - 8, 4);
+      out.writeUInt32LE(chunkLength, dataOffset - 4);
+      await handle.read(out, header.length, chunkLength, dataOffset + start);
+      yield out;
+    }
+  } finally {
+    await handle.close();
   }
-  if (dataOffset < 0 || dataSize <= 0) return [buffer];
-
-  const header = buffer.subarray(0, dataOffset);
-  const chunks: Buffer[] = [];
-  for (let start = 0; start < dataSize; start += maxDataBytes) {
-    const end = Math.min(start + maxDataBytes, dataSize);
-    const chunkData = buffer.subarray(dataOffset + start, dataOffset + end);
-    const out = Buffer.alloc(header.length + chunkData.length);
-    header.copy(out, 0);
-    out.writeUInt32LE(header.length + chunkData.length - 8, 4);
-    out.writeUInt32LE(chunkData.length, dataOffset - 4);
-    chunkData.copy(out, header.length);
-    chunks.push(out);
-  }
-  return chunks;
 }
 
 async function transcribeMimo(config: AsrConfig, audioPath: string, signal?: AbortSignal): Promise<string> {
-  const data = await readFile(audioPath);
-  const chunks = data.length > MIMO_MAX_AUDIO_BYTES ? splitWav(data, MIMO_MAX_AUDIO_BYTES) : [data];
   const results: string[] = [];
 
-  for (const chunk of chunks) {
+  for await (const chunk of mimoAudioChunks(audioPath, MIMO_MAX_AUDIO_BYTES)) {
     const dataUrl = `data:audio/wav;base64,${chunk.toString("base64")}`;
     const res = await fetch(`${config.baseUrl.replace(/\/+$/, "")}/chat/completions`, {
       method: "POST",
@@ -210,7 +233,8 @@ async function transcribeMimo(config: AsrConfig, audioPath: string, signal?: Abo
 
 async function transcribeOpenAiCompatible(config: AsrConfig, audioPath: string, signal?: AbortSignal): Promise<string> {
   const form = new FormData();
-  const file = new Blob([await readFile(audioPath)], { type: "audio/wav" });
+  // openAsBlob 让 FormData 直接引用磁盘文件，不再把整段音频读进 JS 堆
+  const file = await openAsBlob(audioPath, { type: "audio/wav" });
   form.append("file", file, `${basename(audioPath, ".wav") || "audio"}.wav`);
   form.append("model", config.model || "whisper-1");
   form.append("response_format", "json");

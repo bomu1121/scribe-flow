@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
-import { ElInput, ElOption, ElSelect } from "element-plus";
+import { ElInput } from "element-plus/es/components/input/index.mjs";
+import { ElOption, ElSelect } from "element-plus/es/components/select/index.mjs";
 import {
   ChevronDown,
   ChevronRight,

@@ -1,7 +1,11 @@
 <script setup lang="ts">
 import { computed, defineAsyncComponent, h, onBeforeUnmount, onMounted, provide, ref, watch, type Component } from "vue";
 import { useRouter } from "vue-router";
-import { ElInput, ElMessageBox, ElSwitch, ElTooltip, ElUpload, type UploadRequestOptions } from "element-plus";
+import { ElInput } from "element-plus/es/components/input/index.mjs";
+import { ElMessageBox } from "element-plus/es/components/message-box/index.mjs";
+import { ElSwitch } from "element-plus/es/components/switch/index.mjs";
+import { ElTooltip } from "element-plus/es/components/tooltip/index.mjs";
+import { ElUpload, type UploadRequestOptions } from "element-plus/es/components/upload/index.mjs";
 import { PhBookOpenText, PhCloud, PhDotsThreeVertical, PhFileArrowDown, PhFileText, PhFunnel, PhGitBranch, PhGitMerge, PhListChecks, PhMagicWand, PhMicrophone, PhPlay, PhShareNetwork, PhSlidersHorizontal, PhSparkle, PhSwap, PhTreeStructure, PhUploadSimple, PhVideo } from "@phosphor-icons/vue";
 import { CircleAlert } from "lucide-vue-next";
 import { toast } from "@/lib/toast";
@@ -449,6 +453,7 @@ const hasAdvanced = computed(() => {
     "process.chapter",
     "process.gameguide",
     "process.mindmap",
+    "process.obsidian",
     "process.drill",
   ].includes(nodeType.value);
   // 可挑选素材的节点也要能打开高级设置（合并/输出等节点同样需要按素材挑选）。
@@ -456,8 +461,10 @@ const hasAdvanced = computed(() => {
   return base || (hasPickSection.value && nodeType.value !== "flow.pick");
 });
 const isVideoSource = computed(() => nodeType.value === "source.bili" || nodeType.value === "source.file");
-/** 来源节点的「高级设置」不涉及失败重试，标题保持简洁。 */
-const advancedTitle = computed(() => (isVideoSource.value || nodeType.value === "process.mindmap" ? "高级设置" : "高级（失败重试）"));
+/** 不涉及失败重试的节点（来源类、思维导图、Obsidian）标题保持简洁。 */
+const advancedTitle = computed(() =>
+  isVideoSource.value || nodeType.value === "process.mindmap" || nodeType.value === "process.obsidian" ? "高级设置" : "高级（失败重试）",
+);
 const advancedOpen = ref(false);
 
 watch(
@@ -844,6 +851,12 @@ function setKeepVideo(value: string | number | boolean) {
 
 function setVideoQn(qn: number) {
   patch({ videoQn: qn });
+  commit();
+}
+
+/** overwrite：关掉后保存目录里已有同名笔记就退让成「标题 (2).md」，不覆盖已有那篇。 */
+function setOverwrite(value: string | number | boolean) {
+  patch({ overwrite: Boolean(value) });
   commit();
 }
 
@@ -1377,6 +1390,13 @@ const themeOptions = [
               </div>
             </template>
             <template v-else>
+              <div v-if="nodeType === 'process.obsidian'" class="sf-node-advanced-row">
+                <span
+                  class="sf-node-advanced-label"
+                  title="关掉后：保存目录里已有同名笔记时，改写「标题 (2).md」而不动已有那篇；重复运行会接着排 (3)、(4)。"
+                >同名笔记直接覆盖</span>
+                <el-switch size="small" :model-value="data.overwrite !== false" @update:model-value="setOverwrite" />
+              </div>
               <template v-if="nodeType === 'process.mindmap'">
                 <label class="sf-node-field">
                   <NodeFieldLabel label="导图标题（可选）" hint="留空时由 AI 自动提炼标题" />
@@ -1422,7 +1442,8 @@ const themeOptions = [
                 <div class="sf-node-advanced-subtitle">素材挑选</div>
                 <PickFields :options="pickOptions" :pick="data.pick" :stale-keys="pickStale" :readonly="readonly" @update="patchPick" />
               </template>
-              <RetryFields :retry="data.retry" @update="patchRetry" />
+              <!-- Obsidian 节点不在可重试名单里，重试字段对它无效，不给这个空档。 -->
+              <RetryFields v-if="nodeType !== 'process.obsidian'" :retry="data.retry" @update="patchRetry" />
             </template>
           </div>
         </div>

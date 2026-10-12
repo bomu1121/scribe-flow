@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
-import { ElOption, ElSelect, ElTable, ElTableColumn } from "element-plus";
+import { ElOption, ElSelect } from "element-plus/es/components/select/index.mjs";
+import { ElTable, ElTableColumn } from "element-plus/es/components/table/index.mjs";
 import { toast } from "@/lib/toast";
 import {
   ArrowLeft,

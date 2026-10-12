@@ -163,6 +163,8 @@ export interface ObsidianData {
   url?: string;
   /** vault 内相对子目录；缺省用设置里的默认目录。 */
   folder?: string;
+  /** 保存目录里已有同名笔记时是否直接覆盖；缺省覆盖，关掉则退让成「标题 (2).md」。 */
+  overwrite?: boolean;
 }
 
 export interface DrillData {

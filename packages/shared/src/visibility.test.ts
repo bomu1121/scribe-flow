@@ -85,10 +85,25 @@ describe("availablePromptBlocks 与展示范围", () => {
     expect(ids).toContain("builtin.insight.v4");
   });
 
-  it("不传展示范围时行为与从前一致（老调用方不受影响）", () => {
+  it("不传展示范围时仍受「已过审核」白名单约束，不再把全部内置块交回", () => {
+    // 这条原来断言「与从前一致、原样交回」，2026-10-12 起不成立了：
+    // 只放出经过确认的 5 个块，其余等重构审核完成后再逐个放开。
     const before = availablePromptBlocks(BUILTIN_PROMPT_BLOCKS, true);
-    expect(before).toHaveLength(BUILTIN_PROMPT_BLOCKS.length);
-    // 检索密钥没配时仍然只滤掉「必须有联网核查」的块。
-    expect(availablePromptBlocks(BUILTIN_PROMPT_BLOCKS, false).map((b) => b.id)).not.toContain("builtin.trace.v3");
+    expect(before.length).toBeLessThan(BUILTIN_PROMPT_BLOCKS.length);
+    expect(before.map((block) => block.id)).toEqual([
+      "builtin.insight",
+      "builtin.insight.v4",
+      "builtin.insight.v5",
+      "builtin.insight.v6",
+      "builtin.qa",
+    ]);
+  });
+
+  it("检索密钥没配时不列出「必须有联网核查」的块（用注入的块验证，不受白名单影响）", () => {
+    const injected = [
+      { id: "x.required", name: "需核查", prompt: "x", builtin: false, externalCheck: "required" as const },
+    ];
+    expect(availablePromptBlocks(injected, false)).toHaveLength(0);
+    expect(availablePromptBlocks(injected, true)).toHaveLength(1);
   });
 });

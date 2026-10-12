@@ -1,7 +1,10 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from "vue";
 import { useRouter } from "vue-router";
-import { ElButton, ElDialog, ElInput, ElOption, ElSelect } from "element-plus";
+import { ElButton } from "element-plus/es/components/button/index.mjs";
+import { ElDialog } from "element-plus/es/components/dialog/index.mjs";
+import { ElInput } from "element-plus/es/components/input/index.mjs";
+import { ElOption, ElSelect } from "element-plus/es/components/select/index.mjs";
 import { Link2 } from "lucide-vue-next";
 import {
   availablePromptBlocks,
