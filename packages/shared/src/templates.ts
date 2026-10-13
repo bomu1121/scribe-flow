@@ -1,4 +1,5 @@
 import { NODE_CARD_WIDTH, NODE_PORTS, type GraphEdge, type GraphNode, type NodeType, type PageRef, type WorkflowGraph } from "./graph";
+import { aiPromptBlocks, type PromptBlock } from "./prompt";
 
 /**
  * 内置链路的组织方式：**模板 = 加工路径的形状，来源在新建时选**。
@@ -56,6 +57,38 @@ export interface WorkflowTemplate {
 const TEMPLATE_H_GAP = 80;
 
 /**
+ * 「全提示词对照」的分支来源：**当前已放开的通用提示词块**，与画布节点下拉、快捷新建下拉同一份清单
+ * （`aiPromptBlocks`，见 `prompt.ts` 的审核白名单）。
+ *
+ * 刻意**算出来**而不是写死一份 id 清单：这条链路的名字承诺「全部开放提示词」，写死的话白名单里
+ * 放开或新增一个块之后，它会悄悄少一条分支、而它自己看不出来。`searchReady = true`：需要联网核查的
+ * 块也进模板（没配检索密钥时那条分支跳过核查，不会失败）。
+ *
+ * 已知边界：只含**内置**已放开块——模板在 shared 里构建，读不到用户库里的自定义块。
+ */
+const OPEN_PROMPT_BLOCKS: PromptBlock[] = aiPromptBlocks([], true);
+
+/**
+ * 并排分支的纵向间距（px）。
+ *
+ * 卡片高度由内容决定，没有固定值：真机上量下来「AI 加工」卡是 320×167（画布 px），
+ * 所以 220 的间距给相邻两行留出约 53px 的空隙。「多路对照」两条分支的 dy 是 ∓110，
+ * 也就是同一个间距（两卡相距 220）。
+ */
+const TEMPLATE_BRANCH_GAP = 220;
+
+/** 「全提示词对照」的五个（或更多）分支：一条分支一个块，纵向错开铺在同一列。 */
+const ALL_PROMPT_STAGES: TemplateStage[] = OPEN_PROMPT_BLOCKS.map((block, index) => ({
+  key: `p${index + 1}`,
+  type: "process.prompt",
+  from: ["refine"],
+  dy: Math.round((index - (OPEN_PROMPT_BLOCKS.length - 1) / 2) * TEMPLATE_BRANCH_GAP),
+  // 分支卡片的默认名是类型名，几张卡长得一模一样：用块名，才分得清哪份结果对应哪套提示词。
+  label: block.name,
+  data: { promptBlockId: block.id },
+}));
+
+/**
  * 模板的描述**只讲结果**，不讲步骤：步骤由对话框按当前来源展开成一行小字
  * （同一句话在三种来源下的步骤并不一样，写进描述里必错一个）。
  */
@@ -84,6 +117,21 @@ export const WORKFLOW_TEMPLATES: WorkflowTemplate[] = [
       // 两条分支的卡片长一样：给个名字，用户才分得清哪个是哪个（改名只在画布上显示，不影响链路）。
       { key: "left", type: "process.prompt", from: ["refine"], dy: -110, label: "AI 加工 A" },
       { key: "right", type: "process.prompt", from: ["refine"], dy: 110, label: "AI 加工 B" },
+    ],
+  },
+  {
+    id: "template.all-prompts",
+    name: "全提示词对照",
+    // 分支数不写在这句话里：它跟着白名单走，写「五版」明天就可能是六版。
+    description: "同一份内容过一遍全部已放开的提示词块，几版一起写进一篇 Obsidian 笔记",
+    group: "通用",
+    defaultSource: "bili",
+    stages: [
+      { key: "refine", type: "process.refine" },
+      ...ALL_PROMPT_STAGES,
+      // 分支收敛到一张 Obsidian：它是压平节点，几版内容会按连接顺序拼成一篇（见 docs/nodes.md §1.2）。
+      // 不写 data.folder：写了会永久压住设置页的「笔记写进哪个文件夹」。
+      { key: "obsidian", type: "process.obsidian", from: ALL_PROMPT_STAGES.map((stage) => stage.key) },
     ],
   },
   {
@@ -302,7 +350,9 @@ export function buildTemplateGraph(templateId: string, options: BuildTemplateOpt
     const fromKeys = stage.from?.length ? stage.from : [previousKey];
     const column = Math.max(...fromKeys.map((key) => columnOf.get(key) ?? 0)) + 1;
     const data = { ...(stage.data ?? {}) } as GraphNode["data"];
-    if (stage.type === "process.prompt" && options.promptBlockId) {
+    // 模板自己给节点写死的块优先：`options.promptBlockId` 是「一层链路一个块」的旧口径，
+    // 而「全提示词对照」的每条分支各绑一个块——被它统一覆盖会把几条分支压成同一套提示词。
+    if (stage.type === "process.prompt" && options.promptBlockId && !(data as { promptBlockId?: string }).promptBlockId) {
       (data as { promptBlockId?: string }).promptBlockId = options.promptBlockId;
     }
     const node = push(stage.key, stage.type, column, data, stage.label);

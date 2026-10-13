@@ -26,7 +26,8 @@
     "check:size": "node scripts/size-budget.mjs",
     "smoke:ui": "node scripts/cdp-ui-smoke.mjs",
     "check:api:bili": "node scripts/bili-api-check.mjs",
-    "check:api:drill": "node scripts/m-drill-api-check.mjs"
+    "check:api:drill": "node scripts/m-drill-api-check.mjs",
+    "check:api:chain": "node scripts/m-chain-api-check.mjs"
   },
   "devDependencies": {
     "dependency-cruiser": "^18.4.0",

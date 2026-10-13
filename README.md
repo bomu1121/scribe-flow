@@ -56,16 +56,17 @@ pnpm check:size     # 首屏关键路径体积预算（需先 pnpm build）
 pnpm check:prose    # 中文散文检查（需系统装 vale，不在 CI 里）
 ```
 
-下面三条**要手工跑**，因为它们需要真实的外部凭据或真实浏览器：
+下面四条**要手工跑**，因为它们需要真实的外部凭据或真实浏览器：
 
 ```bash
 pnpm smoke:ui       # CDP + 真实 Chrome 的 UI 冒烟（需先 pnpm dev）
 pnpm check:api:bili # B 站二维码生命周期（需联网）
 pnpm check:api:drill # 知识巩固链路（需真实 AI 密钥，会真的调用模型）
+pnpm check:api:chain # B站 → 校对 → 全部开放提示词分支 → Obsidian（真下载真转写，约 10 分钟）
 ```
 
 原先按里程碑分层的 m2/m3/m4/m6 自检脚本已经迁进 vitest（`apps/server/src/routes/run-flows.test.ts`、
-`auth-upload.test.ts`），不再需要先起服务、也由 CI 每次执行；留在脚本里的只有上面这三条"外部依赖"自检。
+`auth-upload.test.ts`），不再需要先起服务、也由 CI 每次执行；留在脚本里的只有上面这四条"外部依赖"自检。
 
 ## 文档
 

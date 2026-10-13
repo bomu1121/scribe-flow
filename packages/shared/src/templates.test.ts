@@ -9,8 +9,11 @@ import {
   type WorkflowTemplate,
 } from "./templates";
 import { parseGraph, safeParseGraph } from "./schema";
+import { aiPromptBlocks } from "./prompt";
 import { NODE_CARD_WIDTH, NODE_PORTS, type GraphNode, type WorkflowGraph } from "./graph";
 import { canConnectSpecs } from "./port";
+
+const ALL_PROMPTS = "template.all-prompts";
 
 const SINGLE = "template.single-note";
 
@@ -219,16 +222,54 @@ describe("buildTemplateGraph", () => {
    * 节点上写了就以节点为准（引擎优先 `data.folder`），于是设置页的「笔记写进库里哪个文件夹」被永久压住：
    * 用户改成 `未分类` 也仍写进 `00-Inbox`（一个他库里可能并不存在的目录），而卡片上显示着这个名字，
    * 看起来像"它擅自放了一个目录"。留空才是跟随设置。
+   *
+   * 会往库里写文件的模板也在同一份名单里盯着：新增一条必须显式加进来，
+   * 免得「某个模板开始往用户的库里写东西」这件事悄悄发生。
    */
-  it("Obsidian 链路不写死保存目录（写了会压住设置页的默认目录）", () => {
+  const OBSIDIAN_TEMPLATES = ["template.obsidian", ALL_PROMPTS];
+
+  it("会写 Obsidian 库的模板就名单里那几条，且都不写死保存目录", () => {
+    const seen = new Set<string>();
     for (const { template, source, graph } of allGraphs()) {
       for (const node of graph.nodes) {
         if (node.type !== "process.obsidian") continue;
+        seen.add(template.id);
+        expect(OBSIDIAN_TEMPLATES, template.id).toContain(template.id);
         expect(node.data.folder ?? "").toBe("");
-        expect(template.id).toBe("template.obsidian");
         expect(source).toBeTruthy();
       }
     }
+    // 名单反过来也要对上：写了名字的模板不能没有 Obsidian 节点（否则名单会慢慢变成一句空话）。
+    expect([...seen].sort()).toEqual([...OBSIDIAN_TEMPLATES].sort());
+  });
+
+  it("「全提示词对照」的分支 = 当前已放开的全部提示词块，末端收进同一张 Obsidian", () => {
+    const open = aiPromptBlocks([], true);
+    const graph = buildTemplateGraph(ALL_PROMPTS, { source: "bili" })!;
+    const branches = graph.nodes.filter((node) => node.type === "process.prompt");
+
+    // 分支内容跟着白名单走：审核放开或新增一个块，这里自动多一条（模板里没有写死的 id 清单）。
+    expect(branches.map((node) => (node.data as { promptBlockId?: string }).promptBlockId)).toEqual(open.map((block) => block.id));
+    // 名字也要跟上：分支卡片默认叫「AI 加工」，几张卡长得一样，只能靠名字认。
+    expect(branches.map((node) => node.data.label)).toEqual(open.map((block) => block.name));
+    // 纵向各自一行，别叠在一起
+    expect(new Set(branches.map((node) => node.position.y)).size).toBe(branches.length);
+
+    // 几版是拼成**一篇**笔记（压平语义），不是各写一份
+    const obsidian = graph.nodes.find((node) => node.type === "process.obsidian")!;
+    expect(graph.edges.filter((edge) => edge.target === obsidian.id)).toHaveLength(branches.length);
+    const leaves = new Set(graph.edges.map((edge) => edge.source));
+    expect(graph.nodes.filter((node) => !leaves.has(node.id)).map((node) => node.type)).toEqual(["process.obsidian"]);
+  });
+
+  it("模板写死的提示词块不被 promptBlockId 覆盖（覆盖会把几条分支压成同一套）", () => {
+    const open = aiPromptBlocks([], true);
+    const graph = buildTemplateGraph(ALL_PROMPTS, { source: "text", promptBlockId: "builtin.insight.v4" })!;
+    const ids = graph.nodes
+      .filter((node) => node.type === "process.prompt")
+      .map((node) => (node.data as { promptBlockId?: string }).promptBlockId);
+    expect(ids).toEqual(open.map((block) => block.id));
+    expect(new Set(ids).size).toBe(ids.length);
   });
 
   it("多路对照不在末端合并：差异由结果页的「对照」标签页承担", () => {

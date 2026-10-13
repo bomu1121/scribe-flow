@@ -115,6 +115,23 @@ const selectedTemplate = computed(() => videoTemplates.value.find((tpl) => tpl.i
 const hasPromptNode = computed(
   () => buildTemplateGraph(templateId.value, { source: "bili" })?.nodes.some((node) => node.type === "process.prompt") ?? false,
 );
+/**
+ * 这里选块有没有意义：要有「AI 加工」节点，且**节点自己没带块**。
+ *
+ * 有节点但块已经绑好的是「全提示词对照」——每条分支各绑一个（`buildTemplateGraph` 里模板写死的块优先），
+ * 在这里选一个会以为生效了，其实一个都不会被覆盖。
+ */
+const promptSelectable = computed(() => {
+  const nodes = buildTemplateGraph(templateId.value, { source: "bili" })?.nodes ?? [];
+  return nodes.some((node) => node.type === "process.prompt" && !(node.data as { promptBlockId?: string }).promptBlockId);
+});
+/** 选择框下面那行小字：说明这里选的块会不会生效，以及为什么。 */
+const promptHint = computed(() => {
+  if (promptSelectable.value) return selectedBlock.value?.description || "该块没有说明文案，可在设置页查看正文。";
+  return hasPromptNode.value
+    ? "该链路的每条 AI 加工分支都已各自绑好提示词块，这里选了不会覆盖（进画布可逐个改）。"
+    : "该链路没有 AI 加工节点，加工节点自带提示词。";
+});
 const selectedBlock = computed(() => promptOptions.value.find((block) => block.id === promptBlockId.value));
 /** 工程名将使用的标题：解析结果优先，其次分享文案里的【标题】。 */
 const resolvedTitle = computed(() => normalizeTitle(preview.value?.title) || extractShareTitle(link.value));
@@ -346,13 +363,11 @@ async function startRun(projectId: string, projectName: string) {
 
       <label class="qc-field">
         <span class="qc-field-label">AI 加工提示词</span>
-        <el-select v-model="promptBlockId" size="default" class="qc-select" :disabled="!hasPromptNode">
+        <el-select v-model="promptBlockId" size="default" class="qc-select" :disabled="!promptSelectable">
           <el-option label="不预选（进画布再选）" :value="NO_PROMPT" />
           <el-option v-for="block in promptOptions" :key="block.id" :label="block.name" :value="block.id" />
         </el-select>
-        <span class="qc-field-hint">
-          {{ hasPromptNode ? selectedBlock?.description || "该块没有说明文案，可在设置页查看正文。" : "该链路没有 AI 加工节点，加工节点自带提示词。" }}
-        </span>
+        <span class="qc-field-hint">{{ promptHint }}</span>
       </label>
     </div>
 

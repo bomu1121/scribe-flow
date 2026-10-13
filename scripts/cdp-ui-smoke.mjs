@@ -704,13 +704,17 @@ async function run() {
     check("设置页「联网检索」写明两个模块共用（信息溯源 + 知识巩固）", searchPanelOk);
     // 「常规」是运行与产出的默认策略：三块都必须渲染出来，且产物目录要显示**服务端解析后的绝对路径**
     // （只显示用户填的 "outputs" 等于没告诉人文件到底写在哪，这正是这一步要拦住的老毛病）。
+    // 说明里的类名是 `.sf-hint`：这里曾写 `.sf-field-hint`——那是设置页早期那一版的名字，
+    // 后来与 `.sf-settings-hint` 一起并成了 `.sf-hint`（见 SettingsView.vue 的样式注释），
+    // 断言没跟着改，于是它一直红在这一条上（实测 64/65），而红的原因恰好又正是它要拦的那个老毛病。
     await evalJs("[...document.querySelectorAll('.sf-settings-nav-item')].find((b) => b.textContent.trim() === '常规')?.click(); true");
     const generalOk = await waitFor(
       `(() => {
         const dividers = [...document.querySelectorAll('.sf-settings-divider')].map((el) => el.textContent.trim());
         const hasAll = ['运行', '产出', '运行结束提醒'].every((name) => dividers.includes(name));
-        const resolved = [...document.querySelectorAll('.sf-field-hint')].some((el) => /当前生效：[A-Za-z]:[\\\\/]/.test(el.textContent));
-        const preview = [...document.querySelectorAll('.sf-field-hint')].some((el) => el.textContent.trim().startsWith('预览：') && el.textContent.includes('.md'));
+        const hints = [...document.querySelectorAll('.sf-hint')].map((el) => el.textContent);
+        const resolved = hints.some((text) => /当前生效：[A-Za-z]:[\\\\/]/.test(text));
+        const preview = hints.some((text) => text.trim().startsWith('预览：') && text.includes('.md'));
         return hasAll && resolved && preview;
       })()`,
       5000,
