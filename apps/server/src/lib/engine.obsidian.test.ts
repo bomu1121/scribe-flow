@@ -1,12 +1,15 @@
 import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { createServer, type Server } from "node:http";
+import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { and, eq } from "drizzle-orm";
 import { parseGraph } from "@scribe-flow/shared";
 import { createDatabase, type AppDatabase } from "../db/client";
 import { projects, runNodeResults, runs } from "../db/schema";
 import { RunEngine } from "./engine";
+import { readRelatedSectionNames } from "./related-notes";
 import { updateSettings } from "./settings";
 import { sleep } from "./sleep";
 
@@ -18,10 +21,47 @@ import { sleep } from "./sleep";
  */
 
 const tmpDirs: string[] = [];
+let server: Server;
+let port = 0;
+/** 到假 AI 的调用次数，以及最后一次**属性抽取**请求的 system 提示词。
+    只记抽取那一次：打标请求紧跟在后面，若混在一起记，断言会读到打标的词库而不是抽取的字段名。 */
+let chatCalls = 0;
+let lastExtractSystem = "";
 const TITLE = "第1期";
 const BODY = "这是本次运行的正文。";
 /** 笔记节点写进去的子目录：节点没填 folder 时用设置页的默认值。 */
 const FOLDER = "00-Inbox";
+
+beforeAll(async () => {
+  // 假 AI：服务属性抽取与话题打标两条模型路径，不联网、不花钱。
+  // 打标那条固定回空数组（这个文件验的是"相关笔记写没写"，标签不是重点）。
+  server = createServer((req, res) => {
+    if (!req.url?.includes("/chat/completions")) {
+      res.statusCode = 404;
+      res.end(JSON.stringify({ error: { message: "not found" } }));
+      return;
+    }
+    const chunks: Buffer[] = [];
+    req.on("data", (chunk: Buffer) => chunks.push(chunk));
+    req.on("end", () => {
+      const body = Buffer.concat(chunks).toString("utf8");
+      chatCalls += 1;
+      const system = (JSON.parse(body) as { messages?: Array<{ role: string; content: string }> }).messages?.find(
+        (message) => message.role === "system",
+      )?.content ?? "";
+      if (system.includes("笔记结构化助手")) lastExtractSystem = system;
+      const content = body.includes("可用标签") ? "[]" : '{"人物":["张三"]}';
+      res.setHeader("Content-Type", "application/json");
+      res.end(JSON.stringify({ choices: [{ message: { content } }] }));
+    });
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()));
+  port = (server.address() as AddressInfo).port;
+});
+
+afterAll(async () => {
+  await new Promise<void>((resolve) => server.close(() => resolve()));
+});
 
 afterEach(async () => {
   // sqlite 句柄可能在 Windows 上短暂占用文件，删除失败可忽略（留在系统临时目录）。
@@ -40,11 +80,19 @@ interface NoteRunResult {
 }
 
 /** 跑一次「文本 → Obsidian 笔记」，返回笔记节点那一次的落库结果。 */
-async function runNote(vaultPath: string, data: Record<string, unknown>, tag: string): Promise<NoteRunResult> {
+async function runNote(
+  vaultPath: string,
+  data: Record<string, unknown>,
+  tag: string,
+  obsidian: Record<string, unknown> = {},
+): Promise<NoteRunResult> {
   const dataDir = await tempDir(`scribe-obsidian-${tag}-`);
   const db = createDatabase(dataDir);
-  // 只留「写到本地库」这一条路：关联与属性抽取关掉，测试不碰网络也不依赖模型。
-  updateSettings(db, { obsidian: { vaultPath, autoLinkEnabled: false, extractFields: [] } });
+  // 默认只留「写到本地库」这一条路：关联与属性抽取关掉，测试不碰网络也不依赖模型。
+  updateSettings(db, { obsidian: { vaultPath, autoLinkEnabled: false, extractFields: [], ...obsidian } });
+  // 密钥一律指向本文件的假 AI：只有真的走到模型那条路时才会发请求（走不到就没人调用它）。
+  // 注意不能拿 `autoTagEnabled` 当条件——节点上的 `autoTag` 能覆盖它，密钥却只来自这里。
+  updateSettings(db, { ai: { baseUrl: `http://127.0.0.1:${port}`, apiKey: "test-key", model: "test" } });
   const graph = parseGraph({
     schemaVersion: 1,
     nodes: [
@@ -54,11 +102,12 @@ async function runNote(vaultPath: string, data: Record<string, unknown>, tag: st
     edges: [{ id: "e1", source: "n_src", target: "n_note", sourceHandle: "transcript", targetHandle: "in" }],
     viewport: { x: 0, y: 0, zoom: 1 },
   });
-  // 前置断言：工程图校验不能把这个开关吃掉。少了它，下面的用例会静默退化成"覆盖模式"，
+  // 前置断言：工程图校验不能把这些节点字段吃掉。少了它，下面的用例会静默退化成"跟随设置"，
   // 看起来是绿的实际什么都没验到。
-  if (data.overwrite !== undefined) {
-    const kept = (graph.nodes.find((node) => node.id === "n_note")?.data as Record<string, unknown> | undefined)?.overwrite;
-    expect(kept, "parseGraph 丢掉了 overwrite").toBe(data.overwrite);
+  for (const key of ["overwrite", "autoTag", "extractFields", "sourceTag", "upTag"]) {
+    if (data[key] === undefined) continue;
+    const kept = (graph.nodes.find((node) => node.id === "n_note")?.data as Record<string, unknown> | undefined)?.[key];
+    expect(kept, `parseGraph 丢掉了 ${key}`).toEqual(data[key]);
   }
 
   const projectId = `prj_${tag}`;
@@ -138,5 +187,141 @@ describe("Obsidian 笔记：同名时覆盖还是退让", () => {
     await runNote(vault, { overwrite: false }, "seq-3");
 
     expect(await noteFiles(dir)).toEqual([`${TITLE} (2).md`, `${TITLE} (3).md`, `${TITLE}.md`]);
+  });
+});
+
+describe("Obsidian 笔记：这一篇怎么抽由节点决定（设置页只提供默认）", () => {
+  /** 设置页的默认：抽「人物」、AI 开着；假 AI 无论要什么都回 {"人物":["张三"]}。 */
+  const settings = { autoTagEnabled: true, extractFields: ["人物"], autoLinkEnabled: false };
+
+  it("节点上选了字段就以节点为准：发给模型的是节点那组，写出来的也只有那组", async () => {
+    const { vault, dir } = await makeVault();
+    chatCalls = 0;
+
+    const run = await runNote(vault, { extractFields: ["事件"] }, "node-fields", settings);
+    expect(run.status).toBe("done");
+
+    // 请求侧：提示词里列的是节点选的「事件」，不再有设置页默认的「人物」
+    expect(lastExtractSystem).toContain("事件");
+    expect(lastExtractSystem).not.toContain("人物");
+    // 落盘侧：假 AI 回的"人物"不在节点选的字段里，因此不该写进 front matter
+    const saved = await readFile(join(dir, `${TITLE}.md`), "utf8");
+    expect(saved).not.toContain("人物");
+    expect(chatCalls).toBeGreaterThan(0);
+  });
+
+  it("节点上留空＝跟随设置页的默认（人物被写进去）", async () => {
+    const { vault, dir } = await makeVault();
+    const run = await runNote(vault, {}, "node-follow", settings);
+    expect(run.status).toBe("done");
+    expect(lastExtractSystem).toContain("人物");
+    expect(await readFile(join(dir, `${TITLE}.md`), "utf8")).toContain("  - 张三");
+  });
+
+  it("节点上关掉 AI（autoTag: false）：一次模型都不调，属性与话题标签都不写", async () => {
+    const { vault, dir } = await makeVault();
+    chatCalls = 0;
+
+    const run = await runNote(vault, { autoTag: false }, "node-ai-off", settings);
+    expect(run.status).toBe("done");
+
+    // 这一条是"关掉"与"留空跟随"的分界：关掉必须连话题标签一起停，所以调用数是 0。
+    expect(chatCalls).toBe(0);
+    const saved = await readFile(join(dir, `${TITLE}.md`), "utf8");
+    expect(saved).not.toContain("人物");
+  });
+
+  it("节点上开着 AI（autoTag: true）：设置页默认关着也照抽", async () => {
+    const { vault, dir } = await makeVault();
+    chatCalls = 0;
+
+    const run = await runNote(vault, { autoTag: true }, "node-ai-on", { ...settings, autoTagEnabled: false });
+    expect(run.status).toBe("done");
+    expect(chatCalls).toBeGreaterThan(0);
+    expect(await readFile(join(dir, `${TITLE}.md`), "utf8")).toContain("  - 张三");
+  });
+});
+
+describe("Obsidian 笔记：保存时写相关笔记", () => {
+  it("按设置里的属性在库里找相关笔记写进文末；重跑是替换不是叠加", async () => {
+    const existing = [
+      "---",
+      "标题: 张三访谈",
+      "人物:",
+      "  - 张三",
+      "---",
+      "",
+      "# 张三访谈",
+      "",
+      "旧笔记正文。",
+      "",
+    ].join("\n");
+    const { vault, dir } = await makeVault({ "张三访谈.md": existing });
+    const settings = { autoTagEnabled: true, extractFields: ["人物"], autoLinkEnabled: true, autoLinkMax: 5 };
+
+    const first = await runNote(vault, {}, "link-first", settings);
+    expect(first.status).toBe("done");
+    expect(first.summary).toContain("关联 1 篇");
+
+    const saved = await readFile(join(dir, `${TITLE}.md`), "utf8");
+    // 抽出来的属性进了 front matter，链接跟着它找到那篇旧笔记。
+    expect(saved).toContain("  - 张三");
+    expect(readRelatedSectionNames(saved)).toEqual(["张三访谈"]);
+
+    // 重跑同一个视频：文件名相同 → 整篇重写，段落仍该是替换而不是叠第二段。
+    await runNote(vault, {}, "link-second", settings);
+    const again = await readFile(join(dir, `${TITLE}.md`), "utf8");
+    expect(again.match(/## 相关笔记/g)).toHaveLength(1);
+    expect(readRelatedSectionNames(again)).toEqual(["张三访谈"]);
+    // 保存路径只写当前这一篇，旧笔记一个字节都不该动。
+    expect(await readFile(join(dir, "张三访谈.md"), "utf8")).toBe(existing);
+  });
+});
+
+describe("Obsidian 笔记：两个自动标签（来源 / UP 主）由元数据写，用户只决定写不写", () => {
+  /**
+   * 自动标签的三个性质，这个 describe 逐个钉住：
+   * ① 取值来自元数据（来源 = 素材类型，UP 主 = 作者），**不花模型钱**；
+   * ② AI 开关关着也照写——它不是"AI 判断出来的东西"；
+   * ③ 设置页给默认，节点卡片可逐篇覆盖（与保存目录同一套约定）。
+   */
+  const ON = { sourceTagEnabled: true, upTagEnabled: true, autoTagEnabled: false };
+
+  it("默认写出来：来源取自「来源」属性、UP 主取自作者，且一次模型都不调", async () => {
+    const { vault, dir } = await makeVault();
+    chatCalls = 0;
+
+    const run = await runNote(vault, { author: "某个 UP 主" }, "auto-tag-on", { ...ON });
+    expect(run.status).toBe("done");
+
+    const saved = await readFile(join(dir, `${TITLE}.md`), "utf8");
+    expect(saved).toContain("来源/文本"); // 图里是 source.text，所以来源是「文本」
+    expect(saved).toContain("UP主名称/某个-UP-主"); // 空格按 Obsidian 规则规范成 -
+    expect(chatCalls).toBe(0);
+  });
+
+  it("设置页关掉：两个标签都不写（哪怕作者和来源都在）", async () => {
+    const { vault, dir } = await makeVault();
+
+    const run = await runNote(vault, { author: "某个 UP 主" }, "auto-tag-off", { sourceTagEnabled: false, upTagEnabled: false, autoTagEnabled: false });
+    expect(run.status).toBe("done");
+
+    const saved = await readFile(join(dir, `${TITLE}.md`), "utf8");
+    expect(saved).not.toContain("来源/文本");
+    expect(saved).not.toContain("UP主名称/");
+    // 但属性行还在（那是「来源/作者」字段，和标签是两件事）
+    expect(saved).toContain("来源: 文本");
+    expect(saved).toContain("作者: 某个 UP 主");
+  });
+
+  it("节点卡片可以逐篇覆盖设置页的开关（设置关着、这一篇要写）", async () => {
+    const { vault, dir } = await makeVault();
+
+    const run = await runNote(vault, { author: "某个 UP 主", sourceTag: true, upTag: true }, "auto-tag-node-on", { sourceTagEnabled: false, upTagEnabled: false });
+    expect(run.status).toBe("done");
+
+    const saved = await readFile(join(dir, `${TITLE}.md`), "utf8");
+    expect(saved).toContain("来源/文本");
+    expect(saved).toContain("UP主名称/某个-UP-主");
   });
 });

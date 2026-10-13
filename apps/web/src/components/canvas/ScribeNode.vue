@@ -3,6 +3,7 @@ import { computed, defineAsyncComponent, h, onBeforeUnmount, onMounted, provide,
 import { useRouter } from "vue-router";
 import { ElInput } from "element-plus/es/components/input/index.mjs";
 import { ElMessageBox } from "element-plus/es/components/message-box/index.mjs";
+import { ElOption, ElSelect } from "element-plus/es/components/select/index.mjs";
 import { ElSwitch } from "element-plus/es/components/switch/index.mjs";
 import { ElTooltip } from "element-plus/es/components/tooltip/index.mjs";
 import { ElUpload, type UploadRequestOptions } from "element-plus/es/components/upload/index.mjs";
@@ -11,7 +12,7 @@ import { CircleAlert } from "lucide-vue-next";
 import { toast } from "@/lib/toast";
 import { Handle, Position, useVueFlow, type NodeProps } from "@vue-flow/core";
 import { ContextMenuContent, ContextMenuItem, ContextMenuPortal, ContextMenuRoot, ContextMenuSeparator, ContextMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuPortal, DropdownMenuRoot, DropdownMenuSeparator, DropdownMenuTrigger, PopoverContent, PopoverPortal, PopoverRoot, PopoverTrigger } from "reka-ui";
-import { availablePromptBlocks, extractBiliUrl, NODE_PORTS, NODE_TYPE_LABELS, SEARCH_PROVIDER_LABELS, type NodePick, type NodeType, type UploadedFile, type VideoPreview } from "@scribe-flow/shared";
+import { aiPromptBlocks, COMMON_EXTRACT_FIELDS, extractBiliUrl, MAX_EXTRACT_FIELDS, NODE_PORTS, NODE_TYPE_LABELS, SEARCH_PROVIDER_LABELS, type NodePick, type NodeType, type UploadedFile, type VideoPreview } from "@scribe-flow/shared";
 import ModelSelect from "../ModelSelect.vue";
 import NodeFieldLabel from "./NodeFieldLabel.vue";
 import IfCard from "./node-cards/IfCard.vue";
@@ -23,7 +24,6 @@ import DrillCard from "./node-cards/DrillCard.vue";
 import PickCard from "./node-cards/PickCard.vue";
 import PickFields from "./node-cards/PickFields.vue";
 import { useSegmentPick } from "@/composables/useSegmentPick";
-import { useHiddenNodes } from "@/composables/useHiddenNodes";
 import { renderMarkdown } from "@/lib/markdown";
 import { fmtCharCount, fmtDuration } from "@/utils/run-segments";
 import { usePromptsStore } from "@/stores/prompts";
@@ -400,6 +400,12 @@ const defaultLabel = computed(() => NODE_TYPE_LABELS[nodeType.value]);
 const label = computed(() => props.data.label || defaultLabel.value);
 /** 运行进行中画布只读：可查看节点/结果，但不能修改节点配置或结构。 */
 const readonly = computed(() => Boolean(props.data.ctx?.readonly));
+/**
+ * 本工程有运行在跑。与 `readonly` 分开是因为两者对「运行入口」的处置不同：
+ * 编辑类操作一律禁用，而运行入口**不禁用**——点了是加入排队（当前运行结束后依次自动开始），
+ * 见 `stores/run-queue.ts`。文案要跟着变，否则「点了没反应」的老问题会原样留在按钮上。
+ */
+const isRunning = computed(() => Boolean(props.data.ctx?.running));
 
 /**
  * 素材挑选：上游可挑素材由 useSegmentPick 统一算出（与「素材挑选」节点卡片共用一份逻辑）。
@@ -746,19 +752,16 @@ const gameGuideModeOptions = [
 
 /** 检索密钥是否已配置：没配就不该让需要联网核查的模版出现在可选列表里。 */
 const searchReady = computed(() => Boolean(settingsStore.settings?.search.hasKey));
-/** 展示范围里收起的节点：它的提示词块（如阴阳师攻略系列）不在下拉里出现。 */
-const hiddenNodes = useHiddenNodes();
 
 /**
  * 提示词块下拉的选项文案：只写名字，自己写的块标一个「我的」。
  * 版本号、配方、内置、推荐这些说法都留在设置页的块库里（那里才是管版本的地方），卡片上不出现。
+ *
+ * 可选块本身与快捷新建共用一份（`aiPromptBlocks`）：同一个块在两处必须都选得到，
+ * 否则会出现画布上选得到、建工程时选不到的情况。
  */
 const promptOptions = computed(() =>
-  availablePromptBlocks(
-    promptsStore.allBlocks.filter((block) => block.series !== "阴阳师攻略"),
-    searchReady.value,
-    hiddenNodes.value,
-  ).map((block) => {
+  aiPromptBlocks(promptsStore.customBlocks, searchReady.value).map((block) => {
     const parts = [block.name];
     if (!block.builtin) parts.push("我的");
     return { label: parts.join(" · "), value: block.id };
@@ -859,6 +862,86 @@ function setOverwrite(value: string | number | boolean) {
   patch({ overwrite: Boolean(value) });
   commit();
 }
+
+/* ------------- Obsidian 节点：「这一篇怎么抽」的覆盖项 ------------- */
+
+/**
+ * 「让 AI 读一遍笔记」在卡片上是三态：跟随设置 / 这一篇读 / 这一篇不读。
+ *
+ * 三态是必要的——`undefined` 只能有一个含义，要么当"跟随设置"、要么当"关"。
+ * 这里选"跟随设置"，因为设置页那一栏现在只是默认值（与保存目录 `folder` 同一套约定）。
+ */
+const aiNoteMode = computed(() => {
+  const value = data.value.autoTag;
+  return value === undefined ? "follow" : value ? "on" : "off";
+});
+
+const aiNoteModeOptions = [
+  { value: "follow", label: "跟随设置" },
+  { value: "on", label: "这一篇：读" },
+  { value: "off", label: "这一篇：不读" },
+];
+
+function setAiNoteMode(value: string) {
+  patch({ autoTag: value === "follow" ? undefined : value === "on" });
+  commit();
+}
+
+/** 两个自动标签的三态：它们由元数据写（来源取自「来源」属性、UP 主取自作者），这里只决定写不写。 */
+function triStateOf(value: boolean | undefined): string {
+  return value === undefined ? "follow" : value ? "on" : "off";
+}
+
+function triStatePatch(value: string): boolean | undefined {
+  return value === "follow" ? undefined : value === "on";
+}
+
+const tagSwitchOptions = [
+  { value: "follow", label: "跟随设置" },
+  { value: "on", label: "这一篇：写" },
+  { value: "off", label: "这一篇：不写" },
+];
+
+const sourceTagMode = computed(() => triStateOf(data.value.sourceTag));
+const upTagMode = computed(() => triStateOf(data.value.upTag));
+
+/** 卡片上的字段列表：留空即跟随设置，与保存目录同一套约定。 */
+const nodeExtractFields = computed(() => data.value.extractFields ?? []);
+
+function setNodeExtractFields(value: string[]) {
+  patch({ extractFields: value.length > 0 ? value : undefined });
+  commit();
+}
+
+/** 设置页里那份默认字段——卡片用它显示"留空会跟随成什么"。 */
+const inheritedExtractFields = computed(() => settingsStore.settings?.obsidian.extractFields ?? []);
+
+const nodeExtractFieldsPlaceholder = computed(() =>
+  inheritedExtractFields.value.length > 0 ? `跟随设置：${inheritedExtractFields.value.join(" / ")}` : "跟随设置（当前：不抽）",
+);
+
+const nodeExtractFieldsHint = computed(() => {
+  const inherited = inheritedExtractFields.value;
+  return inherited.length > 0
+    ? `留空即跟随设置里的默认（${inherited.join(" / ")}）；选了就以这里的为准`
+    : "留空即跟随设置（设置页当前是「不抽」）";
+});
+
+/** 建议项：库里用过的属性名 + 常用名，去掉已经选上的（与设置页那份是同一个来源）。 */
+const nodeFieldSuggestions = computed(() => {
+  const picked = new Set(nodeExtractFields.value);
+  const vault = settingsStore.obsidianFieldNames.map((item) => item.name);
+  return [...new Set([...vault, ...COMMON_EXTRACT_FIELDS])].filter((field) => !picked.has(field));
+});
+
+/** 卡片上的字段列表要跟着设置页那份默认走，所以进设置页前先把设置加载进来。 */
+watch(
+  () => nodeType.value === "process.obsidian",
+  (isObsidian) => {
+    if (isObsidian) void settingsStore.ensureLoaded();
+  },
+  { immediate: true },
+);
 
 async function renameNode() {
   if (readonly.value) return;
@@ -976,8 +1059,8 @@ const themeOptions = [
             </DropdownMenuTrigger>
             <DropdownMenuPortal>
               <DropdownMenuContent class="sf-node-menu" side="bottom" align="start" :side-offset="6" :collision-padding="8" :style="flowMenuStyle">
-                <DropdownMenuItem class="sf-node-menu-item" :disabled="props.data.ctx?.running" title="运行中不可启动新运行" @select="props.data.ctx?.runNode()">运行此节点</DropdownMenuItem>
-                <DropdownMenuItem class="sf-node-menu-item" :disabled="props.data.ctx?.running" title="运行中不可启动新运行" @select="props.data.ctx?.runFromNode()">从此节点运行</DropdownMenuItem>
+                <DropdownMenuItem class="sf-node-menu-item" :title="isRunning ? '当前有运行进行中，点击后加入排队' : '只跑这一个节点'" @select="props.data.ctx?.runNode()">{{ isRunning ? "运行此节点（排队）" : "运行此节点" }}</DropdownMenuItem>
+                <DropdownMenuItem class="sf-node-menu-item" :title="isRunning ? '当前有运行进行中，点击后加入排队' : '该节点及其全部下游'" @select="props.data.ctx?.runFromNode()">{{ isRunning ? "从此节点运行（排队）" : "从此节点运行" }}</DropdownMenuItem>
                 <DropdownMenuSeparator class="sf-node-menu-sep" />
                 <DropdownMenuItem class="sf-node-menu-item" :disabled="readonly" title="运行中不可编辑" @select="renameNode">重命名</DropdownMenuItem>
                 <DropdownMenuItem class="sf-node-menu-item" :disabled="readonly" title="运行中不可编辑" @select="props.data.ctx?.duplicate()">复制</DropdownMenuItem>
@@ -1002,8 +1085,7 @@ const themeOptions = [
             <button
               type="button"
               class="sf-node-run-btn nodrag"
-              :disabled="props.data.ctx?.running"
-              :title="props.data.ctx?.running ? '运行中不可启动新运行' : '从此节点运行'"
+              :title="isRunning ? '当前有运行进行中，点击后加入排队' : '从此节点运行'"
               :aria-label="`从此节点运行 ${label}`"
               @click.stop="props.data.ctx?.runFromNode()"
               @dblclick.stop
@@ -1390,13 +1472,73 @@ const themeOptions = [
               </div>
             </template>
             <template v-else>
-              <div v-if="nodeType === 'process.obsidian'" class="sf-node-advanced-row">
-                <span
-                  class="sf-node-advanced-label"
-                  title="关掉后：保存目录里已有同名笔记时，改写「标题 (2).md」而不动已有那篇；重复运行会接着排 (3)、(4)。"
-                >同名笔记直接覆盖</span>
-                <el-switch size="small" :model-value="data.overwrite !== false" @update:model-value="setOverwrite" />
-              </div>
+              <template v-if="nodeType === 'process.obsidian'">
+                <!--
+                  「这一篇怎么抽」放在卡片上：设置页只定默认值。
+                  一个人会用不同风格处理不同视频，若只能改全局设置，每换一类都得回设置页改一次。
+                  下面是三态——跟随设置 / 这一篇读 / 这一篇不读（后者也是唯一能连话题标签一起关掉的地方）。
+                -->
+                <label class="sf-node-field">
+                  <NodeFieldLabel
+                    label="让 AI 读一遍笔记"
+                    hint="默认跟随设置页；这一篇可以单独改。关掉就不判话题标签、也不抽属性"
+                  />
+                  <ModelSelect
+                    :model-value="aiNoteMode"
+                    :options="aiNoteModeOptions"
+                    size="small"
+                    @update:model-value="(v: string) => setAiNoteMode(v)"
+                  />
+                </label>
+                <label class="sf-node-field">
+                  <NodeFieldLabel label="抽取哪些属性" :hint="nodeExtractFieldsHint" />
+                  <el-select
+                    class="sf-node-control"
+                    size="small"
+                    multiple
+                    filterable
+                    allow-create
+                    default-first-option
+                    clearable
+                    :reserve-keyword="false"
+                    :multiple-limit="MAX_EXTRACT_FIELDS"
+                    :model-value="nodeExtractFields"
+                    :placeholder="nodeExtractFieldsPlaceholder"
+                    @update:model-value="(v: string[]) => setNodeExtractFields(v)"
+                  >
+                    <el-option v-for="field in nodeFieldSuggestions" :key="field" :label="field" :value="field" />
+                  </el-select>
+                </label>
+                <!--
+                  两个自动标签的逐篇开关：它们不是话题标签，不由 AI 判、不在词库里维护，
+                  取值在生成笔记时已经知道（来源 = 素材类型，UP 主 = 作者），所以这里只决定写不写。
+                -->
+                <label class="sf-node-field">
+                  <NodeFieldLabel label="写来源标签" hint="形如「来源/B站」，取值跟笔记的「来源」属性同源" />
+                  <ModelSelect
+                    :model-value="sourceTagMode"
+                    :options="tagSwitchOptions"
+                    size="small"
+                    @update:model-value="(v: string) => { patch({ sourceTag: triStatePatch(v) }); commit(); }"
+                  />
+                </label>
+                <label class="sf-node-field">
+                  <NodeFieldLabel label="写 UP 主标签" hint="形如「UP主名称/某某」，取值跟笔记的「作者」同源" />
+                  <ModelSelect
+                    :model-value="upTagMode"
+                    :options="tagSwitchOptions"
+                    size="small"
+                    @update:model-value="(v: string) => { patch({ upTag: triStatePatch(v) }); commit(); }"
+                  />
+                </label>
+                <div class="sf-node-advanced-row">
+                  <span
+                    class="sf-node-advanced-label"
+                    title="关掉后：保存目录里已有同名笔记时，改写「标题 (2).md」而不动已有那篇；重复运行会接着排 (3)、(4)。"
+                  >同名笔记直接覆盖</span>
+                  <el-switch size="small" :model-value="data.overwrite !== false" @update:model-value="setOverwrite" />
+                </div>
+              </template>
               <template v-if="nodeType === 'process.mindmap'">
                 <label class="sf-node-field">
                   <NodeFieldLabel label="导图标题（可选）" hint="留空时由 AI 自动提炼标题" />
@@ -1589,8 +1731,8 @@ const themeOptions = [
     </ContextMenuTrigger>
     <ContextMenuPortal>
       <ContextMenuContent class="sf-node-menu" align="start" :side-offset="4" :collision-padding="8" :style="flowMenuStyle">
-        <ContextMenuItem class="sf-node-menu-item" :disabled="props.data.ctx?.running" title="运行中不可启动新运行" @select="props.data.ctx?.runNode()">运行此节点</ContextMenuItem>
-        <ContextMenuItem class="sf-node-menu-item" :disabled="props.data.ctx?.running" title="运行中不可启动新运行" @select="props.data.ctx?.runFromNode()">从此节点运行</ContextMenuItem>
+        <ContextMenuItem class="sf-node-menu-item" :title="isRunning ? '当前有运行进行中，点击后加入排队' : '只跑这一个节点'" @select="props.data.ctx?.runNode()">{{ isRunning ? "运行此节点（排队）" : "运行此节点" }}</ContextMenuItem>
+        <ContextMenuItem class="sf-node-menu-item" :title="isRunning ? '当前有运行进行中，点击后加入排队' : '该节点及其全部下游'" @select="props.data.ctx?.runFromNode()">{{ isRunning ? "从此节点运行（排队）" : "从此节点运行" }}</ContextMenuItem>
         <ContextMenuSeparator class="sf-node-menu-sep" />
         <ContextMenuItem class="sf-node-menu-item" :disabled="readonly" title="运行中不可编辑" @select="renameNode">重命名</ContextMenuItem>
         <ContextMenuItem class="sf-node-menu-item" :disabled="readonly" title="运行中不可编辑" @select="props.data.ctx?.duplicate()">复制</ContextMenuItem>
@@ -2026,14 +2168,10 @@ const themeOptions = [
     color var(--dur-1) var(--ease-out);
 }
 
-.sf-node-run-btn:hover:not(:disabled) {
+/* 运行中不再置灰：点了是加入排队，不是「不可用」。 */
+.sf-node-run-btn:hover {
   background: var(--color-ink-soft);
   color: var(--color-text);
-}
-
-.sf-node-run-btn:disabled {
-  opacity: 0.45;
-  cursor: not-allowed;
 }
 
 .sf-node-preview {

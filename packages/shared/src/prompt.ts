@@ -18,7 +18,8 @@ export interface PromptBlock {
   /**
    * 承载这个块的节点类型（可选）。只对「跟着某个节点走」的块标注，如阴阳师攻略跟着
    * `process.gameguide`、练一练跟着 `process.drill`；通用块由「AI 加工」承载，不标。
-   * 用途：设置页「展示范围」收起某个节点时，它的块也要一起收起来（见 visibility.ts）。
+   * 用途有两个：设置页「展示范围」收起某个节点时，它的块也要一起收起来（见 visibility.ts）；
+   * 标了的块不出现在「AI 加工」的提示词下拉里（见 `aiPromptBlocks`）。
    */
   requiresNode?: NodeType;
   /**
@@ -1659,23 +1660,23 @@ export const BUILTIN_PROMPT_BLOCKS: PromptBlock[] = [
   },
 ];
 
-/** 不参与预绑的块：知识巩固由 `process.drill` 节点承载，不是「AI 加工」的提示词。 */
-const NOT_BINDABLE_BLOCK_IDS = new Set(["builtin.drill"]);
-
 /**
- * 预绑用的提示词块候选（快捷新建的「AI 加工提示词」下拉）：
- * 同一系列只留当前推荐版本（没有 `recommended` 就取该系列首个），版本差异不铺在这里；
- * 用户自定义块按传入顺序追加在前面之后。
+ * 「AI 加工」可选的提示词块——画布节点下拉与快捷新建「AI 加工提示词」下拉**共用这一份**。
+ *
+ * 起因是两个下拉各写了一套过滤：节点那边列 5 项，快捷新建那边先按系列去重、只剩 2 项
+ * （实测 2026-10-13），于是同一个块在画布上能选、在建工程时选不到，而块的说明里还在
+ * 让人「用详尽版」——那项它根本没列出来。列表收在一处，就不会再有第二个地方漏掉新块。
+ *
+ * 两条筛选：
+ * 1. `requiresNode` 的块（阴阳师攻略 → `process.gameguide`、练一练 → `process.drill`）
+ *    由各自的专属节点承载，不属于「AI 加工」，这里结构性地摘掉——不是等节点被收起才摘；
+ * 2. 内置块过审核白名单、没配检索密钥时不列需要联网核查的块，与其余入口同一套判定（`availablePromptBlocks`）。
+ *
+ * 用户自定义块不受白名单约束（那是用户自己写的），按传入顺序追加在内置块之后。
  */
-export function bindablePromptBlocks(custom: PromptBlock[] = []): PromptBlock[] {
-  const bySeries = new Map<string, PromptBlock>();
-  for (const block of BUILTIN_PROMPT_BLOCKS) {
-    if (NOT_BINDABLE_BLOCK_IDS.has(block.id)) continue;
-    const series = block.series ?? block.id;
-    const current = bySeries.get(series);
-    if (!current || (block.recommended && !current.recommended)) bySeries.set(series, block);
-  }
-  return [...bySeries.values(), ...custom];
+export function aiPromptBlocks(custom: PromptBlock[] = [], searchReady: boolean): PromptBlock[] {
+  const generic = [...BUILTIN_PROMPT_BLOCKS.filter((block) => !block.requiresNode), ...custom];
+  return availablePromptBlocks(generic, searchReady);
 }
 
 /**
@@ -1688,7 +1689,7 @@ export function bindablePromptBlocks(custom: PromptBlock[] = []): PromptBlock[] 
  * **为什么用白名单而不是给其余块标 `hidden`**：白名单的默认是「不放行」，所以以后新增块不会漏网；
  * 用黑名单的话，每加一个块都得记得去标一次，忘一次就提前露出去了。
  *
- * 只影响**可选列表**：节点卡片的下拉与快捷新建的下拉都走 `availablePromptBlocks`，一处就管住两处；
+ * 只影响**可选列表**：两个提示词块下拉（画布节点、快捷新建）都走 `aiPromptBlocks`，一处就管住两处；
  * 已有工程里已经绑好的块照常运行——引擎按 id 从 `BUILTIN_PROMPT_BLOCKS` 里解析，不看这份白名单。
  * 这与 `visibility.ts` 开头那条「只影响新建时的可选项」是同一条约定。
  * 设置页的提示词块库不受影响：那里是管理面（看提示词、改名、管版本），审核本身就得在那儿做。

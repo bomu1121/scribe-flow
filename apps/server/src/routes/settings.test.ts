@@ -147,6 +147,186 @@ describe("「常规」分组设置", () => {
   });
 });
 
+describe("「Obsidian」分组设置", () => {
+  /** 只关心 obsidian 分段的响应形状。 */
+  async function obsidianOf(app: App): Promise<Record<string, unknown>> {
+    const body = (await (await app.request("/api/settings")).json()) as { obsidian: Record<string, unknown> };
+    return body.obsidian;
+  }
+
+  // 与「重试次数 0」同一类坑，而且是同一个写法栽的：读取时用 `Number(...) || 5` 兜底，
+  // 把合法的 0（＝不关联）悄悄变成 5 —— 用户调到 0、保存、看着成功了，保存时却还在连笔记。
+  it("每篇最多关联几篇：0 是合法值，不能被当成「没传」丢掉", async () => {
+    const { app } = await setup();
+    await put(app, "/api/settings", { obsidian: { autoLinkMax: 0 } });
+    expect(await obsidianOf(app)).toMatchObject({ autoLinkMax: 0 });
+  });
+
+  /**
+   * 属性名建议的来源接口。
+   *
+   * 这里要钉住的是"没配库 / 库是空的"这两种正常情况：它们**不是错误**，必须回一个结构完整的空结果，
+   * 界面才能照常把下拉渲染出来——回 4xx/5xx 会让设置页那一段整体变成一句报错。
+   */
+  describe("GET /api/settings/obsidian/fields", () => {
+    it("没配库路径时回空结果，不是报错", async () => {
+      const { app } = await setup();
+      const response = await app.request("/api/settings/obsidian/fields");
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual({ items: [], scanned: 0, capped: false });
+    });
+
+    it("配了库就按篇数回报用过的属性名，并排掉我们自己写的固定字段", async () => {
+      const { app } = await setup();
+      const vault = await mkdtemp(join(tmpdir(), "sf-vault-fields-"));
+      cleanupDirs.push(vault);
+      await writeFile(
+        join(vault, "第一篇.md"),
+        "---\n标题: 不该进候选\ntags:\n  - 话题/AI\n人物:\n  - 张三\n时期: 唐朝\n---\n\n正文\n",
+        "utf8",
+      );
+      await writeFile(join(vault, "第二篇.md"), "---\n人物: 李四\n---\n\n正文\n", "utf8");
+      await put(app, "/api/settings", { obsidian: { vaultPath: vault } });
+
+      const body = (await (await app.request("/api/settings/obsidian/fields")).json()) as {
+        items: Array<{ name: string; count: number }>;
+        scanned: number;
+        capped: boolean;
+      };
+      expect(body.items).toEqual([
+        { name: "人物", count: 2 },
+        { name: "时期", count: 1 },
+      ]);
+      expect(body.scanned).toBe(2);
+      expect(body.capped).toBe(false);
+    });
+
+    it("库路径指向不存在的地方也回空结果（用户可能刚填错）", async () => {
+      const { app } = await setup();
+      await put(app, "/api/settings", { obsidian: { vaultPath: join(tmpdir(), `sf-no-such-vault-${Date.now()}`) } });
+      expect(await (await app.request("/api/settings/obsidian/fields")).json()).toEqual({ items: [], scanned: 0, capped: false });
+    });
+  });
+
+  describe("GET /api/settings/obsidian/tags", () => {
+    it("没配库路径时回空结果，不是报错", async () => {
+      const { app } = await setup();
+      const response = await app.request("/api/settings/obsidian/tags");
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual({ items: [], scanned: 0, capped: false });
+    });
+
+    it("按「多少篇用过」统计标签，front matter 与行内都算", async () => {
+      const { app } = await setup();
+      const vault = await mkdtemp(join(tmpdir(), "sf-vault-tags-"));
+      cleanupDirs.push(vault);
+      await writeFile(join(vault, "第一篇.md"), "---\ntags:\n  - 来源/B站\n  - 话题/平台抽成\n---\n\n正文。\n", "utf8");
+      await writeFile(join(vault, "第二篇.md"), "---\ntags:\n  - 来源/B站\n---\n\n这里又提到 #话题/平台抽成。\n", "utf8");
+      await put(app, "/api/settings", { obsidian: { vaultPath: vault } });
+
+      const body = (await (await app.request("/api/settings/obsidian/tags")).json()) as {
+        items: Array<{ tag: string; count: number }>;
+        scanned: number;
+      };
+      // 篇数相同按中文拼音序（话题 < 来源），列表顺序因此是稳定的
+      expect(body.items).toEqual([
+        { tag: "话题/平台抽成", count: 2 },
+        { tag: "来源/B站", count: 2 },
+      ]);
+      expect(body.scanned).toBe(2);
+    });
+  });
+
+  /**
+   * 词库编辑器的显示样式：三选一，纯展示。
+   * 这里要钉住的是**坏值必须被丢掉**——手改过库、或将来删掉某个模式之后，
+   * 这一格不该让设置页打不开（回落默认就行）。
+   */
+  /**
+   * 词库的出厂值与两个自动标签开关。
+   *
+   * 这里的重点是**老安装**：`obsidian.tagTaxonomy` 早就整表保存过一次，
+   * 所以改出厂值对它不生效，只能靠读取时收口。
+   */
+  describe("词库出厂值与自动标签开关", () => {
+    const obsidianOf = async (app: App): Promise<Record<string, unknown>> => {
+      const body = (await (await app.request("/api/settings")).json()) as { obsidian: Record<string, unknown> };
+      return body.obsidian;
+    };
+
+    it("新装：词库里只有用户维护的话题分组，两个自动标签开关默认开", async () => {
+      const { app } = await setup();
+      const obsidian = await obsidianOf(app);
+      expect(Object.keys(obsidian.tagTaxonomy as Record<string, string[]>).sort()).toEqual(["类型", "领域"]);
+      expect(obsidian.sourceTagEnabled).toBe(true);
+      expect(obsidian.upTagEnabled).toBe(true);
+      expect(obsidian.autoTagEnabled).toBe(true); // 话题标签的 AI 开关是另一件事，没被动
+    });
+
+    it("老安装：自动分组与「还是出厂那套」的退休分组被摘掉，用户自己改过的留着", async () => {
+      const { app } = await setup();
+      // 模拟老版本存过的整份词库：来源/概念/状态/UP主名称 都还在，另有一个用户自建的分组
+      await put(app, "/api/settings", {
+        obsidian: {
+          tagTaxonomy: {
+            来源: ["B站", "文稿", "本地视频", "网页", "播客"],
+            UP主名称: [],
+            状态: ["未整理", "已整理"],
+            概念: ["Obsidian", "PARA", "Zettelkasten", "RAG", "双链", "Templater", "Dataview"],
+            领域: ["AI", "历史"],
+            读书笔记: ["技术书"],
+          },
+        },
+      });
+
+      const taxonomy = (await obsidianOf(app)).tagTaxonomy as Record<string, string[]>;
+      // 自动分组：无条件摘掉（它们改由元数据写，只留开关）
+      expect(taxonomy["来源"]).toBeUndefined();
+      expect(taxonomy["UP主名称"]).toBeUndefined();
+      // 状态：内容还是出厂那套 → 摘掉
+      expect(taxonomy["状态"]).toBeUndefined();
+      // 概念：也被摘掉（内容与出厂一致）
+      expect(taxonomy["概念"]).toBeUndefined();
+      // 用户维护的两组原样留着
+      expect(taxonomy["领域"]).toEqual(["AI", "历史"]);
+      expect(taxonomy["读书笔记"]).toEqual(["技术书"]);
+    });
+
+    it("退休分组只要用户动过就保留（不删用户的东西）", async () => {
+      const { app } = await setup();
+      await put(app, "/api/settings", { obsidian: { tagTaxonomy: { 状态: ["未整理", "已整理", "我的状态"] } } });
+      const taxonomy = (await obsidianOf(app)).tagTaxonomy as Record<string, string[]>;
+      expect(taxonomy["状态"]).toEqual(["未整理", "已整理", "我的状态"]);
+    });
+
+    it("两个开关能存能取", async () => {
+      const { app } = await setup();
+      await put(app, "/api/settings", { obsidian: { sourceTagEnabled: false, upTagEnabled: false } });
+      const obsidian = await obsidianOf(app);
+      expect(obsidian.sourceTagEnabled).toBe(false);
+      expect(obsidian.upTagEnabled).toBe(false);
+    });
+  });
+
+  describe("词库显示样式 tagView", () => {
+    it("默认是 plain（单色），保存后按选中的回显", async () => {
+      const { app } = await setup();
+      expect(await obsidianOf(app)).toMatchObject({ tagView: "plain" });
+      await put(app, "/api/settings", { obsidian: { tagView: "list" } });
+      expect(await obsidianOf(app)).toMatchObject({ tagView: "list" });
+    });
+
+    it("不认识的值会被丢掉，回落到已保存的那个", async () => {
+      const { app } = await setup();
+      await put(app, "/api/settings", { obsidian: { tagView: "plain" } });
+      const response = await put(app, "/api/settings", { obsidian: { tagView: "rainbow" } });
+      // 校验层就该拦住它：整条请求 400，而不是写进库里
+      expect(response.status).toBe(400);
+      expect(await obsidianOf(app)).toMatchObject({ tagView: "plain" });
+    });
+  });
+});
+
 describe("「展示范围」分组设置", () => {
   it("默认什么都不隐藏，保存后按列表回显（只留认识的节点类型）", async () => {
     const { app } = await setup();

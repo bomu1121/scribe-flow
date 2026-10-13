@@ -55,13 +55,13 @@ status: accepted
 | --- | --- |
 | `packages/shared/src/visibility.ts` | 新增：`NODE_TYPE_ORDER`、`isNodeHidden`、`hiddenNodesInTemplate`、`visibleTemplates` |
 | `packages/shared/src/run.ts` | `AppSettings` / `UpdateSettingsRequest` 增加 `visibility` 分组 |
-| `packages/shared/src/prompt.ts` | `PromptBlock.requiresNode` + `availablePromptBlocks(blocks, searchReady, hiddenNodes)` 第三个可选参数 |
+| `packages/shared/src/prompt.ts` | `PromptBlock.requiresNode` + `availablePromptBlocks(blocks, searchReady, hiddenNodes)` 第三个可选参数；两个「AI 加工」提示词下拉走 `aiPromptBlocks`，那里先按 `requiresNode` 摘掉由专属节点承载的块（不看设置，与收没收起无关） |
 | `apps/server/src/lib/settings.ts` | 读写该分组；坏数据（手改过库）回落「什么都没隐藏」 |
 | `apps/server/src/routes/settings.ts` | 校验：只认 `NodeType` 里的值，拼错的类型返回 400 而不是悄悄写库 |
 | `apps/web/src/views/SettingsView.vue` | 「展示范围」分组：16 个节点开关 + 「当前收起 N 个」提示；块库按同一规则过滤 |
 | `apps/web/src/components/workspace/NodesPanel.vue` | 节点面板按设置过滤，空掉的分组整组收起 |
-| `apps/web/src/components/workspace/NewProjectDialog.vue` / `QuickCreateDialog.vue` | 链路列表与提示词块下拉按设置过滤 |
-| `apps/web/src/components/canvas/ScribeNode.vue` | 节点内的提示词块下拉按设置过滤 |
+| `apps/web/src/components/workspace/NewProjectDialog.vue` / `QuickCreateDialog.vue` | 链路列表按设置过滤；提示词块下拉由 `requiresNode` 结构性决定（见上） |
+| `apps/web/src/components/canvas/ScribeNode.vue` | 链路与节点面板同上；节点内的提示词块下拉与快捷新建共用 `aiPromptBlocks` |
 
 ## 6. 怎么验证
 

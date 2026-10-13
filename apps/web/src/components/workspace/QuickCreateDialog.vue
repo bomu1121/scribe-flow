@@ -2,13 +2,13 @@
 import { computed, nextTick, ref, watch } from "vue";
 import { useRouter } from "vue-router";
 import { ElButton } from "element-plus/es/components/button/index.mjs";
+import { ElCheckbox } from "element-plus/es/components/checkbox/index.mjs";
 import { ElDialog } from "element-plus/es/components/dialog/index.mjs";
 import { ElInput } from "element-plus/es/components/input/index.mjs";
 import { ElOption, ElSelect } from "element-plus/es/components/select/index.mjs";
 import { Link2 } from "lucide-vue-next";
 import {
-  availablePromptBlocks,
-  bindablePromptBlocks,
+  aiPromptBlocks,
   buildTemplateGraph,
   extractBiliUrl,
   extractShareTitle,
@@ -16,13 +16,13 @@ import {
   supportsSource,
   visibleTemplates,
   type BiliLinkSource,
+  type RunMeta,
   type VideoPreview,
   type WorkflowTemplate,
 } from "@scribe-flow/shared";
 import { api } from "@/lib/api";
 import { toast } from "@/lib/toast";
 import { fmtDuration } from "@/utils/run-segments";
-import { useHiddenNodes } from "@/composables/useHiddenNodes";
 import { useProjectsStore } from "@/stores/projects";
 import { usePromptsStore } from "@/stores/prompts";
 import { useSettingsStore } from "@/stores/settings";
@@ -55,6 +55,8 @@ const NO_PROMPT = "";
 interface QuickCreatePrefs {
   templateId: string;
   promptBlockId: string;
+  /** 建好就立刻跑一遍。默认不勾——它会真的花掉模型调用，第一次不该替用户决定。 */
+  runAfterCreate: boolean;
 }
 
 function readPrefs(): QuickCreatePrefs {
@@ -65,17 +67,21 @@ function readPrefs(): QuickCreatePrefs {
       return {
         templateId: typeof parsed.templateId === "string" ? parsed.templateId : DEFAULT_TEMPLATE_ID,
         promptBlockId: typeof parsed.promptBlockId === "string" ? parsed.promptBlockId : DEFAULT_PROMPT_BLOCK_ID,
+        runAfterCreate: parsed.runAfterCreate === true,
       };
     }
   } catch {
     // 隐私模式/损坏状态：回到默认值
   }
-  return { templateId: DEFAULT_TEMPLATE_ID, promptBlockId: DEFAULT_PROMPT_BLOCK_ID };
+  return { templateId: DEFAULT_TEMPLATE_ID, promptBlockId: DEFAULT_PROMPT_BLOCK_ID, runAfterCreate: false };
 }
 
 function writePrefs() {
   try {
-    localStorage.setItem(PREFS_KEY, JSON.stringify({ templateId: templateId.value, promptBlockId: promptBlockId.value }));
+    localStorage.setItem(
+      PREFS_KEY,
+      JSON.stringify({ templateId: templateId.value, promptBlockId: promptBlockId.value, runAfterCreate: runAfterCreate.value }),
+    );
   } catch {
     // 隐私模式等场景静默降级
   }
@@ -87,11 +93,8 @@ const videoTemplates = computed<WorkflowTemplate[]>(() =>
 );
 /** 检索密钥没配时，需要联网核查的块不出现在可选列表里（跑出来只有一份没核查的清单）。 */
 const searchReady = computed(() => Boolean(settingsStore.settings?.search.hasKey));
-/** 展示范围里收起的节点：它的提示词块也一起收起（如阴阳师攻略的块）。 */
-const hiddenNodes = useHiddenNodes();
-const promptOptions = computed(() =>
-  availablePromptBlocks(bindablePromptBlocks(promptsStore.customBlocks), searchReady.value, hiddenNodes.value),
-);
+/** 与画布节点上的提示词下拉共用一份列表（`aiPromptBlocks`），两处能选到的块必须一致。 */
+const promptOptions = computed(() => aiPromptBlocks(promptsStore.customBlocks, searchReady.value));
 
 const link = ref("");
 const preview = ref<VideoPreview | null>(null);
@@ -100,6 +103,7 @@ const previewLoading = ref(false);
 const creating = ref(false);
 const templateId = ref(readPrefs().templateId);
 const promptBlockId = ref(readPrefs().promptBlockId);
+const runAfterCreate = ref(readPrefs().runAfterCreate);
 
 const dialogVisible = computed({
   get: () => props.open,
@@ -185,6 +189,7 @@ function reset() {
   const prefs = readPrefs();
   templateId.value = videoTemplates.value.some((tpl) => tpl.id === prefs.templateId) ? prefs.templateId : DEFAULT_TEMPLATE_ID;
   promptBlockId.value = promptOptions.value.some((block) => block.id === prefs.promptBlockId) ? prefs.promptBlockId : DEFAULT_PROMPT_BLOCK_ID;
+  runAfterCreate.value = prefs.runAfterCreate;
 }
 
 watch(
@@ -267,12 +272,29 @@ async function submit() {
 
     writePrefs();
     emit("update:open", false);
-    toast.success(`已按链路建好工程「${project.name}」`);
+    if (runAfterCreate.value) await startRun(project.id, project.name);
+    else toast.success(`已按链路建好工程「${project.name}」`);
     await router.push(`/project/${project.id}`);
   } catch (err) {
     toast.error(err instanceof Error ? err.message : "创建工程失败");
   } finally {
     creating.value = false;
+  }
+}
+
+/**
+ * 建完直接起运行（scope 是整图，跟画布上那个「运行」按钮同一条路）。
+ *
+ * 密钥、来源节点空没空这些预检由服务端做（`apps/server/src/routes/runs.ts` 的 createRun），
+ * 不在这儿重写一遍——两份判断迟早会漂。它拒了也不影响工程：照常跳进画布，
+ * 补好设置再点一次运行即可。
+ */
+async function startRun(projectId: string, projectName: string) {
+  try {
+    await api.post<RunMeta>(`/api/projects/${projectId}/runs`, { scope: "all" });
+    toast.success(`已建好工程「${projectName}」，正在运行`);
+  } catch (err) {
+    toast.error(`工程已建好，但没能开始运行：${err instanceof Error ? err.message : "启动运行失败"}`);
   }
 }
 </script>
@@ -285,7 +307,8 @@ async function submit() {
       v-model="link"
       class="qc-link"
       type="textarea"
-      :rows="2"
+      :autosize="{ minRows: 2, maxRows: 6 }"
+      resize="none"
       :maxlength="2000"
       placeholder="粘贴 B 站视频链接或 App 分享文案（【标题】+ 链接）"
       @input="scheduleResolve"
@@ -333,8 +356,13 @@ async function submit() {
       </label>
     </div>
 
+    <div class="qc-run">
+      <el-checkbox v-model="runAfterCreate">创建后立刻运行</el-checkbox>
+      <span class="qc-field-hint">建好就按这条链路从来源节点跑到底（会消耗模型调用），进画布即可看进度</span>
+    </div>
+
     <div class="np-foot">
-      <span class="np-hint">链路与提示词会记住上次的选择：下次复制链接后打开这里，直接回车即可。</span>
+      <span class="np-hint">链路、提示词与运行勾选都会记住：下次复制链接后打开这里，直接回车即可。</span>
       <div class="qc-actions">
         <el-button plain :disabled="creating" @click="close">取消</el-button>
         <el-button type="primary" :loading="creating" :disabled="!canSubmit" @click="submit">创建并打开</el-button>

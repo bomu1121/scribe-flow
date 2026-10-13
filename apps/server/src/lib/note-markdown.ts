@@ -199,6 +199,19 @@ export function canRewriteTags(content: string): { ok: true } | { ok: false; rea
 }
 
 /**
+ * 一篇笔记的标题：front matter 的「标题」→ 正文第一个 H1 → 文件名。
+ *
+ * 只有一处口径是对的：入库时文件名由标题决定，所以回补时按文件名兜底仍能对上；
+ * 分类特征（`extractFeatures`）与相关笔记判定（`findRelatedNoteNames`）都读它，
+ * 两处各写一遍迟早会漂。
+ */
+export function noteTitle(fileName: string, content: string): string {
+  const { body } = splitFrontMatter(content);
+  const heading = body.match(/^#\s+(.+)$/m)?.[1]?.trim() ?? "";
+  return parseYamlScalar(content, "标题") || heading || fileName;
+}
+
+/**
  * 分类用的「特征」：标题 + 标题行 + 正文开头一段。
  *
  * 刻意不送全文——一部长视频笔记上万字，而判定"讲什么话题"用开头几百字加全部小标题就够；
@@ -206,8 +219,7 @@ export function canRewriteTags(content: string): { ok: true } | { ok: false; rea
  */
 export function extractFeatures(fileName: string, content: string): string {
   const { body } = splitFrontMatter(content);
-  const heading = body.match(/^#\s+(.+)$/m)?.[1]?.trim() ?? "";
-  const title = parseYamlScalar(content, "标题") || heading || fileName;
+  const title = noteTitle(fileName, content);
   const headings = (body.match(/^#{1,6}\s+.+$/gm) ?? []).slice(0, 20).join(" / ");
   const lead = body
     .replace(/```[\s\S]*?```/g, "")
@@ -253,8 +265,23 @@ export interface VaultFile {
 
 /** 递归列出库里的 Markdown 笔记；隐藏目录、模板目录、附件目录不进来。 */
 export async function walkMarkdownFiles(root: string, options: { excludePaths?: string[] } = {}): Promise<VaultFile[]> {
+  return (await walkVaultFiles(root, options)).files;
+}
+
+/**
+ * 与 `walkMarkdownFiles` 同一个走查，但可以设上限并如实回报「到顶了」。
+ *
+ * 读内容比只数篇数贵得多，所以给"扫全库统计属性名"这种场景一个确定的上限：
+ * 宁可少看几篇并明说是下限，也不要在大库上把一次页面操作卡成转圈。
+ */
+export async function walkVaultFiles(
+  root: string,
+  options: { excludePaths?: string[]; cap?: number } = {},
+): Promise<{ files: VaultFile[]; capped: boolean }> {
   const excluded = new Set((options.excludePaths ?? []).filter(Boolean).map((p) => resolve(p)));
+  const cap = options.cap ?? Number.POSITIVE_INFINITY;
   const files: VaultFile[] = [];
+  let capped = false;
   const walk = async (dir: string) => {
     const entries = await readdir(dir, { withFileTypes: true }).catch(() => []);
     for (const entry of entries) {
@@ -273,9 +300,100 @@ export async function walkMarkdownFiles(root: string, options: { excludePaths?: 
           fileName: entry.name.replace(/\.md$/, ""),
           content,
         });
+        if (files.length >= cap) {
+          capped = true;
+          return;
+        }
       }
+      if (capped) return;
     }
   };
   await walk(root);
-  return files;
+  return { files, capped };
+}
+
+/**
+ * front matter 里的一级键。
+ *
+ * 判定按 YAML 语义来：缩进的行、列表项（`- x`，甚至可以顶格写）、注释都不是键；
+ * **`键:值` 中间没有空格在 YAML 里根本不是映射**（那是普通字符串），所以也排除——
+ * 不排的话 `原始链接: https://…` 这类行会被按第一个冒号切错、裸 URL 也会被当成键。
+ */
+export function frontMatterKeys(content: string): string[] {
+  const { yaml } = splitFrontMatter(content);
+  if (!yaml) return [];
+  const keys: string[] = [];
+  for (const line of yaml.split(/\r?\n/)) {
+    if (line.startsWith(" ") || line.startsWith("\t") || line.startsWith("-") || line.startsWith("#")) continue;
+    const match = /^([^:#\s][^:#]*?)\s*:(?:\s|$)/.exec(line);
+    if (match) keys.push(match[1].trim());
+  }
+  return keys;
+}
+
+/**
+ * 统计库里每个标签被多少篇笔记用过。
+ *
+ * 这是设置页词库那一块「N 篇用过」的数据源，也是**判断某个标签该不该删的唯一依据**
+ * （库是空的、或它一篇都没被用过，才敢动）。口径与属性名那份统计一致：只看 front matter 的
+ * `tags:` 与正文的行内 `#标签`（`parseNoteTags` 同一份实现），**不读正文其余部分、不调模型**。
+ * 到 `cap` 篇就停，`capped` 说明这个统计是下限。
+ */
+export async function collectTagUsage(
+  root: string,
+  options: { cap?: number } = {},
+): Promise<{ items: Array<{ tag: string; count: number }>; scanned: number; capped: boolean }> {
+  const { files, capped } = await walkVaultFiles(root, { cap: options.cap ?? 500 });
+  const counts = new Map<string, number>();
+  for (const file of files) {
+    const { frontmatter, inline } = parseNoteTags(file.content);
+    /* 同一篇里同一个标签出现多次只算一次：统计的是"多少篇用过"。 */
+    for (const tag of new Set([...frontmatter, ...inline])) {
+      const name = tag.trim();
+      if (!name) continue;
+      counts.set(name, (counts.get(name) ?? 0) + 1);
+    }
+  }
+  const items = [...counts.entries()]
+    .map(([tag, count]) => ({ tag, count }))
+    .sort((a, b) => b.count - a.count || a.tag.localeCompare(b.tag, "zh-CN"));
+  return { items, scanned: files.length, capped };
+}
+
+/**
+ * 我们自己写进去的固定字段：统计属性名时要排掉，否则「标题 / tags」会被当成候选推荐给用户。
+ * 与 `engine.ts` 里拼 front matter 的那几行是同一份名单——那边加字段时这里要跟着加。
+ */
+export const NOTE_OWN_FIELDS = ["标题", "类型", "来源", "作者", "原始链接", "创建日期", "tags"];
+
+export interface FrontMatterFieldCount {
+  name: string;
+  /** 库里有多少篇笔记用过这个属性名。 */
+  count: number;
+}
+
+/**
+ * 统计库里出现过的属性名，按篇数从多到少。
+ *
+ * 这是设置页建议列表的数据源：**只看 front matter 的键，不读正文、不调模型**，
+ * 所以它和"检查库"一样是纯本地 IO。篇数到 `cap` 就停，`capped` 说明这个统计是下限。
+ */
+export async function collectFrontMatterFieldNames(
+  root: string,
+  options: { cap?: number; exclude?: string[] } = {},
+): Promise<{ items: FrontMatterFieldCount[]; scanned: number; capped: boolean }> {
+  const exclude = new Set(options.exclude ?? NOTE_OWN_FIELDS);
+  const { files, capped } = await walkVaultFiles(root, { cap: options.cap ?? 500 });
+  const counts = new Map<string, number>();
+  for (const file of files) {
+    /* 同一篇里重复写同一个键只算一次：统计的是"有多少篇用过"，不是出现次数。 */
+    for (const key of new Set(frontMatterKeys(file.content))) {
+      if (!key || exclude.has(key)) continue;
+      counts.set(key, (counts.get(key) ?? 0) + 1);
+    }
+  }
+  const items = [...counts.entries()]
+    .map(([name, count]) => ({ name, count }))
+    .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name, "zh-CN"));
+  return { items, scanned: files.length, capped };
 }

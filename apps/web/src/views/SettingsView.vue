@@ -1,23 +1,25 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref, watch } from "vue";
+import { computed, nextTick, onMounted, reactive, ref, watch } from "vue";
+import type { Component } from "vue";
 import { useRoute } from "vue-router";
 import { ElCollapse, ElCollapseItem } from "element-plus/es/components/collapse/index.mjs";
 import { ElInput } from "element-plus/es/components/input/index.mjs";
 import { ElInputNumber } from "element-plus/es/components/input-number/index.mjs";
+import { ElRadioButton, ElRadioGroup } from "element-plus/es/components/radio/index.mjs";
 import { ElMessageBox } from "element-plus/es/components/message-box/index.mjs";
-import { ElOption, ElSelect } from "element-plus/es/components/select/index.mjs";
+import { ElOption, ElOptionGroup, ElSelect } from "element-plus/es/components/select/index.mjs";
 import { ElSwitch } from "element-plus/es/components/switch/index.mjs";
-import { CircleAlert, CircleCheck, Cloud, Download, ExternalLink, FolderOpen, ListChecks, Loader2, Mic, PlugZap, RefreshCw, RotateCcw, Save, Trash2, Upload } from "lucide-vue-next";
+import { Calendar, CircleAlert, CircleCheck, Cloud, Contrast, Copy, Download, ExternalLink, FolderOpen, Link2, List, ListChecks, Loader2, Mic, MoreHorizontal, Palette, PlugZap, Plus, RefreshCw, RotateCcw, Save, Tag, Trash2, Type, Upload, X } from "lucide-vue-next";
 import { toast } from "@/lib/toast";
 import { ensureNotifyPermission } from "@/utils/run-alert";
 import { formatBytes } from "@/lib/bytes";
 import ModelSelect from "../components/ModelSelect.vue";
 import PromptBlockDiffDialog from "../components/PromptBlockDiffDialog.vue";
-import StableText from "../components/StableText.vue";
-import type { AiProvider, AsrEngine, DataOverview, NodeType, ObsidianVaultCheck, PruneItem, PruneOutcome, PruneTarget, PromptBlock, RetagJobView, RetagPlanView, SearchProvider, TagTaxonomy } from "@scribe-flow/shared";
-import { EXTRACT_FIELD_PRESETS, FILE_NAME_TOKENS, GENERAL_LIMITS, NODE_TYPE_LABELS, NODE_TYPE_ORDER, TRACE_SOURCE_AUTHORITY_LABELS, UP_TAXONOMY_GROUP, addTagToTaxonomy, backupLocationOf, normalizeTagSegment, renderFileNameTemplate, writableTags } from "@scribe-flow/shared";
+import type { AiProvider, AsrEngine, DataOverview, NodeType, TagViewMode, ObsidianVaultCheck, PruneItem, PruneOutcome, PruneTarget, PromptBlock, RelatedJobView, RelatedNoteMode, RelatedPlanView, RetagJobView, RetagPlanView, SearchProvider, TagTaxonomy } from "@scribe-flow/shared";
+import { COMMON_EXTRACT_FIELDS, DEFAULT_TAG_VIEW, EXTRACT_FIELD_PRESETS, FILE_NAME_TOKENS, GENERAL_LIMITS, MAX_EXTRACT_FIELDS, NODE_TYPE_LABELS, NODE_TYPE_ORDER, RELATED_SECTION_TITLE, SOURCE_TAXONOMY_GROUP, TAG_VIEW_MODES, TRACE_SOURCE_AUTHORITY_LABELS, UP_TAXONOMY_GROUP, addTagToTaxonomy, backupLocationOf, normalizeTagSegment, renderFileNameTemplate, tagGroupTone, writableTags } from "@scribe-flow/shared";
 import { api } from "@/lib/api";
 import { copyText } from "@/lib/clipboard";
+import { useDelayedBusy } from "@/utils/busy";
 import { useSettingsStore } from "@/stores/settings";
 import { usePromptsStore } from "@/stores/prompts";
 import { useRunsStore } from "@/stores/runs";
@@ -64,14 +66,18 @@ const form = reactive({
   hiddenNodes: [] as NodeType[],
   obsidianVaultPath: "",
   obsidianFolder: "00-Inbox",
+  /** 词库编辑器的显示样式（纯展示）：三种由用户自己挑，见 TAG_VIEW_MODES。 */
+  obsidianTagView: DEFAULT_TAG_VIEW as TagViewMode,
   obsidianAutoTagEnabled: true,
+  /** 两个自动标签的开关（来源 / UP 主）：标签由元数据写，用户只决定写不写。 */
+  obsidianSourceTagEnabled: true,
+  obsidianUpTagEnabled: true,
   obsidianAllowNewTags: false,
   obsidianExtractFields: [] as string[],
   obsidianTagMinCount: 5,
   obsidianTagMaxCount: 10,
   obsidianAutoLinkEnabled: true,
   obsidianAutoLinkMax: 5,
-  obsidianAutoLinkBidirectional: false,
   nutstoreServerUrl: "https://dav.jianguoyun.com/dav/",
   nutstoreAccount: "",
   nutstorePassword: "",
@@ -138,7 +144,6 @@ const nutstoreSyncing = ref(false);
 const nutstoreBackingUp = ref(false);
 const nutstoreRestoring = ref(false);
 const nutstoreBackups = ref<Array<{ path: string; name: string; lastModified?: number }>>([]);
-const nutstoreBackupFiles = ref<Array<{ path: string; name: string; type: "folder" | "file"; size?: number }>>([]);
 const remotePreview = ref<{ path: string; content: string } | null>(null);
 const nutstoreResult = ref<{
   action: string;
@@ -161,6 +166,178 @@ const retagPlanning = ref(false);
 const retagRunning = ref(false);
 const retagPlan = ref<RetagPlanView | null>(null);
 const retagJob = ref<RetagJobView | null>(null);
+
+/* ---------------------------------------- 词库那一块的显示与编辑状态（纯界面，不进设置） */
+
+/**
+ * 三种显示样式的图标。图标模式下按钮上只有图标，所以名字走两条路：
+ * 鼠标是 `title`（`${label}：${hint}`），读屏是按钮里那段 `.sf-visually-hidden` 文字。
+ * 「彩色标记 / 单色」用调色板与黑白圆（lucide 的 Contrast）配成一对，清单用 List。
+ */
+const TAG_VIEW_ICONS: Record<TagViewMode, Component> = {
+  color: Palette,
+  plain: Contrast,
+  list: List,
+};
+
+/** 正在改名的那一个二级：{ 一级, 下标 }。 */
+const editingTag = ref<{ group: string; index: number } | null>(null);
+/** 正在输入新二级的那个一级（同一时刻只开一个：常驻输入框是这一块原来 880px 的主因）。 */
+const addingInGroup = ref("");
+/** 组头 ⋯ 菜单展开的是哪一个一级。 */
+const groupMenu = ref("");
+/** 收起来的一级（默认全展开——词库通常没几组，全展开更好扫）。 */
+const collapsedGroups = ref<string[]>([]);
+/** 拖拽中的二级与当前悬停的目标，键都是一级名 + 下标。 */
+const draggingTag = ref<{ group: string; index: number } | null>(null);
+const dragOverTag = ref<{ group: string; index: number } | null>(null);
+
+/** 一个二级标签被多少篇笔记用过（拿不到就是 null，界面就不显示这个数字）。 */
+function tagUsage(group: string, child: string): number | null {
+  const hit = store.obsidianTagUsage.find((item) => item.tag === `${group}/${child}` || item.tag === child);
+  return hit ? hit.count : null;
+}
+
+/** 一级的合计用量：判断"这一组整体有没有人用"比单个标签更常用。 */
+function groupUsage(group: string): number | null {
+  const children = taxonomy.value[group] ?? [];
+  if (children.length === 0) return null;
+  const counts = children.map((child) => tagUsage(group, child));
+  if (counts.every((count) => count === null)) return null;
+  return counts.reduce<number>((sum, count) => sum + (count ?? 0), 0);
+}
+
+function groupToneOf(_group: string, index: number) {
+  return tagGroupTone(index);
+}
+
+function isCollapsed(group: string): boolean {
+  return collapsedGroups.value.includes(group);
+}
+
+function toggleGroupCollapsed(group: string): void {
+  collapsedGroups.value = isCollapsed(group)
+    ? collapsedGroups.value.filter((item) => item !== group)
+    : [...collapsedGroups.value, group];
+}
+
+function startAddChild(group: string): void {
+  addingInGroup.value = group;
+  groupMenu.value = "";
+  void nextTick(() => {
+    const input = document.querySelector<HTMLInputElement>(`.sf-tag-add-input[data-group="${CSS.escape(group)}"] input`);
+    input?.focus();
+  });
+}
+
+function startRenameWith(group: string, index: number, current: string): void {
+  renameDraft.value = current;
+  startRename(group, index);
+}
+
+/** 一级改名：改的是键，所以整支内容要搬过去（与节点改名同一套对话框，不用原生 prompt）。 */
+async function renameGroup(group: string): Promise<void> {
+  groupMenu.value = "";
+  try {
+    const { value } = await ElMessageBox.prompt("新的一级名", `重命名「${group}」`, {
+      inputValue: group,
+      inputPattern: /S+/,
+      inputErrorMessage: "一级名不能为空",
+      confirmButtonText: "确定",
+      cancelButtonText: "取消",
+    });
+    const next = normalizeTagSegment(value ?? "");
+    if (!next || next === group) return;
+    if (Object.prototype.hasOwnProperty.call(taxonomy.value, next)) {
+      toast.error(`一级「${next}」已存在`);
+      return;
+    }
+    const moved: TagTaxonomy = {};
+    for (const [key, child] of Object.entries(taxonomy.value)) {
+      moved[key === group ? next : key] = child;
+    }
+    taxonomy.value = moved;
+  } catch {
+    /* 取消：什么都不做 */
+  }
+}
+
+function startRename(group: string, index: number): void {
+  editingTag.value = { group, index };
+  void nextTick(() => {
+    const input = document.querySelector<HTMLInputElement>(`.sf-tag-chip--editing input`);
+    input?.focus();
+    input?.select();
+  });
+}
+
+/** 改名提交：留空＝放弃（改名是"改"，不是"删"）。 */
+function commitRename(): void {
+  const target = editingTag.value;
+  editingTag.value = null;
+  if (!target) return;
+  const draft = (renameDraft.value ?? "").trim();
+  const children = taxonomy.value[target.group] ?? [];
+  const current = children[target.index];
+  if (!draft || current === undefined || draft === current) {
+    renameDraft.value = "";
+    return;
+  }
+  const name = normalizeTagSegment(draft);
+  if (!name) {
+    toast.error("标签名不能为空，也不能是纯数字");
+    renameDraft.value = "";
+    return;
+  }
+  if ((taxonomy.value[target.group] ?? []).some((item, index) => index !== target.index && item === name)) {
+    toast.error(`「${target.group}/${name}」已存在`);
+    renameDraft.value = "";
+    return;
+  }
+  reorderChild(target.group, target.index, target.index, name);
+  renameDraft.value = "";
+}
+
+/** 改名草稿：开始改名时填上当前值。 */
+const renameDraft = ref("");
+
+/** 组内移动（键盘 Alt+↑/↓ 与拖拽共用）：到边界就停，不循环。 */
+function moveChild(group: string, index: number, delta: number): void {
+  const to = index + delta;
+  const children = taxonomy.value[group] ?? [];
+  if (to < 0 || to >= children.length) return;
+  reorderChild(group, index, to);
+}
+
+/**
+ * 把某个二级挪到别的位置（`next` 传了就是改名）。
+ *
+ * 一个函数管改名与移动：两者都是"列表里的一项换了内容/位置"，
+ * 分成两条路径会让"改名后再删"那类 bug 复活（上一版原型就是这么坏的）。
+ */
+function reorderChild(group: string, from: number, to: number, next?: string): void {
+  const children = [...(taxonomy.value[group] ?? [])];
+  const moved = children[from];
+  if (moved === undefined) return;
+  children.splice(from, 1);
+  children.splice(to, 0, next ?? moved);
+  taxonomy.value = { ...taxonomy.value, [group]: children };
+}
+
+function onTagDragStart(group: string, index: number, event: DragEvent): void {
+  draggingTag.value = { group, index };
+  event.dataTransfer?.setData("text/plain", `${group}/${index}`);
+  if (event.dataTransfer) event.dataTransfer.effectAllowed = "move";
+}
+
+function onTagDrop(group: string, index: number): void {
+  const from = draggingTag.value;
+  dragOverTag.value = null;
+  draggingTag.value = null;
+  if (!from || from.group !== group || from.index === index) return;
+  reorderChild(group, from.index, index);
+}
+
 
 /** 词库或库路径有未保存的改动：服务端读的是已保存的设置，没保存就重打标会用错口径。 */
 const obsidianDirty = computed(() => {
@@ -222,9 +399,10 @@ async function copyTagSearch(group: string, child?: string): Promise<void> {
   await copyText(`tag:#${tag}`, `已复制：tag:#${tag}`);
 }
 
+/** 同 `refreshRelatedPlan`：保留旧结果，只压暗，避免点一下抖动一次。 */
 async function refreshRetagPlan(): Promise<void> {
+  if (retagPlanning.value) return;
   retagPlanning.value = true;
-  retagPlan.value = null;
   try {
     retagPlan.value = await api.post<RetagPlanView>("/api/taxonomy/plan", { deep: retagDeep.value });
   } catch (err) {
@@ -281,6 +459,121 @@ async function pollRetag(jobId: string): Promise<void> {
   else if (retagJob.value?.status === "running") toast.error("重打标超过 30 分钟仍未结束，请稍后重试");
 }
 
+/* ---------------------------------------------- 相关笔记：全库回补（不花钱） */
+
+const relatedPlanning = ref(false);
+const relatedRunning = ref(false);
+
+/*
+ * 按钮的"忙碌态"一律走 `useDelayedBusy`：**200ms 内返回的请求什么都不显示**（下面这些标志全程为 false），
+ * 慢的话才把左侧图标换成转圈（文字永不改变——改文字会让可访问名在动作中途变，观感上也是"闪"）。
+ * 依据与数字见 docs/research/loading-flicker-research.md。
+ *
+ * 注意两类操作的差别：
+ * · **只读操作**（自检、预估、读列表、刷新）用延迟标志去控制 `:disabled`，配合处理器开头的防重入守卫：
+ *   快请求时按钮连灰一下都不会有。
+ * · **写操作**（回补、备份、恢复、清理、推/拉）的 `:disabled` 仍绑原始标志（立即生效），
+ *   否则延迟窗口里能被点第二次；它们本来就要跑几秒，不存在闪的问题。
+ */
+const showAiTesting = useDelayedBusy(aiTesting);
+const showAsrTesting = useDelayedBusy(asrTesting);
+const showSearchTesting = useDelayedBusy(searchTesting);
+const showNutstoreTesting = useDelayedBusy(nutstoreTesting);
+const showNutstoreReading = useDelayedBusy(nutstoreReading);
+const showNutstoreSyncing = useDelayedBusy(nutstoreSyncing);
+const showNutstoreBackingUp = useDelayedBusy(nutstoreBackingUp);
+const showNutstoreRestoring = useDelayedBusy(nutstoreRestoring);
+const showDataLoading = useDelayedBusy(dataLoading);
+const showRelatedPlanning = useDelayedBusy(relatedPlanning);
+const showRelatedRunning = useDelayedBusy(relatedRunning);
+const showRetagPlanning = useDelayedBusy(retagPlanning);
+const showRetagRunning = useDelayedBusy(retagRunning);
+/** 清理是逐个目标跑的，转圈跟着当前那个目标。 */
+const showPrune = (target: PruneTarget | "all") => useDelayedBusy(computed(() => pruneRunning.value === target));
+
+const nutstoreBackupFiles = ref<Array<{ path: string; name: string; type: "folder" | "file"; size?: number }>>([]);
+
+const relatedPlan = ref<RelatedPlanView | null>(null);
+const relatedJob = ref<RelatedJobView | null>(null);
+
+/** 样例里的三种动作，给人看得懂的说法。 */
+const RELATED_MODE_LABEL: Record<RelatedNoteMode, string> = { add: "新增", update: "更新", remove: "清掉" };
+
+/**
+ * 相关笔记由「抽取字段 + 开关 + 上限」共同决定，三者任一没保存，回补用的就是旧口径。
+ * 与重打标的 `obsidianDirty` 分开：那边还管词库，改字段不该挡住重打标。
+ */
+const relatedDirty = computed(() => {
+  const saved = store.settings?.obsidian;
+  if (!saved) return false;
+  return (
+    form.obsidianVaultPath.trim() !== saved.vaultPath.trim() ||
+    JSON.stringify(form.obsidianExtractFields) !== JSON.stringify(saved.extractFields ?? []) ||
+    form.obsidianAutoLinkEnabled !== saved.autoLinkEnabled ||
+    form.obsidianAutoLinkMax !== saved.autoLinkMax
+  );
+});
+
+/**
+ * 预估（不花钱，只扫本地）。
+ *
+ * **不要把已有结果清掉再请求**：面板一消失，它下面整块内容会缩掉一百多像素、新结果回来再弹回去——
+ * 实测表单高度 3414 → 3283 → 3414（快的时候 20ms 一次来回），用户看到的就是"点一下抖一下"。
+ * 现在保留旧结果并在重新预估期间压暗它（`.is-stale`），高度不变，只有按钮上的「正在看…」在动。
+ */
+async function refreshRelatedPlan(): Promise<void> {
+  if (relatedPlanning.value) return;
+  relatedPlanning.value = true;
+  try {
+    relatedPlan.value = await api.post<RelatedPlanView>("/api/related-notes/plan", {});
+  } catch (err) {
+    toast.error(err instanceof Error ? err.message : "预估失败");
+  } finally {
+    relatedPlanning.value = false;
+  }
+}
+
+async function startRelatedBackfill(): Promise<void> {
+  relatedRunning.value = true;
+  relatedJob.value = null;
+  try {
+    const created = await api.post<{ jobId: string }>("/api/related-notes/run", {});
+    await pollRelated(created.jobId);
+  } catch (err) {
+    toast.error(err instanceof Error ? err.message : "回补启动失败");
+    relatedRunning.value = false;
+  }
+}
+
+/** 纯本地任务，正常几秒内结束；给 10 分钟上限只是不让轮询悬着。 */
+async function pollRelated(jobId: string): Promise<void> {
+  const deadline = Date.now() + 10 * 60_000;
+  let failure: string | null = null;
+  while (Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 800));
+    let job: RelatedJobView;
+    try {
+      job = await api.get<RelatedJobView>(`/api/related-notes/jobs/${jobId}`);
+    } catch (err) {
+      failure = err instanceof Error ? err.message : "查询回补进度失败";
+      break;
+    }
+    relatedJob.value = job;
+    if (job.status === "running") continue;
+    relatedRunning.value = false;
+    if (job.status === "done") {
+      toast.success(job.message);
+      await refreshRelatedPlan();
+    } else {
+      toast.error(job.error ?? "回补失败");
+    }
+    return;
+  }
+  relatedRunning.value = false;
+  if (failure) toast.error(failure);
+  else if (relatedJob.value?.status === "running") toast.error("回补超过 10 分钟仍未结束，请稍后重试");
+}
+
 /* ---------------------------------------- 库自检与笔记预览（「存到哪」的反馈） */
 
 const vaultCheck = ref<ObsidianVaultCheck | null>(null);
@@ -289,10 +582,42 @@ const vaultChecking = ref(false);
 /** 备份目录填本地还是云端，由输入形状自动判定（没有模式开关）。 */
 const nutstoreBackupLocation = computed(() => backupLocationOf(form.nutstoreBackupDir));
 
-/** 当前抽取字段是否就是某个预设——预设 chip 高亮它，用户一眼知道"我现在用的是哪套"。 */
-function presetActive(preset: { fields: string[] }): boolean {
-  return JSON.stringify(preset.fields) === JSON.stringify(form.obsidianExtractFields);
+/* ---------------------------------------- 「抽取哪些属性」的建议来源 */
+
+/** 库里用过的属性名（按篇数）与常用名，去掉已经选中的那些——下拉里不必再出现一遍。 */
+const vaultFieldSuggestions = computed(() =>
+  store.obsidianFieldNames.filter((item) => !form.obsidianExtractFields.includes(item.name)),
+);
+const commonFieldSuggestions = computed(() =>
+  COMMON_EXTRACT_FIELDS.filter((field) => !form.obsidianExtractFields.includes(field)),
+);
+
+/**
+ * 用户自己敲出来的属性名。
+ *
+ * el-select 的 `allow-create` **不会**把创建出来的值放回候选列表（element-plus 的 issue 11892，仍未修），
+ * 于是"删掉一个自定义词再想加回来"只能重打。这里在 `@change` 里把新面孔记下来补进下拉，
+ * 也就是调研里说的"业务层回填"。
+ */
+const createdFields = ref<string[]>([]);
+const createdFieldSuggestions = computed(() =>
+  createdFields.value.filter((field) => !form.obsidianExtractFields.includes(field)),
+);
+
+function onExtractFieldsChange(values: string[]) {
+  const known = new Set([...store.obsidianFieldNames.map((item) => item.name), ...COMMON_EXTRACT_FIELDS, ...createdFields.value]);
+  for (const value of values) {
+    if (!known.has(value)) createdFields.value.push(value);
+  }
 }
+
+/** 建议区的一句话说明：扫到上限时要说清这是下限，否则看起来像"库里就这么几个"。 */
+const vaultFieldHint = computed(() => {
+  if (store.obsidianFieldsScanned === 0) return "";
+  const base = `已扫过 ${store.obsidianFieldsScanned} 篇笔记的头部`;
+  return store.obsidianFieldsCapped ? `${base}（到上限了，实际可能更多）` : base;
+});
+
 /** 「高级」折叠区的展开状态。 */
 const nutstoreAdvancedOpen = ref<string[]>([]);
 
@@ -310,8 +635,7 @@ const nutstoreAdvancedSummary = computed(() => {
 });
 
 /** 转圈只在检查真的慢时才出现：本地检查通常几十毫秒，闪现一下比不显示更烦。 */
-const vaultSpinnerVisible = ref(false);
-let vaultSpinnerTimer: number | undefined;
+const vaultSpinnerVisible = useDelayedBusy(vaultChecking);
 /** 连发检查时丢弃过期结果：慢的那个后回来会把新结果盖掉，等于给出错误结论。 */
 let vaultCheckSeq = 0;
 
@@ -335,46 +659,54 @@ const vaultState = computed<"unknown" | "ok" | "bad">(() => {
 async function checkVault(): Promise<void> {
   const seq = ++vaultCheckSeq;
   vaultChecking.value = true;
-  window.clearTimeout(vaultSpinnerTimer);
-  vaultSpinnerTimer = window.setTimeout(() => {
-    if (vaultChecking.value) vaultSpinnerVisible.value = true;
-  }, 180);
   try {
     const query = new URLSearchParams({ vaultPath: form.obsidianVaultPath, folder: form.obsidianFolder });
     const result = await api.get<ObsidianVaultCheck>(`/api/settings/obsidian/check?${query.toString()}`);
     if (seq !== vaultCheckSeq) return; // 有更新的检查在跑，这次结果作废
     vaultCheck.value = result;
-    // 库能用就顺手刷新文件夹列表，省掉一个「刷新目录」按钮。
-    if (!result.problem) void store.loadObsidianFolders();
+    // 库能用就顺手刷新文件夹列表与属性名建议，省掉一个「刷新」按钮。
+    if (!result.problem) {
+      void store.loadObsidianFolders();
+      void store.loadObsidianFieldNames();
+    }
   } catch (err) {
     if (seq !== vaultCheckSeq) return;
     vaultCheck.value = null;
     toast.error(err instanceof Error ? err.message : "检查库失败");
   } finally {
-    if (seq === vaultCheckSeq) {
-      vaultChecking.value = false;
-      vaultSpinnerVisible.value = false;
-      window.clearTimeout(vaultSpinnerTimer);
-    }
+    if (seq === vaultCheckSeq) vaultChecking.value = false;
   }
 }
 
-/** 「重新检查」：检查与文件夹列表一起重来（给"我就是想再按一下"的安全感）。 */
+/** 「重新检查」：检查、文件夹列表、属性名建议一起重来（给"我就是想再按一下"的安全感）。 */
 async function recheckVault(): Promise<void> {
-  await Promise.all([checkVault(), store.loadObsidianFolders()]);
+  await Promise.all([checkVault(), store.loadObsidianFolders(), store.loadObsidianFieldNames()]);
 }
 
 const vaultCardTitle = computed(() => {
   if (vaultState.value === "bad") return "现在还存不进去";
   if (!vaultCheck.value) return "还没检查这个库文件夹";
-  return `可以保存：笔记会写进「${form.obsidianFolder || "00-Inbox"}」`;
+  return `可以保存：没单独指定目录的节点写进「${form.obsidianFolder || "00-Inbox"}」`;
 });
 
+/** 属性类型图标：照 Obsidian 属性面板的做法，左列每个属性名前挂一个类型图标。 */
+const PROPERTY_ICONS = { text: Type, link: Link2, date: Calendar, list: List, tags: Tag };
+
+interface NotePreviewProp {
+  name: string;
+  kind: "text" | "link" | "date" | "list" | "tags";
+  value?: string;
+  values?: string[];
+}
+
 /**
- * 笔记头部的预览。用当前词库的真实标签拼出来，所以改词库、开关 AI，预览跟着变——
- * 「保存流程」这件事，看一眼样例比读三行说明有用。
+ * 笔记头部的预览：**按 Obsidian 自己的属性面板来画**——左列属性名 + 类型图标、右列值，
+ * 列表值画成 chip、`tags` 画成紫色 chip——而不是把 raw markdown 倒进一个等宽框。
+ * 那个框没人愿意读，而这一段要回答的恰恰是「我在这页设的几项，最后长什么样」。
+ *
+ * 数据全部来自当前设置：改抽取字段、改词库、开关 AI，这张预览跟着变。
  */
-const notePreview = computed(() => {
+const notePreviewModel = computed(() => {
   // 例子里优先用「话题」那一支：它才是这个功能的主角，来源/类型那些是兜底分类，
   // 拿它们当示例会让人以为标签就该长这样。
   const topics = taxonomy.value["话题"] ?? [];
@@ -383,25 +715,41 @@ const notePreview = computed(() => {
       ? topics.slice(0, 2).map((name) => `话题/${name}`)
       : writableTags(taxonomy.value).slice(0, 2)
     : [];
-  const tags = [`${UP_TAXONOMY_GROUP}/某某-UP`, ...owned];
-  return [
-    "---",
-    "标题: 〈视频标题〉",
-    "类型: 视频笔记",
-    "来源: B站",
-    "作者: 某某 UP",
-    "原始链接: https://www.bilibili.com/video/BV1xxxxxxxxx",
-    "创建日期: 2026-10-11",
-    // 抽取属性按配置的字段名生成，跟着用户在 ② 里改——预览要复现真实写出的形状。
-    ...(form.obsidianAutoTagEnabled ? form.obsidianExtractFields.slice(0, 3).flatMap((field) => [`${field}:`, "  - 〈示例〉"]) : []),
-    "tags:",
-    ...tags.map((tag) => `  - ${tag}`),
-    "---",
-    "",
-    "# 〈视频标题〉",
-    "",
-    "（AI 整理出来的正文）",
-  ].join("\n");
+
+  const props: NotePreviewProp[] = [
+    { name: "标题", kind: "text", value: "〈视频标题〉" },
+    { name: "类型", kind: "text", value: "视频笔记" },
+    { name: "来源", kind: "text", value: "B站" },
+    { name: "作者", kind: "text", value: "某某 UP" },
+    { name: "原始链接", kind: "link", value: "https://www.bilibili.com/video/BV1xxxxxxxxx" },
+    // 日期与引擎写的一致（`process.obsidian` 分支用的是同一个表达式），免得预览挂着一个过期的日子
+    { name: "创建日期", kind: "date", value: new Date().toISOString().slice(0, 10) },
+  ];
+  if (form.obsidianAutoTagEnabled) {
+    // 抽取属性按用户配的字段名生成，给两个示例值：一个是列表、两个才看得出"列表"
+    for (const field of form.obsidianExtractFields.slice(0, 3)) {
+      props.push({ name: field, kind: "list", values: ["〈示例 1〉", "〈示例 2〉"] });
+    }
+  }
+  // 两个自动标签跟开关走：预览要跟真实写出来的东西一致（引擎那边是同一个判据）。
+  const autoTags = [
+    ...(form.obsidianSourceTagEnabled ? [`${SOURCE_TAXONOMY_GROUP}/B站`] : []),
+    ...(form.obsidianUpTagEnabled ? [`${UP_TAXONOMY_GROUP}/某某-UP`] : []),
+  ];
+  props.push({ name: "tags", kind: "tags", values: [...autoTags, ...owned] });
+
+  return {
+    props,
+    // 相关笔记段要不要出现，条件与引擎一字不差（`process.obsidian` 分支）：
+    // 关联开关 + 上限 > 0 + 有字段 + **抽取开关也开着**——最后一个尤其容易被漏：
+    // 属性是抽取那一步写下的，没抽取就没有可比对的东西，段子也就不会生成。
+    // 早先这里只看"关联开关 + 有字段"，于是关掉 AI 时预览还在承诺一段不会出现的文字。
+    related:
+      form.obsidianAutoLinkEnabled &&
+      form.obsidianAutoLinkMax > 0 &&
+      form.obsidianExtractFields.length > 0 &&
+      form.obsidianAutoTagEnabled,
+  };
 });
 
 // 切到这一栏（或直接落在这一栏）就自动检查一次；之后改库路径/子目录也自动重跑，400ms 防抖。
@@ -541,6 +889,8 @@ async function removeBlock(block: PromptBlock) {
 }
 
 async function loadDataInfo() {
+  // 禁用被延迟了（快请求时按钮根本不灰），重复点击得在这里挡。
+  if (dataLoading.value) return;
   dataLoading.value = true;
   dataError.value = "";
   try {
@@ -691,7 +1041,10 @@ function fillForm() {
   form.hiddenNodes = [...(store.settings.visibility?.hiddenNodes ?? [])];
   form.obsidianVaultPath = store.settings.obsidian.vaultPath;
   form.obsidianFolder = store.settings.obsidian.folder;
+  form.obsidianTagView = store.settings.obsidian.tagView;
   form.obsidianAutoTagEnabled = store.settings.obsidian.autoTagEnabled;
+  form.obsidianSourceTagEnabled = store.settings.obsidian.sourceTagEnabled;
+  form.obsidianUpTagEnabled = store.settings.obsidian.upTagEnabled;
   form.obsidianAllowNewTags = store.settings.obsidian.allowNewTags;
   form.obsidianExtractFields = [...store.settings.obsidian.extractFields];
   taxonomy.value = JSON.parse(JSON.stringify(store.settings.obsidian.tagTaxonomy ?? {})) as TagTaxonomy;
@@ -699,7 +1052,6 @@ function fillForm() {
   form.obsidianTagMaxCount = store.settings.obsidian.tagMaxCount;
   form.obsidianAutoLinkEnabled = store.settings.obsidian.autoLinkEnabled;
   form.obsidianAutoLinkMax = store.settings.obsidian.autoLinkMax;
-  form.obsidianAutoLinkBidirectional = store.settings.obsidian.autoLinkBidirectional;
   form.nutstoreServerUrl = store.settings.nutstore.serverUrl;
   form.nutstoreAccount = store.settings.nutstore.account;
   form.nutstoreBackupDir = store.settings.nutstore.backupDir;
@@ -781,15 +1133,17 @@ async function saveAll() {
       obsidian: {
         vaultPath: form.obsidianVaultPath,
         folder: form.obsidianFolder,
+        tagView: form.obsidianTagView,
         tagTaxonomy: taxonomy.value,
         autoTagEnabled: form.obsidianAutoTagEnabled,
+        sourceTagEnabled: form.obsidianSourceTagEnabled,
+        upTagEnabled: form.obsidianUpTagEnabled,
         allowNewTags: form.obsidianAllowNewTags,
         extractFields: form.obsidianExtractFields,
         tagMinCount: form.obsidianTagMinCount,
         tagMaxCount: form.obsidianTagMaxCount,
         autoLinkEnabled: form.obsidianAutoLinkEnabled,
         autoLinkMax: form.obsidianAutoLinkMax,
-        autoLinkBidirectional: form.obsidianAutoLinkBidirectional,
       },
       nutstore: {
         serverUrl: form.nutstoreServerUrl,
@@ -809,6 +1163,8 @@ async function saveAll() {
 }
 
 async function testAi() {
+  // 禁用被延迟了（快请求时按钮根本不灰），重复点击得在这里挡。
+  if (aiTesting.value) return;
   aiTesting.value = true;
   aiModelLoading.value = true;
   try {
@@ -833,6 +1189,8 @@ async function testAi() {
 }
 
 async function testAsr() {
+  // 禁用被延迟了（快请求时按钮根本不灰），重复点击得在这里挡。
+  if (asrTesting.value) return;
   asrTesting.value = true;
   try {
     const content = await store.testAsr({
@@ -850,6 +1208,8 @@ async function testAsr() {
 }
 
 async function testSearch() {
+  // 禁用被延迟了（快请求时按钮根本不灰），重复点击得在这里挡。
+  if (searchTesting.value) return;
   searchTesting.value = true;
   try {
     const result = await store.testSearch({
@@ -871,6 +1231,8 @@ async function testSearch() {
 }
 
 async function testNutstore() {
+  // 禁用被延迟了（快请求时按钮根本不灰），重复点击得在这里挡。
+  if (nutstoreTesting.value) return;
   nutstoreTesting.value = true;
   try {
     const webdav = await store.testNutstore({
@@ -888,6 +1250,8 @@ async function testNutstore() {
 }
 
 async function loadNutstoreFolders() {
+  // 禁用被延迟了（快请求时按钮根本不灰），重复点击得在这里挡。
+  if (nutstoreReading.value) return;
   nutstoreReading.value = true;
   try {
     const dirs = await store.listNutstoreFolders(form.nutstoreObsidianRemotePath, 3);
@@ -907,6 +1271,8 @@ async function loadNutstoreFolders() {
 }
 
 async function loadNutstoreFiles() {
+  // 禁用被延迟了（快请求时按钮根本不灰），重复点击得在这里挡。
+  if (nutstoreReading.value) return;
   nutstoreReading.value = true;
   try {
     const result = await store.listNutstore(form.nutstoreObsidianRemotePath);
@@ -1120,7 +1486,10 @@ async function restoreNutstoreBackup(backup: { path: string; name: string }) {
             <el-input v-model="form.aiKey" type="password" show-password class="sf-field-control" :placeholder="store.settings?.ai.hasKey ? '已保存，留空则不修改' : 'sk-…'" />
           </label>
           <div class="sf-settings-actions">
-            <button type="button" class="sf-btn" :disabled="aiTesting" @click="testAi"><PlugZap :size="14" /><StableText :idle="'测试连接'" :busy="'测试中…'" :active="aiTesting" /></button>
+            <button type="button" class="sf-btn" :disabled="showAiTesting" @click="testAi">
+              <Loader2 v-if="showAiTesting" :size="14" class="sf-spin" />
+              <PlugZap v-else :size="14" /><span>测试连接</span>
+            </button>
             <button type="button" class="sf-btn sf-btn--primary" @click="saveAll"><span>保存设置</span></button>
           </div>
         </div>
@@ -1157,7 +1526,10 @@ async function restoreNutstoreBackup(backup: { path: string; name: string }) {
             <el-input v-model="form.asrKey" type="password" show-password class="sf-field-control" :placeholder="store.settings?.asr.hasKey ? '已保存，留空则不修改' : 'API Key'" />
           </label>
           <div class="sf-settings-actions">
-            <button type="button" class="sf-btn" :disabled="asrTesting" @click="testAsr"><PlugZap :size="14" /><StableText :idle="'测试连接'" :busy="'测试中…'" :active="asrTesting" /></button>
+            <button type="button" class="sf-btn" :disabled="showAsrTesting" @click="testAsr">
+              <Loader2 v-if="showAsrTesting" :size="14" class="sf-spin" />
+              <PlugZap v-else :size="14" /><span>测试连接</span>
+            </button>
             <button type="button" class="sf-btn sf-btn--primary" @click="saveAll"><span>保存设置</span></button>
           </div>
         </div>
@@ -1205,7 +1577,10 @@ async function restoreNutstoreBackup(backup: { path: string; name: string }) {
             调大能拿到更多候选，也更慢、更贵。
           </p>
           <div class="sf-settings-actions">
-            <button type="button" class="sf-btn" :disabled="searchTesting" @click="testSearch"><PlugZap :size="14" /><StableText :idle="'测试连接'" :busy="'测试中…'" :active="searchTesting" /></button>
+            <button type="button" class="sf-btn" :disabled="showSearchTesting" @click="testSearch">
+              <Loader2 v-if="showSearchTesting" :size="14" class="sf-spin" />
+              <PlugZap v-else :size="14" /><span>测试连接</span>
+            </button>
             <button type="button" class="sf-btn sf-btn--primary" @click="saveAll"><span>保存设置</span></button>
           </div>
         </div>
@@ -1220,12 +1595,12 @@ async function restoreNutstoreBackup(backup: { path: string; name: string }) {
           <label class="sf-field">
             <span class="sf-field-label">并发数</span>
             <el-input-number v-model="form.concurrency" :min="GENERAL_LIMITS.concurrency.min" :max="GENERAL_LIMITS.concurrency.max" />
-            <p class="sf-field-hint">同时跑几个节点。调大能多占带宽，也更吃机器；下载与转写这类节点本身就慢，2-3 够用。</p>
+            <p class="sf-hint">同时跑几个节点。调大能多占带宽，也更吃机器；下载与转写这类节点本身就慢，2-3 够用。</p>
           </label>
           <label class="sf-field">
             <span class="sf-field-label">失败自动重试次数</span>
             <el-input-number v-model="form.maxRetries" :min="GENERAL_LIMITS.maxRetries.min" :max="GENERAL_LIMITS.maxRetries.max" />
-            <p class="sf-field-hint">
+            <p class="sf-hint">
               节点卡上没有单独配重试时用这个值。只对会走外部调用的节点生效（B 站下载、转写、AI 加工、练一练）；
               密钥缺失、条件不满足、断言未通过这类不重试——重试也不会变对。
             </p>
@@ -1233,7 +1608,7 @@ async function restoreNutstoreBackup(backup: { path: string; name: string }) {
           <label class="sf-field">
             <span class="sf-field-label">重试等待（秒）</span>
             <el-input-number v-model="form.retryBackoffSec" :min="GENERAL_LIMITS.retryBackoffSec.min" :max="GENERAL_LIMITS.retryBackoffSec.max" />
-            <p class="sf-field-hint">第一次重试前等多久，之后按次数线性递增：填 3 就是等 3 秒、6 秒、9 秒……</p>
+            <p class="sf-hint">第一次重试前等多久，之后按次数线性递增：填 3 就是等 3 秒、6 秒、9 秒……</p>
           </label>
         </div>
 
@@ -1242,11 +1617,11 @@ async function restoreNutstoreBackup(backup: { path: string; name: string }) {
           <label class="sf-field">
             <span class="sf-field-label">输出目录</span>
             <el-input v-model="form.outputDir" class="sf-field-control" placeholder="outputs" />
-            <p class="sf-field-hint">
+            <p class="sf-hint">
               留空用默认的 <strong>outputs</strong>（落在数据目录里）；填相对路径同理；
               想直接把成稿写进自己的笔记文件夹，就填绝对路径，例如 <strong>D:\笔记\ScribeFlow</strong>。
             </p>
-            <p class="sf-field-hint">当前生效：<span class="sf-data-dir">{{ store.settings?.general.resolvedOutputDir || "（保存后显示）" }}</span></p>
+            <p class="sf-hint">当前生效：<span class="sf-data-dir">{{ store.settings?.general.resolvedOutputDir || "（保存后显示）" }}</span></p>
           </label>
           <div class="sf-settings-actions">
             <button type="button" class="sf-btn" :disabled="revealTesting" @click="revealOutputDir"><ExternalLink :size="14" /><span>打开输出目录</span></button>
@@ -1254,11 +1629,11 @@ async function restoreNutstoreBackup(backup: { path: string; name: string }) {
           <label class="sf-field">
             <span class="sf-field-label">文件名模板</span>
             <el-input v-model="form.fileNameTemplate" class="sf-field-control" placeholder="{project}" />
-            <p class="sf-field-hint">
+            <p class="sf-hint">
               占位符：
               <strong v-for="item in FILE_NAME_TOKENS" :key="item.token" class="sf-token">{{ item.token }}（{{ item.label }}）</strong>
             </p>
-            <p class="sf-field-hint">
+            <p class="sf-hint">
               预览：<strong>{{ fileNamePreview }}</strong>；
               一次跑出多份产物而模板里没写 <strong>{node}</strong> 时，会自动在后面补节点名，避免互相覆盖。
             </p>
@@ -1275,7 +1650,7 @@ async function restoreNutstoreBackup(backup: { path: string; name: string }) {
             <span class="sf-field-label">播放提示音</span>
             <el-switch v-model="form.runEndSound" />
           </label>
-          <p class="sf-field-hint">
+          <p class="sf-hint">
             运行是「下载 → 转写 → AI 加工」，几分钟到十几分钟都正常，可以放心切走去做别的。
             只提醒成功与失败；自己点的停止不提醒。
           </p>
@@ -1308,7 +1683,7 @@ async function restoreNutstoreBackup(backup: { path: string; name: string }) {
               />
             </label>
           </div>
-          <p class="sf-field-hint">
+          <p class="sf-hint">
             当前收起 {{ form.hiddenNodes.length }} 个节点<template v-if="form.hiddenNodes.length > 0">：{{ form.hiddenNodes.map((type) => NODE_TYPE_LABELS[type]).join("、") }}</template>。
             保存后生效（面板与链路列表随设置刷新）。
           </p>
@@ -1340,7 +1715,18 @@ async function restoreNutstoreBackup(backup: { path: string; name: string }) {
                 <CircleAlert v-else-if="vaultState === 'bad'" :size="14" class="sf-state sf-state--bad" />
               </template>
             </el-input>
-            <p class="sf-field-hint">改完这个路径会<strong>自动检查</strong>（只读本地文件、不联网），不用点按钮。</p>
+            <p class="sf-hint">改完这个路径会<strong>自动检查</strong>（只读本地文件、不联网），不用点按钮。</p>
+            <!--
+              开着「坚果云直连」时新笔记不写这里。不写清楚的话，这一栏的绿勾会让人以为写的就是它——
+              用户就这么疑惑过（"库文件夹显示 D:\笔记，实际却写到坚果云那个目录"）。
+              本地路径在直连模式下仍然要填：回补相关笔记 / 词库回补 / 属性名与标签用量的扫描都只在本地跑。
+            -->
+            <p v-if="form.nutstoreObsidianMode" class="sf-settings-desc sf-settings-desc--warn">
+              <strong>注意：现在开着「坚果云直连」。</strong>新笔记会写进云端目录
+              <code>{{ form.nutstoreObsidianRemotePath || "/我的坚果云/ScribeFlow/Obsidian" }}</code>，<strong>不是这里的本地库</strong>。
+              这个本地路径仍然必须填——「回补相关笔记」「词库回补」「属性名与标签用量的扫描」都只在本地跑。
+              想让笔记写进本地库，去「坚果云」那一页把那个开关关掉。
+            </p>
           </label>
 
           <div class="sf-vault" :class="`sf-vault--${vaultState === 'bad' ? 'bad' : vaultState === 'ok' ? 'ok' : 'idle'}`">
@@ -1366,7 +1752,7 @@ async function restoreNutstoreBackup(backup: { path: string; name: string }) {
           </div>
 
           <label class="sf-field">
-            <span class="sf-field-label">笔记写进库里哪个文件夹</span>
+            <span class="sf-field-label">默认写进库里哪个文件夹<em class="sf-field-note">只是默认值</em></span>
             <el-select
               v-model="form.obsidianFolder"
               class="sf-field-control"
@@ -1377,21 +1763,27 @@ async function restoreNutstoreBackup(backup: { path: string; name: string }) {
             >
               <el-option v-for="dir in store.obsidianFolders" :key="dir" :label="dir" :value="dir" />
             </el-select>
-            <p class="sf-field-hint">
-              库已读到 {{ store.obsidianFolders.length }} 个文件夹，跟着库路径自动刷新；也可以直接输入一个新名字。
+            <p class="sf-hint">
+              真正决定去向的是链路里「Obsidian 笔记」节点卡片上的「保存目录」——那里选了就按那里，
+              <strong>只有留空的节点才用这里</strong>。库已读到 {{ store.obsidianFolders.length }} 个文件夹，
+              跟着库路径自动刷新；也可以直接输入一个新名字。
             </p>
           </label>
 
           <div class="sf-settings-divider">② 笔记里有什么</div>
           <label class="sf-field sf-field-row">
-            <span class="sf-field-label">让 AI 读一遍笔记，补上话题标签与属性</span>
+            <span class="sf-field-label">默认让 AI 读一遍笔记，补上话题标签与属性<em class="sf-field-note">只是默认值</em></span>
             <el-switch v-model="form.obsidianAutoTagEnabled" />
           </label>
+          <p class="sf-hint">
+            「Obsidian 笔记」节点的高级设置里可以按这一篇单独改——<strong>不同风格的视频可以各抽各的</strong>，
+            不用回这一页改。
+          </p>
 
           <!-- 开关的从属块：缩进 + 左侧竖线，让"这块归上面那个开关管"看得见，而不是靠变灰暗示。 -->
           <div v-if="form.obsidianAutoTagEnabled" class="sf-subblock">
             <label class="sf-field">
-              <span class="sf-field-label">抽取哪些属性<em class="sf-field-note">属性名由你定</em></span>
+              <span class="sf-field-label">默认抽取哪些属性<em class="sf-field-note">节点可覆盖</em></span>
               <el-select
                 v-model="form.obsidianExtractFields"
                 class="sf-field-control"
@@ -1399,104 +1791,306 @@ async function restoreNutstoreBackup(backup: { path: string; name: string }) {
                 filterable
                 allow-create
                 default-first-option
-                placeholder="输入属性名后回车，可填多个"
+                :reserve-keyword="false"
+                :multiple-limit="MAX_EXTRACT_FIELDS"
+                placeholder="输入属性名回车创建；点开下拉有建议"
+                @change="onExtractFieldsChange"
               >
-                <el-option v-for="field in form.obsidianExtractFields" :key="field" :label="field" :value="field" />
+                <el-option-group v-if="createdFieldSuggestions.length > 0" label="你自己加过的">
+                  <el-option v-for="field in createdFieldSuggestions" :key="`c-${field}`" :label="field" :value="field" />
+                </el-option-group>
+                <el-option-group v-if="vaultFieldSuggestions.length > 0" :label="vaultFieldHint || '你库里出现过的'">
+                  <el-option v-for="item in vaultFieldSuggestions" :key="`v-${item.name}`" :label="item.name" :value="item.name">
+                    <span>{{ item.name }}</span>
+                    <span class="sf-option-meta">库里 {{ item.count }} 篇用过</span>
+                  </el-option>
+                </el-option-group>
+                <el-option-group label="常用属性名">
+                  <el-option v-for="field in commonFieldSuggestions" :key="`k-${field}`" :label="field" :value="field" />
+                </el-option-group>
+                <!-- 常用组合放下拉页脚：既不像原来那样常驻一行，也不会被建议列表滚出去 -->
+                <template #footer>
+                  <div class="sf-combo-row">
+                    <span class="sf-combo-label">套用一组</span>
+                    <button
+                      v-for="preset in EXTRACT_FIELD_PRESETS"
+                      :key="preset.id"
+                      type="button"
+                      class="sf-preset"
+                      @click="form.obsidianExtractFields = [...preset.fields]"
+                    >
+                      {{ preset.label }}
+                    </button>
+                  </div>
+                </template>
               </el-select>
             </label>
-            <div class="sf-preset-row">
-              <span class="sf-settings-hint">换成：</span>
-              <button
-                v-for="preset in EXTRACT_FIELD_PRESETS"
-                :key="preset.id"
-                type="button"
-                class="sf-preset"
-                :class="{ 'sf-preset--active': presetActive(preset) }"
-                @click="form.obsidianExtractFields = [...preset.fields]"
-              >
-                {{ preset.label }}
-              </button>
-            </div>
-            <p class="sf-settings-hint">
-              这些属性会写进笔记头部（列表形式），也是「关联相关笔记」的比较依据；<strong>留空就不抽</strong>。
+            <p class="sf-hint">
+              这些属性会写进笔记头部（列表形式），也是「关联相关笔记」的比较依据；<strong>一个都不选就不抽</strong>。
+              最多 {{ MAX_EXTRACT_FIELDS }} 个。节点卡片的高级设置里可以按这一篇换成别的字段。
             </p>
           </div>
-          <p v-else class="sf-settings-hint">
+          <p v-else class="sf-hint">
             关闭时：笔记照样保存，带 UP 主与话题标签，不抽额外属性、也不做关联。
           </p>
 
-          <p class="sf-settings-desc">每篇保存出来的笔记，头部会长这样（下面这段是模板，不是你已有的笔记）：</p>
-          <pre class="sf-note-preview">{{ notePreview }}</pre>
-          <p class="sf-settings-hint">
-            UP 主与话题标签是自动加的，<strong>你自己写的标签不会被改</strong>。标签只写二级（如 <code>话题/AI泡沫</code>）——
-            Obsidian 里按一级筛选会自动带上它下面所有二级。标签从哪来看下面的词库。
+          <p class="sf-settings-desc">每篇保存出来的笔记，长这样（下面这张是模板，不是你已有的笔记）：</p>
+          <!--
+            拟 Obsidian 属性面板：左列属性名 + 类型图标，右列值；列表值画成 chip、`tags` 画成紫色 chip。
+            画成 Ob 的样子而不是倒一段 raw markdown —— 这一段要回答的是「我在这页设的几项，最后长什么样」，
+            一段 YAML 没人愿意读。取值全部跟着当前设置变（见 notePreviewModel）。
+          -->
+          <div class="sf-ob-note">
+            <dl class="sf-ob-props">
+              <template v-for="prop in notePreviewModel.props" :key="prop.name">
+                <dt class="sf-ob-prop-name">
+                  <component :is="PROPERTY_ICONS[prop.kind]" :size="12" />
+                  <span>{{ prop.name }}</span>
+                </dt>
+                <dd class="sf-ob-prop-value">
+                  <span v-if="prop.kind === 'link'" class="sf-ob-link">
+                    {{ prop.value }}<ExternalLink :size="11" />
+                  </span>
+                  <span v-else-if="prop.values" class="sf-ob-chips">
+                    <span
+                      v-for="(value, index) in prop.values"
+                      :key="`${value}-${index}`"
+                      class="sf-ob-chip"
+                      :class="{ 'sf-ob-chip--tag': prop.kind === 'tags' }"
+                    >{{ value }}<span class="sf-ob-chip-x" aria-hidden="true">×</span></span>
+                  </span>
+                  <span v-else>{{ prop.value }}</span>
+                </dd>
+              </template>
+            </dl>
+            <div class="sf-ob-body">
+              <p class="sf-ob-title">〈视频标题〉</p>
+              <p class="sf-ob-text">（AI 整理出来的正文）</p>
+              <template v-if="notePreviewModel.related">
+                <p class="sf-ob-heading">{{ RELATED_SECTION_TITLE }}</p>
+                <p class="sf-ob-text sf-ob-wikilink">- [[另一篇同题材的旧笔记]]</p>
+              </template>
+            </div>
+          </div>
+          <p class="sf-hint">
+            话题标签由 AI 从下面的词库里挑，<strong>你自己写的标签不会被改</strong>。标签只写二级（如 <code>话题/AI泡沫</code>）——
+            Obsidian 里按一级筛选会自动带上它下面所有二级。
           </p>
 
           <div class="sf-settings-divider">③ 词库：决定笔记带什么标签，也决定你怎么找回来</div>
+
+          <!--
+            两个自动标签：只在生成笔记时按元数据写，用户只能决定写不写。
+            它们**不进下面的词库**（不参与 AI 分配，也不参与「回补旧笔记」），
+            所以这里给的是开关而不是可编辑的分组——见 docs/tagging.md。
+          -->
+          <div class="sf-auto-tags">
+            <label class="sf-field sf-field-row">
+              <span class="sf-field-label">写来源标签<em class="sf-field-note">来源/B站 这种</em></span>
+              <el-switch v-model="form.obsidianSourceTagEnabled" />
+            </label>
+            <label class="sf-field sf-field-row">
+              <span class="sf-field-label">写 UP 主标签<em class="sf-field-note">UP主名称/某某 这种</em></span>
+              <el-switch v-model="form.obsidianUpTagEnabled" />
+            </label>
+            <p class="sf-hint">
+              这两个标签<strong>不用你维护、也不靠 AI 判断</strong>：来源取自笔记的「来源」属性（B站 / 本地文件 / 文本…），
+              UP 主取自作者，生成笔记时就已经知道。所以它们不在下面的词库里，也不参与「回补旧笔记」——
+              要改就让旧笔记自己在 Obsidian 里改。节点卡片上可以按这一篇单独覆盖。
+            </p>
+          </div>
+
           <p class="sf-settings-desc">
-            一级是分类、二级是具体标签。标签不能含空格，保存时会自动换成 <code>-</code>。
+            下面这一栏是<strong>你自己维护的话题词库</strong>：一级是分类、二级是具体标签。
+            标签不能含空格，保存时会自动换成 <code>-</code>。
           </p>
-          <p class="sf-settings-hint">
+          <p class="sf-hint">
             <strong>这一栏怎么填，取决于你想按什么找笔记。</strong>想要「某个话题大家怎么说」，就建一个
             <code>话题</code> 一级，把想追踪的议题一个个加成二级（如 <code>话题/平台抽成</code>）。
-            <code>UP主名称</code> 那一支<strong>不用手填</strong>，入库时按视频信息自动写。完整上手步骤见左栏
-            「项目文档」里的《标签与合集：怎么用》。
+            完整上手步骤见左栏「项目文档」里的《标签与合集：怎么用》。
           </p>
-          <div class="sf-tag-tree">
-            <div v-for="group in Object.keys(taxonomy)" :key="group" class="sf-tag-group">
+          <!--
+            词库编辑器：三种显示样式由用户自己挑（纯展示，不改数据）。
+            手势都做成看得见的：删除常显、改名是单击标签名（键盘 F2）、拖拽有常驻把手槽位。
+            依据与实测见 docs/research/taxonomy-editor-research.md。
+          -->
+          <!--
+            显示样式三选一（图标模式，默认单色）。依据与两次返工的原因都在
+            docs/research/view-mode-switcher-research.md：
+            ① 文字标签的分段控件不需要引导说明句（Apple HIG），所以那句解释已删；
+            ② 但需要一个可见标签（GitLab），就是左边这四个字；el-radio-group 的默认可访问名是
+               英文 "radio-group"，必须自己传 aria-label；
+            ③ 三段**分开排**，不再拼成一条：拼接式分段控件里，选中段那圈 1px 描边与邻居共边，
+               DOM 靠后的邻居会把它盖掉——用户看到的"右侧线是浅的"就是这么来的。
+               留 4px 间隙就没有共边，也就没有这条缝。
+            图标只给眼睛看：名字靠 title（鼠标）与一段视觉隐藏文字（读屏）。
+          -->
+          <div class="sf-tag-toolbar">
+            <span class="sf-field-label">显示样式</span>
+            <el-radio-group v-model="form.obsidianTagView" class="sf-tag-view-group" aria-label="显示样式">
+              <el-radio-button
+                v-for="mode in TAG_VIEW_MODES"
+                :key="mode.id"
+                :value="mode.id"
+                :title="`${mode.label}：${mode.hint}`"
+              >
+                <component :is="TAG_VIEW_ICONS[mode.id]" :size="14" />
+                <span class="sf-visually-hidden">{{ mode.label }}</span>
+              </el-radio-button>
+            </el-radio-group>
+          </div>
+
+          <div class="sf-tag-tree" :class="`sf-tag-tree--${form.obsidianTagView}`">
+            <div v-for="(children, group, groupIndex) in taxonomy" :key="group" class="sf-tag-group">
               <div class="sf-tag-group-head">
                 <button
                   type="button"
-                  class="sf-tag-group-name sf-copyable"
-                  :title="`点击复制在 Obsidian 里的搜索串：tag:#${group}`"
-                  @click="copyTagSearch(group)"
-                >
-                  {{ group }}
-                </button>
-                <span class="sf-tag-group-count">{{ (taxonomy[group] ?? []).length }} 个二级</span>
-                <button type="button" class="sf-btn sf-btn--danger" @click="removeGroup(group)">
-                  <Trash2 :size="13" /><span>删除一级</span>
-                </button>
-              </div>
-              <div class="sf-tag-children">
-                <span v-for="child in taxonomy[group] ?? []" :key="child" class="sf-tag-chip">
-                  <button
-                    type="button"
-                    class="sf-tag-chip-name sf-copyable"
-                    :title="`点击复制搜索串：tag:#${group}/${child}`"
-                    @click="copyTagSearch(group, child)"
-                  >
-                    {{ group }}/{{ child }}
-                  </button>
-                  <button type="button" class="sf-tag-chip-remove" :title="`移除 ${group}/${child}`" @click="removeChild(group, child)">×</button>
+                  class="sf-tag-caret"
+                  :aria-expanded="!isCollapsed(group)"
+                  :title="isCollapsed(group) ? '展开这一组' : '收起这一组'"
+                  @click="toggleGroupCollapsed(group)"
+                >{{ isCollapsed(group) ? "▸" : "▾" }}</button>
+                <span v-if="form.obsidianTagView === 'color'" class="sf-tag-dot" :style="{ background: groupToneOf(group, groupIndex).dot }"></span>
+                <span class="sf-tag-group-name">{{ group }}</span>
+                <span class="sf-tag-group-count">
+                  {{ (children ?? []).length }} 个<template v-if="groupUsage(group) !== null"> · {{ groupUsage(group) }} 篇用过</template>
                 </span>
-                <span v-if="!(taxonomy[group] ?? []).length" class="sf-settings-hint">暂无二级（一级本身也可直接当标签用）</span>
+                <div class="sf-tag-group-actions">
+                  <button type="button" class="sf-tag-icon-btn" :title="`复制在 Obsidian 里的搜索串：tag:#${group}`" @click="copyTagSearch(group)">
+                    <Copy :size="13" />
+                  </button>
+                  <button type="button" class="sf-tag-icon-btn" title="在这一组里加一个二级标签" @click="startAddChild(group)">
+                    <Plus :size="14" />
+                  </button>
+                  <button type="button" class="sf-tag-icon-btn" title="重命名 / 删除这个一级" @click="groupMenu = groupMenu === group ? '' : group">
+                    <MoreHorizontal :size="14" />
+                  </button>
+                </div>
               </div>
-              <div class="sf-tag-add">
-                <el-input
-                  v-model="newChildDraft[group]"
-                  size="small"
-                  placeholder="新增二级，回车确认"
-                  @keyup.enter="addChild(group)"
-                />
-                <button type="button" class="sf-btn" @click="addChild(group)"><span>添加</span></button>
+
+              <div v-if="groupMenu === group" class="sf-tag-group-menu">
+                <button type="button" class="sf-tag-menu-btn" @click="renameGroup(group)">重命名这个一级</button>
+                <button type="button" class="sf-tag-menu-btn sf-tag-menu-btn--danger" @click="removeGroup(group)">
+                  <Trash2 :size="13" /><span>删除这个一级</span>
+                </button>
+              </div>
+
+              <div v-if="!isCollapsed(group)" class="sf-tag-body">
+                <!-- 空组不写"暂无"文案：把"创建第一个"作为这一组唯一的内容（Airtable 的空组就是这样） -->
+                <p v-if="(children ?? []).length === 0 && addingInGroup !== group" class="sf-tag-empty">
+                  还没有二级标签，一级本身也能当标签用。
+                  <button type="button" class="sf-tag-link-btn" @click="startAddChild(group)">加一个</button>
+                </p>
+
+                <div class="sf-tag-children">
+                  <span
+                    v-for="(child, index) in children ?? []"
+                    :key="child"
+                    class="sf-tag-chip"
+                    :class="{
+                      'sf-tag-chip--editing': editingTag?.group === group && editingTag?.index === index,
+                      'sf-tag-chip--dragging': draggingTag?.group === group && draggingTag?.index === index,
+                      'sf-tag-chip--over': dragOverTag?.group === group && dragOverTag?.index === index,
+                    }"
+                    :style="form.obsidianTagView === 'color' ? { background: groupToneOf(group, groupIndex).soft } : undefined"
+                    tabindex="0"
+                    draggable="true"
+                    @dragstart="onTagDragStart(group, index, $event)"
+                    @dragover.prevent="dragOverTag = { group, index }"
+                    @dragleave="dragOverTag = null"
+                    @drop.prevent="onTagDrop(group, index)"
+                    @dragend="draggingTag = null; dragOverTag = null"
+                    @keydown.f2.prevent="startRenameWith(group, index, String(child))"
+                    @keydown.delete.prevent="removeChild(group, String(child))"
+                    @keydown.backspace.prevent="removeChild(group, String(child))"
+                    @keydown.alt.up.prevent="moveChild(group, index, -1)"
+                    @keydown.alt.down.prevent="moveChild(group, index, 1)"
+                  >
+                    <span class="sf-tag-chip-grip" title="拖动可以调顺序；键盘用 Alt+↑/↓" aria-hidden="true">⣿</span>
+                    <el-input
+                      v-if="editingTag?.group === group && editingTag?.index === index"
+                      v-model="renameDraft"
+                      class="sf-tag-chip-input"
+                      size="small"
+                      @keyup.enter="commitRename"
+                      @keyup.esc="editingTag = null"
+                      @blur="commitRename"
+                    />
+                    <template v-else>
+                      <button type="button" class="sf-tag-chip-name" title="点一下改名（键盘 F2）" @click="startRenameWith(group, index, String(child))">
+                        {{ child }}
+                      </button>
+                      <span v-if="tagUsage(group, String(child)) !== null" class="sf-tag-chip-usage">{{ tagUsage(group, String(child)) }}</span>
+                      <!--
+                        上移/下移：WCAG 2.5.7 要求"拖拽的功能必须能用单指针不拖拽完成"。
+                        它们**不给 Tab 停靠点**（tabindex=-1）：键盘路径是 Alt+↑/↓，
+                        指针路径是"指向这一项 → 按钮浮现 → 点一下"。这样停靠点数量不涨。
+                      -->
+                      <span class="sf-tag-chip-move">
+                        <button
+                          type="button"
+                          tabindex="-1"
+                          class="sf-tag-chip-move-btn"
+                          :disabled="index === 0"
+                          :aria-label="`把 ${child} 移到前一位`"
+                          title="移到前一位（键盘 Alt+↑）"
+                          @click.stop="moveChild(group, index, -1)"
+                        >↑</button>
+                        <button
+                          type="button"
+                          tabindex="-1"
+                          class="sf-tag-chip-move-btn"
+                          :disabled="index === (children ?? []).length - 1"
+                          :aria-label="`把 ${child} 移到后一位`"
+                          title="移到后一位（键盘 Alt+↓）"
+                          @click.stop="moveChild(group, index, 1)"
+                        >↓</button>
+                      </span>
+                      <button
+                        type="button"
+                        class="sf-tag-chip-remove"
+                        :aria-label="`删除 ${group}/${child}`"
+                        :title="`删除 ${group}/${child}`"
+                        @click="removeChild(group, String(child))"
+                      ><X :size="12" /></button>
+                    </template>
+                  </span>
+
+                  <el-input
+                    v-if="addingInGroup === group"
+                    v-model="newChildDraft[group]"
+                    class="sf-tag-add-input"
+                    :data-group="group"
+                    size="small"
+                    placeholder="标签名，回车添加"
+                    @keyup.enter="addChild(group)"
+                    @keyup.esc="addingInGroup = ''"
+                    @blur="addingInGroup = ''"
+                  />
+                  <button v-else type="button" class="sf-tag-add-btn" @click="startAddChild(group)">
+                    <Plus :size="12" /><span>添加</span>
+                  </button>
+                </div>
               </div>
             </div>
-            <div class="sf-tag-add sf-tag-add--group">
+
+            <div class="sf-tag-add-group">
               <el-input v-model="newGroupName" size="small" placeholder="新增一级分类，回车确认" @keyup.enter="addGroup" />
               <button type="button" class="sf-btn" @click="addGroup"><span>添加一级</span></button>
             </div>
           </div>
+
           <label class="sf-field sf-field-row">
             <span class="sf-field-label">允许 AI 自己补二级标签</span>
             <el-switch v-model="form.obsidianAllowNewTags" />
           </label>
-          <p class="sf-settings-hint">
+          <p class="sf-hint">
             关掉时模型只能从上面这棵树里挑——好处是<strong>同一个话题全库只有一个名字</strong>，搜出来才是完整的合集。
             打开后它能补二级（一级结构始终由你定），补进去的会出现在上面这棵树里。
           </p>
-          <p class="sf-settings-hint">
-            点任意一级或二级的名字，就复制它在 Obsidian 里的搜索串（如 <code>tag:#话题/AI泡沫</code>）。
+          <p class="sf-hint">
+            一级和二级的名字都可以<strong>点一下改</strong>（键盘 F2）；复制搜索串是组头左边那个 <Copy :size="12" /> 按钮——
+            点它会拿到如 <code>tag:#话题/AI泡沫</code> 的串。带把手的标签可以<strong>拖动调顺序</strong>（键盘 Alt+↑/↓）。
             在 Obsidian 里搜这条串、或把它加进「书签」，<strong>就是那个话题的合集</strong>——不用在这个工具里另做什么。
             搜 <code>tag:#UP主名称/某某UP</code> 就是某个人的合集。
           </p>
@@ -1504,7 +2098,7 @@ async function restoreNutstoreBackup(backup: { path: string; name: string }) {
             <span class="sf-field-label">额外：让同题材的旧笔记互相链接</span>
             <el-switch v-model="form.obsidianAutoLinkEnabled" />
           </label>
-          <p class="sf-settings-hint">
+          <p class="sf-hint">
             按上面配置的<strong>抽取字段</strong>在库里找相关笔记（值相同的算强相关），在文末加一段 <code>[[链接]]</code>。
             字段留空就没有可比较的东西，自然不会关联——所以这个开关单独打开也不会有副产物。
           </p>
@@ -1513,11 +2107,88 @@ async function restoreNutstoreBackup(backup: { path: string; name: string }) {
             <el-input-number v-model="form.obsidianAutoLinkMax" :min="0" :max="20" />
           </label>
 
+          <template v-if="form.obsidianAutoLinkEnabled">
+            <div class="sf-settings-divider">属性改了，回补旧笔记的相关笔记</div>
+            <p class="sf-settings-desc">
+              只有<strong>新笔记</strong>会在保存那一刻算一次相关笔记；改了上面的属性字段之后，已经存在的笔记要跑一次这里才会跟上。
+              这一步<strong>不调模型、不花钱</strong>，纯本地按属性比对。
+            </p>
+            <p class="sf-hint">
+              依据是每篇笔记 front matter 里<strong>已经抽好的属性</strong>——在这个功能之前保存、或当时没开抽取的笔记没有依据，
+              补不出链接（这些篇数会记在下面的「没有属性」里）。每篇最多关联几篇、开关本身也按当前设置来。
+            </p>
+            <p v-if="relatedDirty" class="sf-settings-desc sf-settings-desc--warn">
+              属性字段或开关有未保存的改动——先点「保存设置」，否则这一轮用的是旧口径。
+            </p>
+            <div class="sf-settings-actions">
+              <button
+                type="button"
+                class="sf-btn"
+                :disabled="showRelatedPlanning || relatedRunning || relatedDirty"
+                @click="refreshRelatedPlan"
+              >
+                <Loader2 v-if="showRelatedPlanning" :size="14" class="sf-spin" />
+                <ListChecks v-else :size="14" /><span>先看要动多少（不花钱）</span>
+              </button>
+              <button
+                type="button"
+                class="sf-btn sf-btn--primary"
+                :disabled="relatedRunning || relatedDirty || !relatedPlan"
+                @click="startRelatedBackfill"
+              >
+                <Loader2 v-if="showRelatedRunning" :size="14" class="sf-spin" />
+                <RefreshCw v-else :size="14" /><span>回补相关笔记</span>
+              </button>
+            </div>
+            <div v-if="relatedPlan" class="sf-nutstore-result" :class="{ 'is-stale': relatedPlanning }" :aria-busy="relatedPlanning">
+              <h3 class="sf-nutstore-result-title">这一轮要动多少：全库 {{ relatedPlan.totalNotes }} 篇</h3>
+              <div class="sf-nutstore-result-stats">
+                <span>要改 <strong>{{ relatedPlan.willUpdate }}</strong></span>
+                <span>不用动 <strong>{{ relatedPlan.unchanged }}</strong></span>
+                <span>没有属性 <strong>{{ relatedPlan.noFields }}</strong></span>
+                <span>会写出 <strong>{{ relatedPlan.plannedLinks }}</strong> 条链接</span>
+              </div>
+              <p v-if="relatedPlan.willUpdate === 0" class="sf-hint">没有要改的——旧笔记的相关笔记已经和当前口径一致。</p>
+              <ul v-else class="sf-nutstore-result-list">
+                <li v-for="item in relatedPlan.samples" :key="item.relPath">
+                  <span class="sf-nutstore-result-path">{{ item.relPath }}</span>
+                  <span class="sf-nutstore-result-reason">{{ RELATED_MODE_LABEL[item.mode] }} · 关联 {{ item.relatedCount }} 篇</span>
+                </li>
+                <li v-if="relatedPlan.willUpdate > relatedPlan.samples.length" class="sf-nutstore-result-more">
+                  …… 还有 {{ relatedPlan.willUpdate - relatedPlan.samples.length }} 篇未展示
+                </li>
+              </ul>
+            </div>
+            <div v-if="relatedJob" class="sf-nutstore-result">
+              <h3 class="sf-nutstore-result-title">
+                回补：{{ relatedJob.status === "running" ? relatedJob.message : relatedJob.status === "done" ? "完成" : "失败" }}
+              </h3>
+              <p v-if="relatedJob.status === 'running'" class="sf-nutstore-result-detail">
+                阶段 {{ relatedJob.stage }} · {{ relatedJob.processed }}/{{ relatedJob.total }}
+              </p>
+              <p v-else-if="relatedJob.error" class="sf-nutstore-result-detail">{{ relatedJob.error }}</p>
+              <template v-if="relatedJob.report">
+                <div class="sf-nutstore-result-stats">
+                  <span>写入 <strong>{{ relatedJob.report.written }}</strong></span>
+                  <span>未变 <strong>{{ relatedJob.report.unchanged }}</strong></span>
+                  <span>链接 <strong>{{ relatedJob.report.linksWritten }}</strong> 条</span>
+                  <span v-if="relatedJob.report.failed.length > 0">失败 <strong>{{ relatedJob.report.failed.length }}</strong></span>
+                </div>
+                <ul v-if="relatedJob.report.failed.length > 0" class="sf-nutstore-result-list sf-nutstore-result-list--error">
+                  <li v-for="(item, index) in relatedJob.report.failed.slice(0, 20)" :key="`${item.relPath}-${index}`">
+                    <span class="sf-nutstore-result-path">{{ item.relPath }}</span>
+                    <span class="sf-nutstore-result-reason">{{ item.reason }}</span>
+                  </li>
+                </ul>
+              </template>
+            </div>
+          </template>
+
           <div class="sf-settings-divider">词库改了，回补旧笔记</div>
           <p class="sf-settings-desc">
             加了新话题之后，<strong>只有新笔记</strong>会带上它；已经存在的笔记要跑一次这里才会补上。平时不用跑。
           </p>
-          <p class="sf-settings-hint">
+          <p class="sf-hint">
             先点「先看要动多少」，它<strong>不调模型、不花钱</strong>，只告诉你这一轮要动多少篇、大约几次调用。
             <strong>只改词库里的标签</strong>，你自己写的标签不碰；读不出结构的文件会跳过并列出，不会被覆盖。
           </p>
@@ -1528,10 +2199,11 @@ async function restoreNutstoreBackup(backup: { path: string; name: string }) {
             <button
               type="button"
               class="sf-btn"
-              :disabled="retagPlanning || retagRunning || obsidianDirty"
+              :disabled="showRetagPlanning || retagRunning || obsidianDirty"
               @click="refreshRetagPlan"
             >
-              <ListChecks :size="14" /><StableText :idle="'先看要动多少（不花钱）'" :busy="'正在看…'" :active="retagPlanning" />
+              <Loader2 v-if="showRetagPlanning" :size="14" class="sf-spin" />
+              <ListChecks v-else :size="14" /><span>先看要动多少（不花钱）</span>
             </button>
             <button
               type="button"
@@ -1539,19 +2211,20 @@ async function restoreNutstoreBackup(backup: { path: string; name: string }) {
               :disabled="retagRunning || obsidianDirty || !retagPlan"
               @click="startRetag"
             >
-              <RefreshCw :size="14" /><StableText :idle="'开始回补'" :busy="'回补中…'" :active="retagRunning" />
+              <Loader2 v-if="showRetagRunning" :size="14" class="sf-spin" />
+              <RefreshCw v-else :size="14" /><span>开始回补</span>
             </button>
           </div>
           <label class="sf-field sf-field-row">
             <span class="sf-field-label">深度重扫（更贵：能补上"换个说法"的笔记）</span>
             <el-switch v-model="retagDeep" />
           </label>
-          <p class="sf-settings-hint">
+          <p class="sf-hint">
             默认只把「正文里出现过标签名」的笔记送去判定，这是省钱的主要来源；代价是换个说法的笔记会漏。
             比如新标签叫「平台经济」而笔记里只写了「抽成」，默认扫不到——这时再开深度重扫补一次。
           </p>
 
-          <div v-if="retagPlan" class="sf-nutstore-result">
+          <div v-if="retagPlan" class="sf-nutstore-result" :class="{ 'is-stale': retagPlanning }" :aria-busy="retagPlanning">
             <h3 class="sf-nutstore-result-title">这一轮要动多少：全库 {{ retagPlan.totalNotes }} 篇</h3>
             <div class="sf-nutstore-result-stats">
               <span>要重新判定 <strong>{{ retagPlan.fullCount }}</strong></span>
@@ -1622,7 +2295,7 @@ async function restoreNutstoreBackup(backup: { path: string; name: string }) {
           <label class="sf-field">
             <span class="sf-field-label">备份目录</span>
             <el-input v-model="form.nutstoreBackupDir" class="sf-field-control" placeholder="D:\我的坚果云\ScribeFlow\backups 或 /我的坚果云/ScribeFlow/backups" />
-            <p class="sf-field-hint">
+            <p class="sf-hint">
               <strong>填本地文件夹</strong>（如 <code>D:\我的坚果云\ScribeFlow\backups</code>）→ 备份写进坚果云同步文件夹，由客户端上传，
               <strong>不需要账号密码</strong>；<strong>填云端路径</strong>（以 <code>/</code> 开头）→ 由本应用用 WebDAV 直连上传。
               当前识别为：<strong>{{ nutstoreBackupLocation === "local" ? "本地文件夹（客户端同步）" : "云端路径（WebDAV 直连）" }}</strong>
@@ -1630,7 +2303,10 @@ async function restoreNutstoreBackup(backup: { path: string; name: string }) {
           </label>
 
           <div class="sf-settings-actions">
-            <button type="button" class="sf-btn" :disabled="nutstoreBackingUp" @click="backupToNutstore"><Save :size="14" /><StableText :idle="`备份数据到${nutstoreBackupLocation === 'local' ? '本地文件夹' : '坚果云云端'}`" :busy="'备份中…'" :active="nutstoreBackingUp" /></button>
+            <button type="button" class="sf-btn" :disabled="nutstoreBackingUp" @click="backupToNutstore">
+              <Loader2 v-if="showNutstoreBackingUp" :size="14" class="sf-spin" />
+              <Save v-else :size="14" /><span>备份数据到{{ nutstoreBackupLocation === "local" ? "本地文件夹" : "坚果云云端" }}</span>
+            </button>
             <button type="button" class="sf-btn" :disabled="nutstoreBackingUp" @click="loadNutstoreBackups"><RefreshCw :size="14" /><span>读取备份列表</span></button>
           </div>
           <div v-if="nutstoreBackups.length > 0" class="sf-nutstore-backup-list">
@@ -1644,7 +2320,7 @@ async function restoreNutstoreBackup(backup: { path: string; name: string }) {
                 @click="restoreNutstoreBackup(backup)"
               >
                 <RotateCcw :size="13" />
-                <StableText :idle="'恢复'" :busy="'恢复中…'" :active="nutstoreRestoring" />
+                <Loader2 v-if="showNutstoreRestoring" :size="14" class="sf-spin" /><span>恢复</span>
               </button>
             </div>
             <span v-if="nutstoreBackups.length > 10" class="sf-settings-desc">…… 还有 {{ nutstoreBackups.length - 10 }} 个备份未展示</span>
@@ -1689,19 +2365,22 @@ async function restoreNutstoreBackup(backup: { path: string; name: string }) {
                   <span v-else class="sf-chip sf-chip--warning">未配置</span>
                 </span>
                 <el-input v-model="form.nutstorePassword" type="password" show-password class="sf-field-control" :placeholder="store.settings?.nutstore.hasPassword ? '已保存，留空则不修改' : '粘贴坚果云生成的应用密码'" />
-                <p class="sf-field-hint">
+                <p class="sf-hint">
                   坚果云应用密码在<strong>网页版</strong>生成：右上角头像 → 账户信息 → 安全选项 → 第三方应用管理 → 添加应用密码。
                   <a href="https://help.jianguoyun.com/?p=2064" target="_blank" rel="noreferrer">查看官方说明</a>
                 </p>
               </label>
               <div class="sf-settings-actions">
-                <button type="button" class="sf-btn" :disabled="nutstoreTesting" @click="testNutstore"><PlugZap :size="14" /><StableText :idle="'测试连接'" :busy="'测试中…'" :active="nutstoreTesting" /></button>
+                <button type="button" class="sf-btn" :disabled="showNutstoreTesting" @click="testNutstore">
+                  <Loader2 v-if="showNutstoreTesting" :size="14" class="sf-spin" />
+                  <PlugZap v-else :size="14" /><span>测试连接</span>
+                </button>
               </div>
 
               <label class="sf-field">
                 <span class="sf-field-label">Obsidian 云端目录</span>
                 <el-input v-model="form.nutstoreObsidianRemotePath" class="sf-field-control" placeholder="/我的坚果云/ScribeFlow/Obsidian" />
-                <p class="sf-field-hint">想让文件出现在本地坚果云客户端，请把路径放在你的同步文件夹下，例如 <strong>/我的坚果云/ScribeFlow</strong>；不要直接填 <strong>/ScribeFlow</strong>。</p>
+                <p class="sf-hint">想让文件出现在本地坚果云客户端，请把路径放在你的同步文件夹下，例如 <strong>/我的坚果云/ScribeFlow</strong>；不要直接填 <strong>/ScribeFlow</strong>。</p>
               </label>
               <label class="sf-field sf-field-row">
                 <span class="sf-field-label">Obsidian 笔记节点直接读写坚果云</span>
@@ -1711,8 +2390,14 @@ async function restoreNutstoreBackup(backup: { path: string; name: string }) {
 
               <div class="sf-settings-divider">读取云端</div>
               <div class="sf-settings-actions">
-                <button type="button" class="sf-btn" :disabled="nutstoreReading" @click="loadNutstoreFolders"><FolderOpen :size="14" /><StableText :idle="'读取云端目录'" :busy="'读取中…'" :active="nutstoreReading" /></button>
-                <button type="button" class="sf-btn" :disabled="nutstoreReading" @click="loadNutstoreFiles"><RefreshCw :size="14" /><StableText :idle="'读取云端文件'" :busy="'读取中…'" :active="nutstoreReading" /></button>
+                <button type="button" class="sf-btn" :disabled="showNutstoreReading" @click="loadNutstoreFolders">
+                  <Loader2 v-if="showNutstoreReading" :size="14" class="sf-spin" />
+                  <FolderOpen v-else :size="14" /><span>读取云端目录</span>
+                </button>
+                <button type="button" class="sf-btn" :disabled="showNutstoreReading" @click="loadNutstoreFiles">
+                  <Loader2 v-if="showNutstoreReading" :size="14" class="sf-spin" />
+                  <RefreshCw v-else :size="14" /><span>读取云端文件</span>
+                </button>
               </div>
               <p class="sf-settings-desc">已读取目录：{{ nutstoreRemoteFolders.length }} 个；目录按“{{ form.nutstoreObsidianRemotePath || '/我的坚果云/ScribeFlow/Obsidian' }}”为根递归最多 3 层。</p>
               <div v-if="nutstoreRemoteFolders.length > 0" class="sf-nutstore-list">
@@ -1735,8 +2420,14 @@ async function restoreNutstoreBackup(backup: { path: string; name: string }) {
               <div class="sf-settings-divider">本地 Obsidian ↔ 坚果云</div>
               <p class="sf-settings-desc">以 Obsidian 设置页里的“Obsidian 库路径”为本地端；只同步 .md 笔记。遇到不一致时会跳过并显示在下方「最近操作结果」中，不会自动覆盖对端较新的文件。库放在同步文件夹里时不需要它。</p>
               <div class="sf-settings-actions">
-                <button type="button" class="sf-btn" :disabled="nutstoreSyncing" @click="pushObsidian"><Upload :size="14" /><StableText :idle="'推送本地到坚果云'" :busy="'同步中…'" :active="nutstoreSyncing" /></button>
-                <button type="button" class="sf-btn" :disabled="nutstoreSyncing" @click="pullObsidian"><Download :size="14" /><StableText :idle="'拉取坚果云到本地'" :busy="'同步中…'" :active="nutstoreSyncing" /></button>
+                <button type="button" class="sf-btn" :disabled="nutstoreSyncing" @click="pushObsidian">
+                  <Loader2 v-if="showNutstoreSyncing" :size="14" class="sf-spin" />
+                  <Upload v-else :size="14" /><span>推送本地到坚果云</span>
+                </button>
+                <button type="button" class="sf-btn" :disabled="nutstoreSyncing" @click="pullObsidian">
+                  <Loader2 v-if="showNutstoreSyncing" :size="14" class="sf-spin" />
+                  <Download v-else :size="14" /><span>拉取坚果云到本地</span>
+                </button>
               </div>
             </el-collapse-item>
           </el-collapse>
@@ -1869,7 +2560,10 @@ async function restoreNutstoreBackup(backup: { path: string; name: string }) {
           </div>
           <div class="sf-settings-actions sf-storage-head-actions">
             <button type="button" class="sf-btn" :disabled="revealTesting" @click="revealDataDir"><ExternalLink :size="14" /><span>打开数据目录</span></button>
-            <button type="button" class="sf-btn" :disabled="dataLoading" @click="loadDataInfo"><RefreshCw :size="14" /><StableText :idle="'刷新'" :busy="'刷新中…'" :active="dataLoading" /></button>
+            <button type="button" class="sf-btn" :disabled="showDataLoading" @click="loadDataInfo">
+              <Loader2 v-if="showDataLoading" :size="14" class="sf-spin" />
+              <RefreshCw v-else :size="14" /><span>刷新</span>
+            </button>
           </div>
         </div>
         <p v-if="dataError" class="sf-storage-error">{{ dataError }}</p>
@@ -1887,7 +2581,7 @@ async function restoreNutstoreBackup(backup: { path: string; name: string }) {
             </tr>
           </tbody>
         </table>
-        <p class="sf-field-hint">数据目录：<span class="sf-data-dir">{{ dataInfo?.dataDir ?? "—" }}</span></p>
+        <p class="sf-hint">数据目录：<span class="sf-data-dir">{{ dataInfo?.dataDir ?? "—" }}</span></p>
 
         <div class="sf-settings-divider">工程资产</div>
         <p class="sf-settings-desc">「占用」是该工程全部运行记录对应的产物与中间文件；删掉这些运行记录即可回收。</p>
@@ -1903,8 +2597,8 @@ async function restoreNutstoreBackup(backup: { path: string; name: string }) {
             </tr>
           </tbody>
         </table>
-        <p v-else class="sf-field-hint">还没有任何运行记录，所以没有按工程统计的占用。</p>
-        <p v-if="dataInfo && dataInfo.projects.total > dataInfo.projects.top.length" class="sf-field-hint">
+        <p v-else class="sf-hint">还没有任何运行记录，所以没有按工程统计的占用。</p>
+        <p v-if="dataInfo && dataInfo.projects.total > dataInfo.projects.top.length" class="sf-hint">
           只列出占用最多的 10 个工程，另有 {{ dataInfo.projects.total - dataInfo.projects.top.length }} 个工程未展示。
         </p>
 
@@ -1927,17 +2621,14 @@ async function restoreNutstoreBackup(backup: { path: string; name: string }) {
               :disabled="item.count === 0 || pruneRunning !== ''"
               @click="runPrune([item.target], item.target)"
             >
-              <StableText :idle="'清理'" :busy="'清理中…'" :active="pruneRunning === item.target" />
+              <Loader2 v-if="showPrune(item.target)" :size="14" class="sf-spin" /><span>清理</span>
             </button>
           </div>
         </div>
         <div class="sf-settings-actions">
           <button type="button" class="sf-btn sf-btn--danger" :disabled="!hasReclaimable || pruneRunning !== ''" @click="runPrune(pruneAllTargets, 'all')">
-            <StableText
-              :idle="`清理全部可回收项（释放 ${formatBytes(dataInfo?.reclaimableBytes ?? 0)}）`"
-              :busy="'清理中…'"
-              :active="pruneRunning === 'all'"
-            />
+            <Loader2 v-if="showPrune('all')" :size="14" class="sf-spin" />
+            <span>清理全部可回收项（释放 {{ formatBytes(dataInfo?.reclaimableBytes ?? 0) }}）</span>
           </button>
         </div>
 
@@ -1959,7 +2650,7 @@ async function restoreNutstoreBackup(backup: { path: string; name: string }) {
           </ul>
         </div>
 
-        <p class="sf-field-hint">整库备份与恢复（含工程、运行记录与设置）在「坚果云」分组。</p>
+        <p class="sf-hint">整库备份与恢复（含工程、运行记录与设置）在「坚果云」分组。</p>
       </template>
 
       <template v-else>
@@ -2036,7 +2727,8 @@ async function restoreNutstoreBackup(backup: { path: string; name: string }) {
 
 .sf-settings-desc {
   margin: 4px 0 18px;
-  font-size: 13px;
+  font-size: var(--text-body-size);
+  line-height: var(--text-leading);
   color: var(--color-text-secondary);
 }
 
@@ -2104,14 +2796,45 @@ async function restoreNutstoreBackup(backup: { path: string; name: string }) {
   gap: 8px;
 }
 
-.sf-field-hint {
-  margin: 2px 0 0;
-  font-size: 11px;
-  line-height: 1.6;
+/**
+ * 设置页里的帮助文字（唯一一个类名）。
+ *
+ * 早先有两个名字干同一件事：`.sf-field-hint`（有规则、20 处）与 `.sf-settings-hint`（**没有任何规则**、12 处），
+ * 于是同一页里"说明文字"有 11px/13px/14px 三套尺度。现在合并成 `.sf-hint` 一个名字、两个尺寸档：
+ * 帮助 12px（这里）、说明段 13px（`.sf-settings-desc`）。
+ * 取值与依据见 docs/research/settings-text-typography-research.md。
+ */
+.sf-hint {
+  margin: 2px 0 10px;
+  font-size: var(--text-help-size);
+  line-height: var(--text-leading);
   color: var(--color-text-tertiary);
 }
 
-.sf-field-hint a {
+/* 加粗在这套小字里靠"更重 + 更深"两件事表达：600 由 app.css 统一给，这里补一次性加深 */
+.sf-hint strong,
+.sf-settings-desc strong {
+  color: var(--color-text);
+}
+
+/**
+ * 行内代码：底色药丸 + 跟随正文字体。
+ * 不用等宽字体——它没有中文字形，浏览器会按字符回退，同一段 code 里出现两套度量（这是"挤"的机理之一）；
+ * 也不缩字号——GitHub/antd 的 85% 是给 14–16px 正文用的，我们这里 12px 乘 0.85 会掉到 10.2px。
+ * 代码里显式关掉中西文自动加空：它会改变"这段字面值"的观感。
+ */
+.sf-settings-body code {
+  padding: 1px 5px;
+  border-radius: var(--control-radius);
+  background: var(--color-surface-muted);
+  color: var(--color-text-secondary);
+  font-family: inherit;
+  font-size: 1em;
+  text-autospace: no-autospace;
+  overflow-wrap: anywhere;
+}
+
+.sf-hint a {
   color: var(--color-text-secondary);
   text-decoration: underline;
 }
@@ -2626,7 +3349,7 @@ async function restoreNutstoreBackup(backup: { path: string; name: string }) {
  * 库自检结果卡。
  *
  * 三条约束，都是踩过才写下的：
- * 1. **高度尽量不随内容变** —— 它下面是「笔记写进哪个文件夹」和 ②③ 两段，卡片一长高就顶着它们跳。
+ * 1. **高度尽量不随内容变** —— 它下面是「默认写进库里哪个文件夹」和 ②③ 两段，卡片一长高就顶着它们跳。
  *    所以这里不放会折行的东西（完整路径不重复显示：它就在上面那个输入框里），每行文字都短到一行放得下。
  * 2. **标签与值分列**，不写成"完整路径 D:\…"这种一行到底的句子 —— 那既看不清值从哪开始，也没法对齐。
  * 3. hover 用 `.sf-text-btn` 那套中性色（灰底 + 文字加深），不要覆盖成品牌色：绿卡上出现蓝字是冲突的。
@@ -2746,12 +3469,17 @@ async function restoreNutstoreBackup(backup: { path: string; name: string }) {
   font-style: normal;
 }
 
-/* 预设 chip：看得出能点、也看得出当前选的是哪个。 */
-.sf-preset-row {
+/* 「套用一组」页脚：下拉底部的常驻一行，建议列表再长也压不住它。 */
+.sf-combo-row {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 6px;
+}
+
+.sf-combo-label {
+  color: var(--color-text-tertiary);
+  font-size: 11px;
 }
 
 .sf-preset {
@@ -2777,11 +3505,12 @@ async function restoreNutstoreBackup(backup: { path: string; name: string }) {
   color: var(--color-text);
 }
 
-.sf-preset--active {
-  border-color: var(--color-ink);
-  background: var(--color-ink-soft);
-  color: var(--color-text);
-  font-weight: 600;
+/* 选项右侧的次要说明（「库里 N 篇用过」）：数字弱化，名字照常。 */
+.sf-option-meta {
+  float: right;
+  margin-left: 12px;
+  color: var(--color-text-tertiary);
+  font-size: 11px;
 }
 
 .sf-tag-required {
@@ -2795,18 +3524,203 @@ async function restoreNutstoreBackup(backup: { path: string; name: string }) {
   line-height: 16px;
 }
 
-.sf-note-preview {
-  margin: 0;
-  padding: 10px 12px;
+/**
+ * 拟 Obsidian 的笔记预览：白底卡片 = 那篇笔记，上半是属性面板、下半是正文。
+ * 节奏照 Ob 的属性面板来：左列 92px 放属性名与类型图标，右列放值，行距 7px；
+ * 列表值是 chip（灰底 + ×），tags 是紫色 chip（Ob 的标签就是这个色），
+ * 原始链接是链接色 + 一个外链图标（**不做成真链接**：它是示例值，点过去只会 404）。
+ */
+.sf-ob-note {
+  margin: 0 0 10px;
+  padding: 12px 14px 14px;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
+  background: var(--color-surface);
+}
+
+.sf-ob-props {
+  display: grid;
+  grid-template-columns: 92px minmax(0, 1fr);
+  row-gap: 7px;
+  column-gap: 10px;
+  margin: 0;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.sf-ob-prop-name {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  color: var(--color-text-tertiary);
+  font-size: var(--text-help-size);
+  line-height: 1.6;
+}
+
+.sf-ob-prop-value {
+  margin: 0;
+  min-width: 0;
+  color: var(--color-text);
+  font-size: var(--text-help-size);
+  line-height: 1.6;
+}
+
+.sf-ob-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.sf-ob-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 0 5px 0 6px;
+  border-radius: 4px;
   background: var(--color-surface-muted);
   color: var(--color-text-secondary);
-  font-family: var(--font-mono);
-  font-size: 11px;
-  line-height: 1.7;
-  white-space: pre-wrap;
-  word-break: break-all;
+  font-size: var(--text-help-size);
+  line-height: 18px;
+}
+
+/**
+ * 标签 chip 的底色是 Ob 那个淡紫（`--color-accent-indigo-soft`），但**文字不用 `--color-accent-indigo`**：
+ * 那个紫在 12px 下压在淡紫底上只有 3.86:1，不到 AA 的 4.5:1（Obsidian 自己用的紫比这个令牌深）。
+ * 所以底色保留淡紫做"这是标签"的信号，文字走次要色（6.3:1）。
+ */
+.sf-ob-chip--tag {
+  background: var(--color-accent-indigo-soft);
+}
+
+.sf-ob-chip-x {
+  color: var(--color-text-tertiary);
+}
+
+.sf-ob-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--color-brand-pressed);
+}
+
+.sf-ob-body {
+  padding-top: 10px;
+}
+
+.sf-ob-title {
+  margin: 0 0 6px;
+  color: var(--color-text);
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.5;
+}
+
+.sf-ob-heading {
+  margin: 10px 0 4px;
+  color: var(--color-text);
+  font-size: var(--text-body-size);
+  font-weight: 600;
+  line-height: 1.6;
+}
+
+.sf-ob-text {
+  margin: 0;
+  color: var(--color-text-secondary);
+  font-size: var(--text-help-size);
+  line-height: var(--text-leading);
+}
+
+.sf-ob-wikilink {
+  color: var(--color-accent-indigo);
+}
+
+/* 两个自动标签（来源 / UP 主）的开关：它们不在下面的词库里，用一层浅框与词库编辑器分开 */
+.sf-auto-tags {
+  margin: 4px 0 14px;
+  padding: 12px 14px 4px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+}
+
+.sf-auto-tags .sf-hint {
+  margin-bottom: 8px;
+}
+
+/* ============================ 词库编辑器（三种显示样式共用一套结构） ============================ */
+
+.sf-tag-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin: 2px 0 10px;
+}
+
+/* 图标按钮的形状照抄同一块里的组头图标按钮（`.sf-tag-icon-btn`：24×24、透明底、hover 淡灰），
+   但三段之间留 4px 间隙——拼接式分段控件的选中描边会与邻居共边而被邻居盖掉（见模板里的注释）。
+   24×24 也正好是 WCAG 2.5.8 的目标尺寸下限。 */
+.sf-tag-view-group {
+  gap: 4px;
+}
+
+.sf-tag-view-group :deep(.el-radio-button .el-radio-button__inner) {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--color-text-tertiary);
+  /* 干掉 EP 每段自带的那圈 1px 浅描边：未选中的按钮靠图标本身就已经能认出来，
+     轮廓留给选中态去表达（下面那条）。 */
+  outline: none;
+  /* **不能留 EP 的 `transition: all .3s`**：它会把 outline 一起动画，而基态 outline 的
+     computed 颜色是 `currentColor`（悬停时就是近黑），于是选中瞬间先冒出一条近黑描边、
+     再用约 250ms 褪成灰——用户报的「选中之后的异常黑边动效」就是它。
+     实测时间线（灰色深浅）：0ms 近黑 → 40ms 几乎不变 → 150ms 明显变浅 → 250ms 才到 `--color-text-tertiary`。
+     只保留底色与图标色淡入，描边就"出现即到位"（依据与实测见 docs/research/view-mode-switcher-research.md §11）。 */
+  transition: background-color var(--dur-1) var(--ease-out), color var(--dur-1) var(--ease-out);
+}
+
+.sf-tag-view-group :deep(.el-radio-button .el-radio-button__inner:hover) {
+  background: var(--color-ink-soft);
+  color: var(--color-text);
+}
+
+/* 选中：淡灰底 + 一圈达标的描边 + 图标换成正文色（分开排之后这圈描边独占自己的边，不会被邻居盖住）。
+   描边色用 `--color-text-secondary`：**这里要按真实相邻色算**——设置页正文的底色是 `--color-bg`（不是白），
+   `--color-text-tertiary` 对它只有 **2.877:1**，不到 WCAG 1.4.11 要的 3:1；
+   换成 secondary 后实测 **6.276:1**（内侧对自己那层淡灰底也过 6:1）。
+   早先那句"对白底 3.14:1 达标"是按白底算的，用在设置页这一处是错的，已改。 */
+.sf-tag-view-group :deep(.el-radio-button.is-active .el-radio-button__inner) {
+  background: var(--color-ink-soft);
+  color: var(--color-text);
+  outline: 1px solid var(--color-text-secondary);
+}
+
+/* 键盘焦点环要压在选中态之上，否则聚焦到已选中那格时看不出焦点在哪。
+   间隙 4px > offset 1px + 环宽 2px，所以这个环也不会碰到邻居。 */
+.sf-tag-view-group :deep(.el-radio-button .el-radio-button__original-radio:focus-visible + .el-radio-button__inner) {
+  outline: 2px solid var(--color-text);
+  outline-offset: 1px;
+}
+
+/* 只给读屏看的名字：图标按钮没有文字，可访问名得有个来源。 */
+.sf-visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
 }
 
 .sf-tag-tree {
@@ -2817,7 +3731,7 @@ async function restoreNutstoreBackup(backup: { path: string; name: string }) {
 }
 
 .sf-tag-group {
-  padding: 10px 12px;
+  padding: 8px 10px 10px;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
   background: var(--color-surface);
@@ -2826,7 +3740,30 @@ async function restoreNutstoreBackup(backup: { path: string; name: string }) {
 .sf-tag-group-head {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 7px;
+  min-height: 24px;
+}
+
+.sf-tag-caret {
+  width: 14px;
+  border: none;
+  background: transparent;
+  padding: 0;
+  color: var(--color-text-tertiary);
+  font-size: 10px;
+  cursor: pointer;
+}
+
+.sf-tag-caret:hover {
+  color: var(--color-text);
+}
+
+/* 一级的色相标记：8px 实色点，只有彩色模式显示（它是"这属于哪一组"最强的信号） */
+.sf-tag-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: none;
 }
 
 .sf-tag-group-name {
@@ -2835,81 +3772,312 @@ async function restoreNutstoreBackup(backup: { path: string; name: string }) {
   color: var(--color-text);
 }
 
-/** 可点击复制的文字：看起来像文字，鼠标移上去才露出可点。 */
-.sf-copyable {
-  border: none;
-  background: transparent;
-  padding: 0;
-  font: inherit;
-  color: inherit;
-  cursor: pointer;
-  border-bottom: 1px dashed var(--color-border);
-}
-
-.sf-copyable:hover {
-  color: var(--color-brand);
-  border-bottom-color: var(--color-brand);
-}
-
 .sf-tag-group-count {
-  flex: 1;
   font-size: 11px;
   color: var(--color-text-tertiary);
+}
+
+.sf-tag-group-actions {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+/* 组头上的三个动作常显：复制搜索串 / 加一个二级 / 重命名与删除。
+   原来"删除一级"是一个红按钮常驻、复制藏在"点名字"这种自造手势里——两头都不对。 */
+.sf-tag-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--color-text-tertiary);
+  cursor: pointer;
+}
+
+.sf-tag-icon-btn:hover {
+  background: var(--color-ink-soft);
+  color: var(--color-text);
+}
+
+.sf-tag-group-menu {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 6px 0 2px;
+  padding: 6px 8px;
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-muted);
+}
+
+.sf-tag-menu-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border: none;
+  background: transparent;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-family: inherit;
+  font-size: 12px;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+}
+
+.sf-tag-menu-btn:hover {
+  background: var(--color-surface);
+  color: var(--color-text);
+}
+
+.sf-tag-menu-btn--danger:hover {
+  color: var(--color-error);
+}
+
+.sf-tag-body {
+  margin-top: 6px;
+}
+
+.sf-tag-empty {
+  margin: 0;
+  font-size: 11px;
+  color: var(--color-text-tertiary);
+}
+
+.sf-tag-link-btn {
+  border: none;
+  background: transparent;
+  padding: 0 2px;
+  font: inherit;
+  font-size: 11px;
+  color: var(--color-brand-pressed);
+  cursor: pointer;
+  text-decoration: underline;
 }
 
 .sf-tag-children {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 6px;
-  margin-top: 8px;
+  gap: 5px;
 }
+
+/* ---- 二级 chip：24px 高、6px 圆角、常显删除（对比度 6.23 已实测）---- */
 
 .sf-tag-chip {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  height: 22px;
-  padding: 0 4px 0 8px;
-  border-radius: 999px;
+  gap: 3px;
+  height: 24px;
+  padding: 0 2px 0 4px;
+  border: 1px solid transparent;
+  border-radius: 6px;
   background: var(--color-surface-muted);
   color: var(--color-text-secondary);
-  font-size: 11px;
+  font-size: 12px;
   line-height: 1;
+}
+
+.sf-tag-chip:hover {
+  border-color: var(--color-border-strong);
+}
+
+.sf-tag-chip:focus-visible {
+  outline: 2px solid var(--color-brand);
+  outline-offset: 1px;
+}
+
+/* 拖拽把手：16px 槽位**常驻**（避免 hover 时重排），淡显、指向 chip 时变实 */
+.sf-tag-chip-grip {
+  width: 16px;
+  height: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  color: var(--color-text-tertiary);
+  font-size: 9px;
+  letter-spacing: -1px;
+  opacity: 0.45;
+  cursor: grab;
+}
+
+.sf-tag-chip:hover .sf-tag-chip-grip {
+  opacity: 1;
+}
+
+.sf-tag-chip--dragging {
+  opacity: 0.4;
+}
+
+/* 落点线 2px：Atlassian 的拖拽规格就是这个粗细 */
+.sf-tag-chip--over {
+  box-shadow: -2px 0 0 0 var(--color-text);
 }
 
 .sf-tag-chip-name {
-  font-size: 11px;
-  color: var(--color-text-secondary);
+  border: none;
+  background: transparent;
+  padding: 0 2px;
+  font: inherit;
+  font-size: 12px;
+  color: inherit;
+  cursor: text;
+}
+
+.sf-tag-chip-usage {
+  font-size: 10.5px;
+  color: var(--color-text-tertiary);
+  font-variant-numeric: tabular-nums;
 }
 
 .sf-tag-chip-remove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
   border: none;
+  border-radius: 4px;
+  padding: 0;
   background: transparent;
-  color: var(--color-text-tertiary);
-  font-size: 13px;
-  line-height: 1;
+  color: var(--color-text-secondary);
   cursor: pointer;
-  padding: 0 2px;
 }
 
 .sf-tag-chip-remove:hover {
   color: var(--color-error);
+  background: var(--color-error-soft);
 }
 
-.sf-tag-add {
+/* 上移 / 下移：只在"指向或焦点在这一项"时浮现（指针路径）；键盘走 Alt+↑/↓。
+   给它们设 tabindex=-1，所以不会把 Tab 停靠点从 55 抬到 79。 */
+.sf-tag-chip-move {
+  display: inline-flex;
+  align-items: center;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.sf-tag-chip:hover .sf-tag-chip-move,
+.sf-tag-chip:focus-within .sf-tag-chip-move {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.sf-tag-chip-move-btn {
+  width: 16px;
+  height: 18px;
+  padding: 0;
+  border: none;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--color-text-tertiary);
+  font-size: 11px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.sf-tag-chip-move-btn:hover:not(:disabled) {
+  background: var(--color-surface);
+  color: var(--color-text);
+}
+
+.sf-tag-chip-move-btn:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+
+.sf-tag-chip-input {
+  width: 120px;
+}
+
+.sf-tag-add-input {
+  width: 148px;
+}
+
+.sf-tag-add-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  height: 24px;
+  padding: 0 8px;
+  border: 1px dashed var(--color-border-strong);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--color-text-secondary);
+  font-family: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.sf-tag-add-btn:hover {
+  border-color: var(--color-text);
+  color: var(--color-text);
+}
+
+.sf-tag-add-group {
   display: flex;
   align-items: center;
   gap: 6px;
-  margin-top: 8px;
+  margin-top: 2px;
 }
 
-.sf-tag-add--group {
-  margin-top: 0;
+/* ---- 模式差异 ---- */
+
+/* 单色：不上色，chip 就是一块浅灰（色点也不画，由模板的 v-if 控制） */
+.sf-tag-tree--plain .sf-tag-chip {
+  background: var(--color-surface-muted);
 }
+
+/* 清单：一行一个标签，带用量条——标签多的时候最好扫；
+   代价是竖向更高（实测 24 个标签会到 1043px，比 chip 版高不少），所以它是"可选"而不是默认。 */
+.sf-tag-tree--list .sf-tag-children {
+  display: block;
+}
+
+.sf-tag-tree--list .sf-tag-chip {
+  display: flex;
+  width: 100%;
+  height: 26px;
+  border-color: transparent;
+  background: transparent;
+  border-radius: 5px;
+}
+
+.sf-tag-tree--list .sf-tag-chip:hover {
+  background: var(--color-surface-muted);
+}
+
+.sf-tag-tree--list .sf-tag-chip-name {
+  flex: 1;
+  min-width: 0;
+  text-align: left;
+}
+
+.sf-tag-tree--list .sf-tag-chip-usage {
+  width: 34px;
+  text-align: right;
+}
+
+.sf-tag-tree--list .sf-tag-add-btn {
+  width: 100%;
+  justify-content: flex-start;
+  border-style: dashed;
+}
+
 
 .sf-settings-desc--warn {
   color: var(--color-warning);
+}
+
+/* 重新预估期间：结果还在（避免整块塌陷），但压暗表示这组数字正在被重新计算。 */
+.sf-nutstore-result.is-stale {
+  opacity: 0.6;
 }
 
 .sf-nutstore-result {

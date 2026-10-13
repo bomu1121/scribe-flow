@@ -165,6 +165,27 @@ export interface ObsidianData {
   folder?: string;
   /** 保存目录里已有同名笔记时是否直接覆盖；缺省覆盖，关掉则退让成「标题 (2).md」。 */
   overwrite?: boolean;
+  /**
+   * 这一篇要不要让 AI 读一遍（判话题标签 + 抽属性）。
+   *
+   * **三态**：`undefined`＝跟随设置页的默认；`true`／`false`＝这一篇明确要 / 不要。
+   * 与 `folder` 同一套约定——设置页只定默认值，真正的决定点在节点卡片上，
+   * 否则处理不同风格的视频就得来回改设置页。
+   */
+  autoTag?: boolean;
+  /**
+   * 这一篇抽取哪些属性（写进笔记头部、也是「相关笔记」的比对依据）。
+   *
+   * **留空或全清＝跟随设置页的默认**（与 `folder` 同一个约定），所以这里没有"明确不抽"这个单独状态：
+   * 要整篇跳过 AI，把 `autoTag` 设成 `false`——那也是唯一能连话题标签一起关掉的地方。
+   */
+  extractFields?: string[];
+  /**
+   * 这一篇要不要写**来源标签**（`来源/B站` 这种，取自 `来源:` 那个值，不花模型钱）。三态，同上。
+   */
+  sourceTag?: boolean;
+  /** 这一篇要不要写 **UP 主标签**（`UP主名称/某某`，取自作者元数据）。三态，同上。 */
+  upTag?: boolean;
 }
 
 export interface DrillData {

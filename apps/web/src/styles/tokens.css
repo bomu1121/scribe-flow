@@ -89,6 +89,14 @@
   --header-height: 52px;
   --content-max: 1080px;
 
+  /* 文字尺度：说明段与帮助文字两档，别处不要再散写这两个字号。
+     依据与实测见 docs/research/settings-text-typography-research.md：
+     · 12px 是"可读的帮助文字"下限（antd fontSizeSM、Radix size 1、飞书引导语档都是 12）；
+     · 行高 1.8 取自 clreq「行距为字号的 50%–100%」区间偏小的一侧——规范明确"行短、字小时可取小值"。 */
+  --text-body-size: 13px;
+  --text-help-size: 12px;
+  --text-leading: 1.8;
+
   /* 表单控件统一规范：输入框 / 下拉框 / 文本域共用同一套结构，禁止各自散写 */
   --control-height: 36px;
   --control-height-sm: 32px;

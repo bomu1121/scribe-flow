@@ -7,19 +7,22 @@ import {
   DERIVED_ITEM_KEY_PREFIX,
   MULTI_PRODUCT_SEPARATOR,
   NODE_TYPE_LABELS,
+  SOURCE_TAXONOMY_GROUP,
   UP_TAXONOMY_GROUP,
   addTagToTaxonomy,
   fileSegmentKey,
+  isAutoTag,
   isSourceOutputNeeded,
   maybeDrillToMarkdown,
   normalizeTagSegment,
   originSourceNodeId,
   passesPick,
   renderFileNameTemplate,
+  sanitizeExtractFields,
   sanitizeFileName,
   segmentKey,
   tagPathGroup,
-  topicManagedTags,
+  managedTags,
   uniqueNoteFileName,
   type GraphNode,
   type NodeOutput,
@@ -53,8 +56,17 @@ import {
   gcMediaAssets,
 } from "./media-store";
 import { ensureRemoteDirectory, listRemoteDirectory, NUTSTORE_PROPFIND_LIMIT, scanRemoteMarkdown, writeRemoteFile, type NutstoreConfig } from "./nutstore";
-import { parseNoteTags, parseYamlFieldList, upsertFrontMatterTags, walkMarkdownFiles } from "./note-markdown";
+import { parseNoteTags, upsertFrontMatterTags } from "./note-markdown";
 import { appendAllOutput, assertStepOutput, parseJsonLoose, readSearchQueries, renderStepSystem } from "./recipe";
+import {
+  findRelatedNoteNames,
+  pickFields,
+  prepareRelatedNotes,
+  scanVaultNotes,
+  stripRelatedSection,
+  upsertRelatedSection,
+  type RelatedNoteSource,
+} from "./related-notes";
 import { getAiConfig, getAsrConfig, getGeneralSettings, getNutstoreConfig, getSearchConfig, getSettings, updateSettings } from "./settings";
 import { sleep } from "./sleep";
 import { rememberNoteTags, tagNoteContent } from "./tagging";
@@ -323,13 +335,6 @@ function parseExtractEntities(raw: string, fields: string[]): Record<string, str
   } catch {
     return empty;
   }
-}
-
-/** 从笔记正文里按字段名取出已写好的属性值（关联笔记的比较依据）。 */
-function pickFields(content: string, fields: string[]): Record<string, string[]> {
-  const out: Record<string, string[]> = {};
-  for (const field of fields) out[field] = parseYamlFieldList(content, field);
-  return out;
 }
 
 function previewFor(output: NodeOutput): string | undefined {
@@ -1732,19 +1737,34 @@ export class RunEngine {
         }
         const outPath = nutstoreMode ? `${remoteDir}/${fileName}` : join(dir, fileName);
 
-        // 额外属性：按设置里配置的字段名抽（默认是历史笔记那三个，可换成任意字段；留空则不抽）。
-        const extractFields = settings.obsidian.extractFields;
-        const entities =
-          settings.obsidian.autoTagEnabled && extractFields.length > 0
-            ? await this.extractEntities(text, extractFields, signal)
-            : {};
+        /*
+         * 「这一篇怎么抽」由节点决定，设置页只提供默认值——与保存目录（`folder`）同一套约定。
+         * 理由：一个人会用不同风格处理不同视频，若只能改全局设置，每换一类都得回去改一次设置页。
+         *
+         * · autoTag 是三态：`undefined`＝跟随设置；`true`／`false`＝这一篇明确要 / 不要。
+         *   它是唯一能连话题标签一起关掉的地方（属性抽取与标签判定共用这一个开关）。
+         * · extractFields 留空或全清＝跟随设置（所以没有"明确不抽"这个单独状态）。
+         */
+        const aiNote = data.autoTag === undefined ? settings.obsidian.autoTagEnabled : data.autoTag === true;
+        const nodeFields = sanitizeExtractFields(data.extractFields);
+        const extractFields = nodeFields.length > 0 ? nodeFields : settings.obsidian.extractFields;
+        const entities = aiNote && extractFields.length > 0 ? await this.extractEntities(text, extractFields, signal) : {};
         const body = text.startsWith("# ") ? text : `# ${title}\n\n${text}`;
 
-        // 标签两个来源：UP 主来自来源元数据（确定性，不花模型钱），话题标签由词库 + AI 判定。
+        /*
+         * 标签三类：
+         * · **自动标签**：来源（取自 `来源:` 那个值）与 UP 主（作者），都是确定性的、不花模型钱，
+         *   用户只能决定写不写——设置页给默认，节点卡片可逐篇覆盖（与保存目录同一套约定）；
+         * · **话题标签**：词库 + AI 判定；
+         * · 人写在文件里的标签：原样保留（`humanTags`）。
+         */
+        const sourceName = normalizeTagSegment(source);
         const upName = normalizeTagSegment(author);
+        const wantSourceTag = data.sourceTag === undefined ? settings.obsidian.sourceTagEnabled : data.sourceTag === true;
+        const wantUpTag = data.upTag === undefined ? settings.obsidian.upTagEnabled : data.upTag === true;
         let taxonomy = settings.obsidian.tagTaxonomy;
         let topicTags: string[] = [];
-        if (settings.obsidian.autoTagEnabled && Object.keys(taxonomy).length > 0) {
+        if (aiNote && Object.keys(taxonomy).length > 0) {
           const aiConfig = getAiConfig(this.db);
           if (aiConfig.apiKey) {
             const tagged = await tagNoteContent(aiConfig, taxonomy, {
@@ -1765,13 +1785,17 @@ export class RunEngine {
         }
         // 入库是"再写一次"：目标文件已存在时，保留人手补过的标签，别把人的劳动抹掉。
         const existing = nutstoreMode ? "" : await readFile(outPath, "utf8").catch(() => "");
-        const ours = new Set(topicManagedTags(taxonomy).map((tag) => tag.toLowerCase()));
+        const ours = new Set(managedTags(taxonomy).map((tag) => tag.toLowerCase()));
         const humanTags = existing
-          ? parseNoteTags(existing).frontmatter.filter(
-              (tag) => !ours.has(tag.toLowerCase()) && tagPathGroup(tag) !== UP_TAXONOMY_GROUP,
-            )
+          ? parseNoteTags(existing).frontmatter.filter((tag) => !ours.has(tag.toLowerCase()) && !isAutoTag(tag))
           : [];
-        const tags = [...new Set([...explicitTags, ...humanTags, ...(upName ? [`${UP_TAXONOMY_GROUP}/${upName}`] : []), ...topicTags])];
+        // 自动分组由这里统一写：开关关掉就不写，文件里同组的旧标签也一并不留（那是这个开关管的东西）。
+        // 要留着就把它打开，或者改完元数据（来源/作者）再重跑。
+        const autoTags = [
+          ...(wantSourceTag && sourceName ? [`${SOURCE_TAXONOMY_GROUP}/${sourceName}`] : []),
+          ...(wantUpTag && upName ? [`${UP_TAXONOMY_GROUP}/${upName}`] : []),
+        ];
+        const tags = [...new Set([...explicitTags, ...humanTags, ...autoTags, ...topicTags])];
 
         const frontmatterLines = [
           "---",
@@ -1796,16 +1820,19 @@ export class RunEngine {
         }
 
         // 自动关联：按设置里配置的抽取字段在库里找相关笔记（字段留空时没有可比的东西，自然不关联）。
+        // 判定与段落写法都走 `related-notes.ts`，设置页的「回补相关笔记」用的是同一份实现。
         let relatedNames: string[] = [];
         if (settings.obsidian.autoLinkEnabled && settings.obsidian.autoLinkMax > 0 && extractFields.length > 0) {
           const existingNotes =
             nutstoreMode && config
               ? await this.scanRemoteObsidianNotes(config, remoteObsidianRoot, extractFields)
-              : await this.scanObsidianNotes(vaultPath, outPath, extractFields);
-          relatedNames = this.findRelatedNoteNames({ fields: entities, title }, existingNotes, settings.obsidian.autoLinkMax || 5);
-          if (relatedNames.length > 0) {
-            markdown += `\n## 相关笔记\n${relatedNames.map((name) => `- [[${name}]]`).join("\n")}\n`;
-          }
+              : await scanVaultNotes(vaultPath, extractFields, { excludePaths: [outPath] });
+          relatedNames = findRelatedNoteNames(
+            { fields: entities, title },
+            prepareRelatedNotes(existingNotes),
+            settings.obsidian.autoLinkMax || 5,
+          );
+          if (relatedNames.length > 0) markdown = upsertRelatedSection(markdown, relatedNames).content;
         }
 
         if (nutstoreMode && config) {
@@ -1896,65 +1923,17 @@ ${list}
     return new Set(listing.items.map((item) => item.name));
   }
 
-  private async scanObsidianNotes(
-    vaultPath: string,
-    excludePath: string,
-    fields: string[],
-  ): Promise<Array<{ absPath: string; name: string; fields: Record<string, string[]>; content: string }>> {
-    // 遍历本身与打标共用 `walkMarkdownFiles`，免得两处各自漏掉同一个目录。
-    const files = await walkMarkdownFiles(vaultPath, { excludePaths: [excludePath] });
-    return files.map((file) => ({
-      absPath: file.absPath,
-      name: file.fileName,
-      fields: pickFields(file.content, fields),
-      content: file.content,
-    }));
-  }
-
   /** 扫描坚果云远程 Obsidian 库内已有笔记（内容只用于相关性判断）。 */
-  private async scanRemoteObsidianNotes(
-    config: NutstoreConfig,
-    remoteRoot: string,
-    fields: string[],
-  ): Promise<Array<{ absPath: string; name: string; fields: Record<string, string[]>; content: string }>> {
+  private async scanRemoteObsidianNotes(config: NutstoreConfig, remoteRoot: string, fields: string[]): Promise<RelatedNoteSource[]> {
     const notes = await scanRemoteMarkdown(config, remoteRoot, { maxFiles: 2000, maxFileBytes: 1024 * 1024 });
     return notes.map((note) => ({
-      absPath: note.path,
+      // 远端没有本地路径，用远端路径当唯一键；判定只需要「把自己排除掉」这一个用途。
+      key: note.path,
       name: note.name.replace(/\.md$/, ""),
       fields: pickFields(note.content, fields),
-      content: note.content,
+      // 与本地扫描同样先摘掉我们自己写的那一段，否则上次写的 `[[链接]]` 会变成下次判定的"证据"。
+      content: stripRelatedSection(note.content).content,
     }));
-  }
-
-  /**
-   * 按配置的字段名，找出库内相关笔记名。
-   *
-   * 打分对**每个字段一视同仁**：早先给「人物/事件」权重 4、「时期」权重 3，那是历史笔记的领域知识，
-   * 换到别的门类只会造成偏差。命中同一字段的值是最强信号，出现在标题/正文里依次递减。
-   */
-  private findRelatedNoteNames(
-    current: { fields: Record<string, string[]>; title: string },
-    notes: Array<{ name: string; fields: Record<string, string[]>; content: string }>,
-    max: number,
-  ): string[] {
-    const scored: Array<{ name: string; score: number }> = [];
-    for (const note of notes) {
-      let score = 0;
-      for (const [field, values] of Object.entries(current.fields)) {
-        for (const value of values) {
-          if (!value) continue;
-          const lower = value.toLowerCase();
-          if ((note.fields[field] ?? []).some((candidate) => candidate.toLowerCase() === lower)) score += 4;
-          if (note.name.toLowerCase().includes(lower)) score += 2;
-          if (note.content.toLowerCase().includes(lower)) score += 1;
-        }
-      }
-      if (current.title && note.name.toLowerCase().includes(current.title.toLowerCase())) score += 2;
-      // 至少达到强相关阈值才认为相关，避免误连。
-      if (score >= 3) scored.push({ name: note.name, score });
-    }
-    scored.sort((a, b) => b.score - a.score);
-    return scored.slice(0, max).map((item) => item.name);
   }
 
   private async progress(active: ActiveRun, nodeId: string, progress: number, message: string) {

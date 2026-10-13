@@ -7,13 +7,13 @@ import { Hono } from "hono";
 import type { Context } from "hono";
 import { z } from "zod";
 import { GENERAL_LIMITS, MAX_EXTRACT_FIELDS, NODE_TYPE_ORDER, PRUNE_TARGETS } from "@scribe-flow/shared";
-import type { NodeType, ObsidianVaultCheck } from "@scribe-flow/shared";
+import type { NodeType, ObsidianFieldsResult, ObsidianTagUsageResult, ObsidianVaultCheck } from "@scribe-flow/shared";
 import type { AppDatabase } from "../db/client";
 import { chatCompletion, listAiModels, transcribeAudio } from "../lib/ai";
 import { getAiConfig, getAsrConfig, getNutstoreConfig, getSearchConfig, getSettings, updateSettings, withResolvedPaths } from "../lib/settings";
 import { badRequest } from "../lib/bad-request";
 import { runFfmpeg } from "../lib/media";
-import { countMarkdownFiles } from "../lib/note-markdown";
+import { collectFrontMatterFieldNames, collectTagUsage, countMarkdownFiles } from "../lib/note-markdown";
 import { listRemoteDirectories } from "../lib/nutstore";
 import { buildDataOverview, fileManagerCommand, isInsideDataDir, pruneStorage, resolveOutputRoot, type StorageDeps } from "../lib/storage";
 import { collectSources } from "../lib/traceExternal";
@@ -65,14 +65,16 @@ const updateSchema = z.object({
       vaultPath: z.string().trim().max(500).optional(),
       folder: z.string().trim().max(200).optional(),
       tagTaxonomy: z.record(z.string(), z.array(z.string())).optional(),
+      tagView: z.enum(["color", "plain", "list"]).optional(),
       autoTagEnabled: z.boolean().optional(),
+      sourceTagEnabled: z.boolean().optional(),
+      upTagEnabled: z.boolean().optional(),
       allowNewTags: z.boolean().optional(),
       extractFields: z.array(z.string()).max(MAX_EXTRACT_FIELDS).optional(),
       tagMinCount: z.number().int().min(1).max(20).optional(),
       tagMaxCount: z.number().int().min(1).max(30).optional(),
       autoLinkEnabled: z.boolean().optional(),
       autoLinkMax: z.number().int().min(0).max(20).optional(),
-      autoLinkBidirectional: z.boolean().optional(),
     })
     .optional(),
   nutstore: z
@@ -279,6 +281,40 @@ export function settingsApi(db: AppDatabase, engine: RunEngine, dataDir: string)
     await walk(vaultPath, "", 0);
     items.sort((a, b) => a.localeCompare(b, "zh-CN"));
     return c.json({ items });
+  });
+
+  /**
+   * 词库里每个标签被多少篇笔记用过——设置页那一块「N 篇用过」的来源。
+   *
+   * 与 `/obsidian/fields` 同一套口径与代价（本地扫、不花钱、到上限说 capped）：
+   * 它的用途是**判断该不该删**，所以宁可给"至少 N 篇"也不给一个假装精确的数。
+   */
+  api.get("/obsidian/tags", async (c) => {
+    const settings = getSettings(db);
+    if (settings.nutstore.obsidianMode && settings.nutstore.hasPassword) {
+      return c.json({ items: [], scanned: 0, capped: false } satisfies ObsidianTagUsageResult);
+    }
+    const vaultPath = settings.obsidian.vaultPath.trim();
+    if (!vaultPath) return c.json({ items: [], scanned: 0, capped: false } satisfies ObsidianTagUsageResult);
+    return c.json((await collectTagUsage(vaultPath)) satisfies ObsidianTagUsageResult);
+  });
+
+  /**
+   * 库里用过的属性名——「抽取哪些属性」下拉的建议来源。
+   *
+   * 为什么不复用 `/obsidian/folders` 那种"每次现扫"的轻量扫法：这一步要读每篇笔记的正文才能拿到
+   * front matter，比只列目录贵，所以带上限（`collectFrontMatterFieldNames` 的 cap）并如实回报 `capped`。
+   * 云端（坚果云）模式不做这件事：那要把库拉下来，代价和收益不成比例，返回空列表由界面照常解释。
+   */
+  api.get("/obsidian/fields", async (c) => {
+    const settings = getSettings(db);
+    if (settings.nutstore.obsidianMode && settings.nutstore.hasPassword) {
+      return c.json({ items: [], scanned: 0, capped: false } satisfies ObsidianFieldsResult);
+    }
+    const vaultPath = settings.obsidian.vaultPath.trim();
+    if (!vaultPath) return c.json({ items: [], scanned: 0, capped: false } satisfies ObsidianFieldsResult);
+    const result = await collectFrontMatterFieldNames(vaultPath);
+    return c.json(result satisfies ObsidianFieldsResult);
   });
 
   /**

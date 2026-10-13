@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { BUILTIN_PROMPT_BLOCKS, availablePromptBlocks, bindablePromptBlocks } from "./prompt";
+import { BUILTIN_PROMPT_BLOCKS, aiPromptBlocks, availablePromptBlocks } from "./prompt";
 
 describe("builtin prompt blocks", () => {
   it("展示名与系列名不夹带内部说法（版本号 / 配方 / 内置 / 代号）", () => {
@@ -268,29 +268,32 @@ describe("availablePromptBlocks", () => {
   });
 });
 
-describe("bindablePromptBlocks", () => {
-  it("同系列只留推荐版本：观点提炼出 v4 而非 v1/v2/v3", () => {
-    const blocks = bindablePromptBlocks();
-    const insight = blocks.filter((block) => block.series === "观点笔记");
-    expect(insight.map((block) => block.id)).toEqual(["builtin.insight.v4"]);
+describe("aiPromptBlocks（画布节点与快捷新建共用的「AI 加工」可选块）", () => {
+  it("两处下拉是同一份列表：已过审核的 5 个通用块，顺序稳定", () => {
+    expect(aiPromptBlocks([], true).map((block) => block.id)).toEqual([
+      "builtin.insight",
+      "builtin.insight.v4",
+      "builtin.insight.v5",
+      "builtin.insight.v6",
+      "builtin.qa",
+    ]);
   });
 
-  it("排除由专属节点承载的块（知识巩固），且没有重复项", () => {
-    const ids = bindablePromptBlocks().map((block) => block.id);
-    expect(ids).not.toContain("builtin.drill");
-    expect(new Set(ids).size).toBe(ids.length);
+  it("由专属节点承载的块（阴阳师攻略 / 练一练）不属于「AI 加工」，一次也不出现", () => {
+    const ids = aiPromptBlocks([], true).map((block) => block.id);
+    for (const id of ["builtin.gameguide", "builtin.gameguide.v2", "builtin.drill"]) expect(ids).not.toContain(id);
+    // 反过来也成立：列表里没有任何标了 requiresNode 的块
+    expect(aiPromptBlocks([], true).every((block) => !block.requiresNode)).toBe(true);
   });
 
-  it("没有推荐位的系列取该系列首个版本", () => {
-    const blocks = bindablePromptBlocks();
-    expect(blocks.find((block) => block.series === "技术点拆解")?.id).toBe("builtin.tech");
-    expect(blocks.find((block) => block.series === "概念的来龙去脉")?.id).toBe("builtin.cascade");
-  });
-
-  it("自定义块按传入顺序追加在内置候选之后", () => {
+  it("自定义块追加在内置块之后，且不受审核白名单约束", () => {
     const custom = { id: "custom.1", name: "我的块", prompt: "x", builtin: false };
-    const blocks = bindablePromptBlocks([custom]);
+    const blocks = aiPromptBlocks([custom], true);
     expect(blocks.at(-1)).toBe(custom);
-    expect(blocks.length).toBe(bindablePromptBlocks().length + 1);
+    expect(blocks.length).toBe(aiPromptBlocks([], true).length + 1);
+  });
+
+  it("没配检索密钥时不列出需要联网核查的块", () => {
+    expect(aiPromptBlocks([], false).every((block) => block.externalCheck !== "required")).toBe(true);
   });
 });

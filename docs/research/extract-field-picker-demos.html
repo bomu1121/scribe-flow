@@ -1,0 +1,1015 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>「抽取哪些属性」选择控件 —— 候选方案对照</title>
+<!--
+  用途：比较「抽取哪些属性」这个多值字段选择器的几种结构，供选型。
+  这是**交互原型**，不是生产代码：颜色取自 apps/web/src/styles/tokens.css（同一份令牌，直接链接），
+  但没有走 Element Plus。落地时按仓库规范必须用 Element Plus 实现，能力边界见
+  docs/research/extract-field-picker-research.md。
+-->
+<!-- 令牌内联自 apps/web/src/styles/tokens.css（element-plus 2.14.5 同版的仓库令牌），
+       内联是为了双击打开 file:// 时也能正确渲染 -->
+<style>
+/**
+ * ScribeFlow 设计令牌 —— 纸面工作台 × 工程制图
+ * 浅色优先；B 站蓝只用于交互信号；画布克制安静。
+ * 所有组件必须引用这里的变量，禁止散写颜色。
+ */
+:root {
+  /* 结构色 */
+  --color-bg: #f4f5f6;
+  --color-canvas: #f8f9fa;
+  --color-surface: #ffffff;
+  --color-surface-muted: #f7f8f9;
+  --color-surface-glass: rgba(255, 255, 255, 0.82);
+  --color-border: #e4e7eb;
+  --color-border-strong: #cdd3da;
+  --color-border-glass: rgba(22, 24, 29, 0.12);
+  --color-text: #16181d;
+  --color-text-secondary: #545b66;
+  --color-text-tertiary: #8a929e;
+
+  /* 交互信号 */
+  --color-brand: #00aeec;
+  --color-brand-hover: #0d9bcf;
+  --color-brand-pressed: #0b88c4;
+  --color-brand-soft: #e6f7fe;
+  --color-brand-soft-glass: rgba(0, 174, 236, 0.1);
+  --color-brand-border: #b8e8fb;
+  --color-on-brand: #ffffff;
+
+  /* 墨色（导航/强标题） */
+  --color-ink: #16181d;
+  --color-ink-soft: #f0f1f3;
+  --color-ink-soft-glass: rgba(22, 24, 29, 0.06);
+
+  /* 盖片/角标（图面上深色半透明底 + 白字，如封面时长角标） */
+  --color-scrim: rgba(22, 24, 29, 0.72);
+  --color-on-scrim: #ffffff;
+
+  /* 语义 */
+  --color-success: #18a058;
+  --color-success-soft: #e7f6ee;
+  --color-success-border: #b7e4ca;
+  --color-on-success: #ffffff;
+  --color-warning: #d9822b;
+  --color-warning-soft: #fcf0e2;
+  --color-warning-border: #f0d3ae;
+  --color-on-warning: #ffffff;
+  --color-error: #d23f4e;
+  --color-error-soft: #fbecee;
+  --color-error-border: #f0c3c9;
+  --color-on-error: #ffffff;
+  --color-info: #0b88c4;
+  --color-info-soft: #e6f5fc;
+  --color-info-border: #b8e2f2;
+  --color-on-info: #ffffff;
+
+  /* 来源身份（B 站粉等只在徽章里用） */
+  --color-accent-pink: #fb7299;
+  --color-accent-pink-soft: #feeef3;
+  --color-accent-indigo: #6366f1;
+  --color-accent-indigo-soft: #eef0fe;
+
+  /* 画布 */
+  --node-radius: 10px;
+  --node-border: var(--color-border);
+  --node-selected-border: var(--color-text);
+  --node-running-border: var(--color-brand);
+  --edge-color: #c6ccd4;
+  --edge-selected-color: var(--color-text);
+  --edge-running-color: var(--color-brand);
+  --handle-color: #aeb6bf;
+  --handle-hover-color: var(--color-text);
+  --canvas-dot-color: rgba(22, 24, 29, 0.12);
+
+  /* 字体 */
+  --font-family:
+    "Geist Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+    "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans SC", sans-serif;
+  --font-mono: "Geist Mono", "Cascadia Code", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+
+  /* 尺寸 */
+  --radius-xs: 4px;
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 10px;
+  --radius-xl: 14px;
+  --sidebar-width: 56px;
+  --rail-width: 52px;
+  --explorer-width: 296px;
+  --header-height: 52px;
+  --content-max: 1080px;
+
+  /* 表单控件统一规范：输入框 / 下拉框 / 文本域共用同一套结构，禁止各自散写 */
+  --control-height: 36px;
+  --control-height-sm: 32px;
+  --control-padding-x: 10px;
+  --control-radius: 4px;
+  --control-radius-sm: 4px;
+  --control-font-size: 13px;
+  --control-font-size-sm: 12px;
+  --control-border: var(--color-border);
+  --control-border-hover: var(--color-text-tertiary);
+  --control-border-focus: var(--color-text-tertiary);
+  --control-bg: var(--color-surface);
+  --control-bg-muted: var(--color-surface-muted);
+  --control-placeholder: var(--color-text-tertiary);
+
+  /* 浮层层级（Teleport 组件必须统一从这里取值，禁止散写 z-index） */
+  --z-rail: 3;
+  --z-panel: 2;
+  --z-overlay: 1000;
+  --z-dialog: 1010;
+  --z-select: 1120;
+  --z-popover: 1130;
+  --z-dropdown: 1150;
+  --z-context: 1300;
+  /* 自定义模态遮罩：高于普通应用浮层/菜单，但低于 Teleport 弹层（EP popper 约 2000+ / 自研 3000） */
+  --z-modal: 1500;
+  /* Teleport 浮层若出现在 Element Plus overlay（z 2000+）内，必须高于 EP overlay */
+  --z-dropdown-modal: 3000;
+
+  /* 阴影（两档，禁止发光） */
+  --shadow-xs: 0 1px 2px rgba(22, 24, 29, 0.04);
+  --shadow-card: 0 1px 2px rgba(22, 24, 29, 0.05), 0 4px 12px rgba(22, 24, 29, 0.04);
+  --shadow-overlay: 0 8px 24px rgba(22, 24, 29, 0.12);
+
+  /* 动效 */
+  --ease-out: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --dur-1: 120ms;
+  --dur-2: 180ms;
+  --dur-3: 240ms;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  font-family: var(--font-family);
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--color-text);
+  background: var(--color-bg);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+::selection {
+  background: rgba(0, 174, 236, 0.16);
+}
+
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--color-border);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-border-strong);
+}
+
+.tnum {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+button {
+  font-family: inherit;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+</style>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 32px 24px 96px;
+    background: var(--color-bg);
+    color: var(--color-text);
+    font-family: var(--font-family);
+    font-size: 13px;
+    line-height: 1.6;
+  }
+  .page { max-width: 900px; margin: 0 auto; }
+  .page-head { margin-bottom: 24px; }
+  .page-title { margin: 0 0 6px; font-size: 20px; font-weight: 600; }
+  .page-desc { margin: 0; color: var(--color-text-secondary); }
+
+  .toc {
+    display: flex; flex-wrap: wrap; gap: 8px;
+    margin: 16px 0 28px; padding: 0; list-style: none;
+  }
+  .toc a {
+    display: inline-block; padding: 4px 10px;
+    border: 1px solid var(--color-border); border-radius: 999px;
+    background: var(--color-surface);
+    color: var(--color-text-secondary); text-decoration: none; font-size: 12px;
+  }
+  .toc a:hover { border-color: var(--color-text); color: var(--color-text); }
+
+  .width-bar {
+    display: flex; align-items: center; gap: 8px;
+    margin: 0 0 22px; padding: 8px 12px;
+    background: var(--color-surface); border: 1px solid var(--color-border); border-radius: 8px;
+    font-size: 12px; color: var(--color-text-secondary);
+  }
+  .width-bar label { display: flex; align-items: center; gap: 6px; cursor: pointer; }
+  .width-bar code { font-family: var(--font-mono); font-size: 11px; color: var(--color-text-tertiary); }
+  /* 设置页的表单列是 460px（.sf-settings-form 的 max-width），演示区默认按它显示 */
+  body.narrow .stage { max-width: 460px; }
+  body.narrow .pros { grid-template-columns: 1fr; }
+  /* 460px 下三列会把说明文字折成三行，改成一行一张卡 */
+  body.narrow .tpl-row { grid-template-columns: 1fr; }
+  body.narrow .tpl { display: flex; align-items: baseline; gap: 10px; padding: 7px 11px; }
+  body.narrow .tpl-name { margin-bottom: 0; flex: none; min-width: 48px; }
+  body.narrow .tpl-fields { flex: 1; }
+
+  .panel {
+    margin-bottom: 28px; padding: 20px 22px 22px;
+    background: var(--color-surface);
+    border: 1px solid var(--color-border); border-radius: 12px;
+  }
+  .panel-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin-bottom: 4px; }
+  .panel-name { font-size: 15px; font-weight: 600; }
+  .panel-badge {
+    padding: 1px 7px; border-radius: 999px; font-size: 11px;
+    background: var(--color-brand-soft); color: var(--color-brand-pressed);
+    border: 1px solid var(--color-brand-border);
+  }
+  .panel-badge--grey {
+    background: var(--color-surface-muted); color: var(--color-text-tertiary);
+    border-color: var(--color-border);
+  }
+  .panel-src { margin: 0 0 14px; font-size: 12px; color: var(--color-text-tertiary); }
+  .panel-src b { color: var(--color-text-secondary); font-weight: 500; }
+
+  /* 被比较的设置页片段：一份灰底区域，代表设置页里的位置 */
+  .stage {
+    padding: 16px 18px;
+    background: var(--color-surface-muted);
+    border: 1px solid var(--color-border); border-radius: 10px;
+  }
+  .stage--flush { background: transparent; border: none; padding: 0; }
+
+  .field-label { display: block; margin-bottom: 6px; font-weight: 500; }
+  .field-note { margin-left: 6px; color: var(--color-text-tertiary); font-size: 11px; font-style: normal; font-weight: 400; }
+  .hint { margin: 6px 0 0; color: var(--color-text-tertiary); font-size: 12px; }
+  .hint strong { color: var(--color-text-secondary); }
+
+  .switch-row { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
+  .switch {
+    position: relative; width: 34px; height: 19px; border-radius: 999px;
+    background: var(--color-brand); border: none; cursor: pointer; padding: 0; flex: none;
+  }
+  .switch::after {
+    content: ""; position: absolute; top: 2px; left: 17px;
+    width: 15px; height: 15px; border-radius: 50%; background: #fff;
+    transition: left .16s ease;
+  }
+  .switch[aria-checked="false"] { background: var(--color-border-strong); }
+  .switch[aria-checked="false"]::after { left: 2px; }
+
+  .pros { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 18px; margin: 16px 0 0; }
+  .pros h4 { margin: 0 0 4px; font-size: 12px; font-weight: 600; color: var(--color-text-secondary); }
+  .pros ul { margin: 0; padding-left: 16px; color: var(--color-text-secondary); font-size: 12px; }
+  .pros li { margin-bottom: 3px; }
+
+  /* ---------- 通用：chip 与下拉 ---------- */
+  .picker { position: relative; }
+
+  /* 输入框本体：chips 与 input 同处一个框内 */
+  .picker-box {
+    display: flex; flex-wrap: wrap; gap: 4px; align-items: center;
+    min-height: 34px; padding: 3px 30px 3px 6px;
+    background: var(--color-surface);
+    border: 1px solid var(--color-border-strong); border-radius: 8px;
+    cursor: text;
+  }
+  .picker-box:focus-within { border-color: var(--color-brand); box-shadow: 0 0 0 2px var(--color-brand-soft-glass); }
+  .picker-box input {
+    flex: 1 1 90px; min-width: 90px; border: none; outline: none;
+    padding: 3px 2px; font: inherit; color: var(--color-text); background: transparent;
+  }
+  .picker-caret {
+    position: absolute; right: 9px; top: 50%; transform: translateY(-50%);
+    color: var(--color-text-tertiary); pointer-events: none; font-size: 10px;
+  }
+
+  .chip {
+    display: inline-flex; align-items: center; gap: 4px;
+    padding: 1px 4px 1px 8px; border-radius: 6px;
+    background: var(--color-brand-soft); color: var(--color-brand-pressed);
+    border: 1px solid var(--color-brand-border);
+    font-size: 12px; line-height: 20px; white-space: nowrap;
+  }
+  .chip-x {
+    width: 16px; height: 16px; border: none; border-radius: 4px; padding: 0;
+    background: transparent; color: inherit; cursor: pointer;
+    font-size: 12px; line-height: 1; opacity: .65;
+  }
+  .chip-x:hover { opacity: 1; background: var(--color-brand-border); }
+
+  /* 下拉面板 */
+  .pop {
+    position: absolute; z-index: 20; left: 0; right: 0; top: calc(100% + 4px);
+    display: flex; flex-direction: column;
+    background: var(--color-surface);
+    border: 1px solid var(--color-border-strong); border-radius: 8px;
+    box-shadow: 0 8px 24px rgba(22, 24, 29, .12);
+    overflow: hidden;
+  }
+  .pop[hidden] { display: none; }
+  /* 建议区滚动，「常用组合」固定在底部不跟着滚 */
+  .pop-list { max-height: 208px; overflow-y: auto; padding: 4px; }
+  .pop-foot {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 6px;
+    padding: 7px 9px; border-top: 1px solid var(--color-border);
+    background: var(--color-surface-muted); font-size: 11px; color: var(--color-text-tertiary);
+  }
+  .pop-foot-combo {
+    padding: 1px 9px; border-radius: 999px; cursor: pointer; font: inherit; font-size: 11px;
+    border: 1px solid var(--color-border-strong); background: var(--color-surface);
+    color: var(--color-text-secondary);
+  }
+  .pop-foot-combo:hover { border-color: var(--color-brand); color: var(--color-brand-pressed); }
+  .pop-group {
+    padding: 5px 8px 3px; font-size: 11px; color: var(--color-text-tertiary);
+  }
+  .pop-item {
+    display: flex; align-items: center; gap: 8px;
+    padding: 5px 8px; border-radius: 6px; cursor: pointer; font-size: 13px;
+  }
+  .pop-item:hover, .pop-item--active { background: var(--color-surface-muted); }
+  .pop-item--create { color: var(--color-brand-pressed); }
+  .pop-item-plus {
+    width: 16px; height: 16px; border-radius: 4px; flex: none;
+    display: grid; place-items: center; font-size: 12px; line-height: 1;
+    background: var(--color-brand-soft); color: var(--color-brand-pressed);
+  }
+  .pop-item-meta { margin-left: auto; font-size: 11px; color: var(--color-text-tertiary); }
+  .pop-empty { padding: 10px 8px; color: var(--color-text-tertiary); font-size: 12px; }
+  .pop-sep { height: 1px; margin: 4px 0; background: var(--color-border); }
+
+  /* 预设 chip（现状那种） */
+  .preset-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 8px; }
+  .preset {
+    padding: 2px 10px; border: 1px solid var(--color-border-strong); border-radius: 999px;
+    background: var(--color-surface); color: var(--color-text-secondary);
+    font: inherit; font-size: 12px; cursor: pointer;
+  }
+  .preset:hover { border-color: var(--color-text); color: var(--color-text); }
+  .preset--active {
+    border-color: var(--color-brand); background: var(--color-brand-soft); color: var(--color-brand-pressed);
+  }
+
+  /* 模板卡（方案 C） */
+  .tpl-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+  .tpl {
+    text-align: left; padding: 10px 12px; cursor: pointer;
+    border: 1px solid var(--color-border-strong); border-radius: 8px;
+    background: var(--color-surface); font: inherit; color: inherit;
+  }
+  .tpl:hover { border-color: var(--color-text); }
+  .tpl--active { border-color: var(--color-brand); background: var(--color-brand-soft); }
+  .tpl-name { display: block; font-weight: 500; margin-bottom: 2px; }
+  .tpl-fields { display: block; font-size: 11px; color: var(--color-text-tertiary); }
+  .tpl--custom .tpl-name::after {
+    content: "已改"; margin-left: 6px; padding: 0 5px; border-radius: 4px;
+    background: var(--color-warning-soft); color: var(--color-warning);
+    border: 1px solid var(--color-warning-border); font-size: 10px; font-weight: 400;
+  }
+
+  /* 属性表（方案 B） */
+  .rows { border: 1px solid var(--color-border); border-radius: 8px; overflow: hidden; background: var(--color-surface); }
+  .row { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-bottom: 1px solid var(--color-border); }
+  .row:last-child { border-bottom: none; }
+  .row-name { font-weight: 500; min-width: 72px; }
+  .row-desc { flex: 1; color: var(--color-text-tertiary); font-size: 12px; }
+  .row-x {
+    border: none; background: transparent; color: var(--color-text-tertiary);
+    cursor: pointer; font-size: 14px; line-height: 1; padding: 2px 4px; border-radius: 4px;
+  }
+  .row-x:hover { color: var(--color-error); background: var(--color-error-soft); }
+  .row-add {
+    display: flex; align-items: center; gap: 6px; padding: 8px 10px;
+    color: var(--color-text-secondary); cursor: pointer; font-size: 12px;
+    border: none; background: transparent; width: 100%; text-align: left; font-family: inherit;
+  }
+  .row-add:hover { color: var(--color-text); }
+
+  /* 维度勾选（方案 D） */
+  .dims { display: flex; flex-wrap: wrap; gap: 6px; }
+  .dim {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 4px 11px 4px 9px; border-radius: 999px; cursor: pointer;
+    border: 1px solid var(--color-border-strong); background: var(--color-surface);
+    font-size: 12px; color: var(--color-text-secondary);
+  }
+  .dim:hover { border-color: var(--color-text); color: var(--color-text); }
+  .dim--on {
+    border-color: var(--color-brand); background: var(--color-brand-soft); color: var(--color-brand-pressed);
+  }
+  .dim-tick { font-size: 11px; opacity: 0; }
+  .dim--on .dim-tick { opacity: 1; }
+  .dim-custom {
+    display: inline-flex; align-items: center; gap: 4px;
+    padding: 3px 6px; border: 1px dashed var(--color-border-strong); border-radius: 999px;
+  }
+  .dim-custom input { border: none; outline: none; background: transparent; font: inherit; width: 88px; }
+
+  .empty-note {
+    display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+    padding: 10px 12px; border: 1px dashed var(--color-border-strong); border-radius: 8px;
+    color: var(--color-text-secondary); background: var(--color-surface);
+  }
+  .empty-note b { font-weight: 500; color: var(--color-text); }
+</style>
+</head>
+<body>
+<div class="page">
+  <header class="page-head">
+    <h1 class="page-title">「抽取哪些属性」选择控件 —— 候选方案对照</h1>
+    <p class="page-desc">
+      这是设置页 Obsidian 组「② 笔记里有什么」里那个多值字段的结构对比。每一版都可以点、可以打字、可以删 chip，
+      用来比较 <b>交互结构</b> 而不是配色。生产实现必须走 Element Plus（见同目录的调研文档）。
+    </p>
+    <ul class="toc">
+      <li><a href="#now">现状（对照）</a></li>
+      <li><a href="#a">方案 A 并入下拉</a></li>
+      <li><a href="#b">方案 B 属性表</a></li>
+      <li><a href="#c">方案 C 模板两级</a></li>
+      <li><a href="#d">方案 D 选维度</a></li>
+    </ul>
+    <div class="width-bar">
+      <label><input type="checkbox" id="narrow" checked> 按设置页真实宽度显示</label>
+      <code>设置页表单列 .sf-settings-form 的 max-width 是 460px</code>
+    </div>
+    <p class="page-desc" style="margin:-10px 0 22px">
+      <b>2026-10-13：方案 A 已被选中并落地到设置页。</b>真实现与这版原型的差异有两处——创建行在真组件上渲染成输入文本本身
+      （没有原型里的「＋ 创建「X」」字样），「你库里出现过的」那一组要有笔记才看得见。详见 CHANGELOG。
+    </p>
+  </header>
+
+  <!-- ============ 现状 ============ -->
+  <section class="panel" id="now">
+    <div class="panel-head">
+      <span class="panel-name">现状（对照）</span>
+      <span class="panel-badge panel-badge--grey">当前实现</span>
+    </div>
+    <p class="panel-src">
+      问题在这几处：<b>下拉的候选项就是它自己的当前值</b>（<code>el-option v-for="field in form.obsidianExtractFields"</code>），
+      所以点开几乎没东西可选；预设行写的是「换成：」；默认值指向历史笔记。这一版照着现有行为复现，不是改好的样子。
+    </p>
+    <div class="stage">
+      <div class="switch-row">
+        <span>让 AI 读一遍笔记，补上话题标签与属性</span>
+        <button class="switch" aria-checked="true" role="switch"></button>
+      </div>
+      <div style="padding-left:12px;border-left:2px solid var(--color-border)">
+        <label class="field-label">抽取哪些属性<em class="field-note">属性名由你定</em></label>
+        <div class="picker" data-picker="now">
+          <div class="picker-box" data-box>
+            <input data-input placeholder="输入属性名后回车，可填多个">
+          </div>
+          <span class="picker-caret">▾</span>
+          <div class="pop" data-pop hidden></div>
+        </div>
+        <div class="preset-row">
+          <span class="hint" style="margin:0">换成：</span>
+          <button class="preset preset--active">历史笔记</button>
+          <button class="preset">通用</button>
+          <button class="preset">不抽</button>
+        </div>
+        <p class="hint">这些属性会写进笔记头部（列表形式），也是「关联相关笔记」的比较依据；<strong>留空就不抽</strong>。</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ 方案 A ============ -->
+  <section class="panel" id="a">
+    <div class="panel-head">
+      <span class="panel-name">方案 A：全部收进下拉（建议 + 创建 + 常用组合）</span>
+      <span class="panel-badge">推荐</span>
+    </div>
+    <p class="panel-src">
+      参照：<b>GitLab 的定时任务</b>（原话「Select one of the preconfigured intervals, or enter a custom interval in
+      cron notation」——预设与自定义在同一个字段里）＋ <b>Notion 的选项</b>（在列表尾部就地新建一个值）＋
+      <b>Sentry TimeRangeSelector</b>（输入即生成选项）。形态归类与全部出处见同目录调研文档的 §2。
+    </p>
+    <div class="stage">
+      <label class="field-label">按这些属性给笔记建索引<em class="field-note">属性名由你定，随时可加</em></label>
+      <div class="picker" data-picker="a">
+        <div class="picker-box" data-box>
+          <input data-input placeholder="输入属性名，或从下面的建议里挑">
+        </div>
+        <span class="picker-caret">▾</span>
+        <div class="pop" data-pop hidden></div>
+      </div>
+      <p class="hint">
+        会写进笔记头部，也是「相关笔记」的比对依据；<strong>一个都不选就不抽</strong>。
+      </p>
+    </div>
+    <div class="pros">
+      <div>
+        <h4>好在哪</h4>
+        <ul>
+          <li>一个控件说完全部：建议、创建、常用组合都在下拉里</li>
+          <li>点开有东西可选——不再是自己选自己</li>
+          <li>键盘可全程操作（↑↓ 移动、回车选中/创建）</li>
+        </ul>
+      </div>
+      <div>
+        <h4>代价</h4>
+        <ul>
+          <li>「常用组合」要展开下拉才看见，常驻入口没了</li>
+          <li>建议列表要有内容才有意义（没有建议就是现状）</li>
+          <li><b>一个真缺口</b>：el-select 不会把创建过的值放回候选（
+            <a href="https://github.com/element-plus/element-plus/issues/11892">issue #11892</a> 仍 open），
+            第二次想选同一个词只能重打——要在 <code>@change</code> 里自己回填。本原型已按回填后的行为做，
+            所以你能看到「你自己加过的」这一组</li>
+          <li>落地无阻碍：<code>#footer</code> 插槽自 element-plus 2.4.3 起就有，官方还带一个
+            「Footer of the dropdown」示例（页脚里放按钮），骨架可直接照抄</li>
+          <li><code>allow-create</code> 必须同时给 <code>filterable</code>，否则<b>静默失效且不报错</b></li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ 方案 B ============ -->
+  <section class="panel" id="b">
+    <div class="panel-head">
+      <span class="panel-name">方案 B：属性做成一张小表（每行一个，能写说明）</span>
+    </div>
+    <p class="panel-src">参照：<b>Notion / Airtable 的字段列表</b>（选项就地新建 + 每个选项有名称与设置）、
+      <b>VS Code 设置的来源标注与 Reset Setting</b>（值级来源 + 恢复默认的动作）。</p>
+    <div class="stage">
+      <label class="field-label">笔记头部的属性</label>
+      <div class="rows" data-rows="b">
+        <div class="row" data-row>
+          <span class="row-name">人物</span>
+          <span class="row-desc">从正文里抽出出现的人名</span>
+          <button class="row-x" data-del title="移除">×</button>
+        </div>
+        <div class="row" data-row>
+          <span class="row-name">事件</span>
+          <span class="row-desc">从正文里抽出事件名</span>
+          <button class="row-x" data-del title="移除">×</button>
+        </div>
+        <button class="row-add" data-add>＋ 添加属性</button>
+      </div>
+      <p class="hint">空的时候给一组起点，而不是常驻一个「换成：」。</p>
+    </div>
+    <div class="pros">
+      <div>
+        <h4>好在哪</h4>
+        <ul>
+          <li>每个字段有地方写「这个属性会抽什么」——现在全靠一条公共提示</li>
+          <li>空列表时可以放引导，不再默认指向历史笔记</li>
+          <li>以后要给单个属性加开关/类型，有位置放</li>
+        </ul>
+      </div>
+      <div>
+        <h4>代价</h4>
+        <ul>
+          <li>竖向占位随字段数增长（3 个字段 ≈ 3 行）</li>
+          <li>「挑一个已有的名字」这件事反而变慢，只能靠输入时的联想</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ 方案 C ============ -->
+  <section class="panel" id="c">
+    <div class="panel-head">
+      <span class="panel-name">方案 C：模板与结果分两级，手改后自动标「已改」</span>
+    </div>
+    <p class="panel-src">参照：<b>Notion 数据库模板</b>（套用＝一次性 stamp，之后只是值）、<b>Airtable 单选的 Default option</b>（官方写明「只影响新建记录」）、
+      <b>Figma 变量模式</b>的规则「显式指定过就锁定，默认/自动才跟随」——「已改」标记用的就是这条。</p>
+    <div class="stage">
+      <label class="field-label">第二步：这些属性从正文里抽出来</label>
+      <div class="tpl-row" data-tpls="c">
+        <button class="tpl" data-tpl='[]'>
+          <span class="tpl-name">不抽</span>
+          <span class="tpl-fields">只写标签，不做属性比对</span>
+        </button>
+        <button class="tpl" data-tpl='["人物","机构","概念"]'>
+          <span class="tpl-name">通用</span>
+          <span class="tpl-fields">人物 / 机构 / 概念</span>
+        </button>
+        <button class="tpl" data-tpl='["人物","事件","时期"]'>
+          <span class="tpl-name">历史类</span>
+          <span class="tpl-fields">人物 / 事件 / 时期</span>
+        </button>
+      </div>
+      <div style="margin-top:12px">
+        <div class="picker" data-picker="c">
+          <div class="picker-box" data-box>
+            <input data-input placeholder="也可以直接在这里输入属性名">
+          </div>
+          <span class="picker-caret">▾</span>
+          <div class="pop" data-pop hidden></div>
+        </div>
+      </div>
+      <p class="hint">模板名不再是一个空标签——卡片里直接写清它会抽哪几个字段。</p>
+    </div>
+    <div class="pros">
+      <div>
+        <h4>好在哪</h4>
+        <ul>
+          <li>「默认指向历史笔记」变成用户自己选的那一格，不再藏在默认值里</li>
+          <li>手改之后卡片标「已改」，不会像现在这样静默失配</li>
+        </ul>
+      </div>
+      <div>
+        <h4>代价</h4>
+        <ul>
+          <li>层级最深：模板 + 字段两行，加上开关一共三层</li>
+          <li>多数人只想要「随便填几个词」，两张卡片是多余的</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ 方案 D ============ -->
+  <section class="panel" id="d">
+    <div class="panel-head">
+      <span class="panel-name">方案 D：不问字段名，问「你想按什么把笔记串起来」</span>
+    </div>
+    <p class="panel-src">
+      这一版的出处弱一些：来自 <b>Sentry TimeRangeSelector</b> 的原则——自定义应当是「预设的生成器」，
+      而不是另一条独立的输入路径（<a href="https://github.com/getsentry/sentry/pull/36624">Sentry PR #36624</a>），
+      以及 <b>Stripe metadata</b> 这个反面样本：纯自由填写零可发现性，用户不知道业界通用名字叫什么。
+      但「勾选维度」这个具体控件形态<b>是我构造的，没有可直接对应的成熟设计</b>，见调研文档的诚实清单。
+    </p>
+    <div class="stage">
+      <label class="field-label">你想让笔记之间靠什么互相找到</label>
+      <div class="dims" data-dims="d">
+        <button class="dim" data-dim="人物"><span class="dim-tick">✓</span>人物</button>
+        <button class="dim" data-dim="事件"><span class="dim-tick">✓</span>事件</button>
+        <button class="dim" data-dim="时期"><span class="dim-tick">✓</span>时期</button>
+        <button class="dim" data-dim="地点"><span class="dim-tick">✓</span>地点</button>
+        <button class="dim" data-dim="概念"><span class="dim-tick">✓</span>概念</button>
+        <button class="dim" data-dim="作品"><span class="dim-tick">✓</span>作品</button>
+        <button class="dim" data-dim="机构"><span class="dim-tick">✓</span>机构</button>
+        <span class="dim-custom">
+          <input data-dim-custom placeholder="自定义">
+        </span>
+      </div>
+      <p class="hint" data-dim-out>还没选。</p>
+    </div>
+    <div class="pros">
+      <div>
+        <h4>好在哪</h4>
+        <ul>
+          <li>用户不必先想出一个字段名——那是这个功能最难的一步</li>
+          <li>默认不再偏向任何一类笔记</li>
+        </ul>
+      </div>
+      <div>
+        <h4>代价</h4>
+        <ul>
+          <li>看着比前三个都重，勾选项本身也是一份要维护的清单</li>
+          <li>字段名与勾选项绑死后，「任意名字」的自由度靠自定义那一格兜</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+</div>
+
+<script>
+/* ---------------- 数据 ---------------- */
+const SUGGEST = [
+  { group: "你库里出现过的", items: [
+    { name: "人物", count: 41 }, { name: "事件", count: 37 }, { name: "时期", count: 25 },
+    { name: "地点", count: 12 }, { name: "作品", count: 9 },
+  ] },
+  { group: "常用属性名", items: [
+    { name: "概念" }, { name: "机构" }, { name: "关键词" }, { name: "主题" },
+  ] },
+];
+const COMBOS = [
+  { name: "历史类", fields: ["人物", "事件", "时期"] },
+  { name: "通用", fields: ["人物", "机构", "概念"] },
+  { name: "不抽", fields: [] },
+];
+
+/* ---------------- 小工具 ---------------- */
+function el(tag, cls, text) {
+  const node = document.createElement(tag);
+  if (cls) node.className = cls;
+  if (text != null) node.textContent = text;
+  return node;
+}
+
+/* ---------------- creatable 选择器 ---------------- */
+function makePicker(root, opts = {}) {
+  const box = root.querySelector("[data-box]");
+  const input = root.querySelector("[data-input]");
+  const pop = root.querySelector("[data-pop]");
+  let values = (opts.initial || []).slice();
+  /* 用户自己创建过的名字：真机上 el-select 不会把它放回候选（issue #11892），
+     推荐实现是在 @change 里回填到自己的建议数组里——原型照这个行为做，不然第二次想选同一个词只能重打。 */
+  let remembered = [];
+  let active = -1;
+  let items = [];
+
+  function chip(value) {
+    const wrap = el("span", "chip");
+    wrap.append(el("span", null, value));
+    const x = el("button", "chip-x", "×");
+    x.title = `移除 ${value}`;
+    x.addEventListener("mousedown", (e) => {
+      e.preventDefault();
+      values = values.filter((v) => v !== value);
+      render();
+      input.focus();
+    });
+    wrap.append(x);
+    return wrap;
+  }
+
+  function suggestItems(query) {
+    const out = [];
+    /* 「你自己加过的」排在最前：它比通用词更可能被再次选中 */
+    if (remembered.length) {
+      for (const name of remembered) {
+        if (values.includes(name)) continue;
+        if (query && !name.includes(query)) continue;
+        out.push({ kind: "suggest", group: "你自己加过的", name });
+      }
+    }
+    for (const g of SUGGEST) {
+      for (const item of g.items) {
+        if (values.includes(item.name)) continue;
+        if (query && !item.name.includes(query)) continue;
+        out.push({ kind: "suggest", group: g.group, name: item.name, count: item.count });
+      }
+    }
+    return out;
+  }
+
+  function renderPop() {
+    const query = input.value.trim();
+    pop.innerHTML = "";
+    items = [];
+    const list = el("div", "pop-list");
+    pop.append(list);
+
+    /* 现状：候选项＝当前值本身，所以能点的都已经是选中的了（复现真实行为，别修好它） */
+    if (opts.mode === "self") {
+      const query = input.value.trim();
+      for (const v of values) {
+        const row = el("div", "pop-item");
+        row.append(el("span", null, v));
+        row.append(el("span", "pop-item-meta", "已选"));
+        list.append(row);
+      }
+      if (query && !values.includes(query)) {
+        const row = el("div", "pop-item pop-item--create");
+        row.append(el("span", "pop-item-plus", "＋"), el("span", null, `创建「${query}」`));
+        row.addEventListener("mousedown", (e) => { e.preventDefault(); add(query); });
+        list.append(row);
+        items.push({ node: row, run: () => add(query) });
+      }
+      list.append(el("div", "pop-empty", "可选项只有上面这几个——都是你已经选中的"));
+      active = -1;
+      highlight();
+      return;
+    }
+    const suggests = suggestItems(query);
+    let lastGroup = "";
+    for (const s of suggests) {
+      if (s.group !== lastGroup) {
+        list.append(el("div", "pop-group", s.group));
+        lastGroup = s.group;
+      }
+      const row = el("div", "pop-item");
+      row.append(el("span", null, s.name));
+      if (s.count != null) row.append(el("span", "pop-item-meta", `库里 ${s.count} 篇用过`));
+      row.addEventListener("mousedown", (e) => { e.preventDefault(); add(s.name); });
+      list.append(row);
+      items.push({ node: row, run: () => add(s.name) });
+    }
+
+    if (query && !values.includes(query)) {
+      if (items.length) list.append(el("div", "pop-sep"));
+      const row = el("div", "pop-item pop-item--create");
+      row.append(el("span", "pop-item-plus", "＋"), el("span", null, `创建「${query}」`));
+      row.addEventListener("mousedown", (e) => { e.preventDefault(); add(query); });
+      list.append(row);
+      items.push({ node: row, run: () => add(query) });
+    }
+
+    if (!items.length) list.append(el("div", "pop-empty", "没有匹配的名字，回车即可创建"));
+
+    /* 常用组合固定在底部：建议列表再长也压不住它 */
+    if (opts.combos) {
+      const foot = el("div", "pop-foot");
+      foot.append(el("span", null, "常用组合"));
+      for (const combo of COMBOS) {
+        const btn = el("button", "pop-foot-combo", combo.name);
+        btn.type = "button";
+        btn.title = combo.fields.length ? combo.fields.join(" / ") : "清空属性";
+        btn.addEventListener("mousedown", (e) => {
+          e.preventDefault();
+          values = combo.fields.slice();
+          input.value = "";
+          render();
+          input.focus();
+        });
+        foot.append(btn);
+      }
+      pop.append(foot);
+    }
+
+    active = -1;
+    highlight();
+  }
+
+  function highlight() {
+    items.forEach((it, i) => it.node.classList.toggle("pop-item--active", i === active));
+  }
+
+  function add(value) {
+    const v = String(value).trim();
+    if (!v || values.includes(v)) { input.value = ""; renderPop(); return; }
+    const known = SUGGEST.some((g) => g.items.some((item) => item.name === v)) || remembered.includes(v);
+    if (!known) remembered.push(v);
+    values.push(v);
+    input.value = "";
+    render();
+    input.focus();
+  }
+
+  function render() {
+    box.querySelectorAll(".chip").forEach((n) => n.remove());
+    /* chip 按加入顺序排在输入框之前——和 el-select 的表现一致，新加的落在最后 */
+    for (const v of values) box.insertBefore(chip(v), input);
+    renderPop();
+    opts.onChange?.(values.slice());
+  }
+
+  input.addEventListener("focus", () => { pop.hidden = false; renderPop(); });
+  input.addEventListener("input", () => { pop.hidden = false; renderPop(); });
+  input.addEventListener("blur", () => { setTimeout(() => { pop.hidden = true; }, 120); });
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      const pick = items[active];
+      if (pick && pick.run) pick.run();
+      else add(input.value);
+      return;
+    }
+    if (e.key === "Backspace" && !input.value && values.length) {
+      values.pop();
+      render();
+      return;
+    }
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+      e.preventDefault();
+      if (!items.length) return;
+      active = e.key === "ArrowDown"
+        ? (active + 1) % items.length
+        : (active - 1 + items.length) % items.length;
+      highlight();
+    }
+    if (e.key === "Escape") pop.hidden = true;
+  });
+  box.addEventListener("mousedown", (e) => { if (e.target === box) { e.preventDefault(); input.focus(); } });
+
+  render();
+  return { get: () => values.slice(), set: (next) => { values = next.slice(); render(); } };
+}
+
+/* ---------------- 接线 ---------------- */
+const pickers = {};
+
+/* 真实宽度开关：默认按设置页 460px 显示，关掉可以看结构全貌 */
+const narrowBox = document.getElementById("narrow");
+function applyWidth() { document.body.classList.toggle("narrow", narrowBox.checked); }
+narrowBox.addEventListener("change", applyWidth);
+applyWidth();
+/* 现状：候选项就是当前值（复现现在的行为，点开确实没东西可选） */
+pickers.now = makePicker(document.querySelector('[data-picker="now"]'), {
+  initial: ["人物", "事件", "时期"],
+  mode: "self",
+});
+/* 方案 A */
+pickers.a = makePicker(document.querySelector('[data-picker="a"]'), {
+  initial: ["人物", "事件"],
+  combos: true,
+});
+/* 方案 C：模板卡与「已改」状态 */
+const tplBtns = [...document.querySelectorAll('[data-tpls="c"] .tpl')];
+/** 用户最后按下的那张模板卡：手改之后靠它知道「已改」该标在哪一张上。 */
+let lastTpl = null;
+
+function syncTpl(values) {
+  const now = JSON.stringify(values);
+  const hit = tplBtns.findIndex((btn) => JSON.stringify(JSON.parse(btn.dataset.tpl)) === now);
+  tplBtns.forEach((btn, i) => {
+    /* 命中＝正在用这套；没命中但它是最后按下的那张，标「已改」——说明这份是从它改出来的 */
+    const changed = hit < 0 && i === lastTpl;
+    btn.classList.toggle("tpl--active", i === hit || changed);
+    btn.classList.toggle("tpl--custom", changed);
+  });
+}
+
+pickers.c = makePicker(document.querySelector('[data-picker="c"]'), {
+  initial: ["人物", "事件", "时期"],
+  onChange: (values) => syncTpl(values),
+});
+
+tplBtns.forEach((btn, i) => {
+  btn.addEventListener("click", () => {
+    lastTpl = i;
+    pickers.c.set(JSON.parse(btn.dataset.tpl));
+    syncTpl(pickers.c.get());
+  });
+});
+
+/* 方案 B：属性表 */
+const rows = document.querySelector('[data-rows="b"]');
+rows.addEventListener("click", (e) => {
+  const del = e.target.closest("[data-del]");
+  if (del) { del.closest("[data-row]").remove(); return; }
+  const add = e.target.closest("[data-add]");
+  if (add) {
+    const row = el("div", "row");
+    row.dataset.row = "";
+    row.append(el("span", "row-name", "新属性"));
+    row.append(el("span", "row-desc", "从正文里抽出这个属性填进笔记头部"));
+    const x = el("button", "row-x", "×");
+    x.dataset.del = "";
+    x.title = "移除";
+    row.append(x);
+    rows.insertBefore(row, add);
+  }
+});
+
+/* 方案 D：维度勾选 */
+const dims = document.querySelector('[data-dims="d"]');
+const dimOut = document.querySelector('[data-dim-out]');
+function syncDims() {
+  const picked = [...dims.querySelectorAll(".dim--on")].map((b) => b.dataset.dim);
+  const custom = dims.querySelector("[data-dim-custom]").value.trim();
+  const all = custom ? [...picked, custom] : picked;
+  dimOut.innerHTML = all.length
+    ? `会写成 <code>${all.join("、")}</code> 这几个字段名，写进笔记头部。`
+    : "还没选。";
+}
+dims.addEventListener("click", (e) => {
+  const dim = e.target.closest("[data-dim]");
+  if (!dim) return;
+  dim.classList.toggle("dim--on");
+  syncDims();
+});
+dims.querySelector("[data-dim-custom]").addEventListener("input", syncDims);
+syncDims();
+
+/* 现状的「换成」按钮：点了直接覆盖当前值（也和真实行为一致） */
+const presetMap = { 历史笔记: ["人物", "事件", "时期"], 通用: ["人物", "机构", "概念"], 不抽: [] };
+document.querySelectorAll("#now .preset").forEach((btn) => {
+  btn.addEventListener("click", () => {
+    document.querySelectorAll("#now .preset").forEach((b) => b.classList.remove("preset--active"));
+    btn.classList.add("preset--active");
+    pickers.now.set(presetMap[btn.textContent.trim()] ?? []);
+  });
+});
+
+/* 开关都可点（纯演示） */
+document.querySelectorAll(".switch").forEach((s) => {
+  s.addEventListener("click", () => {
+    s.setAttribute("aria-checked", s.getAttribute("aria-checked") === "true" ? "false" : "true");
+  });
+});
+</script>
+</body>
+</html>

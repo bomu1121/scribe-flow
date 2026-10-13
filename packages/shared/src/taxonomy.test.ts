@@ -1,20 +1,22 @@
 import { describe, expect, it } from "vitest";
 import {
+  AUTO_TAG_GROUPS,
+  SOURCE_TAXONOMY_GROUP,
   UP_TAXONOMY_GROUP,
   addTagToTaxonomy,
+  isAutoTag,
   managedTags,
   normalizeTagSegment,
   sanitizeTaxonomy,
   taxonomyHash,
-  topicManagedTags,
   writableTags,
 } from "./taxonomy";
 import { DEFAULT_EXTRACT_FIELDS, EXTRACT_FIELD_PRESETS, MAX_EXTRACT_FIELDS, sanitizeExtractFields } from "./obsidian";
 
 /**
  * 词库与标签名的纯函数。重点在三件"错了不会报错"的事：
- * 空格必须被规范掉（Obsidian 标签不能含空格）、UP 主那一支不能被模型分配、
- * 词库指纹对"同样的词库"必须稳定（它决定重打标要不要重跑）。
+ * 空格必须被规范掉（Obsidian 标签不能含空格）、两个自动分组（UP主名称 / 来源）不能被模型分配
+ * 也不能被重打标当成"词库里删掉的条目"清理、词库指纹对"同样的词库"必须稳定（它决定重打标要不要重跑）。
  */
 
 describe("normalizeTagSegment", () => {
@@ -39,22 +41,30 @@ describe("normalizeTagSegment", () => {
 });
 
 describe("词库派生", () => {
-  const taxonomy = { 领域: ["AI", "历史"], 状态: [], [UP_TAXONOMY_GROUP]: ["某某UP"] };
+  const taxonomy = { 领域: ["AI", "历史"], 状态: [], [UP_TAXONOMY_GROUP]: ["某某UP"], [SOURCE_TAXONOMY_GROUP]: ["B站"] };
 
-  it("writableTags 不含 UP 主那一支；没有二级的一级自己可当标签", () => {
+  it("writableTags 不含两个自动分组；没有二级的一级自己可当标签", () => {
     const writable = writableTags(taxonomy);
     expect(writable).toEqual(["领域/AI", "领域/历史", "状态"]);
-    expect(writable.some((tag) => tag.startsWith(UP_TAXONOMY_GROUP))).toBe(false);
+    for (const group of AUTO_TAG_GROUPS) {
+      expect(writable.some((tag) => tag.startsWith(`${group}/`))).toBe(false);
+    }
   });
 
-  it("managedTags 含一级本身（用户可能只用一级打标）", () => {
+  it("managedTags 含一级本身（用户可能只用一级打标），但**不含自动分组**——回补不许碰它们", () => {
     expect(managedTags(taxonomy)).toContain("领域");
     expect(managedTags(taxonomy)).toContain("领域/AI");
+    // 这一条是防回归的：老指纹里记过 `来源/*` 是我们写的，若 managedTags 把它们算进来，
+    // 一次全库回补就会把老笔记里的来源标签当"词库里删掉的条目"清掉。
+    for (const group of AUTO_TAG_GROUPS) {
+      expect(managedTags(taxonomy).some((tag) => tag === group || tag.startsWith(`${group}/`))).toBe(false);
+    }
   });
 
-  it("topicManagedTags 去掉 UP 主那一支", () => {
-    expect(topicManagedTags(taxonomy).some((tag) => tag.startsWith(UP_TAXONOMY_GROUP))).toBe(false);
-    expect(topicManagedTags(taxonomy)).toContain("状态");
+  it("isAutoTag 认得出两个自动分组，认不出普通分组", () => {
+    expect(isAutoTag(`${UP_TAXONOMY_GROUP}/某某UP`)).toBe(true);
+    expect(isAutoTag(`${SOURCE_TAXONOMY_GROUP}/B站`)).toBe(true);
+    expect(isAutoTag("领域/AI")).toBe(false);
   });
 
   it("taxonomyHash 与键序、大小写无关，与内容有关", () => {

@@ -29,6 +29,8 @@ const patchBodySchema = z.object({
 
 const putGraphSchema = z.object({
   graph: z.unknown(),
+  /** 明确确认「用一张空画布覆盖一份非空工程」。缺省 false——空覆盖非空一律先拦下来。 */
+  confirmEmpty: z.boolean().optional(),
 });
 
 const orderBodySchema = z.object({
@@ -230,6 +232,35 @@ export function projectsApi(db: AppDatabase, engine: RunEngine, dataDir: string)
       graph = cleanGraph(parseGraph(parsed.data.graph));
     } catch {
       return c.json({ error: "画布数据校验失败：存在非法节点或连线" }, 400);
+    }
+
+    // 空画布覆盖非空工程：必须带 confirmEmpty 才放行。
+    //
+    // 前端那道空图确认弹窗只守得住「用户在画布上把节点删空」这一条路径。它守不住的是
+    // 编辑器以一个空画布启动的情况——读工程失败（后端正在重启）、旧标签页里还留着空画布、
+    // 热更新换树——那时前端的「上一次保存了几个节点」这类状态本身就是 0，护栏等于不存在，
+    // 一次防抖保存就把整份工程写空（2026-10-13 实际发生）。
+    // 判断放在这里是因为只有服务端知道「这一版到底有没有节点」，与客户端时序无关。
+    if (graph.nodes.length === 0) {
+      let storedNodes = 0;
+      try {
+        const previous = JSON.parse(row.graphJson) as WorkflowGraph;
+        storedNodes = Array.isArray(previous.nodes) ? previous.nodes.length : 0;
+      } catch {
+        storedNodes = 0;
+      }
+      if (storedNodes > 0 && parsed.data.confirmEmpty !== true) {
+        // 仍然留档：万一是用户真想清空，这版也还在。
+        backupGraph(db, dataDir, id, row.graphJson);
+        return c.json(
+          {
+            error: `画布是空的，但服务端这份工程还有 ${storedNodes} 个节点，已拦下这次覆盖。确实要清空的话，在画布上确认后再保存。`,
+            needConfirmEmpty: true,
+            storedNodes,
+          },
+          409,
+        );
+      }
     }
 
     // 覆盖前留一份「前一版」：编辑器在异常路径（热更新换树、渲染失败、防抖竞态）下

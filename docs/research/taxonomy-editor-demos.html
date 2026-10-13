@@ -1,0 +1,667 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>③ 词库编辑器 —— 现状对照与候选方案</title>
+<!--
+  用途：比较设置页「③ 词库」这块两级标签编辑器的结构，供选型。
+  内容宽度 454px（= 设置页表单列 460px 减去 6px 余量），与真机一致；用真机上的真实词库数据。
+  用法：双击打开；三个方案都能真的增删改，图表里的高度是实测。
+-->
+<style>
+  /* 令牌内联自 apps/web/src/styles/tokens.css */
+  :root {
+    --color-bg: #f4f5f6;
+    --color-surface: #ffffff;
+    --color-surface-muted: #f7f8f9;
+    --color-border: #e4e7eb;
+    --color-border-strong: #cdd3da;
+    --color-text: #16181d;
+    --color-text-secondary: #545b66;
+    --color-text-tertiary: #8a929e;
+    --color-error: #d23f4e;
+    --color-error-soft: #fbecee;
+    --color-brand: #00aeec;
+    --color-brand-soft: #e6f7fe;
+    --color-brand-border: #b8e8fb;
+    --color-brand-pressed: #0b88c4;
+    --radius-md: 8px;
+    --font-family: "Geist Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+      "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans SC", sans-serif;
+    --text-help-size: 12px;
+    --text-body-size: 13px;
+    --text-leading: 1.8;
+    --dur-1: 120ms;
+    --ease-out: cubic-bezier(0.2, 0.8, 0.2, 1);
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 28px 22px 96px;
+    background: var(--color-bg); color: var(--color-text);
+    font-family: var(--font-family); font-size: 14px; line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+  .page { max-width: 900px; margin: 0 auto; }
+  h1 { margin: 0 0 6px; font-size: 20px; font-weight: 600; }
+  .lead { margin: 0 0 16px; color: var(--color-text-secondary); }
+  .width-bar {
+    display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+    margin: 0 0 20px; padding: 8px 12px;
+    background: var(--color-surface); border: 1px solid var(--color-border); border-radius: 8px;
+    font-size: 12px; color: var(--color-text-secondary);
+  }
+  .width-bar label { display: flex; align-items: center; gap: 6px; cursor: pointer; }
+
+  .panel {
+    margin-bottom: 24px; padding: 16px 18px 18px;
+    background: var(--color-surface); border: 1px solid var(--color-border); border-radius: 12px;
+  }
+  .panel-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+  .panel-name { font-size: 15px; font-weight: 600; }
+  .badge {
+    padding: 1px 7px; border-radius: 999px; font-size: 11px;
+    background: var(--color-brand-soft); color: var(--color-brand-pressed); border: 1px solid var(--color-brand-border);
+  }
+  .badge--grey { background: var(--color-surface-muted); color: var(--color-text-tertiary); border-color: var(--color-border); }
+  .panel-src { margin: 4px 0 12px; font-size: 12px; color: var(--color-text-tertiary); }
+  .panel-src b { color: var(--color-text-secondary); font-weight: 500; }
+  .stage { max-width: 454px; }
+  .facts { margin: 12px 0 0; padding: 0; list-style: none; font-size: 12px; color: var(--color-text-secondary); }
+  .facts li { margin-bottom: 3px; }
+  .facts b { color: var(--color-text); font-weight: 600; }
+  .measured {
+    display: inline-block; margin-left: 6px; padding: 0 6px; border-radius: 4px;
+    background: var(--color-surface-muted); color: var(--color-text-secondary); font-size: 11px;
+  }
+
+  /* ---------- 通用小件 ----------
+     尺寸**照抄真机**（组卡 padding 10/12、chip 22px、输入框 32px、间距 6/8px）：
+     只有结构这一个变量在变，否则"省了多少"就没法比。 */
+  .g { padding: 10px 12px; border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--color-surface); }
+  .g + .g { margin-top: 8px; }
+  .g-head { display: flex; align-items: center; gap: 8px; }
+  .g-name { font-size: 13px; font-weight: 600; }
+  .g-count { font-size: 11px; color: var(--color-text-tertiary); }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+  .chip {
+    display: inline-flex; align-items: center; gap: 4px;
+    padding: 0 4px 0 8px; border-radius: 999px;
+    background: var(--color-surface-muted); color: var(--color-text-secondary);
+    font-size: 11px; line-height: 22px;
+  }
+  .chip b { font-weight: 400; }
+  .chip-x {
+    border: none; background: transparent; color: var(--color-text-tertiary);
+    font: inherit; font-size: 12px; line-height: 1; padding: 0 2px; cursor: pointer;
+    opacity: 0; transition: opacity var(--dur-1) var(--ease-out);
+  }
+  .chip:hover .chip-x { opacity: 1; }
+  .chip-x:hover { color: var(--color-error); }
+  /* 「+ 添加」的槽位：与 chip 同一行、同一行高，视觉上就是"列表的最后一个" */
+  .add-slot { display: inline-flex; align-items: center; height: 22px; }
+  .add-slot .mini { height: 22px; }
+  .ghost {
+    border: none; background: transparent; color: var(--color-text-tertiary);
+    font: inherit; font-size: 11px; padding: 0 4px; cursor: pointer; line-height: 22px;
+  }
+  .ghost:hover { color: var(--color-text); }
+  .caret {
+    border: none; background: transparent; color: var(--color-text-tertiary);
+    font: inherit; font-size: 10px; padding: 0; cursor: pointer; width: 12px;
+  }
+  .mini {
+    border: 1px solid var(--color-border); border-radius: 4px; background: var(--color-surface);
+    font: inherit; font-size: 12px; padding: 1px 8px; height: 32px; color: var(--color-text);
+  }
+  .mini:focus { outline: none; border-color: var(--color-brand); }
+  .hint-inline { font-size: 11px; color: var(--color-text-tertiary); }
+  .collapsed .chips, .collapsed .g-extra { display: none; }
+  .row {
+    display: flex; align-items: center; gap: 6px; padding: 1px 4px; border-radius: 4px;
+  }
+  .row:hover { background: var(--color-surface-muted); }
+  .row .indent { width: 18px; }
+  .row .row-x { opacity: 0; border: none; background: transparent; color: var(--color-text-tertiary); cursor: pointer; font-size: 12px; padding: 0 3px; }
+  .row:hover .row-x { opacity: 1; }
+  .row .row-x:hover { color: var(--color-error); }
+  .row-name { font-size: 12px; }
+  .row-name input { font: inherit; border: 1px solid var(--color-brand); border-radius: 4px; padding: 0 4px; }
+</style>
+</head>
+<body>
+<div class="page">
+  <h1>③ 词库编辑器 —— 现状对照与候选方案</h1>
+  <p class="lead">
+    设置页里维护两级标签的那一块。宽度按真机的 454px、数据用真机上的真实词库（6 个一级 / 24 个二级）。
+    三个方案都可以真的增删改，下面写的高度是在浏览器里量出来的。
+  </p>
+  <div class="width-bar">
+    <label><input type="checkbox" id="real" checked> 按真机宽度（454px）显示</label>
+    <label><input type="checkbox" id="accordion"> 手风琴：同时只展开一组</label>
+    <label><input type="checkbox" id="search"> 顶部加搜索框</label>
+    <span id="support"></span>
+  </div>
+
+  <!-- ================= 现状 ================= -->
+  <section class="panel" id="now">
+    <div class="panel-head">
+      <span class="panel-name">现状（照抄真机）</span>
+      <span class="badge badge--grey">6 组 880px · 7 输入框 · 67 按钮</span>
+    </div>
+    <p class="panel-src">
+      每个一级一张卡片：组头（名字 + 计数 + <b>删除一级</b>）+ 二级 chip + <b>一个「新增二级」输入框与「添加」按钮</b>。
+      一组不高，六组叠起来 <b>880px</b>；每组的输入框都常驻，全块 <b>7 个输入框、67 个可聚焦按钮</b>。不能折叠，不能重命名。
+    </p>
+    <div class="stage" id="now-stage"></div>
+    <ul class="facts">
+      <li>竖向：<b>880px</b><span class="measured">实测</span>——只这一块就占掉一屏多</li>
+      <li>键盘：<b>67 个停靠点</b><span class="measured">实测</span>（每个 chip 两个按钮：名字 + ×）</li>
+      <li>每组常驻输入框 + 按钮：<b>视觉噪音</b>，而且让"这组有几个标签"变得难扫</li>
+      <li>chip 上重复写着父级名（<code>来源/B站</code>），而组头已经写了「来源」</li>
+      <li>不能折叠、不能重命名、不能排序；「删除一级」与「添加」等重，误点代价高</li>
+    </ul>
+  </section>
+
+  <!-- ================= 方案 A ================= -->
+  <section class="panel" id="a">
+    <div class="panel-head">
+      <span class="panel-name">方案 A：紧凑分组 + 按需新增 + 可折叠</span>
+      <span class="badge">推荐</span>
+    </div>
+    <p class="panel-src">
+      三处改动：① 输入框与「添加」收成一个 <b>「+ 添加」幽灵按钮</b>，点了才变输入框（回车提交、Esc 取消）；
+      ② 组头收掉「删除一级」，改成指向时才出现的 <b>⋯</b>（复制搜索串 / 重命名 / 删除）；
+      ③ 二级 chip 去掉重复的父级前缀，删除按钮<b>指向才出现</b>；组头可点折叠。
+    </p>
+    <div class="stage" id="a-stage"></div>
+    <ul class="facts">
+      <li>试着做：<b>点组名折叠</b>、<b>点「+ 添加」</b>加一个、<b>指向 chip</b> 看 × 、<b>指向组头</b>看 ⋯</li>
+      <li>预期省下的：常驻输入框消失、每组头尾各收一行；<b>实测高度见下</b></li>
+    </ul>
+  </section>
+
+  <!-- ================= 方案 B ================= -->
+  <section class="panel" id="b">
+    <div class="panel-head">
+      <span class="panel-name">方案 B：一个输入台管全部（打字即归组）</span>
+    </div>
+    <p class="panel-src">
+      顶部一个输入框 + 一个「加到哪个一级」的选择，回车即加；<b>直接打 <code>话题/平台抽成</code> 也能自动归组并建组</b>。
+      下面那棵树只负责"看和删"——它是只读展示，没有再多的按钮。
+    </p>
+    <div class="stage" id="b-stage"></div>
+    <ul class="facts">
+      <li>试：输入「平台抽成」＋选「来源」回车；或直接输入 <b>话题/平台抽成</b> 回车（会自动建「话题」一级）</li>
+      <li>竖向最省：整块只有 <b>1 个输入框</b>，其余是只读 chips</li>
+      <li>代价：重命名/挪动仍然没有；打错字要删了重加</li>
+    </ul>
+  </section>
+
+  <!-- ================= 方案 C ================= -->
+  <section class="panel" id="c">
+    <div class="panel-head">
+      <span class="panel-name">方案 C：树 + 行内编辑（Anki / Zotero 那种）</span>
+    </div>
+    <p class="panel-src">
+      每一行一个标签，层级用<b>缩进 + 折叠三角</b>表示；<b>双击行内改名</b>，行尾指向时出现「+」加二级、× 删除。
+      这种结构在"标签多、要改名/整理"时最顺手。
+    </p>
+    <div class="stage" id="c-stage"></div>
+    <ul class="facts">
+      <li>试：<b>双击任一标签名改名</b>、点三角折叠一级、指向行尾看 + 与 ×</li>
+      <li>代价：树比分组卡片更"技术感"，第一眼看不出"二级属于哪个一级"的归属关系（只能靠缩进）</li>
+      <li>拖拽移动这一版原型<b>没有实现</b>（成熟实现见 Anki/Zotero）；真做要引入拖拽库</li>
+    </ul>
+  </section>
+</div>
+
+<script>
+/* ------------------------------------------------------------------ 数据 */
+const TAXONOMY = {
+  来源: ["B站", "文稿", "本地视频", "网页", "播客"],
+  类型: ["视频笔记", "学习笔记", "思维导图", "会议纪要"],
+  领域: ["历史", "AI", "编程", "效率", "心理", "知识管理"],
+  概念: ["Obsidian", "PARA", "Zettelkasten", "RAG", "双链", "Templater", "Dataview"],
+  状态: ["未整理", "已整理"],
+  UP主名称: [],
+};
+const clone = (t) => JSON.parse(JSON.stringify(t));
+
+/* ------------------------------------------------------------------ 工具 */
+function el(tag, cls, text) {
+  const n = document.createElement(tag);
+  if (cls) n.className = cls;
+  if (text != null) n.textContent = text;
+  return n;
+}
+function groupCard(group, children, opts) {
+  const card = el("div", "g");
+  const head = el("div", "g-head");
+  if (opts.collapsible) {
+    const caret = el("button", "caret", "▾");
+    caret.type = "button";
+    caret.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const on = card.classList.toggle("collapsed");
+      caret.textContent = on ? "▸" : "▾";
+      /* 手风琴开关打开时：展开这一组就把同容器里其他组收起 */
+      if (!on && document.body.classList.contains("accordion")) {
+        for (const other of card.parentElement.children) {
+          if (other === card || !other.classList.contains("g")) continue;
+          other.classList.add("collapsed");
+          const c = other.querySelector(".caret");
+          if (c) c.textContent = "▸";
+        }
+      }
+    });
+    head.append(caret);
+  }
+  const name = el("span", "g-name", group);
+  head.append(name);
+  head.append(el("span", "g-count", String(children.length)));
+  if (opts.menu) {
+    const more = el("button", "ghost", "⋯");
+    more.type = "button";
+    more.style.opacity = "0";
+    more.style.marginLeft = "auto";
+    more.addEventListener("click", () => {
+      const menu = el("div", "chips");
+      const rename = el("button", "ghost", "重命名");
+      const del = el("button", "ghost", "删除一级");
+      del.style.color = "var(--color-error)";
+      rename.addEventListener("click", () => { name.textContent = prompt("新的一级名", group) ?? group; menu.remove(); });
+      del.addEventListener("click", () => { card.remove(); });
+      menu.append(rename, del);
+      card.querySelector(".g-extra")?.remove();
+      const extra = el("div", "g-extra");
+      extra.append(menu);
+      card.append(extra);
+      more.style.opacity = "1";
+    });
+    head.addEventListener("mouseenter", () => { more.style.opacity = "1"; });
+    head.addEventListener("mouseleave", () => { more.style.opacity = "0"; });
+    head.append(more);
+  }
+  card.append(head);
+  const chips = el("div", "chips");
+  for (const child of children) chips.append(chip(group, child, opts.onRename));
+  card.append(chips);
+  return card;
+}
+function chip(group, child, onRenamed) {
+  const wrap = el("span", "chip");
+  const label = el("b", null, child);
+  label.title = "双击改名";
+  wrap.append(label);
+  if (onRenamed) {
+    label.style.cursor = "text";
+    label.addEventListener("dblclick", () => {
+      const input = el("input", "mini");
+      input.value = child;
+      input.style.width = `${Math.max(60, child.length * 14 + 20)}px`;
+      input.style.height = "20px";
+      label.replaceWith(input);
+      input.focus();
+      input.select();
+      const commit = (save) => {
+        const next = save ? input.value.trim() : child;
+        if (input.parentElement) input.replaceWith(label);
+        if (next && next !== child) {
+          label.textContent = next;
+          onRenamed(child, next);
+        }
+      };
+      input.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") commit(true);
+        if (e.key === "Escape") commit(false);
+      });
+      input.addEventListener("blur", () => commit(true));
+    });
+  }
+  const x = el("button", "chip-x", "×");
+  x.type = "button";
+  x.title = `移除 ${group}/${child}`;
+  x.addEventListener("click", () => wrap.remove());
+  wrap.append(x);
+  return wrap;
+}
+/** 按需出现的输入：一个「+ 添加」按钮，点了才变成输入框。
+    两处都照成熟做法：① **并进 chip 行的末尾**（放成独立一行会让每组白多 30px）；
+    ② 回车提交后**输入框保持打开**，方便连续录入（Trello 的 checklist 就是这样），Esc 才收起。 */
+function addAffordance(label, onCommit, opts = {}) {
+  const wrap = el("span", "add-slot");
+  const btn = el("button", "ghost", label);
+  btn.type = "button";
+  wrap.append(btn);
+  btn.addEventListener("click", () => {
+    const input = el("input", "mini");
+    input.placeholder = opts.placeholder ?? "回车确认，Esc 取消";
+    input.style.width = "132px";
+    wrap.replaceChild(input, btn);
+    input.focus();
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") {
+        const value = input.value.trim();
+        if (value) onCommit(value);
+        input.value = ""; /* 连续录入：提交后留在输入框里，而不是收回去 */
+        return;
+      }
+      if (e.key === "Escape" && wrap.contains(input)) wrap.replaceChild(btn, input);
+    });
+    input.addEventListener("blur", () => {
+      if (wrap.contains(input)) wrap.replaceChild(btn, input);
+    });
+  });
+  return wrap;
+}
+
+/* ------------------------------------------------------------------ 现状 */
+(function renderNow() {
+  const stage = document.getElementById("now-stage");
+  for (const [group, children] of Object.entries(clone(TAXONOMY))) {
+    const card = el("div", "g");
+    const head = el("div", "g-head");
+    head.append(el("span", "g-name", group));
+    const count = el("span", "g-count", `${children.length} 个二级`);
+    count.style.flex = "1";
+    head.append(count);
+    const del = el("button", "ghost", "删除一级");
+    del.type = "button";
+    del.style.color = "var(--color-error)";
+    head.append(del);
+    card.append(head);
+
+    const chips = el("div", "chips");
+    for (const child of children) {
+      const wrap = el("span", "chip");
+      const btn = el("button", "ghost", `${group}/${child}`);
+      btn.type = "button";
+      btn.style.color = "var(--color-text-secondary)";
+      wrap.append(btn);
+      const x = el("button", "chip-x", "×");
+      x.type = "button";
+      x.style.opacity = "1"; /* 现状：删除按钮常显 */
+      wrap.append(x);
+      chips.append(wrap);
+    }
+    card.append(chips);
+
+    const add = el("div", "chips");
+    const input = el("input", "mini");
+    input.placeholder = "新增二级，回车确认";
+    input.style.flex = "1";
+    const addBtn = el("button", "ghost", "添加");
+    addBtn.type = "button";
+    addBtn.style.border = "1px solid var(--color-border)";
+    addBtn.style.borderRadius = "4px";
+    addBtn.style.padding = "1px 10px";
+    add.append(input, addBtn);
+    card.append(add);
+    stage.append(card);
+  }
+  const last = el("div", "chips");
+  const input = el("input", "mini");
+  input.placeholder = "新增一级分类，回车确认";
+  input.style.flex = "1";
+  const btn = el("button", "ghost", "添加一级");
+  btn.type = "button";
+  btn.style.border = "1px solid var(--color-border)";
+  btn.style.borderRadius = "4px";
+  btn.style.padding = "1px 10px";
+  last.append(input, btn);
+  stage.append(last);
+})();
+
+/* ------------------------------------------------------------------ 方案 A */
+(function renderA() {
+  const stage = document.getElementById("a-stage");
+  for (const [group, children] of Object.entries(clone(TAXONOMY))) {
+    const card = groupCard(group, children, { collapsible: true, menu: true, onRename: () => {} });
+    /* 「+ 添加」并进 chip 行末：放成独立一行会让每组白多 30px */
+    card.querySelector(".chips").append(
+      addAffordance("+ 添加", (value) => {
+        const chips = card.querySelector(".chips");
+        chips.insertBefore(chip(group, value), chips.lastElementChild);
+        const count = card.querySelector(".g-count");
+        count.textContent = String(Number(count.textContent) + 1);
+      }),
+    );
+    stage.append(card);
+  }
+  const newGroup = addAffordance(
+    "+ 新增一级分类",
+    (value) => {
+      const card = groupCard(value, [], { collapsible: true, menu: true });
+      card.querySelector(".chips").append(addAffordance("+ 添加", () => {}));
+      stage.insertBefore(card, stage.lastElementChild);
+    },
+    { placeholder: "一级名称，回车确认" },
+  );
+  const tail = el("div", "chips");
+  tail.append(newGroup);
+  stage.append(tail);
+})();
+
+/* ------------------------------------------------------------------ 方案 B */
+(function renderB() {
+  const stage = document.getElementById("b-stage");
+  const bar = el("div", "chips");
+  const target = el("select", "mini");
+  for (const group of Object.keys(TAXONOMY)) {
+    const option = el("option", null, group);
+    option.value = group;
+    target.append(option);
+  }
+  const input = el("input", "mini");
+  input.placeholder = "输入标签名回车；也可直接打 一级/二级";
+  input.style.flex = "1";
+  bar.append(input, target);
+  stage.append(bar);
+
+  const tree = el("div");
+  tree.style.marginTop = "8px";
+  const draw = (taxonomy) => {
+    tree.innerHTML = "";
+    for (const [group, children] of Object.entries(taxonomy)) {
+      const card = el("div", "g");
+      const head = el("div", "g-head");
+      head.append(el("span", "g-name", group), el("span", "g-count", String(children.length)));
+      card.append(head);
+      const chips = el("div", "chips");
+      for (const child of children) chips.append(chip(group, child, () => {}));
+      card.append(chips);
+      tree.append(card);
+    }
+  };
+  const state = clone(TAXONOMY);
+  draw(state);
+  stage.append(tree);
+
+  input.addEventListener("keydown", (e) => {
+    if (e.key !== "Enter") return;
+    const raw = input.value.trim();
+    if (!raw) return;
+    /* 打了 `一级/二级` 就按路径走（会自动建一级）；否则用旁边的选择 */
+    const [group, child] = raw.includes("/") ? raw.split("/") : [target.value, raw];
+    if (!child) return;
+    state[group] = [...(state[group] ?? []), child];
+    draw(state);
+    input.value = "";
+  });
+})();
+
+/* ------------------------------------------------------------------ 方案 C */
+(function renderC() {
+  const stage = document.getElementById("c-stage");
+  const state = clone(TAXONOMY);
+  const draw = () => {
+    stage.innerHTML = "";
+    for (const [group, children] of Object.entries(state)) {
+      const headRow = el("div", "row");
+      const caret = el("button", "caret", "▾");
+      caret.type = "button";
+      headRow.append(caret);
+      const name = el("span", "row-name", group);
+      headRow.append(name);
+      headRow.append(el("span", "hint-inline", String(children.length)));
+      const addBtn = el("button", "row-x", "+");
+      addBtn.title = "在这个一级下加一个二级";
+      headRow.append(addBtn);
+      headRow.style.marginLeft = "0";
+      stage.append(headRow);
+
+      const body = el("div");
+      stage.append(body);
+      const renderChildren = () => {
+        body.innerHTML = "";
+        for (const child of state[group]) {
+          const row = el("div", "row");
+          row.style.paddingLeft = "20px";
+          row.append(el("span", "indent"));
+          const nameSpan = el("span", "row-name", child);
+          row.append(nameSpan);
+          const x = el("button", "row-x", "×");
+          x.title = `移除 ${group}/${child}`;
+          x.addEventListener("click", () => {
+            state[group] = state[group].filter((item) => item !== child);
+            draw();
+          });
+          row.append(x);
+          /* 双击行内改名 */
+          nameSpan.addEventListener("dblclick", () => {
+            const edit = el("input");
+            edit.value = child;
+            nameSpan.replaceWith(edit);
+            edit.focus();
+            edit.select();
+            const commit = () => {
+              const next = edit.value.trim();
+              if (next) state[group] = state[group].map((item) => (item === child ? next : item));
+              draw();
+            };
+            edit.addEventListener("keydown", (e) => {
+              if (e.key === "Enter") commit();
+              if (e.key === "Escape") draw();
+            });
+            edit.addEventListener("blur", commit);
+          });
+          body.append(row);
+        }
+      };
+      renderChildren();
+      caret.addEventListener("click", () => {
+        const hidden = body.style.display === "none";
+        body.style.display = hidden ? "" : "none";
+        caret.textContent = hidden ? "▾" : "▸";
+        /* 手风琴：展开这一组时，把同一个 stage 里其他组也收起（C 的每组 = 一行组头 + 一个 body） */
+        if (hidden && document.body.classList.contains("accordion")) {
+          const rows = Array.from(stage.children);
+          for (const node of rows) {
+            if (node === body) continue;
+            if (!node.classList.contains("row")) continue;
+            const next = node.nextElementSibling;
+            if (next && next !== body && !next.classList.contains("row") && !next.querySelector(".row-name")) {
+              next.style.display = "none";
+              const c = node.querySelector(".caret");
+              if (c) c.textContent = "▸";
+            }
+          }
+        }
+      });
+      addBtn.addEventListener("click", () => {
+        const input = el("input", "mini");
+        input.placeholder = "二级名称，回车确认";
+        const row = el("div", "row");
+        row.style.paddingLeft = "20px";
+        row.append(el("span", "indent"), input);
+        body.append(row);
+        input.focus();
+        input.addEventListener("keydown", (e) => {
+          if (e.key === "Enter" && input.value.trim()) {
+            state[group] = [...state[group], input.value.trim()];
+            draw();
+          }
+          if (e.key === "Escape") row.remove();
+        });
+      });
+    }
+  };
+  draw();
+})();
+
+/* ------------------------------------------------------------------ 交互与测量 */
+const accordion = document.getElementById("accordion");
+const search = document.getElementById("search");
+accordion?.addEventListener("change", () => {
+  document.body.classList.toggle("accordion", accordion.checked);
+  if (!accordion.checked) return;
+  /* 打开时立刻收敛成"只留第一组展开"，让差别一眼可见。
+     A 与 C 的结构不同，各按自己的机制收：A 是卡片加 .collapsed，C 是"组头行 + 紧随的 body"。 */
+  const stageA = document.getElementById("a-stage");
+  Array.from(stageA.querySelectorAll(".g")).forEach((card, index) => {
+    card.classList.toggle("collapsed", index !== 0);
+    const c = card.querySelector(".caret");
+    if (c) c.textContent = index === 0 ? "▾" : "▸";
+  });
+  const stageC = document.getElementById("c-stage");
+  const heads = Array.from(stageC.querySelectorAll(":scope > .row"));
+  heads.forEach((head, index) => {
+    const body = head.nextElementSibling;
+    if (body && body.querySelector(".row-name")) {
+      body.style.display = index === 0 ? "" : "none";
+      const c = head.querySelector(".caret");
+      if (c) c.textContent = index === 0 ? "▾" : "▸";
+    }
+  });
+});
+search?.addEventListener("change", () => {
+  const existing = document.querySelector("#a-stage .search-slot");
+  if (search.checked) installSearch();
+});
+const real = document.getElementById("real");
+const apply = () => document.querySelectorAll(".stage").forEach((s) => (s.style.maxWidth = real.checked ? "454px" : "none"));
+real.addEventListener("change", apply);
+apply();
+
+/* 顶部搜索框：只加在方案 A 上（其他两个方案不装，保持对比干净） */
+function installSearch() {
+  const stage = document.getElementById("a-stage");
+  const bar = el("div", "chips");
+  const input = el("input", "mini");
+  input.placeholder = "搜索标签，命中的组会自动展开";
+  input.style.flex = "1";
+  bar.append(input);
+  bar.style.marginBottom = "4px";
+  stage.insertBefore(bar, stage.firstChild);
+  input.addEventListener("input", () => {
+    const q = input.value.trim().toLowerCase();
+    for (const card of stage.querySelectorAll(".g")) {
+      const hit = [...card.querySelectorAll(".chip b")].some((b) => b.textContent.toLowerCase().includes(q));
+      card.style.display = !q || hit ? "" : "none";
+      if (q && hit) {
+        card.classList.remove("collapsed");
+        const c = card.querySelector(".caret");
+        if (c) c.textContent = "▾";
+      }
+    }
+  });
+}
+
+/** 把每个方案的高度量出来写在标题上——"省了多少"必须有数，不能只凭感觉。 */
+window.__measure = () => {
+  const out = {};
+  for (const id of ["now", "a", "b", "c"]) {
+    const stage = document.getElementById(`${id}-stage`);
+    const box = stage.getBoundingClientRect();
+    out[id] = {
+      高: Math.round(box.height),
+      输入框: stage.querySelectorAll("input").length,
+      按钮: stage.querySelectorAll("button").length,
+    };
+  }
+  return out;
+};
+</script>
+</body>
+</html>

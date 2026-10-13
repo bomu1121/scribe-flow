@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { MAX_EXTRACT_FIELDS } from "./obsidian";
 import type { PortSpec } from "./port";
 import { NODE_PORTS, type NodeType, type WorkflowGraph } from "./graph";
 
@@ -115,6 +116,13 @@ const nodeDataByType = {
     url: z.string().optional(),
     folder: z.string().optional(),
     overwrite: z.boolean().optional(),
+    // 这两个是「这一篇怎么办」的覆盖项，缺省跟随设置页的默认（见 graph.ts 的 ObsidianData）。
+    // 字段名沿用设置页那一套校验：单名 12 字、最多 MAX_EXTRACT_FIELDS 个——引擎会再 sanitize 一次，
+    // 这里拦住的是"图里存了明显不合法的值"。
+    autoTag: z.boolean().optional(),
+    sourceTag: z.boolean().optional(),
+    upTag: z.boolean().optional(),
+    extractFields: z.array(z.string().min(1).max(12)).max(MAX_EXTRACT_FIELDS).optional(),
   }),
   drill: baseDataSchema.extend({
     pointCount: z.number().int().min(3).max(12).optional(),

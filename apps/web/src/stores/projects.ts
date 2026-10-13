@@ -134,8 +134,17 @@ export const useProjectsStore = defineStore("projects", () => {
     return project;
   }
 
-  async function saveGraph(id: string, graph: WorkflowGraph) {
-    await api.put<{ ok: boolean }>(`/api/projects/${id}/graph`, { graph });
+  /**
+   * 落盘工程图。
+   *
+   * `confirmEmpty` 只该在「用户刚刚在确认框里点了『清空并保存』」时传：服务端会把
+   * 空图覆盖非空工程一律拦成 409，没有这个标记就写不进去（见 routes/projects.ts 的说明）。
+   */
+  async function saveGraph(id: string, graph: WorkflowGraph, options: { confirmEmpty?: boolean } = {}) {
+    await api.put<{ ok: boolean }>(`/api/projects/${id}/graph`, {
+      graph,
+      ...(options.confirmEmpty ? { confirmEmpty: true } : {}),
+    });
   }
 
   async function exportProject(id: string, name: string) {

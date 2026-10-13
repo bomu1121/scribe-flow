@@ -101,16 +101,21 @@ pnpm check:api:drill # 知识巩固链路（需真实 AI 密钥，会真的调�
 - [AI 加工节点内部多步链：收益调研与进阶实现方案](./docs/research/ai-node-multistep-research.md)
 - [BibiGPT 的视频笔记提示词工程：原文提取、槽位框架与实测对照](./docs/research/bibigpt-note-prompt-engineering.md)
 - [双维度知识库：按「UP」与按「议题」检索](./docs/research/dual-axis-knowledge-base.md)
+- [「抽取哪些属性」选择控件：成熟做法调研与四个候选方案](./docs/research/extract-field-picker-research.md)
+- [按钮"忙碌态"的闪烁：为什么"改文字"是最差的那种，以及延迟与最短显示的阈值](./docs/research/loading-flicker-research.md)
 - [节点结果预览展示调研与方案](./docs/research/node-result-preview-research.md)
 - [新功能该加一张卡片，还是加一个提示词](./docs/research/node-vs-prompt-block-boundary.md)
 - [全项目审计（2026-09-27）](./docs/research/project-audit-2026-09-27.md)
 - [R1 桌面研究报告：市场工作流产品功能地图 v1](./docs/research/r1-desktop-research.md)
 - [仓库可读性与过度工程：外部证据与本仓处置建议](./docs/research/repo-legibility-and-over-engineering.md)
 - [多视频结果的分组切换：导航模式调研与改造方案](./docs/research/segment-navigation-research.md)
+- [设置页说明文字的排版：现状实测与四个候选方案](./docs/research/settings-text-typography-research.md)
 - [结果页 tab 切换：标准依据与实测对照](./docs/research/tab-interaction-research.md)
+- [③ 词库编辑器：现状实测、三个候选方案与外部依据](./docs/research/taxonomy-editor-research.md)
 - [内置链路（模板）调研](./docs/research/template-set-research.md)
 - [视频模块 P0 真实视频验证记录](./docs/research/video-module-poc.md)
 - [ScribeFlow 视频下载与结果页播放 —— 调研与设计](./docs/research/video-module-research.md)
+- [设置页「显示样式」三选一：形态、摆放、标签与无障碍的公开依据](./docs/research/view-mode-switcher-research.md)
 - [ScribeFlow 功能工作流模块拓展 — 调研方案](./docs/research/workflow-module-expansion-research.md)
 
 **样例**（`docs/samples/`）
@@ -149,12 +154,13 @@ UI 文案一律简体中文；通用组件用 Element Plus、画布交互用 Vue
 - **坚果云请求无超时**（对照 AI / 媒体 / B 站调用都有超时）。
 - **`forceStop` 会篡改已结束的运行**；**SSE 建连存在竞态**（快照与订阅之间运行结束，该连接永不 resolve）。
 
-**待定夺**（代码与文档不一致，两条都在 git 历史里可复核）：
+**待定夺**（代码与文档不一致，可在 git 历史里复核）：
 
-- **Obsidian「AI 打标签」从未接线**：设置页有四个控件、`buildObsidianTags` 也完整存在，
-  但它没有任何调用点，`obsidian.tagTaxonomy` / `tagMinCount` / `tagMaxCount` 改了没有效果。
-  两条出路：接进 `process.obsidian`，或把三个设置项连同死函数一起删掉。
-- **`obsidian.autoLinkBidirectional` 全仓 0 个读取点**：要么实现双向链接回填，要么删掉这个开关。
+- **`obsidian.tagMinCount` / `tagMaxCount` 两个设置项没有读取点**：设置页有控件、也会持久化，
+  但判定每篇给几个标签时用的是 `apps/server/src/lib/tagging.ts` 里写死的 `MAX_TAGS_PER_NOTE`。
+  两条出路：改成读这两个值，或把这两个设置项连同控件删掉。
+  （这一条原先写的是「AI 打标签从未接线、`buildObsidianTags` 完整存在」——那个死函数已经不在了，
+  打标链路现在真的接在 `process.obsidian` 上；剩下没接的只有这两个数量设置。）
 
 ## License
 

@@ -1291,6 +1291,25 @@
   width: 100%;
 }
 
+/* 「创建后立刻运行」：占整行，勾选框与说明文字同一基线，和上面两个字段拉开一档间距 */
+.qc-run {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+  margin-top: 12px;
+}
+
+.qc-run .el-checkbox {
+  flex-shrink: 0;
+}
+
+.qc-run .el-checkbox__label {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--color-text);
+}
+
 .qc-field-hint {
   font-size: 11px;
   line-height: 1.5;

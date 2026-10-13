@@ -1,8 +1,9 @@
 /**
  * 标签词库（受控词表）与标签名的规范化规则。
  *
- * 词库结构是「一级 → 二级」，两级都存成纯粹的字符串；一级为 `UP主名称` 时是保留分组，
- * 由来源元数据自动写入，AI 不许碰（见 `writableTags`）。
+ * 词库结构是「一级 → 二级」，两级都存成纯粹的字符串；其中有**两个保留分组**
+ * （`UP主名称` / `来源`），它们由来源元数据自动写入、AI 不许碰、全库回补也不碰
+ * （见 `AUTO_TAG_GROUPS` / `writableTags` / `managedTags`）。
  *
  * 为什么需要规范化：Obsidian 的标签**不能含空格**，且只认字母/数字/`_`/`-`/`/`
  * （`/` 是层级分隔符）。UP 主名字里带空格是常态，不规范化就会写出一堆 Obsidian 读不出来的标签。
@@ -14,6 +15,18 @@ export type TagTaxonomy = Record<string, string[]>;
 
 /** 保留分组：这一支下的标签由来源元数据自动写入，AI 不可分配。 */
 export const UP_TAXONOMY_GROUP = "UP主名称";
+
+/** 来源标签的分组名；取值与笔记 frontmatter 的 `来源:` 属性同源（B站 / 本地文件 / 文本…）。 */
+export const SOURCE_TAXONOMY_GROUP = "来源";
+
+/**
+ * 所有由元数据自动写入的保留分组。
+ *
+ * 用户对它们**只有一个决定权：写不写**（设置页两个开关；节点卡片可以逐篇覆盖）。
+ * 词库里不维护、AI 不分配、全库回补既不新增也不清理——理由：这些值在生成笔记时就已经知道了，
+ * 靠内容回补是不可靠的。要改就让用户去 Obsidian 里自己改。
+ */
+export const AUTO_TAG_GROUPS: readonly string[] = [UP_TAXONOMY_GROUP, SOURCE_TAXONOMY_GROUP];
 
 /**
  * 64 位十六进制字符串哈希（两个不同种子的 32 位混合）。
@@ -77,6 +90,11 @@ export function isUpTag(tag: string): boolean {
   return tagPathGroup(tag) === UP_TAXONOMY_GROUP;
 }
 
+/** 是否是自动写入的保留分组下的标签（UP 主 / 来源）。 */
+export function isAutoTag(tag: string): boolean {
+  return AUTO_TAG_GROUPS.includes(tagPathGroup(tag));
+}
+
 /**
  * 把任意来源的 JSON 收敛成干净的词库：丢掉非数组的二级、逐段规范化、按小写去重。
  * 设置接口、AI 新增、默认值三条入口都过这一层，坏数据不该让打标整条链路失败。
@@ -103,13 +121,13 @@ export function sanitizeTaxonomy(raw: unknown): TagTaxonomy {
 }
 
 /**
- * AI 可以分配的标签：每个一级的二级（一级没有二级时一级自己），但**排除 UP 主分组**
- * ——那一支是来源元数据写的，让模型参与只会写出跟元数据不一致的名字。
+ * AI 可以分配的标签：每个一级的二级（一级没有二级时一级自己），但**排除保留分组**
+ * ——那两支是来源元数据写的，让模型参与只会写出跟元数据不一致的名字。
  */
 export function writableTags(taxonomy: TagTaxonomy): string[] {
   const out: string[] = [];
   for (const [group, children] of Object.entries(taxonomy)) {
-    if (group === UP_TAXONOMY_GROUP) continue;
+    if (AUTO_TAG_GROUPS.includes(group)) continue;
     if (children.length === 0) out.push(group);
     else for (const child of children) out.push(`${group}/${child}`);
   }
@@ -119,19 +137,18 @@ export function writableTags(taxonomy: TagTaxonomy): string[] {
 /**
  * 本功能「拥有」的标签集合：写过的都算，所以它包含一级本身
  * （用户可能只用一级打标，那个一级也要能被删除）。
+ *
+ * **排除保留分组**：`来源/*` 与 `UP主名称/*` 不由词库管理，所以全库回补既不该新增、
+ * 也不该把它们当成"词库里删掉的条目"从老笔记里清掉。
  */
 export function managedTags(taxonomy: TagTaxonomy): string[] {
   const out: string[] = [];
   for (const [group, children] of Object.entries(taxonomy)) {
+    if (AUTO_TAG_GROUPS.includes(group)) continue;
     out.push(group);
     for (const child of children) out.push(`${group}/${child}`);
   }
   return out;
-}
-
-/** 本功能拥有的**话题类**标签（去掉 UP 主那一支）：全库重打标只管这一部分。 */
-export function topicManagedTags(taxonomy: TagTaxonomy): string[] {
-  return managedTags(taxonomy).filter((tag) => !isUpTag(tag));
 }
 
 /** 词库内容的稳定指纹；排序后拼接，保证「同样的词库得到同样的哈希」。 */

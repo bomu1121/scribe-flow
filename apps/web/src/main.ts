@@ -28,6 +28,11 @@ import "element-plus/es/components/input-number/style/css.mjs";
 import "element-plus/es/components/loading/style/css.mjs";
 import "element-plus/es/components/message-box/style/css.mjs";
 import "element-plus/es/components/radio/style/css.mjs";
+// radio 的入口只带 el-radio.css，**不含 radio-button 与 radio-group**（三者是并列的组件入口）：
+// 少了 radio-button 那一行，`el-radio-button` 渲染出来就是没有外壳的一排圆点 + 文字；
+// 少了 radio-group 那一行，分组容器没有 `display: inline-flex / font-size: 0`（踩过前者一次）。
+import "element-plus/es/components/radio-button/style/css.mjs";
+import "element-plus/es/components/radio-group/style/css.mjs";
 import "element-plus/es/components/select/style/css.mjs";
 import "element-plus/es/components/switch/style/css.mjs";
 import "element-plus/es/components/table/style/css.mjs";

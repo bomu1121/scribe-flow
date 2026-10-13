@@ -11,6 +11,10 @@ import type {
   NutstoreRestoreResult,
   NutstoreSyncResult,
   NutstoreTestResult,
+  ObsidianFieldSuggestion,
+  ObsidianFieldsResult,
+  ObsidianTagUsage,
+  ObsidianTagUsageResult,
   SearchProvider,
   TraceSourceAuthority,
   UpdateSettingsRequest,
@@ -75,6 +79,12 @@ export const useSettingsStore = defineStore("settings", () => {
   const loading = ref(false);
   /** Obsidian 库内目录列表，由设置页读取后供节点下拉选择复用。 */
   const obsidianFolders = ref<string[]>([]);
+  /** 库里用过的属性名（带篇数）与扫描情况；「抽取哪些属性」下拉的建议来源。 */
+  const obsidianFieldNames = ref<ObsidianFieldSuggestion[]>([]);
+  const obsidianFieldsScanned = ref(0);
+  const obsidianFieldsCapped = ref(false);
+  /** 库里每个标签被多少篇用过——词库那一块显示「N 篇」，也是判断某个标签该不该删的依据。 */
+  const obsidianTagUsage = ref<ObsidianTagUsage[]>([]);
   /** 保存在 sessionStorage 中，刷新页面后仍可回显；关闭标签页后清除。 */
   const aiKeyDraft = ref(readKeyDraft(AI_KEY_DRAFT_STORAGE));
   const asrKeyDraft = ref(readKeyDraft(ASR_KEY_DRAFT_STORAGE));
@@ -89,6 +99,8 @@ export const useSettingsStore = defineStore("settings", () => {
       // 目录列表只喂 Obsidian 那一栏的下拉框，而它是递归读本地知识库，实测要 280-840 ms。
       // 不 await：表单回填不该被一个与自身无关的请求挡住。
       void loadObsidianFolders();
+      void loadObsidianFieldNames();
+      void loadObsidianTagUsage();
     } finally {
       loading.value = false;
     }
@@ -114,6 +126,40 @@ export const useSettingsStore = defineStore("settings", () => {
     } catch {
       // 读取目录失败不应阻塞设置页/节点；由用户在设置页手动重试并看到明确错误。
       obsidianFolders.value = [];
+    }
+  }
+
+  /**
+   * 读每个标签被多少篇用过。
+   *
+   * 与属性名那份统计同一套代价（本地扫 front matter 与行内标签），失败了也只清空——
+   * 没有用量数字时词库那一块照常能用，只是少一条判断依据。
+   */
+  async function loadObsidianTagUsage() {
+    try {
+      const data = await api.get<ObsidianTagUsageResult>("/api/settings/obsidian/tags");
+      obsidianTagUsage.value = data.items ?? [];
+    } catch {
+      obsidianTagUsage.value = [];
+    }
+  }
+
+  /**
+   * 读库里用过的属性名。
+   *
+   * 这一步要读全库笔记的正文（拿 front matter），比列目录贵，所以和目录列表分开、失败了也只清空建议——
+   * 「没有建议」不是错误状态，下拉里还有常用属性名可点。
+   */
+  async function loadObsidianFieldNames() {
+    try {
+      const data = await api.get<ObsidianFieldsResult>("/api/settings/obsidian/fields");
+      obsidianFieldNames.value = data.items ?? [];
+      obsidianFieldsScanned.value = data.scanned ?? 0;
+      obsidianFieldsCapped.value = Boolean(data.capped);
+    } catch {
+      obsidianFieldNames.value = [];
+      obsidianFieldsScanned.value = 0;
+      obsidianFieldsCapped.value = false;
     }
   }
 
@@ -183,5 +229,5 @@ export const useSettingsStore = defineStore("settings", () => {
     return result.items ?? [];
   }
 
-  return { settings, loading, obsidianFolders, aiKeyDraft, asrKeyDraft, load, ensureLoaded, save, loadObsidianFolders, testAi, testAsr, testSearch, fetchAiModels, testNutstore, listNutstore, listNutstoreFolders, readNutstore, pushNutstore, pullNutstore, backupNutstore, restoreNutstore, listNutstoreBackups };
+  return { settings, loading, obsidianFolders, obsidianFieldNames, obsidianFieldsScanned, obsidianFieldsCapped, obsidianTagUsage, aiKeyDraft, asrKeyDraft, load, ensureLoaded, save, loadObsidianFolders, loadObsidianFieldNames, loadObsidianTagUsage, testAi, testAsr, testSearch, fetchAiModels, testNutstore, listNutstore, listNutstoreFolders, readNutstore, pushNutstore, pullNutstore, backupNutstore, restoreNutstore, listNutstoreBackups };
 });

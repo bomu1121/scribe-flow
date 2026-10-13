@@ -25,9 +25,8 @@ import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import type { TagTaxonomy } from "@scribe-flow/shared";
 import {
-  UP_TAXONOMY_GROUP,
   addTagToTaxonomy,
-  isUpTag,
+  isAutoTag,
   managedTags,
   normalizeTagPath,
   normalizeTagSegment,
@@ -35,13 +34,12 @@ import {
   tagKey,
   tagPathGroup,
   taxonomyHash,
-  topicManagedTags,
   writableTags,
 } from "@scribe-flow/shared";
 import type { AppDatabase } from "../db/client";
 import { appSettings, noteTagFingerprints } from "../db/schema";
 import { chatCompletionWithUsage, type AiConfig, type ChatUsage } from "./ai";
-import { canRewriteTags, extractFeatures, parseNoteTags, parseYamlScalar, upsertFrontMatterTags, walkMarkdownFiles, type VaultFile } from "./note-markdown";
+import { canRewriteTags, extractFeatures, parseNoteTags, upsertFrontMatterTags, walkMarkdownFiles, type VaultFile } from "./note-markdown";
 
 /** 一次调用判定多少篇：越大越省（指令与词库被摊薄），但每篇的判定质量会降。 */
 const CLASSIFY_BATCH = 20;
@@ -64,8 +62,6 @@ interface NoteDecision {
   reason?: string;
   /** 增量模式下与这篇字面匹配上的新标签。 */
   candidateTags: string[];
-  /** 从笔记的「来源 + 作者」推出来的 UP 主标签（确定性，不调模型）。 */
-  upTag?: string;
   /** 写入 front matter 的最终标签；未参与本次处理的笔记为 undefined。 */
   tagsOverride?: string[];
 }
@@ -257,16 +253,12 @@ interface DecideResult {
   taxHash: string;
 }
 
-/** 笔记里的 UP 主是从「来源 + 作者」这两行推出来的。 */
-function deriveUpTag(content: string): string | undefined {
-  const source = parseYamlScalar(content, "来源");
-  const author = parseYamlScalar(content, "作者");
-  if (!source || !author) return undefined;
-  const name = normalizeTagSegment(author);
-  return name ? `${UP_TAXONOMY_GROUP}/${name}` : undefined;
-}
-
-/** 逐篇决定处理方式；plan 与 run 共用，保证"预估"与"实际执行"口径一致。 */
+/**
+ * 逐篇决定处理方式；plan 与 run 共用，保证"预估"与"实际执行"口径一致。
+ *
+ * **只处理用户维护的话题标签**：`来源/*` 与 `UP主名称/*` 由元数据在生成笔记时写入，
+ * 不在这里新增、也不在这里清理（要改就让用户去 Obsidian 里自己改）。
+ */
 async function decide(
   db: AppDatabase,
   vaultPath: string,
@@ -277,7 +269,7 @@ async function decide(
   const files = await walkMarkdownFiles(vaultPath);
   const fingerprints = loadFingerprints(db, vaultPath);
   const taxHash = taxonomyHash(taxonomy);
-  const topic = new Set(topicManagedTags(taxonomy).map(tagKey));
+  const topic = new Set(managedTags(taxonomy).map(tagKey));
   const managedNow = new Set(managedTags(taxonomy).map(tagKey));
 
   // 基准是"上次跑用的词库"而不是"笔记用过的标签"：后者会让从没被用上的词库条目每轮都算新增。
@@ -288,7 +280,7 @@ async function decide(
     ? []
     : writableTags(taxonomy).filter((tag) => !previousWritable || !previousWritable.has(tagKey(tag)));
   const removedTags = snapshot
-    ? managedTags(snapshot).filter((tag) => !isUpTag(tag) && !managedNow.has(tagKey(tag))).sort()
+    ? managedTags(snapshot).filter((tag) => !managedNow.has(tagKey(tag))).sort()
     : [];
 
   const decisions: NoteDecision[] = [];
@@ -307,12 +299,11 @@ async function decide(
     }
 
     // 我们管得着的标签 = 词库里现在还留着的（含一级）+ 历史上我们写过的（词库删条目后仍要能清理）。
+    // **自动分组（UP主名称 / 来源）永远不在清理范围内**：老指纹里可能记着它们（那时它们还属于词库），
+    // 但产品上它们归元数据管，删了就找不回来了——用户要改自己改。
     const isOurs = (tag: string) =>
       topic.has(tagKey(tag)) || ownedPrevious.some((prev) => tagKey(prev) === tagKey(tag));
-    const stale = currentTags.filter((tag) => !isUpTag(tag) && isOurs(tag) && !topic.has(tagKey(tag)));
-    // UP 标签在入库时写；已存在的老笔记靠这一步补上——纯读字段，不花模型钱。
-    const upTag = deriveUpTag(file.content);
-    const needsUpTag = Boolean(upTag) && !currentTags.some((tag) => tagKey(tag) === tagKey(upTag!));
+    const stale = currentTags.filter((tag) => !isAutoTag(tag) && isOurs(tag) && !topic.has(tagKey(tag)));
 
     let mode: NoteMode = "skip";
     let candidateTags: string[] = [];
@@ -326,9 +317,9 @@ async function decide(
         candidateTags = matched;
       }
     }
-    if (mode === "skip" && (stale.length > 0 || needsUpTag)) mode = "cleanup";
+    if (mode === "skip" && stale.length > 0) mode = "cleanup";
 
-    decisions.push({ file, features, currentTags, ownedPrevious, mode, candidateTags, upTag });
+    decisions.push({ file, features, currentTags, ownedPrevious, mode, candidateTags });
   }
 
   return { decisions, addedTags, removedTags, taxHash };
@@ -547,26 +538,26 @@ export function rememberNoteTags(
   ownedTags: string[],
   taxonomy: TagTaxonomy,
 ): void {
-  const ownedKeys = new Set(topicManagedTags(taxonomy).map(tagKey));
-  const owned = [...new Set(ownedTags.map(normalizeTagPath).filter((tag) => tag && ownedKeys.has(tagKey(tag)) && !isUpTag(tag)))];
+  const ownedKeys = new Set(managedTags(taxonomy).map(tagKey));
+  const owned = [...new Set(ownedTags.map(normalizeTagPath).filter((tag) => tag && ownedKeys.has(tagKey(tag))))];
   saveFingerprint(db, vaultPath, relPath, fingerprintOf(fileNameOf(relPath), content), taxonomyHash(taxonomy), owned);
 }
 
 /**
- * 合成写入 front matter 的最终标签：人写的原样保留，UP 标签与话题标签由我们重排。
- * `incremental` 为真表示"旧的话题标签仍然有效"（增量模式没重新判它们）。
+ * 合成写入 front matter 的最终标签：人写的原样保留，自动分组（UP主名称 / 来源）原样保留，
+ * 话题标签由我们重排。`incremental` 为真表示"旧的话题标签仍然有效"（增量模式没重新判它们）。
+ *
+ * 自动分组在这里**只保留、不推导**：它们归元数据管，回补不碰（`来源/UP主名称` 不新增也不删）。
  */
 function mergeTopicTags(note: NoteDecision, accepted: string[] | undefined, taxonomy: TagTaxonomy, incremental: boolean): string[] {
-  const topic = new Set(topicManagedTags(taxonomy).map(tagKey));
+  const topic = new Set(managedTags(taxonomy).map(tagKey));
   const isOurs = (tag: string) => topic.has(tagKey(tag)) || note.ownedPrevious.some((prev) => tagKey(prev) === tagKey(tag));
-  const preserved = note.currentTags.filter((tag) => isOurs(tag) && topic.has(tagKey(tag)) && !isUpTag(tag));
-  const human = note.currentTags.filter((tag) => !isOurs(tag) && !isUpTag(tag));
-  const up = note.currentTags.filter(isUpTag);
-  if (note.upTag && !up.some((tag) => tagKey(tag) === tagKey(note.upTag!))) up.push(note.upTag);
+  const preserved = note.currentTags.filter((tag) => isOurs(tag) && topic.has(tagKey(tag)));
+  const human = note.currentTags.filter((tag) => !isOurs(tag) || isAutoTag(tag));
 
   const next = incremental ? [...preserved] : [];
   for (const tag of accepted ?? []) if (!next.some((existing) => tagKey(existing) === tagKey(tag))) next.push(tag);
-  const merged = [...human, ...up, ...next];
+  const merged = [...human, ...next];
   return merged.filter((tag, index) => merged.findIndex((other) => tagKey(other) === tagKey(tag)) === index);
 }
 

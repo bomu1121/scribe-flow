@@ -1,6 +1,6 @@
 import { eq } from "drizzle-orm";
-import type { AiSettings, AppSettings, AsrSettings, GeneralSettings, NodeType, SearchProvider, UpdateSettingsRequest } from "@scribe-flow/shared";
-import { DEFAULT_EXTRACT_FIELDS, DEFAULT_FILE_NAME_TEMPLATE, DEFAULT_OUTPUT_DIR, GENERAL_LIMITS, NODE_TYPE_ORDER, UP_TAXONOMY_GROUP, backupLocationOf, joinBackupPath, sanitizeExtractFields, sanitizeTaxonomy } from "@scribe-flow/shared";
+import type { AiSettings, AppSettings, AsrSettings, GeneralSettings, NodeType, SearchProvider, TagViewMode, UpdateSettingsRequest } from "@scribe-flow/shared";
+import { DEFAULT_EXTRACT_FIELDS, DEFAULT_FILE_NAME_TEMPLATE, DEFAULT_OUTPUT_DIR, DEFAULT_TAG_VIEW, GENERAL_LIMITS, NODE_TYPE_ORDER, AUTO_TAG_GROUPS, TAG_VIEW_MODES, backupLocationOf, joinBackupPath, sanitizeExtractFields, sanitizeTaxonomy } from "@scribe-flow/shared";
 import type { AppDatabase } from "../db/client";
 import { appSettings } from "../db/schema";
 import type { AiConfig, AsrConfig } from "./ai";
@@ -37,14 +37,16 @@ const GENERAL_DEFAULTS: Record<string, string> = {
 const OBSIDIAN_DEFAULTS: Record<string, string> = {
   "obsidian.vaultPath": "",
   "obsidian.folder": "00-Inbox",
+  "obsidian.tagView": DEFAULT_TAG_VIEW,
   "obsidian.autoTagEnabled": "true",
+  "obsidian.sourceTagEnabled": "true",
+  "obsidian.upTagEnabled": "true",
   "obsidian.allowNewTags": "false",
   "obsidian.extractFields": JSON.stringify(DEFAULT_EXTRACT_FIELDS),
   "obsidian.tagMinCount": "5",
   "obsidian.tagMaxCount": "10",
   "obsidian.autoLinkEnabled": "true",
   "obsidian.autoLinkMax": "5",
-  "obsidian.autoLinkBidirectional": "false",
 };
 
 const NUTSTORE_DEFAULTS: Record<string, string> = {
@@ -58,13 +60,23 @@ const NUTSTORE_DEFAULTS: Record<string, string> = {
 /** 旧键：以前这里存的是「备份根目录」，实际备份落在它下面的 `backups/`。 */
 const LEGACY_BACKUP_ROOT_KEY = "nutstore.remoteRoot";
 
+/**
+ * 出厂词库：**只放用户维护的话题分组**。
+ *
+ * `来源` 与 `UP主名称` 不在里面——它们由元数据在生成笔记时自动写入，用户只能决定"要不要写"
+ * （两个开关见 `obsidian.sourceTagEnabled` / `obsidian.upTagEnabled`），不参与词库编辑、
+ * AI 分配与全库回补。`概念` / `状态` 也从出厂值里撤掉了：前者用户看不懂用途，
+ * 后者模型不可能知道（见 CHANGELOG）。
+ */
 const DEFAULT_TAG_TAXONOMY: Record<string, string[]> = {
-  来源: ["B站", "文稿", "本地视频", "网页", "播客"],
   类型: ["视频笔记", "学习笔记", "思维导图", "会议纪要"],
   领域: ["历史", "AI", "编程", "效率", "心理", "知识管理"],
+};
+
+/** 已从出厂词库退休的分组：内容还是出厂那套就一并清掉，用户自己改过就留着（不删用户的东西）。 */
+const RETIRED_TAG_DEFAULTS: Record<string, string[]> = {
   概念: ["Obsidian", "PARA", "Zettelkasten", "RAG", "双链", "Templater", "Dataview"],
   状态: ["未整理", "已整理"],
-  UP主名称: [],
 };
 
 function raw(db: AppDatabase, key: string, fallback: string): string {
@@ -105,18 +117,53 @@ function searchProviderOf(db: AppDatabase): SearchProvider {
 }
 
 /**
- * 词库读取时的收口：规范化 + 保证保留分组在。
+ * 「每篇最多关联几篇」的读取。
  *
- * 保留分组要在**老安装**上也出现——`obsidian.tagTaxonomy` 早就被保存过（设置页会整表回写），
- * 所以新增默认值对它不生效；而 UP 标签写的就是 `UP主名称/<UP 名>`，界面上看不到这一支会让人不明白
- * 那些标签从哪来、去哪删。
+ * 这里不能用 `Number(...) || 5` 那种兜底写法：**0 是合法值**（＝不关联，界面上可以调到 0），
+ * 而 `0 || 5` 会把它悄悄变成 5，于是"关掉"这个动作在服务端根本没生效——用户调到 0、
+ * 保存、看起来成功了，保存时却还在给他连笔记。只能判"读出来的是不是个数"。
+ */
+function readAutoLinkMax(db: AppDatabase): number {
+  const parsed = Number(raw(db, "obsidian.autoLinkMax", OBSIDIAN_DEFAULTS["obsidian.autoLinkMax"]));
+  return Number.isFinite(parsed) ? Math.max(0, Math.min(20, Math.trunc(parsed))) : 5;
+}
+
+/**
+ * 词库读取时的收口：规范化 + 把**不再属于词库的分组**摘掉。
+ *
+ * 老安装的 `obsidian.tagTaxonomy` 里存着整套出厂值（设置页整表回写），所以改默认值对它不生效——
+ * 只能在这里收口。读的时候收口而不是写迁移脚本，是为了让"没保存过的人"也立刻看到新口径，
+ * 而且下次保存时自然落库。摘两类：
+ * - **自动分组**（`来源` / `UP主名称`）：它们改由元数据写、只留开关，留在词库里会让 AI 重复分配；
+ * - **退休分组**（`概念` / `状态`）：只在其内容仍是出厂那套时摘掉，用户自己加过的就留着。
  */
 function readTagTaxonomy(db: AppDatabase): Record<string, string[]> {
   const taxonomy = sanitizeTaxonomy(rawJson<Record<string, string[]>>(db, "obsidian.tagTaxonomy", DEFAULT_TAG_TAXONOMY));
-  if (!Object.prototype.hasOwnProperty.call(taxonomy, UP_TAXONOMY_GROUP)) {
-    return { ...taxonomy, [UP_TAXONOMY_GROUP]: [] };
+  const isRetiredDefault = (group: string, children: string[]): boolean => {
+    const retired = RETIRED_TAG_DEFAULTS[group];
+    if (!retired) return false;
+    const current = new Set(children.map((child) => child.toLowerCase()));
+    return retired.length === current.size && retired.every((name) => current.has(name.toLowerCase()));
+  };
+  const out: Record<string, string[]> = {};
+  for (const [group, children] of Object.entries(taxonomy)) {
+    if (AUTO_TAG_GROUPS.includes(group)) continue;
+    if (isRetiredDefault(group, children)) continue;
+    out[group] = children;
   }
-  return taxonomy;
+  return out;
+}
+
+/**
+ * 读词库编辑器的显示样式。
+ *
+ * 只认三种已知值：手改过库、或将来删掉某个模式之后，坏值一律回落默认——
+ * 这一格是纯展示设置，不值得因为它让设置页打不开。
+ */
+function readTagView(db: AppDatabase): TagViewMode {
+  const stored = raw(db, "obsidian.tagView", "");
+  const hit = TAG_VIEW_MODES.find((mode) => mode.id === stored);
+  return hit ? hit.id : DEFAULT_TAG_VIEW;
 }
 
 /**
@@ -167,15 +214,17 @@ export function getSettings(db: AppDatabase): AppSettings {
     obsidian: {
       vaultPath: raw(db, "obsidian.vaultPath", OBSIDIAN_DEFAULTS["obsidian.vaultPath"]) ?? "",
       folder: raw(db, "obsidian.folder", OBSIDIAN_DEFAULTS["obsidian.folder"]) ?? "00-Inbox",
+      tagView: readTagView(db),
       tagTaxonomy: readTagTaxonomy(db),
       autoTagEnabled: raw(db, "obsidian.autoTagEnabled", OBSIDIAN_DEFAULTS["obsidian.autoTagEnabled"]) === "true",
+      sourceTagEnabled: raw(db, "obsidian.sourceTagEnabled", OBSIDIAN_DEFAULTS["obsidian.sourceTagEnabled"]) === "true",
+      upTagEnabled: raw(db, "obsidian.upTagEnabled", OBSIDIAN_DEFAULTS["obsidian.upTagEnabled"]) === "true",
       allowNewTags: raw(db, "obsidian.allowNewTags", OBSIDIAN_DEFAULTS["obsidian.allowNewTags"]) === "true",
       extractFields: sanitizeExtractFields(rawJson<unknown>(db, "obsidian.extractFields", DEFAULT_EXTRACT_FIELDS)),
       tagMinCount: Number(raw(db, "obsidian.tagMinCount", OBSIDIAN_DEFAULTS["obsidian.tagMinCount"]) ?? 5) || 5,
       tagMaxCount: Number(raw(db, "obsidian.tagMaxCount", OBSIDIAN_DEFAULTS["obsidian.tagMaxCount"]) ?? 10) || 10,
       autoLinkEnabled: raw(db, "obsidian.autoLinkEnabled", OBSIDIAN_DEFAULTS["obsidian.autoLinkEnabled"]) === "true",
-      autoLinkMax: Number(raw(db, "obsidian.autoLinkMax", OBSIDIAN_DEFAULTS["obsidian.autoLinkMax"]) ?? 5) || 5,
-      autoLinkBidirectional: raw(db, "obsidian.autoLinkBidirectional", OBSIDIAN_DEFAULTS["obsidian.autoLinkBidirectional"]) === "true",
+      autoLinkMax: readAutoLinkMax(db),
     },
     nutstore: {
       serverUrl: raw(db, "nutstore.serverUrl", NUTSTORE_DEFAULTS["nutstore.serverUrl"]) ?? "https://dav.jianguoyun.com/dav/",
@@ -321,8 +370,15 @@ export function updateSettings(db: AppDatabase, patch: UpdateSettingsRequest) {
   if (patch.obsidian) {
     if (patch.obsidian.vaultPath !== undefined) set(db, "obsidian.vaultPath", patch.obsidian.vaultPath.trim().replace(/[\\/]+$/, ""));
     if (patch.obsidian.folder !== undefined) set(db, "obsidian.folder", patch.obsidian.folder.trim().replace(/^[\\/]+|[\\/]+$/g, "") || "00-Inbox");
+    // 显示样式只认三种已知值：不认识的输入直接丢掉，别把设置页写成一个打不开的状态
+    const nextTagView = patch.obsidian.tagView;
+    if (nextTagView !== undefined && TAG_VIEW_MODES.some((mode) => mode.id === nextTagView)) {
+      set(db, "obsidian.tagView", nextTagView);
+    }
     if (patch.obsidian.tagTaxonomy !== undefined) set(db, "obsidian.tagTaxonomy", JSON.stringify(sanitizeTaxonomy(patch.obsidian.tagTaxonomy)));
     if (patch.obsidian.autoTagEnabled !== undefined) set(db, "obsidian.autoTagEnabled", patch.obsidian.autoTagEnabled ? "true" : "false");
+    if (patch.obsidian.sourceTagEnabled !== undefined) set(db, "obsidian.sourceTagEnabled", patch.obsidian.sourceTagEnabled ? "true" : "false");
+    if (patch.obsidian.upTagEnabled !== undefined) set(db, "obsidian.upTagEnabled", patch.obsidian.upTagEnabled ? "true" : "false");
     if (patch.obsidian.allowNewTags !== undefined) set(db, "obsidian.allowNewTags", patch.obsidian.allowNewTags ? "true" : "false");
     // 空数组是合法值（＝不抽），但 set() 会跳过空串，所以这里序列化成 "[]" 才存得进去。
     if (patch.obsidian.extractFields !== undefined) {
@@ -332,7 +388,6 @@ export function updateSettings(db: AppDatabase, patch: UpdateSettingsRequest) {
     if (patch.obsidian.tagMaxCount !== undefined) set(db, "obsidian.tagMaxCount", String(Math.max(1, Math.min(30, patch.obsidian.tagMaxCount))));
     if (patch.obsidian.autoLinkEnabled !== undefined) set(db, "obsidian.autoLinkEnabled", patch.obsidian.autoLinkEnabled ? "true" : "false");
     if (patch.obsidian.autoLinkMax !== undefined) set(db, "obsidian.autoLinkMax", String(Math.max(0, Math.min(20, patch.obsidian.autoLinkMax))));
-    if (patch.obsidian.autoLinkBidirectional !== undefined) set(db, "obsidian.autoLinkBidirectional", patch.obsidian.autoLinkBidirectional ? "true" : "false");
   }
   if (patch.nutstore) {
     if (patch.nutstore.serverUrl !== undefined) {

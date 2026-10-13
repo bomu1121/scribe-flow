@@ -4,6 +4,7 @@ import { BookText, History, LayoutGrid, PenLine, Settings, Shapes } from "lucide
 import type { RunStatus } from "@scribe-flow/shared";
 import { useRunsStore } from "@/stores/runs";
 import { usePromptsStore } from "@/stores/prompts";
+import { useRunQueueStore } from "@/stores/run-queue";
 import { useSettingsStore } from "@/stores/settings";
 import { useUiStore, type RailTab } from "@/stores/ui";
 import { notifyRunFinished, shouldAlertRunEnd } from "@/utils/run-alert";
@@ -12,8 +13,15 @@ import QuickCreateDialog from "@/components/workspace/QuickCreateDialog.vue";
 
 const runsStore = useRunsStore();
 const promptsStore = usePromptsStore();
+const runQueueStore = useRunQueueStore();
 const settingsStore = useSettingsStore();
 const uiStore = useUiStore();
+
+/**
+ * 排队运行的排空挂在外壳上，不挂画布页：一次运行几分钟到十几分钟，人点完「排队运行」
+ * 多半会切到结果页或别的工程去，队列不能因为离开画布就停住（理由见 `stores/run-queue.ts`）。
+ */
+runQueueStore.init();
 
 const panelOpen = computed(() => uiStore.panelOpen);
 

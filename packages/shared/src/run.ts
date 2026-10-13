@@ -1,3 +1,4 @@
+import type { TagViewMode } from "./obsidian";
 import type { AsrEngine, NodeType, WorkflowGraph } from "./graph";
 import type { NutstoreSettings } from "./nutstore";
 import type { RunMediaView } from "./media";
@@ -242,8 +243,21 @@ export interface AppSettings {
     folder: string;
     /** 受控标签词表：维度 -> 标签数组。 */
     tagTaxonomy: Record<string, string[]>;
+    /** 词库编辑器的显示样式（纯展示，不改数据）。 */
+    tagView: TagViewMode;
     /** 是否启用 AI 自动补全标签。 */
     autoTagEnabled: boolean;
+    /**
+     * 要不要写**来源标签**（`来源/B站` 这种）。
+     *
+     * 这个标签不用维护、也不靠 AI 判断：它的取值跟笔记 frontmatter 的 `来源:` 属性同源，
+     * 在生成笔记时就已经知道了。用户只有这一个决定权：写，还是不写。
+     */
+    sourceTagEnabled: boolean;
+    /**
+     * 要不要写 **UP 主标签**（`UP主名称/某某`）。同上：取值来自视频元数据的作者，不靠 AI 判断。
+     */
+    upTagEnabled: boolean;
     /**
      * 允许 AI 往词库里**新增**标签（默认关）。
      * 关掉时模型只能从词库里挑——聚合口径不会被模型自己长出来的新写法冲散。
@@ -262,8 +276,6 @@ export interface AppSettings {
     autoLinkEnabled: boolean;
     /** 相关笔记最多数量。 */
     autoLinkMax: number;
-    /** 是否双向回链旧笔记。 */
-    autoLinkBidirectional: boolean;
   };
   nutstore: NutstoreSettings;
 }
@@ -303,7 +315,10 @@ export interface UpdateSettingsRequest {
     vaultPath?: string;
     folder?: string;
     tagTaxonomy?: Record<string, string[]>;
+    tagView?: TagViewMode;
     autoTagEnabled?: boolean;
+    sourceTagEnabled?: boolean;
+    upTagEnabled?: boolean;
     allowNewTags?: boolean;
     /** 从正文额外抽取的属性名；空数组表示不抽。 */
     extractFields?: string[];
@@ -311,7 +326,6 @@ export interface UpdateSettingsRequest {
     tagMaxCount?: number;
     autoLinkEnabled?: boolean;
     autoLinkMax?: number;
-    autoLinkBidirectional?: boolean;
   };
   nutstore?: {
     serverUrl?: string;

@@ -4,18 +4,20 @@ import { useRoute, useRouter } from "vue-router";
 import { ElDropdown, ElDropdownItem, ElDropdownMenu } from "element-plus/es/components/dropdown/index.mjs";
 import { ElMessageBox } from "element-plus/es/components/message-box/index.mjs";
 import { toast } from "@/lib/toast";
-import { Activity, Check, Copy, Download, History, LayoutPanelTop, Maximize, MoreHorizontal, Play, Redo2, StopCircle, Undo2 } from "lucide-vue-next";
-import { emptyGraph, type NodeType, type RunDetail, type RunMeta, type RunNodeResult, type RunStatus, type SourceVideoItem, type WorkflowGraph } from "@scribe-flow/shared";
+import { Activity, Check, Copy, Download, History, LayoutPanelTop, ListOrdered, Maximize, MoreHorizontal, Play, Redo2, StopCircle, Undo2 } from "lucide-vue-next";
+import { emptyGraph, type NodeType, type RunDetail, type RunMeta, type RunNodeResult, type RunScope, type RunStatus, type SourceVideoItem, type WorkflowGraph } from "@scribe-flow/shared";
 import FlowCanvas from "@/components/canvas/FlowCanvas.vue";
 import SourcePickerDialog from "@/components/canvas/SourcePickerDialog.vue";
 import BiliAccountButton from "@/components/auth/BiliAccountButton.vue";
 import { api } from "@/lib/api";
 import { subscribeRunEvents } from "@/lib/sse";
 import { runScopeNodeIds, stripRuntimeFields, type NodePreviewOutput } from "@/utils/flow";
+import { queuedToast, queueTitle, runQueueLabel } from "@/utils/run-queue";
 import { buildNodeSegments, type RunSegment } from "@/utils/run-segments";
 import { backfillFromRun, canBackfillFromStatus, snapshotIsComplete } from "@/utils/run-restore";
 import { useAuthStore } from "@/stores/auth";
 import { useProjectsStore } from "@/stores/projects";
+import { useRunQueueStore } from "@/stores/run-queue";
 import { useRunsStore } from "@/stores/runs";
 import { useSettingsStore } from "@/stores/settings";
 import { useUiStore } from "@/stores/ui";
@@ -26,6 +28,7 @@ const route = useRoute();
 const router = useRouter();
 const store = useProjectsStore();
 const runsStore = useRunsStore();
+const runQueue = useRunQueueStore();
 const settingsStore = useSettingsStore();
 const authStore = useAuthStore();
 const uiStore = useUiStore();
@@ -48,8 +51,16 @@ const activeRun = ref<RunMeta | null>(null);
 const lastRun = ref<RunMeta | null>(null);
 const running = ref(false);
 const projectRunningRun = computed(() => runsStore.runs.find((r) => r.projectId === projectId.value && r.status === "running") ?? null);
-/** 当前工程有运行进行中：画布进入只读，避免编辑无法影响本次运行的节点造成歧义。 */
-const canvasRunning = computed(() => running.value || Boolean(projectRunningRun.value));
+/** 本工程等待中的运行（点了「排队运行」的那些）。 */
+const queuedCount = computed(() => runQueue.pendingCount(projectId.value));
+const queuedTitle = computed(() => queueTitle(runQueue.itemsOf(projectId.value)));
+/**
+ * 当前工程有运行进行中：画布进入只读，避免编辑无法影响本次运行的节点造成歧义。
+ *
+ * 排队中的那些也算——它们之间没有可编辑的窗口，若不算，画布会在「上一条跑完、下一条还没起来」
+ * 的空隙里闪一下可编辑状态。
+ */
+const canvasRunning = computed(() => running.value || Boolean(projectRunningRun.value) || queuedCount.value > 0 || runQueue.isStarting(projectId.value));
 const activeTaskCount = computed(() => {
   const localActive = running.value && activeRun.value && !runsStore.runs.some((r) => r.id === activeRun.value?.id && r.status === "running") ? 1 : 0;
   return runsStore.runningCount + localActive;
@@ -119,7 +130,11 @@ async function loadProject() {
   } catch (err) {
     if (disposed || token !== loadProjectToken) return;
     saveState.value = "error";
-    loaded.value = true;
+    // 没读到工程就不要摆出一个空画布：那画布上的「空」不是这份工程的真实内容，
+    // 而任何一次自动保存都会把它当成结果写回去（见 scheduleSave 的说明）。这里退回加载态/错误态，
+    // guardProjectId 同时清空，本次会话对这个工程一律不许写回。
+    loaded.value = false;
+    guardProjectId = "";
     toast.error(err instanceof Error ? err.message : "加载工程失败");
   }
 
@@ -235,10 +250,16 @@ function onGraphUpdate(next: WorkflowGraph) {
 }
 
 /**
- * 防误清空护栏：最近一次成功落盘的节点数。
- * 画布被清空（误触删除、全选删除、渲染异常）时，防抖自动保存会把空 nodes 写回服务端，
- * 覆盖掉唯一一份工程图——刷新后节点就永久消失（2026-09-10 实际发生过一次）。
- * 因此写成空画布前先让用户确认：取消则本次不落盘、服务端保留上一版非空图（刷新即可恢复）。
+ * 防误清空的两道状态。合起来回答的是同一个问题：**现在画布上的这份东西，能不能代表服务端那一份。**
+ *
+ * - `guardProjectId`：本次会话成功读到过哪个工程。没读到过（加载失败、还在加载）就不许写回——
+ *   2026-10-13 实际发生过：后端重启的那一两秒里加载工程失败，编辑器照样以空画布挂载，
+ *   而当时这两个状态都还是初始值（0 和空串），护栏形同不存在，一次防抖保存就把 13 个节点写没了。
+ * - `lastSavedNodeCount`：最近一次成功落盘时的节点数。画布被清空（误触删除、全选删除、渲染异常）
+ *   时用它做二次确认，取消则本次不落盘、服务端保留上一版（刷新即可恢复）。
+ *
+ * 这两道都只守得住「画布上有东西可参考」的情形，所以服务端还有一道与客户端时序无关的兜底：
+ * 空图覆盖非空工程一律 409（见 routes/projects.ts），确认后才带 confirmEmpty 重发。
  */
 let lastSavedNodeCount = 0;
 let guardProjectId = "";
@@ -252,7 +273,9 @@ function scheduleSave() {
   const id = projectId.value;
   saveTimer = setTimeout(async () => {
     if (id !== projectId.value) return;
-    if (graph.value.nodes.length === 0 && lastSavedNodeCount > 0 && guardProjectId === id) {
+    if (guardProjectId !== id) return;
+    let confirmEmpty = false;
+    if (graph.value.nodes.length === 0 && lastSavedNodeCount > 0) {
       if (emptyGraphConfirming) return;
       emptyGraphConfirming = true;
       try {
@@ -270,9 +293,10 @@ function scheduleSave() {
         emptyGraphConfirming = false;
       }
       if (disposed || !loaded.value) return;
+      confirmEmpty = true;
     }
     try {
-      await store.saveGraph(id, graph.value);
+      await store.saveGraph(id, graph.value, { confirmEmpty });
       lastSavedNodeCount = graph.value.nodes.length;
       saveState.value = "saved";
     } catch (err) {
@@ -287,6 +311,8 @@ async function flushPendingSave(id: string) {
   if (!saveTimer) return;
   clearTimeout(saveTimer);
   saveTimer = null;
+  // 同上：没成功读到过这个工程就没有可信的内容可补写。
+  if (guardProjectId !== id) return;
   const pending = graph.value;
   try {
     await store.saveGraph(id, pending);
@@ -501,9 +527,28 @@ function missingKeyMessage(scope: "all" | "fromNode" | "node", nodeId?: string):
   return null;
 }
 
-async function startRun(scope: "all" | "fromNode" | "node", nodeId?: string) {
+/**
+ * 运行中点击运行入口 = 加入排队（不再是点了没反应的灰按钮）。
+ *
+ * 排队的语义与「同工程单运行」一致：当前运行结束后依次自动开始，由 `stores/run-queue.ts`
+ * 负责排空，本页只负责算出入队条目的名字与提示。
+ */
+function enqueueRun(scope: RunScope, nodeId?: string) {
+  const outcome = runQueue.enqueue(projectId.value, {
+    scope,
+    nodeId,
+    label: runQueueLabel(scope, nodeId ? nodeName(nodeId) : projectName.value),
+  });
+  if (outcome.result === "duplicate") {
+    toast.info("该运行已在排队中，不用重复添加");
+    return;
+  }
+  toast.info(queuedToast(outcome.position));
+}
+
+async function startRun(scope: RunScope, nodeId?: string) {
   if (canvasRunning.value) {
-    toast.warning("已有运行正在进行");
+    enqueueRun(scope, nodeId);
     return;
   }
   if (!settingsStore.settings) {
@@ -520,6 +565,12 @@ async function startRun(scope: "all" | "fromNode" | "node", nodeId?: string) {
     toast.error(missing);
     return;
   }
+  // 没成功读到这个工程就别运行：这次落盘会把服务端那份覆盖成空画布（同 scheduleSave 的说明），
+  // 而且跑起来的也只会是一张空图。
+  if (guardProjectId !== projectId.value) {
+    toast.error("工程还没加载成功，请刷新页面后再运行");
+    return;
+  }
   // 先落盘当前画布，避免运行服务端读到上一次保存的旧图（例如刚粘贴的 B 站链接还没到自动保存）。
   if (saveTimer) clearTimeout(saveTimer);
   saveTimer = null;
@@ -532,6 +583,8 @@ async function startRun(scope: "all" | "fromNode" | "node", nodeId?: string) {
     return;
   }
   clearNodeOutputCache();
+  // 记在队列 store 上：POST 往返期间「已有一处在起运行」，排队那边据此让路，不重复启动。
+  runQueue.beginStart(projectId.value);
   try {
     running.value = true;
     const run = await api.post<RunMeta>(`/api/projects/${projectId.value}/runs`, { scope, nodeId });
@@ -558,11 +611,24 @@ async function startRun(scope: "all" | "fromNode" | "node", nodeId?: string) {
   } catch (err) {
     running.value = false;
     toast.error(err instanceof Error ? err.message : "启动运行失败");
+  } finally {
+    runQueue.endStart(projectId.value);
   }
 }
 
 function nodeName(nodeId: string): string {
   return graph.value.nodes.find((n) => n.id === nodeId)?.data.label ?? nodeId;
+}
+
+/** 清掉本工程的等待队列，返回给提示用的一句话（没有排队时是空串）。 */
+function clearQueueSuffix(): string {
+  const cleared = runQueue.clear(projectId.value);
+  return cleared > 0 ? `，并清空排队（${cleared} 个）` : "";
+}
+
+function clearQueue(): void {
+  const cleared = runQueue.clear(projectId.value);
+  if (cleared > 0) toast.info(`已清空排队（${cleared} 个）`);
 }
 
 async function stopRun() {
@@ -571,10 +637,11 @@ async function stopRun() {
   try {
     if (activeRun.value) {
       await api.post<{ ok: boolean }>(`/api/runs/${target.id}/stop`);
-      toast.success("已发送停止指令");
+      // 停止是「都不要跑了」：不清队列的话，下一条会立刻自己起来，看起来像停止没生效。
+      toast.success(`已发送停止指令${clearQueueSuffix()}`);
     } else {
       await api.post<{ ok: boolean }>(`/api/runs/${target.id}/force-stop`);
-      toast.success("已强制结束中断的运行");
+      toast.success(`已强制结束中断的运行${clearQueueSuffix()}`);
       await runsStore.load();
     }
   } catch (err) {
@@ -587,7 +654,7 @@ async function forceStopRun() {
   if (!target) return;
   try {
     await api.post<{ ok: boolean }>(`/api/runs/${target.id}/force-stop`);
-    toast.success("已强制结束运行");
+    toast.success(`已强制结束运行${clearQueueSuffix()}`);
     const cancelled = activeRun.value ? { ...activeRun.value, status: "cancelled" as const } : { ...target, status: "cancelled" as const };
     if (activeRun.value) activeRun.value = cancelled;
     runsStore.upsert(cancelled);
@@ -710,9 +777,14 @@ async function viewOutput(nodeId: string, segmentIndex?: number) {
       <div class="sf-mobile-hint">画布编辑器需要桌面端（≥1024px）。当前仅作只读预览，请在电脑上打开以编辑。</div>
       <div class="sf-canvas-wrap">
         <div v-if="loaded" class="sf-editor-float-actions">
-          <button type="button" class="sf-float-btn sf-float-run" :disabled="canvasRunning" @click="startRun('all')">
+          <button
+            type="button"
+            class="sf-float-btn sf-float-run"
+            :title="canvasRunning ? '当前有运行进行中，点击后加入排队' : '运行整个工程'"
+            @click="startRun('all')"
+          >
             <Play :size="13" />
-            <span>运行</span>
+            <span>{{ canvasRunning ? "排队运行" : "运行" }}</span>
           </button>
           <button v-if="lastRun" type="button" class="sf-float-btn sf-float-ghost" @click="router.push(`/project/${projectId}/run/${lastRun.id}`)">
             <History :size="13" />
@@ -722,6 +794,10 @@ async function viewOutput(nodeId: string, segmentIndex?: number) {
             <Activity :size="13" />
             <span>活动任务 {{ activeTaskCount }}</span>
           </span>
+          <button v-if="queuedCount > 0" type="button" class="sf-float-btn sf-float-queue" :title="queuedTitle" @click="clearQueue">
+            <ListOrdered :size="13" />
+            <span>排队 {{ queuedCount }}</span>
+          </button>
           <button
             type="button"
             class="sf-float-btn sf-float-stop"
@@ -934,6 +1010,17 @@ async function viewOutput(nodeId: string, segmentIndex?: number) {
 .sf-float-stop:hover:not(:disabled) {
   background: var(--color-ink-soft);
   color: var(--color-text);
+}
+
+/* 排队计数：软底标签的既有样式（同 RunLogDialog 的 is-ai-request），点击清空——提示里写了。 */
+.sf-float-queue {
+  background: var(--color-info-soft);
+  color: var(--color-info);
+}
+
+.sf-float-queue:hover:not(:disabled) {
+  background: var(--color-brand-soft);
+  color: var(--color-info);
 }
 
 .sf-mobile-hint {

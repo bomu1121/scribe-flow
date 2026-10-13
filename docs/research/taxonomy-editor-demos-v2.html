@@ -1,0 +1,638 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>③ 词库编辑器 v2 —— 视觉语言重做（三版对照）</title>
+<!--
+  v2 与 v1 的区别：**结构不动**（v1 已经定在「紧凑分组 + 按需新增 + 可折叠」），
+  这一版只改视觉语言与手势的可见性：
+    · 一级有颜色（色点 + 淡底），二级一眼能分出组；颜色只做标记，文字一律用正文色（对比度见文档）
+    · 删除与改名不再藏在 hover / 双击里 —— 都改成可见入口或标准手势
+    · 每个二级带「用过多少篇」；一级带合计
+    · 支持拖拽排序（组内）
+    · 空组有空状态，不是干挂一个「+ 添加」
+  宽度按真机 454px，数据用真机词库。
+-->
+<style>
+  :root {
+    --color-bg: #f4f5f6;
+    --color-surface: #ffffff;
+    --color-surface-muted: #f7f8f9;
+    --color-border: #e4e7eb;
+    --color-border-strong: #cdd3da;
+    --color-text: #16181d;
+    --color-text-secondary: #545b66;
+    --color-text-tertiary: #8a929e;
+    --color-error: #d23f4e;
+    --color-brand: #00aeec;
+    --color-brand-soft: #e6f7fe;
+    --color-success: #18a058;
+    --color-success-soft: #e7f6ee;
+    --color-warning: #d9822b;
+    --color-warning-soft: #fcf0e2;
+    --color-info: #0b88c4;
+    --color-info-soft: #e6f5fc;
+    --color-accent-pink: #fb7299;
+    --color-accent-pink-soft: #feeef3;
+    --color-accent-indigo: #6366f1;
+    --color-accent-indigo-soft: #eef0fe;
+    --radius-md: 8px;
+    --font-family: "Geist Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+      "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans SC", sans-serif;
+    --text-body-size: 13px;
+    --dur-1: 120ms;
+    --ease-out: cubic-bezier(0.2, 0.8, 0.2, 1);
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 28px 22px 96px;
+    background: var(--color-bg); color: var(--color-text);
+    font-family: var(--font-family); font-size: 14px; line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+  .page { max-width: 900px; margin: 0 auto; }
+  h1 { margin: 0 0 6px; font-size: 20px; font-weight: 600; }
+  .lead { margin: 0 0 14px; color: var(--color-text-secondary); }
+  .lead b { color: var(--color-text); font-weight: 600; }
+  .bar {
+    display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+    margin: 0 0 22px; padding: 8px 12px;
+    background: var(--color-surface); border: 1px solid var(--color-border); border-radius: 8px;
+    font-size: 12px; color: var(--color-text-secondary);
+  }
+  .bar label { display: flex; align-items: center; gap: 6px; cursor: pointer; }
+  .panel {
+    margin-bottom: 26px; padding: 16px 18px 18px;
+    background: var(--color-surface); border: 1px solid var(--color-border); border-radius: 12px;
+  }
+  .panel-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+  .panel-name { font-size: 15px; font-weight: 600; }
+  .badge {
+    padding: 1px 7px; border-radius: 999px; font-size: 11px;
+    background: var(--color-brand-soft); color: #0b6c92; border: 1px solid #b8e8fb;
+  }
+  .badge--grey { background: var(--color-surface-muted); color: var(--color-text-tertiary); border-color: var(--color-border); }
+  .panel-src { margin: 4px 0 12px; font-size: 12px; color: var(--color-text-tertiary); }
+  .panel-src b { color: var(--color-text-secondary); font-weight: 500; }
+  .stage { max-width: 454px; }
+  .facts { margin: 12px 0 0; padding: 0; list-style: none; font-size: 12px; color: var(--color-text-secondary); }
+  .facts li { margin-bottom: 3px; }
+  .facts b { color: var(--color-text); font-weight: 600; }
+
+  /* ---------------- 共用：分组卡片的骨架 ---------------- */
+  .grp { padding: 10px 12px; border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--color-surface); }
+  .grp + .grp { margin-top: 8px; }
+  .grp-head { display: flex; align-items: center; gap: 7px; min-height: 22px; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+  .grp-name { font-size: 13px; font-weight: 600; letter-spacing: 0.01em; }
+  .grp-count { font-size: 11px; color: var(--color-text-tertiary); }
+  .grp-actions { margin-left: auto; display: flex; align-items: center; gap: 2px; }
+  .icon-btn {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 24px; height: 24px; padding: 0; border: none; border-radius: 5px;
+    background: transparent; color: var(--color-text-tertiary); cursor: pointer;
+  }
+  .icon-btn:hover { background: var(--color-ink-soft, #f0f1f3); color: var(--color-text); }
+  .icon-btn--danger:hover { color: var(--color-error); }
+
+  .chips { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 8px; }
+  .chip {
+    display: inline-flex; align-items: center; gap: 5px;
+    padding: 0 3px 0 6px; border-radius: 6px;
+    font-size: 12px; line-height: 24px; cursor: text;
+    background: var(--color-surface-muted); color: var(--color-text-secondary);
+    border: 1px solid transparent;
+  }
+  .chip:hover { border-color: var(--color-border-strong); }
+  /* 拖拽把手：16px 槽位**常驻**（避免 hover 时重排），淡显；指向 chip 时变实。
+     依据：Atlassian 的拖拽设计指南——次操作可以 hover 显形，但要用 compact 尺寸、别留大缝；
+     而"既要点又要拖"的列表项应该有独立把手（只有卡片那种"隐含可拖"的形态才允许整块拖）。 */
+  .chip-grip {
+    width: 16px; height: 24px; display: inline-flex; align-items: center; justify-content: center;
+    color: var(--color-text-tertiary); opacity: 0.45; cursor: grab; font-size: 9px;
+    letter-spacing: -1px; flex: none;
+  }
+  .chip:hover .chip-grip { opacity: 1; }
+  .chip:active .chip-grip { cursor: grabbing; }
+  .chip-usage { font-size: 10.5px; color: var(--color-text-tertiary); font-variant-numeric: tabular-nums; }
+  /* × 用次要色而不是三级灰：三级灰压在彩色淡底上实测只有 2.86:1，
+     低于 WCAG 1.4.11 对 UI 组件要求的 3:1；次要色在同样的底上是 6.05–6.23。 */
+  .chip-x {
+    width: 20px; height: 20px; border: none; border-radius: 4px; padding: 0;
+    background: transparent; color: var(--color-text-secondary);
+    font-size: 13px; line-height: 1; cursor: pointer;
+  }
+  .chip-x:hover { color: var(--color-error); background: #fdecee; }
+  .chip input { font: inherit; border: 1px solid var(--color-brand); border-radius: 4px; padding: 0 4px; width: 90px; }
+  .chip--drag { opacity: 0.4; }
+  .chip--over { box-shadow: -2px 0 0 0 var(--color-text); } /* 2px 落点线：Atlassian 的规格就是 2px */
+
+  .add-row { margin-top: 8px; display: flex; align-items: center; gap: 6px; }
+  .add-btn {
+    display: inline-flex; align-items: center; gap: 4px;
+    height: 24px; padding: 0 8px; border-radius: 6px;
+    border: 1px dashed var(--color-border-strong); background: transparent;
+    color: var(--color-text-secondary); font: inherit; font-size: 12px; cursor: pointer;
+  }
+  .add-btn:hover { border-color: var(--color-text); color: var(--color-text); }
+  .add-row input {
+    height: 26px; padding: 0 8px; font: inherit; font-size: 12px;
+    border: 1px solid var(--color-brand); border-radius: 6px; width: 150px;
+  }
+  .empty { font-size: 12px; color: var(--color-text-tertiary); margin-top: 6px; }
+
+  /* ---------------- V2 变体：叠色（Notion 风） ---------------- */
+  /* 彩色 chip：淡底 + 同族描边。描边用 color-mix 从令牌混出来——
+     真机里写 #xxx 会被 ui-lint 拦，而 color-mix(in srgb, var(--token) 30%, transparent) 不引入新色值。 */
+  .chip--tinted { border-color: color-mix(in srgb, var(--chip-color) 32%, transparent); }
+  /* ---------------- V3 变体：清单（GitHub Labels 风） ---------------- */
+  .v3 .rows { margin-top: 6px; }
+  .v3 .r {
+    display: flex; align-items: center; gap: 8px;
+    padding: 3px 4px 3px 0; border-radius: 5px; font-size: 12px;
+  }
+  .v3 .r:hover { background: var(--color-surface-muted); }
+  .v3 .r-name { flex: 1; min-width: 0; cursor: text; }
+  .v3 .r-bar { width: 34px; height: 4px; border-radius: 999px; background: var(--color-surface-muted); flex: none; }
+  .v3 .r-bar span { display: block; height: 100%; border-radius: 999px; }
+  .v3 .r-usage { width: 30px; text-align: right; color: var(--color-text-tertiary); font-size: 10.5px; font-variant-numeric: tabular-nums; }
+  .v3 .r .icon-btn { width: 22px; height: 22px; }
+</style>
+</head>
+<body>
+<div class="page">
+  <h1>③ 词库编辑器 v2 —— 视觉语言重做</h1>
+  <p class="lead">
+    v1 的三个方案只动了结构，皮没换，所以还是丑。这一版<b>结构沿用 v1 的 A</b>（紧凑分组 + 按需新增 + 折叠 + 手风琴），
+    只重做<b>视觉与手势的可见性</b>：一级上色（色点 + 淡底）、删除与改名不再藏进 hover/双击、每个标签带用量、组内可拖拽。
+    下面三版是同一套交互、<b>三种视觉取向</b>，请挑观感。
+  </p>
+  <div class="bar">
+    <label><input type="checkbox" id="real" checked> 按真机宽度（454px）</label>
+    <label><input type="checkbox" id="accordion"> 手风琴（只展开一组）</label>
+    <label><input type="checkbox" id="usage" checked> 每个标签显示用量</label>
+    <label><input type="checkbox" id="palette"> 换成 Primer 色板（浅底深字，≈5:1）</label>
+    <span>颜色只做标记：文字一律用正文色，对比度实测见文档</span>
+  </div>
+
+  <section class="panel">
+    <div class="panel-head">
+      <span class="panel-name">V1 彩色标记版（Notion / Linear 取向）</span>
+      <span class="badge">推荐</span>
+    </div>
+    <p class="panel-src">
+      一级一个色（<b>色点 + 名称</b>），二级 chip 用同色的 <b>淡底</b>；块与块之间靠颜色一眼分区。
+      文字仍是正文色/次要色——<b>不用彩色小字</b>，因为仓库令牌里没有一个颜色能在自己的淡底上达到 4.5:1（实测 3.1–3.9）。
+    </p>
+    <div class="stage v1" id="v1"></div>
+    <ul class="facts">
+      <li>试：<b>点标签名改名</b>（不是双击）、<b>拖标签排序</b>、点组头的复制/添加/⋯、指向 chip 看常显的 ×</li>
+      <li>每个标签带<b>用量</b>（用过多少篇笔记）；一级带合计——调研里"该不该删"就靠这个</li>
+    </ul>
+  </section>
+
+  <section class="panel">
+    <div class="panel-head">
+      <span class="panel-name">V2 单色版（更贴仓库现在的克制风格）</span>
+    </div>
+    <p class="panel-src">
+      不上色：靠<b>字重、缩进、分隔与留白</b>做层次；chip 是浅灰底、hover 才浮出边框。
+      适合"不想让设置页出现彩虹"，代价是 6 个组的区分度全部落在"组头那一行"上。
+    </p>
+    <div class="stage v2" id="v2"></div>
+  </section>
+
+  <section class="panel">
+    <div class="panel-head">
+      <span class="panel-name">V3 清单版（GitHub Labels 取向）</span>
+    </div>
+    <p class="panel-src">
+      每个标签占一行：名字 + <b>用量条</b> + 数值 + 两个图标按钮（改名 / 删除）。
+      信息密度最高、最像"数据管理"界面，但 24 个标签就是 24 行——竖向比 chip 版高。
+    </p>
+    <div class="stage v3" id="v3"></div>
+  </section>
+</div>
+
+<script>
+/* ------------------------------------------------------------------ 数据 */
+/*
+ * 分组的取色规则（照 Notion 的做法：颜色是"可分配的资源"，不是自动彩虹）：
+ *   可用的**色相只有 5 个**——蓝 / 靛 / 绿 / 橙 / 粉。仓库调色板里有两个蓝（brand 与 info），
+ *   按顺序取会撞色（来源 与 概念 看上去一样），所以只用一个蓝。
+ *   第 6 个起用中性灰；**自动维护的组固定中性**（UP主名称由入库时自动写，不该和人维护的组一样有声有色）。
+ */
+/* Primer 的浅底/深字配对（GitHub 的开源设计系统，MIT）：每一对的对比度都被工程化到 ≈5:1，
+   而它们自己的 hover 档也一并给出来。用它们的理由：我们自己的令牌里没有够深的彩色文字档
+   ——实测主色压自己的淡底只有 2.31–3.94，全部不到小字要求的 4.5。 */
+const PRIMER = {
+  来源: { bg: "#d1f0ff", fg: "#005fcc", hover: "#ade1ff" },
+  类型: { bg: "#f1e5ff", fg: "#783ae4", hover: "#e6d2fe" },
+  领域: { bg: "#c7f5ef", fg: "#106e75", hover: "#89ebe1" },
+  概念: { bg: "#ffe7d1", fg: "#a24610", hover: "#fecfaa" },
+  状态: { bg: "#ffe5f1", fg: "#b12f79", hover: "#fdc9e2" },
+  UP主名称: { bg: "#caf7ca", fg: "#2b6e3f", hover: "#9ceda0" },
+};
+
+const GROUPS = [
+  { name: "来源", color: "var(--color-brand)", soft: "var(--color-brand-soft)", items: [
+    ["B站", 128], ["文稿", 41], ["本地视频", 12], ["网页", 7], ["播客", 3] ] },
+  { name: "类型", color: "var(--color-accent-indigo)", soft: "var(--color-accent-indigo-soft)", items: [
+    ["视频笔记", 118], ["学习笔记", 34], ["思维导图", 9], ["会议纪要", 5] ] },
+  { name: "领域", color: "var(--color-success)", soft: "var(--color-success-soft)", items: [
+    ["历史", 46], ["AI", 38], ["编程", 21], ["效率", 14], ["心理", 9], ["知识管理", 6] ] },
+  { name: "概念", color: "var(--color-warning)", soft: "var(--color-warning-soft)", items: [
+    ["Obsidian", 52], ["PARA", 18], ["Zettelkasten", 12], ["RAG", 11], ["双链", 9], ["Templater", 4], ["Dataview", 3] ] },
+  { name: "状态", color: "var(--color-accent-pink)", soft: "var(--color-accent-pink-soft)", items: [
+    ["未整理", 87], ["已整理", 61] ] },
+  { name: "UP主名称", color: "var(--color-text-tertiary)", soft: "var(--color-surface-muted)", items: [] },
+];
+const clone = () => JSON.parse(JSON.stringify(GROUPS));
+
+/* ------------------------------------------------------------------ 小工具 */
+function el(tag, cls, text) {
+  const n = document.createElement(tag);
+  if (cls) n.className = cls;
+  if (text != null) n.textContent = text;
+  return n;
+}
+function icon(name) {
+  /* 图标用文字符号代替（原型不走图标库），形状与真机 lucide 图标同义 */
+  const map = { copy: "⧉", plus: "＋", more: "⋯", grip: "⣿", edit: "✎", del: "×" };
+  return map[name];
+}
+function iconButton(name, title, onClick, danger) {
+  const b = el("button", "icon-btn" + (danger ? " icon-btn--danger" : ""), icon(name));
+  b.type = "button";
+  b.title = title;
+  b.addEventListener("click", (e) => { e.stopPropagation(); onClick(); });
+  return b;
+}
+
+/* ------------------------------------------------------------------ 共用：一个分组的渲染（chip 版：V1 / V2） */
+function renderChipGroup(group, opts) {
+  const card = el("div", "grp");
+  const head = el("div", "grp-head");
+  const caret = el("button", "caret", "▾");
+  caret.type = "button";
+  caret.style.cssText = "border:none;background:transparent;color:var(--color-text-tertiary);font-size:10px;padding:0;cursor:pointer;width:12px";
+  head.append(caret);
+  if (opts.tinted) {
+    const dot = el("span", "dot");
+    dot.style.background = group.color;
+    head.append(dot);
+  }
+  head.append(el("span", "grp-name", group.name));
+  const total = group.items.reduce((sum, [, usage]) => sum + usage, 0);
+  head.append(el("span", "grp-count", `${group.items.length} 个 · ${total} 篇用过`));
+
+  const actions = el("div", "grp-actions");
+  actions.append(iconButton("copy", `复制 Obsidian 搜索串 tag:#${group.name}`, () => {}));
+  actions.append(iconButton("plus", "在这一组里加一个标签", () => openAdd()));
+  actions.append(iconButton("more", "重命名 / 删除这一组", () => {
+    const menu = el("div", "add-row");
+    menu.style.gap = "8px";
+    const rename = el("button", "add-btn", "重命名这一组");
+    rename.type = "button";
+    rename.addEventListener("click", () => { head.querySelector(".grp-name").textContent = prompt("新的一级名", group.name) ?? group.name; menu.remove(); });
+    const del = el("button", "add-btn", "删除这一组");
+    del.type = "button";
+    del.addEventListener("click", () => card.remove());
+    menu.append(rename, del);
+    card.append(menu);
+  }));
+  head.append(actions);
+  card.append(head);
+
+  const chips = el("div", "chips");
+  const body = el("div");
+  body.append(chips);
+
+  const drawChips = () => {
+    chips.innerHTML = "";
+    for (const item of group.items) chips.append(chipOf(item));
+    chips.append(addSlot());
+    if (group.items.length === 0) {
+      /* 空组：不写"暂无"文案，只留那一行创建入口（Airtable 的 Add option 就是唯一内容）。
+         组名旁边的「0 个 · 0 篇用过」已经在说"这组是空的"，再写一句就是重复。 */
+      const hint = el("span", "chip-usage", "还没有二级标签，一级本身也能当标签用");
+      hint.style.paddingLeft = "2px";
+      chips.prepend(hint);
+    } else {
+      const stale = body.querySelector(".empty");
+      if (stale) stale.remove();
+    }
+  };
+
+  /* 传的是**那一项本身**（[名字, 用量]），不是名字的快照：
+     改名后按旧名字去删就会删不掉（这个 bug 是自动化点测抓出来的）。 */
+  function chipOf(item) {
+    const name = item[0];
+    const chip = el("span", "chip" + (opts.tinted ? " chip--tinted" : ""));
+    const palette = opts.palette === "primer" ? PRIMER[group.name] : null;
+    if (opts.tinted) {
+      chip.style.background = palette ? palette.bg : group.soft;
+      chip.style.setProperty("--chip-color", palette ? palette.fg : group.color);
+      if (palette) {
+        chip.style.color = palette.fg;      /* 色相落在文字上——浅底承载不了色相 */
+        chip.style.borderColor = "transparent";
+      }
+    }
+    const grip = el("span", "chip-grip", "⣿");
+    grip.title = "拖动可以调顺序";
+    chip.append(grip);
+    const label = el("span", null, name);
+    label.style.cursor = "text";
+    label.title = "点一下改名";
+    chip.append(label);
+    if (item[1] != null && showUsage) {
+      const usageNode = el("span", "chip-usage", String(item[1]));
+      if (palette) usageNode.style.color = palette.fg;
+      chip.append(usageNode);
+    }
+    const x = el("button", "chip-x", icon("del"));
+    x.type = "button";
+    x.title = `删除 ${group.name}/${name}`;
+    x.addEventListener("click", (e) => {
+      e.stopPropagation();
+      group.items = group.items.filter((it) => it !== item);
+      drawChips();
+      updateCount();
+    });
+    chip.append(x);
+
+    /* 单击即改名（不是双击） */
+    label.addEventListener("click", () => {
+      const input = el("input");
+      input.value = name;
+      input.style.width = `${Math.max(60, name.length * 13 + 16)}px`;
+      chip.replaceChild(input, label);
+      input.focus();
+      input.select();
+      const commit = (save) => {
+        const next = save ? input.value.trim() : name;
+        if (chip.contains(input)) chip.replaceChild(label, input);
+        if (next && next !== item[0]) {
+          item[0] = next;
+          label.textContent = next;
+          x.title = `删除 ${group.name}/${next}`;
+        }
+      };
+      input.addEventListener("click", (e) => e.stopPropagation());
+      input.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") commit(true);
+        if (e.key === "Escape") commit(false);
+      });
+      input.addEventListener("blur", () => commit(true));
+    });
+
+    /* 拖拽：整块 draggable，落点用左边缘高亮；拖动中自己半透明 */
+    chip.draggable = true;
+    chip.addEventListener("dragstart", (e) => {
+      dragFrom = { group, name };
+      chip.classList.add("chip--drag");
+      e.dataTransfer.effectAllowed = "move";
+    });
+    chip.addEventListener("dragend", () => chip.classList.remove("chip--drag"));
+    chip.addEventListener("dragover", (e) => {
+      if (!dragFrom || dragFrom.group !== group) return;
+      e.preventDefault();
+      chip.classList.add("chip--over");
+    });
+    chip.addEventListener("dragleave", () => chip.classList.remove("chip--over"));
+    chip.addEventListener("drop", (e) => {
+      e.preventDefault();
+      chip.classList.remove("chip--over");
+      if (!dragFrom || dragFrom.group !== group) return;
+      const from = group.items.findIndex(([n]) => n === dragFrom.name);
+      const to = group.items.findIndex(([n]) => n === name);
+      if (from < 0 || to < 0 || from === to) return;
+      const [moved] = group.items.splice(from, 1);
+      group.items.splice(to, 0, moved);
+      dragFrom = null;
+      drawChips();
+    });
+    /* 键盘：F2 进入改名（Windows 资源管理器 / Excel / VS Code / Nautilus 都用 F2，macOS 用 Return），
+       Delete/Backspace 删掉这一项（Material 的 deletable chip 就是这个约定）。
+       F2 只是**补充**入口——很多笔记本的 F 键默认是多媒体键、要先按 Fn，所以"单击名字"这条鼠标路径必须同时存在。 */
+    chip.tabIndex = 0;
+    chip.addEventListener("keydown", (e) => {
+      if (e.key === "F2") {
+        e.preventDefault();
+        label.click();
+      }
+      if (e.key === "Delete" || e.key === "Backspace") {
+        e.preventDefault();
+        group.items = group.items.filter((it) => it !== item);
+        drawChips();
+        updateCount();
+      }
+    });
+
+    return chip;
+  }
+
+  function addSlot() {
+    const slot = el("span", "add-slot");
+    const btn = el("button", "add-btn", icon("plus").replace("＋", "+ ") + "");
+    btn.textContent = "+ 添加";
+    btn.type = "button";
+    btn.style.height = "24px";
+    btn.addEventListener("click", () => openAdd());
+    slot.append(btn);
+    slot.style.display = "inline-flex";
+    return slot;
+  }
+
+  function openAdd() {
+    const slot = chips.querySelector(".add-slot");
+    if (!slot || slot.querySelector("input")) { slot?.querySelector("input")?.focus(); return; }
+    const input = el("input");
+    input.placeholder = "标签名，回车添加";
+    slot.innerHTML = "";
+    slot.append(input);
+    input.focus();
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") {
+        const name = input.value.trim();
+        if (name) group.items.push([name, 0]);
+        input.value = "";
+        drawChips();
+        updateCount();
+        chips.querySelector(".add-slot input")?.focus();
+      }
+      if (e.key === "Escape") drawChips();
+    });
+    input.addEventListener("blur", () => drawChips());
+  }
+
+  function updateCount() {
+    const t = group.items.reduce((sum, [, usage]) => sum + usage, 0);
+    head.querySelector(".grp-count").textContent = `${group.items.length} 个 · ${t} 篇用过`;
+  }
+
+  /* 折叠 */
+  caret.addEventListener("click", () => {
+    const hidden = body.style.display === "none";
+    body.style.display = hidden ? "" : "none";
+    caret.textContent = hidden ? "▾" : "▸";
+    if (hidden && document.body.classList.contains("accordion")) {
+      for (const other of card.parentElement.children) {
+        if (other === card || !other.classList.contains("grp")) continue;
+        const ob = other.querySelector(":scope > div:last-child");
+        if (ob) ob.style.display = "none";
+        const oc = other.querySelector(".caret");
+        if (oc) oc.textContent = "▸";
+      }
+    }
+  });
+
+  card.append(body);
+  drawChips();
+  return card;
+}
+
+let dragFrom = null;
+/** 是否在每个 chip 上显示用量：这是"该删哪个标签"的唯一依据，但它每个 chip 要多占 ~20px 宽。
+    做成开关是为了让这个代价看得见——实测见文档。 */
+let showUsage = true;
+
+/* ------------------------------------------------------------------ V1 / V2 渲染 */
+function renderChipVariant(rootId, tinted, palette) {
+  const root = document.getElementById(rootId);
+  const state = clone();
+  for (const group of state) root.append(renderChipGroup(group, { tinted, palette }));
+  const tail = el("div", "add-row");
+  const btn = el("button", "add-btn", "+ 新增一级分类");
+  btn.type = "button";
+  btn.addEventListener("click", () => {
+    const name = prompt("一级分类的名字（如「话题」）");
+    if (!name) return;
+    const group = { name, color: "var(--color-text-tertiary)", soft: "var(--color-surface-muted)", items: [] };
+    state.push(group);
+    root.insertBefore(renderChipGroup(group, { tinted, palette }), tail);
+  });
+  tail.append(btn);
+  root.append(tail);
+}
+let chipPalette = "grey";
+renderChipVariant("v1", true, chipPalette);
+renderChipVariant("v2", false, "grey"); /* 单色版永远不变色 */
+
+/* 开关：仓库令牌（灰字）↔ Primer 色板（浅底深字） */
+const paletteToggle = document.getElementById("palette");
+paletteToggle?.addEventListener("change", () => {
+  chipPalette = paletteToggle.checked ? "primer" : "grey";
+  document.getElementById("v1").innerHTML = "";
+  document.getElementById("v2").innerHTML = "";
+  renderChipVariant("v1", true, chipPalette);
+  renderChipVariant("v2", false, chipPalette);
+});
+
+/* ------------------------------------------------------------------ V3：清单版 */
+(function renderV3() {
+  const root = document.getElementById("v3");
+  const state = clone();
+  const maxUsage = Math.max(...state.flatMap((g) => g.items.map(([, u]) => u)), 1);
+  const draw = () => {
+    root.innerHTML = "";
+    for (const group of state) {
+      const card = el("div", "grp");
+      const head = el("div", "grp-head");
+      const dot = el("span", "dot");
+      dot.style.background = group.color;
+      head.append(dot, el("span", "grp-name", group.name));
+      const total = group.items.reduce((s, [, u]) => s + u, 0);
+      head.append(el("span", "grp-count", `${group.items.length} 个 · ${total} 篇用过`));
+      const actions = el("div", "grp-actions");
+      actions.append(iconButton("copy", `复制搜索串 tag:#${group.name}`, () => {}));
+      actions.append(iconButton("plus", "在这一组里加一个标签", () => addItem(group)));
+      head.append(actions);
+      card.append(head);
+
+      const rows = el("div", "rows");
+      if (group.items.length === 0) {
+        rows.append(el("div", "empty", "还没有二级标签——一级本身也能直接当标签用。"));
+      }
+      for (const item of group.items) {
+        const row = el("div", "r");
+        const name = el("span", "r-name", item[0]);
+        name.title = "点一下改名";
+        name.addEventListener("click", () => {
+          const input = el("input");
+          input.value = item[0];
+          input.style.cssText = "font:inherit;font-size:12px;border:1px solid var(--color-brand);border-radius:4px;padding:0 4px;width:120px";
+          name.replaceWith(input);
+          input.focus(); input.select();
+          const commit = () => { item[0] = input.value.trim() || item[0]; draw(); };
+          input.addEventListener("keydown", (e) => { if (e.key === "Enter") commit(); if (e.key === "Escape") draw(); });
+          input.addEventListener("blur", commit);
+        });
+        const bar = el("span", "r-bar");
+        const fill = el("span");
+        fill.style.width = `${Math.round((item[1] / maxUsage) * 100)}%`;
+        fill.style.background = group.color;
+        bar.append(fill);
+        const usage = el("span", "r-usage", String(item[1]));
+        const edit = iconButton("edit", `重命名 ${group.name}/${item[0]}`, () => {});
+        const del = iconButton("del", `删除 ${group.name}/${item[0]}`, () => {
+          group.items = group.items.filter(([n]) => n !== item[0]);
+          draw();
+        }, true);
+        row.append(name, bar, usage, edit, del);
+        rows.append(row);
+      }
+      card.append(rows);
+      root.append(card);
+    }
+  };
+  function addItem(group) {
+    const name = prompt(`给「${group.name}」加一个二级标签`);
+    if (!name) return;
+    group.items.push([name, 0]);
+    draw();
+  }
+  draw();
+})();
+
+/* ------------------------------------------------------------------ 开关 */
+const real = document.getElementById("real");
+const accordion = document.getElementById("accordion");
+const apply = () => document.querySelectorAll(".stage").forEach((s) => (s.style.maxWidth = real.checked ? "454px" : "none"));
+real.addEventListener("change", apply);
+apply();
+const usageToggle = document.getElementById("usage");
+usageToggle.addEventListener("change", () => {
+  showUsage = usageToggle.checked;
+  /* 两版都重画 */
+  document.getElementById("v1").innerHTML = "";
+  document.getElementById("v2").innerHTML = "";
+  renderChipVariant("v1", true);
+  renderChipVariant("v2", false);
+});
+accordion.addEventListener("change", () => {
+  document.body.classList.toggle("accordion", accordion.checked);
+  if (!accordion.checked) return;
+  for (const stage of document.querySelectorAll(".stage")) {
+    const groups = Array.from(stage.children).filter((c) => c.classList.contains("grp"));
+    groups.forEach((card, index) => {
+      const body = card.querySelector(":scope > div:last-child");
+      if (body) body.style.display = index === 0 ? "" : "none";
+      const caret = card.querySelector(".caret");
+      if (caret) caret.textContent = index === 0 ? "▾" : "▸";
+    });
+  }
+});
+
+window.__measure = () => {
+  const out = {};
+  for (const id of ["v1", "v2", "v3"]) {
+    const box = document.getElementById(id).getBoundingClientRect();
+    out[id] = { 高: Math.round(box.height), 按钮: document.getElementById(id).querySelectorAll("button").length };
+  }
+  return out;
+};
+</script>
+</body>
+</html>

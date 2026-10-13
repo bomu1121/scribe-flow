@@ -16,6 +16,26 @@ body {
   background: var(--color-bg);
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
+
+  /*
+   * 中文排版的两条引擎级规则（依据与实测见 docs/research/settings-text-typography-research.md）：
+   * · text-autospace：中西文之间自动补间距，实测每处边界 +1.5px（= 1/8 汉字宽，clreq 的参考值是 ≤ 1/4）。
+   *   **四家引擎的初始值都是 no-autospace（规范写的是 normal），不显式声明就不生效**；
+   *   已经手打过空格的地方它 +0，所以不会把排好的文案弄散。
+   * · line-break: strict：clreq 的行首行尾禁则——点号与结束括号不得出现在行首。
+   */
+  text-autospace: normal;
+  line-break: strict;
+}
+
+/*
+ * 加粗统一 600 并禁止"合成加粗"：中文没有真粗体，浏览器会靠加粗笔画合成出 700，
+ * 在小字上笔画间隙被填掉、糊成一块。600 是各家设计系统的共同选择（Tailwind / antd / GitHub / shadcn）。
+ */
+strong,
+b {
+  font-weight: 600;
+  font-synthesis-weight: none;
 }
 
 /*

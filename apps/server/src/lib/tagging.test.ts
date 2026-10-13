@@ -220,49 +220,75 @@ describe("全库重打标", () => {
     expect(second.written).toBe(0);
   });
 
-  it("老笔记靠「作者」那行补上 UP 标签，不调模型，且再跑一次仍是 0 次调用", async () => {
+  it("自动分组不归回补管：笔记里已有的 UP 主 / 来源标签既不清掉、也不重新推导", async () => {
     const vault = await makeVault({
-      "old.md": `---\n标题: 老笔记\n来源: B站\n作者: 某个 UP 主\n---\n\n# 老笔记\n\n讲智能体开发。\n`,
-      "hand.md": `---\ntags:\n  - 读书笔记\n---\n\n手工写的笔记，没有来源与作者。\n`,
+      "old.md": `---
+标题: 老笔记
+来源: B站
+作者: 某人
+tags:
+  - UP主名称/某人
+  - 来源/B站
+---
+
+# 老笔记
+
+讲智能体开发。
+`,
     });
     const taxonomy: TagTaxonomy = { 领域: ["AI"] };
-    respond = () => [];
+    respond = (_text, available) => available.filter((tag) => tag === "领域/AI");
+
+    // 清单里不该出现"需要清理"的笔记：自动分组不参与清理（老指纹里可能记过它们，见下面那条，
+    // 那是老版本把 `来源` 当词库条目的时代留下的）。
+    const plan = await planRetag(db, vault, taxonomy);
+    expect(plan.cleanupNotes).toEqual([]);
+
+    const report = await runRetag(db, aiConfig(), vault, taxonomy, { allowNewTags: false });
+    expect(report.written).toBe(1);
+    const tags = parseNoteTags(await readFile(join(vault, "old.md"), "utf8")).frontmatter;
+    expect(tags).toContain("领域/AI"); // 话题标签照判
+    expect(tags).toContain("UP主名称/某人"); // 自动标签原样留着
+    expect(tags).toContain("来源/B站");
+  });
+
+  it("笔记缺 UP 主 / 来源标签时，回补不会顺手补上（那是入库时按元数据写的事）", async () => {
+    const vault = await makeVault({
+      "old.md": `---
+标题: 老笔记
+来源: B站
+作者: 某个 UP 主
+---
+
+# 老笔记
+
+讲智能体开发。
+`,
+      "hand.md": `---
+tags:
+  - 读书笔记
+---
+
+手工写的笔记，没有来源与作者。
+`,
+    });
+    const taxonomy: TagTaxonomy = { 领域: ["AI"] };
+    respond = (_text, available) => available.filter((tag) => tag === "领域/AI");
 
     const first = await runRetag(db, aiConfig(), vault, taxonomy, { allowNewTags: false });
     expect(first.calls).toBe(1); // 两篇都是新笔记，一批判完
     const oldTags = parseNoteTags(await readFile(join(vault, "old.md"), "utf8")).frontmatter;
-    // 空格被规范成 -，这是 Obsidian 标签的硬限制
-    expect(oldTags).toContain("UP主名称/某个-UP-主");
+    expect(oldTags).toContain("领域/AI");
+    // 来源/作者两行都在，但**不会**被推导成标签——回补只管用户维护的话题词库
+    expect(oldTags.some((tag) => tag.startsWith("UP主名称/"))).toBe(false);
+    expect(oldTags.some((tag) => tag.startsWith("来源/"))).toBe(false);
 
-    // 手写笔记没有「来源」，不该被安上 UP 标签
-    const handTags = parseNoteTags(await readFile(join(vault, "hand.md"), "utf8")).frontmatter;
-    expect(handTags.filter((tag) => tag.startsWith("UP主名称/"))).toEqual([]);
-    expect(handTags).toContain("读书笔记");
-
-    // 补完 UP 标签后，再跑一次必须是 0 次调用（补标签不能把指纹搞成"永远过期"）
+    // 再跑一次仍是 0 次调用（不补标签，指纹就不该反复过期）
     chatCalls = 0;
     const second = await runRetag(db, aiConfig(), vault, taxonomy, { allowNewTags: false });
     expect(chatCalls).toBe(0);
     expect(second.written).toBe(0);
     expect(second.unchanged).toBe(2);
-  });
-
-  it("只缺 UP 标签的老笔记走本地补写，不产生模型调用", async () => {
-    const vault = await makeVault({ "old.md": `---\n标题: 老笔记\n来源: B站\n作者: 某人\n---\n\n# 老笔记\n\n正文。\n` });
-    const taxonomy: TagTaxonomy = { 领域: ["AI"] };
-    // 模拟"上一个版本写下的指纹"：内容与现在完全一致，但当时还没写 UP 标签。
-    const content = await readFile(join(vault, "old.md"), "utf8");
-    rememberNoteTags(db, vault, "old.md", content, [], taxonomy);
-
-    const plan = await planRetag(db, vault, taxonomy);
-    expect(plan.cleanupNotes).toEqual(["old.md"]);
-    expect(plan.estimatedCalls).toBe(0);
-
-    chatCalls = 0;
-    const report = await runRetag(db, aiConfig(), vault, taxonomy, { allowNewTags: false });
-    expect(chatCalls).toBe(0);
-    expect(report.written).toBe(1);
-    expect(parseNoteTags(await readFile(join(vault, "old.md"), "utf8")).frontmatter).toContain("UP主名称/某人");
   });
 
   it("人写的标签原样保留；词库删掉的标签被清掉（且不花模型钱）", async () => {

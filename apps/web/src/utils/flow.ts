@@ -81,6 +81,17 @@ export interface ScribeNodeData {
   folder?: string;
   /** 保存目录里已有同名笔记时是否直接覆盖；缺省覆盖，关掉则退让成「标题 (2).md」。 */
   overwrite?: boolean;
+  /**
+   * 这一篇要不要让 AI 读一遍（判话题标签 + 抽属性）。
+   * 三态：`undefined`＝跟随设置页的默认；`true`／`false`＝这一篇明确要 / 不要。
+   */
+  autoTag?: boolean;
+  /** 这一篇抽取哪些属性；留空或全清＝跟随设置页的默认。 */
+  extractFields?: string[];
+  /** 这一篇要不要写来源标签（`来源/B站`）。三态，同上。 */
+  sourceTag?: boolean;
+  /** 这一篇要不要写 UP 主标签（`UP主名称/某某`）。三态，同上。 */
+  upTag?: boolean;
   retry?: { maxRetries?: number; backoffMs?: number };
   /** 素材挑选：来源节点 id → 选中的素材段标识（未配置即全选）。 */
   pick?: Record<string, string[]>;

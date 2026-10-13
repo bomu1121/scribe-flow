@@ -149,10 +149,11 @@
   padding-right: 36px;
 }
 
-/* Element Plus 原生下拉框也遵循同一控件规范，避免与自研下拉框 / 输入框出现两套观感 */
-.el-select__wrapper {
+/* Element Plus 原生下拉框也遵循同一控件规范，避免与自研下拉框 / 输入框出现两套观感。
+   纵向留 4px：单行时靠 min-height 仍是 --control-height（36px），与输入框对齐；
+   多选换行时这点余量才让第二行不贴着边框（EP 原本是 4px 12px，这里是唯一被收窄的一处）。 */.el-select__wrapper {
   min-height: var(--control-height);
-  padding: 0 var(--control-padding-x);
+  padding: 4px var(--control-padding-x);
   border-radius: var(--control-radius);
   background-color: var(--control-bg);
   box-shadow: 0 0 0 1px var(--control-border) inset;
@@ -170,9 +171,72 @@
 
 .el-select--small .el-select__wrapper {
   min-height: var(--control-height-sm);
-  padding: 0 var(--control-padding-x);
+  padding: 3px var(--control-padding-x);
   font-size: var(--control-font-size-sm);
   line-height: normal;
+}
+
+/**
+ * 多选下拉里的选中项（el-tag）。
+ *
+ * Element Plus 默认是 `el-tag--info`：淡蓝底 + `--color-info` 蓝字、方角 24px，关闭按钮 hover 时
+ * 还会变成一个**实心色块圆**——和仓库自研 chip（设置页词库的 `.sf-tag-chip`）完全是两套观感。
+ * 这里把它对齐到同一套语言：灰底药丸、次要文字色、11px。
+ *
+ * 关闭按钮的两条规矩，都是被反馈逼出来的：
+ * 1. **随 chip 出现**：静止态 `opacity: 0` + `pointer-events: none`，指针停在这个 chip 上（或键盘聚焦）才显示、才可点。
+ *    这是 Notion / GitHub 标签 / Gmail 收件人 chip 的通行做法。
+ * 2. **它自己没有任何 hover 变色**。这个按钮只有 14×14px，就贴在第一个 chip 的右端，
+ *    而第一个 chip 在最左边——用户"hover 那个下拉框"时指针本来就容易落在它上面（实测：指针在
+ *    chip 文字上是静默的，压到 604–612 这段就点亮）。一个会突然变红的小按钮在那里读起来像报错或选中，
+ *    而不是"可以删"。所以反馈只留"指向 chip → × 出现"这一层，按钮本身不再有第二段状态。
+ *
+ * 改在这里而不是到处 `:deep`：这是仓库里唯一的 el-tag 用法，将来别处用到也自然一致。
+ */
+.el-select__selection .el-tag {
+  --el-tag-bg-color: var(--color-surface-muted);
+  --el-tag-border-color: transparent;
+  --el-tag-text-color: var(--color-text-secondary);
+  --el-tag-hover-color: transparent;
+
+  height: 22px;
+  padding: 0 4px 0 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  line-height: 1;
+}
+
+.el-select__selection .el-tag .el-tag__close {
+  margin-left: 2px;
+  color: var(--color-text-tertiary);
+  opacity: 0;
+  pointer-events: none;
+  /* 出现/消失走同一节奏，扫过时也不会"跳"出来 */
+  transition: opacity var(--dur-1) var(--ease-out);
+}
+
+.el-select__selection .el-tag:hover .el-tag__close,
+.el-select__selection .el-tag:focus-within .el-tag__close {
+  opacity: 1;
+  pointer-events: auto;
+  color: var(--color-text-secondary);
+}
+
+.el-select__selection .el-tag .el-tag__close .el-icon {
+  font-size: 12px;
+}
+
+/**
+ * 下拉里的分组标题（「你自己加过的」「常用属性名」）。
+ *
+ * Element Plus 把它写死成 `--el-color-info`（当链接色看）并给了 34px 行高——比它下面的选项还抢眼，
+ * 看着像可点项。它只是一句分节说明，降级成小字三级灰，左边界与选项对齐。
+ */
+.el-select-group__title {
+  padding: 6px 20px 2px;
+  color: var(--color-text-tertiary);
+  font-size: 11px;
+  line-height: 1.5;
 }
 
 /* Element Plus 下拉浮层统一：让下拉菜单/选择器也有足够宽度和一致圆角 */
@@ -185,6 +249,49 @@
   min-height: 32px;
   border-radius: var(--radius-sm);
   font-size: 13px;
+}
+
+/**
+ * 分段控件（`el-radio-button` 连着排）的选中态：跟仓库自研的那个分段控件（节点卡片上的清晰度三档，
+ * `ScribeNode.vue` 的 `.sf-node-advanced-qn.is-active`）对齐——**浅灰底 + 细边框 + 加粗一档**，
+ * 而不是 Element Plus 默认那个"主色实心块"。本仓库把主色映射成了墨色（`--el-color-primary: var(--color-ink)`），
+ * 不覆写的话选中的那一格会是一块近黑的实心，在一页表单里太重。
+ *
+ * 描边：EP 的三段**只画 outline（border 宽度是 0）**，而且默认三段同色（`--color-border-strong`）。
+ * 只把选中那一段的 outline 提到 `--color-text-secondary`（压白底实测 6.85:1，远超 WCAG 1.4.11 要的 3:1）——
+ * 分段控件的"当前是哪个"就是它的全部信息量。**注意这个色要按真实相邻底色选**：早先用的
+ * `--color-text-tertiary` 只在白底上够（3.14:1），放到 `--color-bg` `#f4f5f6` 的页面底上只有 2.877:1，不到线。
+ *
+ * **`transition` 也要收窄**：EP 默认 `transition: all .3s` 会把 outline 一起动画，
+ * 而基态 outline 的 computed 颜色是 `currentColor`（悬停时即近黑），于是选中瞬间会先冒出一条近黑描边、
+ * 再褪成灰——观感就是"异常黑边动效"（用户报的，时间线与依据见
+ * docs/research/view-mode-switcher-research.md §11）。只留底色与文字色。
+ *
+ * **`position: relative; z-index: 1` 不是装饰，是修一个真实的错**：outline 画在元素**外侧**，
+ * 相邻两段的盒紧挨着，选中段那条 1px 描边正好落在**邻居背景盒**覆盖的位置；而邻居在 DOM 里靠后、
+ * 整块（背景 + 描边）后画，于是把选中段的描边从右边盖掉了——用户看到的就是"选的这格右侧线是浅的"。
+ * 把选中段抬到兄弟之上，它那圈描边才是完整的。EP 自己的 `:focus-visible` 规则就是这么做的（`z-index: 2`）。
+ *
+ * 三档差异：淡底 + 达标描边 + 字重。**字重必须把基础档写成 400**：EP 的 `--el-font-weight-primary`
+ * 本身就是 500，不写这一条的话"选中加粗"是个空操作（实测三段都是 500）。
+ */
+.el-radio-button {
+  --el-radio-button-checked-bg-color: var(--color-ink-soft);
+  --el-radio-button-checked-text-color: var(--color-text);
+  --el-radio-button-checked-border-color: var(--color-text-secondary);
+}
+
+.el-radio-button .el-radio-button__inner {
+  color: var(--color-text-secondary);
+  font-weight: 400;
+  transition: background-color var(--dur-1) var(--ease-out), color var(--dur-1) var(--ease-out);
+}
+
+.el-radio-button.is-active .el-radio-button__inner {
+  position: relative;
+  z-index: 1;
+  font-weight: 500;
+  outline-color: var(--color-text-secondary);
 }
 
 /* 深色模式 v1 不启用，仅预留变量骨架：M5 后如需启用，给 <html> 加 .dark 即可 */

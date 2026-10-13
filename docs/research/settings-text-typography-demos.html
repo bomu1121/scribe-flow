@@ -1,0 +1,375 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>设置页说明文字的排版 —— 现状对照与候选方案</title>
+<!--
+  用途：比较设置页里「说明文字 + 行内加粗 + 行内代码」的排法，供选型。
+  测量前提：内容宽度 454px（= 设置页表单列 460px 减去 6px 余量），与真机一致。
+  用法：双击打开；顶部开关可切「真实宽度」与「放大对比」。
+-->
+<style>
+  /* 令牌内联自 apps/web/src/styles/tokens.css，保证 file:// 打开也正确 */
+  :root {
+    --color-bg: #f4f5f6;
+    --color-surface: #ffffff;
+    --color-surface-muted: #f7f8f9;
+    --color-border: #e4e7eb;
+    --color-border-strong: #cdd3da;
+    --color-text: #16181d;
+    --color-text-secondary: #545b66;
+    --color-text-tertiary: #8a929e;
+    --color-brand-soft: #e6f7fe;
+    --color-brand-border: #b8e8fb;
+    --color-brand-pressed: #0b88c4;
+    --font-family: "Geist Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+      "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans SC", sans-serif;
+    --font-mono: "Geist Mono", "Cascadia Code", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 28px 22px 96px;
+    background: var(--color-bg); color: var(--color-text);
+    font-family: var(--font-family); font-size: 14px; line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+  .page { max-width: 880px; margin: 0 auto; }
+  h1 { margin: 0 0 6px; font-size: 20px; font-weight: 600; }
+  .lead { margin: 0 0 18px; color: var(--color-text-secondary); }
+
+  .width-bar {
+    display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+    margin: 0 0 22px; padding: 8px 12px;
+    background: var(--color-surface); border: 1px solid var(--color-border); border-radius: 8px;
+    font-size: 12px; color: var(--color-text-secondary);
+  }
+  .width-bar label { display: flex; align-items: center; gap: 6px; cursor: pointer; }
+  .width-bar code { font-size: 11px; color: var(--color-text-tertiary); }
+
+  .panel {
+    margin-bottom: 26px; padding: 18px 20px 20px;
+    background: var(--color-surface); border: 1px solid var(--color-border); border-radius: 12px;
+  }
+  .panel-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+  .panel-name { font-size: 15px; font-weight: 600; }
+  .badge {
+    padding: 1px 7px; border-radius: 999px; font-size: 11px;
+    background: var(--color-brand-soft); color: var(--color-brand-pressed);
+    border: 1px solid var(--color-brand-border);
+  }
+  .badge--grey { background: var(--color-surface-muted); color: var(--color-text-tertiary); border-color: var(--color-border); }
+  .panel-src { margin: 4px 0 14px; font-size: 12px; color: var(--color-text-tertiary); }
+  .panel-src b { color: var(--color-text-secondary); font-weight: 500; }
+
+  /* 演示区：内容宽度与真机一致 */
+  .stage { padding: 2px 0; }
+  body.real .stage-inner { max-width: 454px; }
+
+  .facts { margin: 14px 0 0; padding: 0; list-style: none; font-size: 12px; color: var(--color-text-secondary); }
+  .facts li { margin-bottom: 3px; }
+  .facts b { color: var(--color-text); font-weight: 500; }
+
+  .engine-facts {
+    margin: -12px 0 22px; padding: 8px 12px;
+    background: var(--color-surface); border: 1px solid var(--color-border); border-radius: 8px;
+    font-size: 12px; line-height: 1.8; color: var(--color-text-secondary);
+  }
+  .engine-facts b { color: var(--color-text); font-weight: 600; }
+  .engine-facts code {
+    padding: 1px 5px; border-radius: 4px;
+    background: var(--color-surface-muted); font-size: 0.94em;
+  }
+
+  /* 引擎级开关：只作用在正文段落上，不动标题与说明行 */
+  body.autospace .stage-inner p,
+  body.autospace .stage-inner li { text-autospace: normal; }
+  body.trim .stage-inner p,
+  body.trim .stage-inner li { text-spacing-trim: trim-start; }
+
+  /* 行首行尾禁则：clreq 要求点号与结束括号不得出现在行首。这一条对四个方案都成立，直接常开 */
+  .stage-inner p { line-break: strict; }
+</style>
+<style>
+  /* ============ 现状（照抄真机数值，不要"顺手修好"） ============ */
+  .now .hint-a { margin: 2px 0 0; font-size: 11px; line-height: 1.6; color: var(--color-text-tertiary); }
+  /* .sf-settings-hint 在真机上没有任何 CSS：14px / 1.6 / 正文色 */
+  .now .hint-b { margin: 0; font-size: 14px; line-height: 1.6; color: var(--color-text); }
+  .now .desc { margin: 4px 0 18px; font-size: 13px; line-height: 1.6; color: var(--color-text-secondary); }
+  /* code / strong 在真机上也没有规则：只换等宽字体、字号继承 */
+  .now code { font-family: var(--font-mono); }
+  .now strong { font-weight: 700; }
+</style>
+<style>
+  /* ============ 方案 A：三套收敛成一套 ============ */
+  #a .hint-a, #a .hint-b, #a .desc {
+    margin: 2px 0 10px;
+    font-size: 12px;
+    line-height: 1.75;
+    color: var(--color-text-secondary);
+  }
+  #a code {
+    padding: 1px 5px;
+    border-radius: 4px;
+    background: var(--color-surface-muted);
+    font-size: 0.95em;
+  }
+  #a strong { font-weight: 600; }
+</style>
+<style>
+  /* ============ 方案 B：分两档 + 加粗降重 + code 药丸 ============ */
+  #b .hint-a, #b .hint-b {
+    margin: 2px 0 10px;
+    font-size: 12px;
+    line-height: 1.8;
+    color: var(--color-text-tertiary);
+  }
+  #b .desc {
+    margin: 2px 0 12px;
+    font-size: 13px;
+    line-height: 1.8;
+    color: var(--color-text-secondary);
+  }
+  /* 加粗不靠笔画糊：降到 600，同时把颜色提到正文色，用"更重 + 更深"两件事表达强调 */
+  #b strong { font-weight: 600; color: var(--color-text); font-synthesis-weight: none; }
+  /* 行内代码：不缩字号（12–13px 的中文再乘 0.9 会掉到 11px 以下）、跟随正文字体
+     （等宽字体没有中文字形，中文会按字符回退，同一段里出现两套度量）、只用底色区分；
+     代码里关掉自动加空，免得它改变"这段字面值"的观感 */
+  #b code {
+    padding: 1px 5px;
+    border-radius: 4px;
+    background: var(--color-surface-muted);
+    color: var(--color-text-secondary);
+    font-family: inherit;
+    font-size: 1em;
+    text-autospace: no-autospace;
+    overflow-wrap: anywhere;
+  }
+</style>
+<style>
+  /* ============ 方案 C：不缩字号（antd 派） ============ */
+  /* antd 的 Form help/extra：字号不缩（14px / 行高 22px），只把颜色降到 45% 黑 */
+  #c .hint-a, #c .hint-b {
+    margin: 2px 0 10px;
+    font-size: 14px;
+    line-height: 22px;
+    color: var(--color-text-tertiary);
+  }
+  #c .desc {
+    margin: 2px 0 12px;
+    font-size: 14px;
+    line-height: 22px;
+    color: var(--color-text-secondary);
+  }
+  #c strong { font-weight: 600; color: var(--color-text); font-synthesis-weight: none; }
+  /* antd 的行内代码：缩到 85%（14px → 11.9px）+ 1px 边框 + 3px 圆角 + 0.2em/0.4em 内边距 */
+  #c code {
+    padding: 0.2em 0.4em;
+    border: 1px solid var(--color-border);
+    border-radius: 3px;
+    background: var(--color-surface-muted);
+    font-size: 0.85em;
+  }
+</style>
+<style>
+  /* ============ 方案 D：结构化（数值同 B） ============ */
+  #d .hint-a, #d .hint-b {
+    margin: 2px 0 10px;
+    font-size: 12px;
+    line-height: 1.8;
+    color: var(--color-text-tertiary);
+  }
+  #d .desc {
+    margin: 2px 0 12px;
+    font-size: 13px;
+    line-height: 1.8;
+    color: var(--color-text-secondary);
+  }
+  #d strong { font-weight: 600; color: var(--color-text); font-synthesis-weight: none; }
+  #d code {
+    padding: 1px 5px;
+    border-radius: 4px;
+    background: var(--color-surface-muted);
+    color: var(--color-text-secondary);
+    font-family: inherit;
+    font-size: 1em;
+    text-autospace: no-autospace;
+  }
+  #d .list { margin: 0 0 10px; padding-left: 18px; font-size: 12px; line-height: 1.8; color: var(--color-text-tertiary); }
+  #d .list li { margin-bottom: 3px; }
+</style>
+</head>
+<body>
+<div class="page">
+  <h1>设置页「说明文字」的排版 —— 现状对照与候选方案</h1>
+  <p class="lead">
+    同一个设置页里，说明文字现在有三套尺度和三档颜色。下面用<b>设置页上的真实文案</b>并排比，
+    宽度按真机的 454px（表单列 460px 减去 6px 余量）。
+  </p>
+
+  <div class="width-bar">
+    <label><input type="checkbox" id="real" checked> 按真机宽度（454px）显示</label>
+    <label><input type="checkbox" id="autospace"> 中西文自动加间距（<code>text-autospace</code>）</label>
+    <label><input type="checkbox" id="trim"> 全角标点挤压（<code>text-spacing-trim</code>）</label>
+    <span id="support"></span>
+  </div>
+  <p class="engine-facts">
+    <b>引擎级开关的实测</b>（12px，量的是文本宽度）：
+    <code>AI泡沫</code> 34.94 → 36.44（<b>+1.5</b>）｜
+    <code>中文English混排2026年</code> 123.5 → 129.5（<b>+6</b>，四处边界各 1.5）｜
+    <code>话题/AI泡沫</code> 63.61 → 65.11（<b>+1.5</b>）｜
+    <code>UP 主与话题标签…</code>（本来就手打了空格）162.27 → 162.27（<b>0</b>）。
+    引擎只在<b>没打空格</b>的中西文边界补 1.5px（= 1/8 汉字宽），已经打过的地方不重复补。
+    <br />
+    <b>两条必须知道的前提</b>：① 四家引擎的初始值都是 <code>no-autospace</code>（规范写的是 <code>normal</code>），
+    <b>不显式声明就不生效</b>；② 支持面是 Chrome/Edge 140+、Firefox 145+、Safari 18.4+
+    （Baseline 2025），老版本浏览器要留手打空格兜底。
+    <br />
+    <b>但 <code>text-spacing-trim</code> 现在不建议上</b>：MDN 标它 not Baseline / experimental，
+    而且<b>字体缺 <code>halt</code> / <code>chws</code> 特性时属性直接失效</b>——这个开关留着看效果，
+    不要照它写进产品。
+  </p>
+
+  <!-- ================= 现状 ================= -->
+  <section class="panel now" id="now">
+    <div class="panel-head">
+      <span class="panel-name">现状（照抄真机数值）</span>
+      <span class="badge badge--grey">三项不一致</span>
+    </div>
+    <p class="panel-src">
+      真机实测：<b>.sf-field-hint</b> 11px / 行高 17.6px / 三级灰（用了 20 处）、
+      <b>.sf-settings-hint</b> 14px / 22.4px / 正文黑（用了 12 处，<b>而且这个类没有 CSS</b>）、
+      <b>.sf-settings-desc</b> 13px / 20.8px / 次要色（用了 32 处）。
+      行内 <code>code</code> 与 <code>strong</code> 全仓库都没有规则。
+    </p>
+    <div class="stage"><div class="stage-inner">
+      <p class="hint-a">改完这个路径会<strong>自动检查</strong>（只读本地文件、不联网），不用点按钮。</p>
+      <p class="hint-b">这些属性会写进笔记头部（列表形式），也是「关联相关笔记」的比较依据；<strong>一个都不选就不抽</strong>。最多 8 个。</p>
+      <p class="desc">一级是分类、二级是具体标签。标签不能含空格，保存时会自动换成 <code>-</code>。</p>
+      <p class="hint-b">UP 主与话题标签是自动加的，<strong>你自己写的标签不会被改</strong>。标签只写二级（如 <code>话题/AI泡沫</code>）—— Obsidian 里按一级筛选会自动带上它下面所有二级。标签从哪来看下面的词库。</p>
+    </div></div>
+    <ul class="facts">
+      <li>三套尺度并存：<b>11px / 13px / 14px</b>，颜色也有三级灰 / 次要色 / 正文黑</li>
+      <li>行内 <code>code</code> 只换了等宽字体，<b>没有背景、没有内边距</b>；字号跟着段落走，于是同一页里 code 一会儿 11px、一会儿 14px</li>
+      <li><code>strong</code> 用 <b>700 字重</b>压在 11px 的中文上（中文没有真粗体，是合成加粗，小字上会糊）</li>
+      <li>行高 1.6 → 11px 时只有 <b>17.6px</b>；中文比拉丁文需要更大的行高</li>
+      <li>一行约 <b>41 个全角字</b>（454 ÷ 11）</li>
+    </ul>
+  </section>
+
+  <!-- ================= 方案 A ================= -->
+  <section class="panel" id="a">
+    <div class="panel-head">
+      <span class="panel-name">方案 A：三套收敛成一套</span>
+      <span class="badge">改动最小</span>
+    </div>
+    <p class="panel-src">只做"对齐"：所有说明文字统一到 <b>12px / 行高 1.75 / 次要色</b>，给 <code>code</code> 与 <code>strong</code> 补上规则。</p>
+    <div class="stage"><div class="stage-inner">
+      <p class="hint-a">改完这个路径会<strong>自动检查</strong>（只读本地文件、不联网），不用点按钮。</p>
+      <p class="hint-b">这些属性会写进笔记头部（列表形式），也是「关联相关笔记」的比较依据；<strong>一个都不选就不抽</strong>。最多 8 个。</p>
+      <p class="desc">一级是分类、二级是具体标签。标签不能含空格，保存时会自动换成 <code>-</code>。</p>
+      <p class="hint-b">UP 主与话题标签是自动加的，<strong>你自己写的标签不会被改</strong>。标签只写二级（如 <code>话题/AI泡沫</code>）—— Obsidian 里按一级筛选会自动带上它下面所有二级。标签从哪来看下面的词库。</p>
+    </div></div>
+    <ul class="facts">
+      <li>好处：一页只有一种说明尺度，<b>不引入新概念</b>，改动集中在几条 CSS</li>
+      <li>代价：11px 提到 12px 会让每段略微变长；层级只靠"说明 / 正文"两档表达</li>
+    </ul>
+  </section>
+
+  <!-- ================= 方案 B ================= -->
+  <section class="panel" id="b">
+    <div class="panel-head">
+      <span class="panel-name">方案 B：分两档（说明 12px / 正文 13px）＋ 加粗降重、代码改药丸</span>
+      <span class="badge">推荐</span>
+    </div>
+    <p class="panel-src">
+      说明文字 12px、正文 13px、行高都 <b>1.8</b>；<code>strong</code> 降到 <b>600</b> 并加深一档颜色（不靠笔画糊出来），
+      另加 <code>font-synthesis-weight: none</code> 禁止合成加粗；
+      <code>code</code> 给 <b>背景 + 内边距 + 圆角</b>、字号 <b>1em（不缩）</b>、<b>不用等宽字体</b>
+      （等宽字体没有中文字形，中文会按字符回退，同一段里出现两套度量）。
+      为什么不用 GitHub/antd 那个 85%：那个比例是给 14–16px 正文用的，我们这里只有 12px，乘 0.85 会掉到 10.2px。
+    </p>
+    <div class="stage"><div class="stage-inner">
+      <p class="hint-a">改完这个路径会<strong>自动检查</strong>（只读本地文件、不联网），不用点按钮。</p>
+      <p class="hint-b">这些属性会写进笔记头部（列表形式），也是「关联相关笔记」的比较依据；<strong>一个都不选就不抽</strong>。最多 8 个。</p>
+      <p class="desc">一级是分类、二级是具体标签。标签不能含空格，保存时会自动换成 <code>-</code>。</p>
+      <p class="hint-b">UP 主与话题标签是自动加的，<strong>你自己写的标签不会被改</strong>。标签只写二级（如 <code>话题/AI泡沫</code>）—— Obsidian 里按一级筛选会自动带上它下面所有二级。标签从哪来看下面的词库。</p>
+    </div></div>
+    <ul class="facts">
+      <li>好处：层级靠"字号 + 颜色"两维表达，加粗不再是唯一的强调手段；中文不再被 mono 字体切成两套度量</li>
+      <li>代价：code 药丸会占一点横向空间，行内换行处需要允许断开</li>
+    </ul>
+  </section>
+
+  <!-- ================= 方案 C：不缩字号（antd 派） ================= -->
+  <section class="panel" id="c">
+    <div class="panel-head">
+      <span class="panel-name">方案 C：说明文字不缩小，只降对比度（antd 派）</span>
+      <span class="badge badge--grey">另一流派</span>
+    </div>
+    <p class="panel-src">
+      antd 的 Form <code>help</code> / <code>extra</code> 就是这么做的：<b>字号不缩</b>（14px / 行高 22px），
+      只把颜色降到 45% 黑（<code>colorTextDescription</code>）。层级完全交给颜色，不交给字号。
+      它和方案 A/B 是**两条路**，不是同一个方向的不同档位——这一版用 14px 给说明文字。
+    </p>
+    <div class="stage"><div class="stage-inner">
+      <p class="hint-a">改完这个路径会<strong>自动检查</strong>（只读本地文件、不联网），不用点按钮。</p>
+      <p class="hint-b">这些属性会写进笔记头部（列表形式），也是「关联相关笔记」的比较依据；<strong>一个都不选就不抽</strong>。最多 8 个。</p>
+      <p class="desc">一级是分类、二级是具体标签。标签不能含空格，保存时会自动换成 <code>-</code>。</p>
+      <p class="hint-b">UP 主与话题标签是自动加的，<strong>你自己写的标签不会被改</strong>。标签只写二级（如 <code>话题/AI泡沫</code>）—— Obsidian 里按一级筛选会自动带上它下面所有二级。标签从哪来看下面的词库。</p>
+    </div></div>
+    <ul class="facts">
+      <li>好处：可读性最好——14px 是这套界面里正文也该用的字号，说明文字不再"小到要凑近看"</li>
+      <li>代价：竖向占位明显变多（同样的文案，这一版比 A/B 高度大 20%+）；说明与正文之间只剩颜色一层区别</li>
+    </ul>
+  </section>
+
+  <!-- ================= 方案 D：结构化 ================= -->
+  <section class="panel" id="d">
+    <div class="panel-head">
+      <span class="panel-name">方案 D：长说明结构化（不再是一整段灰字）</span>
+    </div>
+    <p class="panel-src">同一套数值（同方案 B），但把最长的两段拆成「一句话结论 + 要点」，减少整段加粗。</p>
+    <div class="stage"><div class="stage-inner">
+      <p class="hint-a">改完这个路径会<strong>自动检查</strong>（只读本地文件、不联网），不用点按钮。</p>
+      <p class="hint-b">这些属性会写进笔记头部（列表形式），也是「关联相关笔记」的比较依据；<strong>一个都不选就不抽</strong>。最多 8 个。</p>
+      <p class="desc">一级是分类、二级是具体标签。标签不能含空格，保存时会自动换成 <code>-</code>。</p>
+      <p class="hint-b">UP 主与话题标签是自动加的，你自己写的标签不会被改。</p>
+      <ul class="list">
+        <li>标签只写二级（如 <code>话题/AI泡沫</code>）——一级筛选会自动带上它下面的二级</li>
+        <li>标签从哪来看下面的词库</li>
+      </ul>
+    </div></div>
+    <ul class="facts">
+      <li>好处：扫读成本最低，最适合"这一栏怎么填"这种长说明</li>
+      <li>代价：要改文案与结构，不是纯 CSS；列表在 454px 下比段落更占竖向空间</li>
+    </ul>
+  </section>
+</div>
+
+<script>
+  const real = document.getElementById("real");
+  const autospace = document.getElementById("autospace");
+  const trim = document.getElementById("trim");
+
+  const applyWidth = () => document.body.classList.toggle("real", real.checked);
+  /* 这两个是引擎级开关，对所有方案同时生效——它们和 A/B/C 的选择是正交的 */
+  const applyEngine = () => {
+    document.body.classList.toggle("autospace", autospace.checked);
+    document.body.classList.toggle("trim", trim.checked);
+  };
+
+  real.addEventListener("change", applyWidth);
+  autospace.addEventListener("change", applyEngine);
+  trim.addEventListener("change", applyEngine);
+  applyWidth();
+  applyEngine();
+
+  /* 把"这个引擎到底支不支持"写在页面上——支持才谈得上选 */
+  const okAuto = CSS.supports("text-autospace", "normal");
+  const okTrim = CSS.supports("text-spacing-trim", "trim-start");
+  document.getElementById("support").textContent =
+    `当前引擎：text-autospace ${okAuto ? "支持" : "不支持"} / text-spacing-trim ${okTrim ? "支持" : "不支持"}`;
+</script>
+</body>
+</html>
