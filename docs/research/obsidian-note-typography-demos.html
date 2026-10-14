@@ -1,0 +1,794 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<title>ScribeFlow · Obsidian 笔记排版方案 demo</title>
+<style>
+/*
+ * 「Obsidian 排版方案 demo」的预览样式：近似 Obsidian 默认主题（浅色）。
+ *
+ * 这不是 Obsidian 的截图，是近似渲染。真实观感请用 Obsidian 打开 `note-candidates/排版方案demo/` 这个文件夹作为库。
+ *
+ * 标定依据（2026-10-14 从 Obsidian Publish 的 app.css 抽出，只取数值作测量，未收录原文）：
+ *   正文 16px / 行高 1.5 / 段距 1rem / 正文栏宽 700px / 加粗字重 600
+ *   标题 h1 1.618em 700、h2 1.462em 600、h3 1.318em 600、h4 1.188em 600
+ *   引用块：左侧 2px 边框（--interactive-accent）+ 左内边距 24px
+ *   高亮 ==x==：rgba(255, 208, 0, 0.4)
+ *   callout：底色 rgba(类型色, .1)、圆角 4px、内边距 12/12/12/24、标题字色=类型色、图标 1em；
+ *            下表的类型色与图标均取自 app.css 的 `--callout-*` 与 `data-callout` 规则，
+ *            summary/abstract/tldr=青(0,191,188)+剪贴板、example=紫(120,82,238)+列表、
+ *            quote/cite=灰(158,158,158)+引号、默认/note=蓝(8,109,221)+铅笔。
+ *            quote 的图标 Obsidian 用自带 glyph，这里用 Lucide 的 quote 近似（诚实清单里写明）。
+ * 未复刻：mix-blend-mode、属性面板的交互样式、主题字体微调。
+ */
+
+:root {
+  /* 浅色主题的调色板（--color-base-*） */
+  --color-base-00: #ffffff;
+  --color-base-10: #fafafa;
+  --color-base-20: #f6f6f6;
+  --color-base-30: #e0e0e0;
+  --color-base-50: #ababab;
+  --color-base-70: #5c5c5c;
+  --color-base-100: #222222;
+  --background-primary: var(--color-base-00);
+  --background-secondary: var(--color-base-20);
+  --background-modifier-border: var(--color-base-30);
+  --text-normal: var(--color-base-100);
+  --text-muted: var(--color-base-70);
+  --text-faint: var(--color-base-50);
+  --interactive-accent: hsl(258, 88%, 66%);
+  --text-accent: var(--interactive-accent);
+  --font-text: ui-sans-serif, -apple-system, BlinkMacSystemFont, system-ui, Roboto, "Helvetica", "Arial", "Segoe UI", "InterVariable", "Inter", "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", sans-serif;
+  --file-line-width: 700px;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  padding: 32px;
+  background: var(--background-secondary);
+  color: var(--text-normal);
+  font-family: var(--font-text);
+}
+
+/* 一页笔记：Obsidian 阅读视图的正文栏 */
+.markdown-preview-view {
+  width: var(--file-line-width);
+  margin: 0 auto;
+  padding: 32px 40px;
+  background: var(--background-primary);
+  font-size: 16px;
+  line-height: 1.5;
+}
+
+.markdown-preview-view > :first-child { margin-top: 0; }
+
+h1, h2, h3, h4 { line-height: 1.3; margin: 1.6em 0 0.6em; }
+h1 { font-size: 1.618em; font-weight: 700; }
+h2 { font-size: 1.462em; font-weight: 600; }
+h3 { font-size: 1.318em; font-weight: 600; }
+h4 { font-size: 1.188em; font-weight: 600; }
+
+p { margin: 0 0 1rem; }
+strong { font-weight: 600; }
+a { color: var(--text-accent); }
+
+ul, ol { margin: 0 0 1rem; padding-inline-start: 1.7em; }
+li { margin: 0.075em 0; padding-inline-start: 0.2em; }
+li::marker { color: var(--text-faint); }
+li > strong:first-child { font-weight: 600; }
+
+hr {
+  border: none;
+  border-top: 1px solid var(--background-modifier-border);
+  margin: 2rem 0;
+}
+
+blockquote {
+  margin: 1rem 0;
+  padding: 0 0 0 24px;
+  border-inline-start: 2px solid var(--interactive-accent);
+  color: inherit;
+}
+
+mark {
+  background-color: rgba(255, 208, 0, 0.4);
+  color: inherit;
+}
+
+/* 属性面板（frontmatter）：近似阅读视图顶部的属性区 */
+.properties {
+  width: var(--file-line-width);
+  margin: 0 auto;
+  padding: 20px 40px 0;
+  background: var(--background-primary);
+  font-size: 0.875em;
+}
+.properties .prop-row { display: flex; gap: 12px; padding: 3px 0; }
+.properties .prop-name { flex: 0 0 6.5em; color: var(--text-faint); }
+.properties .prop-value { color: var(--text-normal); }
+.properties .prop-chip {
+  display: inline-block;
+  margin-inline-end: 6px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: var(--background-secondary);
+  color: var(--text-muted);
+}
+.properties + .markdown-preview-view { padding-top: 12px; }
+
+/* ------------------------------------------------------------------ callout */
+.callout {
+  --callout-color: 8, 109, 221; /* 默认 note/info 的蓝 */
+  --callout-icon-color: rgb(var(--callout-color));
+  overflow: hidden;
+  margin: 1em 0;
+  padding: 12px 12px 12px 24px;
+  border-radius: 4px;
+  background-color: rgba(var(--callout-color), 0.1);
+}
+
+.callout[data-callout="summary"],
+.callout[data-callout="abstract"],
+.callout[data-callout="tldr"] { --callout-color: 0, 191, 188; }
+
+.callout[data-callout="example"] { --callout-color: 120, 82, 238; }
+
+.callout[data-callout="quote"],
+.callout[data-callout="cite"] { --callout-color: 158, 158, 158; }
+
+.callout-title {
+  display: flex;
+  gap: 4px;
+  align-items: flex-start;
+  color: rgb(var(--callout-color));
+  font-weight: 600;
+  line-height: 1.3;
+}
+
+.callout.is-collapsible .callout-title { cursor: pointer; }
+
+.callout-icon { flex: 0 0 auto; display: flex; align-items: center; }
+.callout-icon svg { width: 1em; height: 1em; color: rgb(var(--callout-color)); }
+
+.callout-title-inner { flex: 1 1 auto; }
+
+.callout-fold { display: flex; align-items: center; padding-inline-end: 8px; }
+.callout-fold svg { width: 1em; height: 1em; color: var(--text-faint); transition: transform 100ms ease-in-out; }
+.callout-fold.is-collapsed svg { transform: rotate(-90deg); }
+
+.callout-content { padding-top: 2px; }
+.callout-content > :first-child { margin-top: 0; }
+.callout-content > :last-child { margin-bottom: 0; }
+
+/* 折起来时，Obsidian 只留标题行 */
+details.callout:not([open]) > .callout-content { display: none; }
+
+/* ------------------------------------------------- demo 页自己的排版（非 Obsidian） */
+.demo-shell { max-width: 1560px; margin: 0 auto; }
+.demo-title { font-size: 20px; font-weight: 600; margin: 0 0 4px; }
+.demo-sub { color: var(--text-muted); font-size: 13px; margin: 0 0 24px; }
+
+.demo-strip { margin: 0 0 40px; width: fit-content; }
+.demo-strip-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-normal);
+  margin: 0 0 12px;
+  padding-left: 4px;
+  border-left: 3px solid var(--interactive-accent);
+}
+.demo-panel { margin: 0 0 20px; }
+.demo-panel-label {
+  display: inline-block;
+  margin: 0 0 8px;
+  padding: 2px 10px;
+  border-radius: 999px;
+  background: var(--color-base-30);
+  color: var(--text-muted);
+  font-size: 12px;
+}
+.demo-grid { display: grid; grid-template-columns: repeat(2, max-content); gap: 20px 24px; }
+.demo-clip { overflow: hidden; max-height: 520px; }
+
+/*
+ * ScribeFlow 笔记样式片段（方案 D 用的那份 CSS）
+ *
+ * 装法：把本文件拷进 <库>/.obsidian/snippets/ 下 → 设置 → 外观 → CSS 片段 → 刷新 → 打开开关。
+ * 只作用于 frontmatter 里写了 `cssclasses: [scribeflow]` 的笔记，不动库里其他笔记。
+ *
+ * 变量名取自 Obsidian 官方开发者文档的 CSS 变量参考（--background-secondary /
+ * --background-modifier-border / --text-accent / --radius-m）。个别主题里若某个变量
+ * 没定义，括号里给了兜底值；再不行就先在你的主题里确认变量名。
+ */
+
+/* 小节标题：一条淡分隔线，让 ## 级标题在长文里"站得住" */
+.scribeflow h2 {
+  padding-bottom: 0.2em;
+  border-bottom: 1px solid var(--background-modifier-border, #e0e0e0);
+  margin-top: 1.8em;
+}
+
+/* 速览与速查：紧跟在小标题后的那一串清单，做成浅色卡片——
+   这两块是"旁注型"内容（扫一眼 / 回头查），与正文段落分开更好认 */
+.scribeflow h2 + ul {
+  background: var(--background-secondary, #f6f6f6);
+  border-radius: var(--radius-m, 8px);
+  padding: 0.7em 1.2em 0.7em 2.2em;
+  line-height: 1.7;
+}
+
+/* 速查条目：条目名（每条的**加粗**）用强调色，正文说明保持常规色——
+   28 条平铺时，靠颜色给"条目名 → 说明"这道分隔一个视觉落点 */
+.scribeflow li > strong:first-child {
+  color: var(--text-accent, #705dcf);
+}
+
+/* 正文段落：行距放宽一点，几百字一段的长文更好读 */
+.scribeflow p {
+  line-height: 1.85;
+}
+
+</style>
+</head>
+<body>
+<div class="demo-shell">
+  <h1 class="demo-title">ScribeFlow 导出的 Obsidian 笔记：五种排版</h1>
+  <p class="demo-sub">同一份内容（中美社保那条视频笔记），只改排版。预览样式是近似 Obsidian 默认主题的渲染，不是 Obsidian 的截图；
+  真实观感请用 Obsidian 打开 <code>note-candidates/排版方案demo/</code> 这个文件夹。下面先看三个对比条，再看五份完整笔记。</p>
+
+  <section class="demo-strip" data-shot="obsidian-note-typography-sulan">
+    <h2 class="demo-strip-title">① 速览区：五种排法</h2>
+    <div class="demo-panel"><div class="demo-panel-label">0 · 现状基线（现在导出的样子）</div><div class="markdown-preview-view"><h2>速览</h2>
+<ul>
+<li>人社部“用数据找人”只能动员，因为中国职工养老强制，灵活就业人员自愿。</li>
+<li>美国 Social Security 对绝大多数有工作者强制，雇员雇主各缴工资的百分之六点二，自雇者百分之十二点四全额自付，Medicare 另扣。</li>
+<li>中美公共部门退休待遇都高于企业部门；作者认为公平方向是提高其他人，而不是降降公务员。</li>
+<li>养老金会不会崩，关键不是账户余额和年轻人数量，而是法币时代的生产力与商品服务供给。</li>
+<li>中国低通胀、失业率百分之五点二，有闲置劳动力和财政空间，问题不在没钱，而在分配。</li>
+<li>作者主张取消社保费、改征累进社保税，由财政支持养老，资格不依赖缴费记录。</li>
+</ul>
+</div></div>
+<div class="demo-panel"><div class="demo-panel-label">A · 纯 Markdown 骨架（不用 callout）</div><div class="markdown-preview-view"><h2>速览</h2>
+<ul>
+<li>人社部“用数据找人”只能动员，因为中国职工养老强制，灵活就业人员自愿。</li>
+<li>美国 Social Security 对绝大多数有工作者强制，雇员雇主各缴工资的百分之六点二，自雇者百分之十二点四全额自付，Medicare 另扣。</li>
+<li>中美公共部门退休待遇都高于企业部门；作者认为公平方向是提高其他人，而不是降降公务员。</li>
+<li>养老金会不会崩，关键不是账户余额和年轻人数量，而是法币时代的生产力与商品服务供给。</li>
+<li>中国低通胀、失业率百分之五点二，有闲置劳动力和财政空间，问题不在没钱，而在分配。</li>
+<li>作者主张取消社保费、改征累进社保税，由财政支持养老，资格不依赖缴费记录。</li>
+</ul>
+</div></div>
+<div class="demo-panel"><div class="demo-panel-label">B · Callout 容器（推荐）</div><div class="markdown-preview-view"><div class="callout" data-callout="summary"><div class="callout-title"><div class="callout-icon"><svg class="svg-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="8" height="4" x="8" y="2" rx="1" ry="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><path d="M12 11h4"/><path d="M12 16h4"/><path d="M8 11h.01"/><path d="M8 16h.01"/></svg></div><div class="callout-title-inner">速览</div></div><div class="callout-content"><ul>
+<li>人社部“用数据找人”只能动员，因为中国职工养老强制，灵活就业人员自愿。</li>
+<li>美国 Social Security 对绝大多数有工作者强制，雇员雇主各缴工资的百分之六点二，自雇者百分之十二点四全额自付，Medicare 另扣。</li>
+<li>中美公共部门退休待遇都高于企业部门；作者认为公平方向是提高其他人，而不是降降公务员。</li>
+<li>养老金会不会崩，关键不是账户余额和年轻人数量，而是法币时代的生产力与商品服务供给。</li>
+<li>中国低通胀、失业率百分之五点二，有闲置劳动力和财政空间，问题不在没钱，而在分配。</li>
+<li>作者主张取消社保费、改征累进社保税，由财政支持养老，资格不依赖缴费记录。</li>
+</ul>
+</div></div></div></div>
+<div class="demo-panel"><div class="demo-panel-label">D · 只改样式（cssclasses + CSS 片段）</div><div class="markdown-preview-view scribeflow"><h2>速览</h2>
+<ul>
+<li>人社部“用数据找人”只能动员，因为中国职工养老强制，灵活就业人员自愿。</li>
+<li>美国 Social Security 对绝大多数有工作者强制，雇员雇主各缴工资的百分之六点二，自雇者百分之十二点四全额自付，Medicare 另扣。</li>
+<li>中美公共部门退休待遇都高于企业部门；作者认为公平方向是提高其他人，而不是降降公务员。</li>
+<li>养老金会不会崩，关键不是账户余额和年轻人数量，而是法币时代的生产力与商品服务供给。</li>
+<li>中国低通胀、失业率百分之五点二，有闲置劳动力和财政空间，问题不在没钱，而在分配。</li>
+<li>作者主张取消社保费、改征累进社保税，由财政支持养老，资格不依赖缴费记录。</li>
+</ul>
+</div></div>
+  </section>
+
+  <section class="demo-strip" data-shot="obsidian-note-typography-zhengwen">
+    <h2 class="demo-strip-title">② 正文开场（截到 520px 高）：基线 vs 方案 C</h2>
+    <div class="demo-grid"><div class="demo-panel"><div class="demo-panel-label">0 · 现状基线（多一层「正文」空壳标题 + 三级小节）</div><div class="demo-clip"><div class="markdown-preview-view"><h2>正文</h2>
+<h3>人社部能“用数据找人”，但法律给灵活就业人员留的是自愿选择</h3>
+<p>在中国，按照《中国社会保险法》第十条，职工应当参加基本养老保险，由单位和个人共同缴费。这一部分是强制的。但是属于法律规定范围的灵活就业人员，则可以选择参加。这一部分是自愿的。所以人社部虽然要说用数据找人，也只能是动员他们参保。在现行法律之下，你要是不交，谁也没招。真正的问题不是要如何去想办法动员大家去交社保，而是这个制度本身就是一个累退的制度，收入越低的人越不划算。</p>
+<h3>美国 Social Security 是强制税，雇员和雇主各缴百分之六点二</h3>
+<p>美国的社保叫做 Social Security，对绝大多数有工作的人来说是强制缴纳的。你不能因为自己不想养老选择不交。根据美国国税局的说明，普通雇员和雇主通常应各缴纳工资的百分之六点二，合计是百分之十二点四，雇员部分由雇主代扣。此外还要单独扣 Medicare，就是医保税。它和中国的医保不一样：中国是通过职工医保和居民医保，给不同年龄段的人提供基本覆盖；美国的 Medicare 主要覆盖六十五岁及以上的老人，以及部分残疾和特定重病患者。一般人在日常生活中不能一直依赖 Medicare，通常还是需要通过雇主或者自己购买医疗保险。所以美国的这笔医保税，对于很多人来说，真的是交了你也用不上。</p>
+<h3>美国自雇者不缴不是“少领养老金”，而是欠税、罚息、扣款甚至刑责</h3>
+<p>美国法律下，自由职业者接单或者自己经营的，也通常有缴税义务。一般情况下，如果你的年净收益达到了四百美元，就需要缴纳自雇税。其中社保部分就是百分之十二点四，全额自付；另外还有 Medicare 的部分，也是全额自付的。符合纳税条件的灵活就业人员，不缴自雇税会形成欠税，追缴的会有罚金和利息，不按期申报还有可能有另外的罚金。经过法定通知等程序之后，税务局还可以直接从你的银行存款、从你的工资里面去扣，还可以依法扣押出售你的财产来抵税。所以如果长期不缴，后果可不只是将来少领养老金。如果明知有纳税义务却故意不申报或者拒不缴税的，达到犯罪构成，还可能承担刑事责任，单项罪最高可判一年。如果隐瞒收入、转移资产等行为构成逃税重罪，口播稿在此处截断，没有讲完。中国法律相当于是给灵活就业人员保留了选择空间：你可以参保也可以不参保，还可以参加居民养老，这样缴纳的钱就比较少，不过以后领的养老金也会少。</p>
+<h3>中美公共部门退休待遇都高于企业部门，但公平方向应是提高其他人</h3>
+<p>口播稿在讲美国公共部门待遇时提到：“两项合起来就是约三千一百三十美元。”也就是说，体制内比体制外至少要多拿一倍的养老金。这里还没有计算企业员工的四零一K账户，还有公务员的 TSP 账户。这个账户属于偏投资的那种账户，最后能提供多少退休收入，主要还是看你个人缴了多少、投资的收益和领取的方式。如果只看所有人都有的那一部分，在美国，体制内的退休金也是远远高于体制外的。美国做公务员和中国差不多：第一，它是一个铁饭碗，你基本没有被开除的风险。马斯克的效率部折腾了半天，说要裁掉百分之五十的公务员，最后也没裁掉，最多就是让一些人提前一年退休了，工资你还得照给。第二，公务员除了工资以外，其他待遇都是按照顶格给的。原因也很简单：你公务员待遇都不好，那其他企业有样学样的就更差了，这不相当于给资本家兜底吗？中美都有公共部门与企业部门退休保障不同的现象，但追求公平的方向不要错了，不是让公务员的退休金减少，而是让其他人的退休金提高。比如说，杜绝企业不按照实际工资标准缴纳的现象，这也是体制内外差别的主要原因之一。</p>
+<h3>养老金账户余额不是社会养老能力，法币时代真正养老的是商品和服务</h3>
+<p>现在已经是法币时代了，钱是印出来的，这个东西是无限的，你要多少有多少。大家一定不要被货币的迷雾给影响，而是看到它背后真实的商品和服务。养老金问题最容易被混淆的，就是把一个基金账户的余额直接当成了整个社会的养老能力，仿佛只要养老金这个池子枯竭了，所有老人就吃不上饭了。养老金账户就是一个记账符号罢了。一个国家能不能养老，最终要看老人需要的东西，社会能不能生产得出来。吃的饭、住的房子、要用的药、医生提供的诊疗，还有护理人员每天付出的劳动，这些才是养老真正的内容，而不是钱。相反，即便你买了一堆的股票债券，养老金账户里有好几个亿，可是你退休的时候，你拿钱买不到这些商品和服务，那也没有用。你要的是退休时候能够获得当时商品和服务的购买力。</p>
+</div></div></div><div class="demo-panel"><div class="demo-panel-label">C · 正文小节升到二级、去掉「正文」空壳标题</div><div class="demo-clip"><div class="markdown-preview-view"><h2>人社部能“用数据找人”，但法律给灵活就业人员留的是自愿选择</h2>
+<p>在中国，按照《中国社会保险法》第十条，职工应当参加基本养老保险，由单位和个人共同缴费。这一部分是强制的。但是属于法律规定范围的灵活就业人员，则可以选择参加。这一部分是自愿的。所以人社部虽然要说用数据找人，也只能是动员他们参保。在现行法律之下，你要是不交，谁也没招。真正的问题不是要如何去想办法动员大家去交社保，而是这个制度本身就是一个累退的制度，收入越低的人越不划算。</p>
+<h2>美国 Social Security 是强制税，雇员和雇主各缴百分之六点二</h2>
+<p>美国的社保叫做 Social Security，对绝大多数有工作的人来说是强制缴纳的。你不能因为自己不想养老选择不交。根据美国国税局的说明，普通雇员和雇主通常应各缴纳工资的百分之六点二，合计是百分之十二点四，雇员部分由雇主代扣。此外还要单独扣 Medicare，就是医保税。它和中国的医保不一样：中国是通过职工医保和居民医保，给不同年龄段的人提供基本覆盖；美国的 Medicare 主要覆盖六十五岁及以上的老人，以及部分残疾和特定重病患者。一般人在日常生活中不能一直依赖 Medicare，通常还是需要通过雇主或者自己购买医疗保险。所以美国的这笔医保税，对于很多人来说，真的是交了你也用不上。</p>
+<h2>美国自雇者不缴不是“少领养老金”，而是欠税、罚息、扣款甚至刑责</h2>
+<p>美国法律下，自由职业者接单或者自己经营的，也通常有缴税义务。一般情况下，如果你的年净收益达到了四百美元，就需要缴纳自雇税。其中社保部分就是百分之十二点四，全额自付；另外还有 Medicare 的部分，也是全额自付的。符合纳税条件的灵活就业人员，不缴自雇税会形成欠税，追缴的会有罚金和利息，不按期申报还有可能有另外的罚金。经过法定通知等程序之后，税务局还可以直接从你的银行存款、从你的工资里面去扣，还可以依法扣押出售你的财产来抵税。所以如果长期不缴，后果可不只是将来少领养老金。如果明知有纳税义务却故意不申报或者拒不缴税的，达到犯罪构成，还可能承担刑事责任，单项罪最高可判一年。如果隐瞒收入、转移资产等行为构成逃税重罪，口播稿在此处截断，没有讲完。中国法律相当于是给灵活就业人员保留了选择空间：你可以参保也可以不参保，还可以参加居民养老，这样缴纳的钱就比较少，不过以后领的养老金也会少。</p>
+<h2>中美公共部门退休待遇都高于企业部门，但公平方向应是提高其他人</h2>
+<p>口播稿在讲美国公共部门待遇时提到：</p>
+<div class="callout" data-callout="quote"><div class="callout-title"><div class="callout-icon"><svg class="svg-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 3a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2 1 1 0 0 1 1 1v1a2 2 0 0 1-2 2 1 1 0 0 0-1 1v2a1 1 0 0 0 1 1 6 6 0 0 0 6-6V5a2 2 0 0 0-2-2z"/><path d="M5 3a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2 1 1 0 0 1 1 1v1a2 2 0 0 1-2 2 1 1 0 0 0-1 1v2a1 1 0 0 0 1 1 6 6 0 0 0 6-6V5a2 2 0 0 0-2-2z"/></svg></div><div class="callout-title-inner">原话</div></div><div class="callout-content"><p>两项合起来就是约三千一百三十美元。</p>
+</div></div><p>也就是说，体制内比体制外至少要多拿一倍的养老金，自雇者一方的负担是 <mark>百分之十二点四全额自付</mark>。这里还没有计算企业员工的四零一K账户，还有公务员的 TSP 账户。这个账户属于偏投资的那种账户，最后能提供多少退休收入，主要还是看你个人缴了多少、投资的收益和领取的方式。如果只看所有人都有的那一部分，在美国，体制内的退休金也是远远高于体制外的。美国做公务员和中国差不多：第一，它是一个铁饭碗，你基本没有被开除的风险。马斯克的效率部折腾了半天，说要裁掉百分之五十的公务员，最后也没裁掉，最多就是让一些人提前一年退休了，工资你还得照给。第二，公务员除了工资以外，其他待遇都是按照顶格给的。原因也很简单：你公务员待遇都不好，那其他企业有样学样的就更差了，这不相当于给资本家兜底吗？中美都有公共部门与企业部门退休保障不同的现象，但追求公平的方向不要错了，不是让公务员的退休金减少，而是让其他人的退休金提高。比如说，杜绝企业不按照实际工资标准缴纳的现象，这也是体制内外差别的主要原因之一。</p>
+<h2>养老金账户余额不是社会养老能力，法币时代真正养老的是商品和服务</h2>
+<p>现在已经是法币时代了，钱是印出来的，这个东西是无限的，你要多少有多少。大家一定不要被货币的迷雾给影响，而是看到它背后真实的商品和服务。养老金问题最容易被混淆的，就是把一个基金账户的余额直接当成了整个社会的养老能力，仿佛只要养老金这个池子枯竭了，所有老人就吃不上饭了。养老金账户就是一个记账符号罢了。一个国家能不能养老，最终要看老人需要的东西，社会能不能生产得出来。吃的饭、住的房子、要用的药、医生提供的诊疗，还有护理人员每天付出的劳动，这些才是养老真正的内容，而不是钱。相反，即便你买了一堆的股票债券，养老金账户里有好几个亿，可是你退休的时候，你拿钱买不到这些商品和服务，那也没有用。你要的是退休时候能够获得当时商品和服务的购买力。</p>
+</div></div></div><div class="demo-panel"><div class="demo-panel-label">C · 同一篇的第 4 节：原话用 [!quote] 单独成块、关键数字 ==高亮==</div><div class="demo-clip"><div class="markdown-preview-view"><h2>中美公共部门退休待遇都高于企业部门，但公平方向应是提高其他人</h2>
+<p>口播稿在讲美国公共部门待遇时提到：</p>
+<div class="callout" data-callout="quote"><div class="callout-title"><div class="callout-icon"><svg class="svg-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 3a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2 1 1 0 0 1 1 1v1a2 2 0 0 1-2 2 1 1 0 0 0-1 1v2a1 1 0 0 0 1 1 6 6 0 0 0 6-6V5a2 2 0 0 0-2-2z"/><path d="M5 3a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2 1 1 0 0 1 1 1v1a2 2 0 0 1-2 2 1 1 0 0 0-1 1v2a1 1 0 0 0 1 1 6 6 0 0 0 6-6V5a2 2 0 0 0-2-2z"/></svg></div><div class="callout-title-inner">原话</div></div><div class="callout-content"><p>两项合起来就是约三千一百三十美元。</p>
+</div></div><p>也就是说，体制内比体制外至少要多拿一倍的养老金，自雇者一方的负担是 <mark>百分之十二点四全额自付</mark>。这里还没有计算企业员工的四零一K账户，还有公务员的 TSP 账户。这个账户属于偏投资的那种账户，最后能提供多少退休收入，主要还是看你个人缴了多少、投资的收益和领取的方式。如果只看所有人都有的那一部分，在美国，体制内的退休金也是远远高于体制外的。美国做公务员和中国差不多：第一，它是一个铁饭碗，你基本没有被开除的风险。马斯克的效率部折腾了半天，说要裁掉百分之五十的公务员，最后也没裁掉，最多就是让一些人提前一年退休了，工资你还得照给。第二，公务员除了工资以外，其他待遇都是按照顶格给的。原因也很简单：你公务员待遇都不好，那其他企业有样学样的就更差了，这不相当于给资本家兜底吗？中美都有公共部门与企业部门退休保障不同的现象，但追求公平的方向不要错了，不是让公务员的退休金减少，而是让其他人的退休金提高。比如说，杜绝企业不按照实际工资标准缴纳的现象，这也是体制内外差别的主要原因之一。</p>
+</div></div></div><div class="demo-panel"><div class="demo-panel-label">C 的变体 · 小节标题降成三级（视觉轻一些，Outline 里仍只有正文小节）</div><div class="demo-clip"><div class="markdown-preview-view"><h3>人社部能“用数据找人”，但法律给灵活就业人员留的是自愿选择</h3>
+<p>在中国，按照《中国社会保险法》第十条，职工应当参加基本养老保险，由单位和个人共同缴费。这一部分是强制的。但是属于法律规定范围的灵活就业人员，则可以选择参加。这一部分是自愿的。所以人社部虽然要说用数据找人，也只能是动员他们参保。在现行法律之下，你要是不交，谁也没招。真正的问题不是要如何去想办法动员大家去交社保，而是这个制度本身就是一个累退的制度，收入越低的人越不划算。</p>
+<h3>美国 Social Security 是强制税，雇员和雇主各缴百分之六点二</h3>
+<p>美国的社保叫做 Social Security，对绝大多数有工作的人来说是强制缴纳的。你不能因为自己不想养老选择不交。根据美国国税局的说明，普通雇员和雇主通常应各缴纳工资的百分之六点二，合计是百分之十二点四，雇员部分由雇主代扣。此外还要单独扣 Medicare，就是医保税。它和中国的医保不一样：中国是通过职工医保和居民医保，给不同年龄段的人提供基本覆盖；美国的 Medicare 主要覆盖六十五岁及以上的老人，以及部分残疾和特定重病患者。一般人在日常生活中不能一直依赖 Medicare，通常还是需要通过雇主或者自己购买医疗保险。所以美国的这笔医保税，对于很多人来说，真的是交了你也用不上。</p>
+<h3>美国自雇者不缴不是“少领养老金”，而是欠税、罚息、扣款甚至刑责</h3>
+<p>美国法律下，自由职业者接单或者自己经营的，也通常有缴税义务。一般情况下，如果你的年净收益达到了四百美元，就需要缴纳自雇税。其中社保部分就是百分之十二点四，全额自付；另外还有 Medicare 的部分，也是全额自付的。符合纳税条件的灵活就业人员，不缴自雇税会形成欠税，追缴的会有罚金和利息，不按期申报还有可能有另外的罚金。经过法定通知等程序之后，税务局还可以直接从你的银行存款、从你的工资里面去扣，还可以依法扣押出售你的财产来抵税。所以如果长期不缴，后果可不只是将来少领养老金。如果明知有纳税义务却故意不申报或者拒不缴税的，达到犯罪构成，还可能承担刑事责任，单项罪最高可判一年。如果隐瞒收入、转移资产等行为构成逃税重罪，口播稿在此处截断，没有讲完。中国法律相当于是给灵活就业人员保留了选择空间：你可以参保也可以不参保，还可以参加居民养老，这样缴纳的钱就比较少，不过以后领的养老金也会少。</p>
+<h3>中美公共部门退休待遇都高于企业部门，但公平方向应是提高其他人</h3>
+<p>口播稿在讲美国公共部门待遇时提到：</p>
+<div class="callout" data-callout="quote"><div class="callout-title"><div class="callout-icon"><svg class="svg-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 3a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2 1 1 0 0 1 1 1v1a2 2 0 0 1-2 2 1 1 0 0 0-1 1v2a1 1 0 0 0 1 1 6 6 0 0 0 6-6V5a2 2 0 0 0-2-2z"/><path d="M5 3a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2 1 1 0 0 1 1 1v1a2 2 0 0 1-2 2 1 1 0 0 0-1 1v2a1 1 0 0 0 1 1 6 6 0 0 0 6-6V5a2 2 0 0 0-2-2z"/></svg></div><div class="callout-title-inner">原话</div></div><div class="callout-content"><p>两项合起来就是约三千一百三十美元。</p>
+</div></div><p>也就是说，体制内比体制外至少要多拿一倍的养老金，自雇者一方的负担是 <mark>百分之十二点四全额自付</mark>。这里还没有计算企业员工的四零一K账户，还有公务员的 TSP 账户。这个账户属于偏投资的那种账户，最后能提供多少退休收入，主要还是看你个人缴了多少、投资的收益和领取的方式。如果只看所有人都有的那一部分，在美国，体制内的退休金也是远远高于体制外的。美国做公务员和中国差不多：第一，它是一个铁饭碗，你基本没有被开除的风险。马斯克的效率部折腾了半天，说要裁掉百分之五十的公务员，最后也没裁掉，最多就是让一些人提前一年退休了，工资你还得照给。第二，公务员除了工资以外，其他待遇都是按照顶格给的。原因也很简单：你公务员待遇都不好，那其他企业有样学样的就更差了，这不相当于给资本家兜底吗？中美都有公共部门与企业部门退休保障不同的现象，但追求公平的方向不要错了，不是让公务员的退休金减少，而是让其他人的退休金提高。比如说，杜绝企业不按照实际工资标准缴纳的现象，这也是体制内外差别的主要原因之一。</p>
+<h3>养老金账户余额不是社会养老能力，法币时代真正养老的是商品和服务</h3>
+<p>现在已经是法币时代了，钱是印出来的，这个东西是无限的，你要多少有多少。大家一定不要被货币的迷雾给影响，而是看到它背后真实的商品和服务。养老金问题最容易被混淆的，就是把一个基金账户的余额直接当成了整个社会的养老能力，仿佛只要养老金这个池子枯竭了，所有老人就吃不上饭了。养老金账户就是一个记账符号罢了。一个国家能不能养老，最终要看老人需要的东西，社会能不能生产得出来。吃的饭、住的房子、要用的药、医生提供的诊疗，还有护理人员每天付出的劳动，这些才是养老真正的内容，而不是钱。相反，即便你买了一堆的股票债券，养老金账户里有好几个亿，可是你退休的时候，你拿钱买不到这些商品和服务，那也没有用。你要的是退休时候能够获得当时商品和服务的购买力。</p>
+</div></div></div></div>
+  </section>
+
+  <section class="demo-strip" data-shot="obsidian-note-typography-sucha">
+    <h2 class="demo-strip-title">③ 速查区：平铺 28 条 vs 只加样式 vs 折叠 callout</h2>
+    <div class="demo-grid"><div class="demo-panel"><div class="demo-panel-label">0 · 现状基线（28 条平铺）</div><div class="markdown-preview-view"><h2>速查</h2>
+<ul>
+<li><strong>人社部“数据找人”</strong>（事件）：只能动员灵活就业人员参保，不能强制。</li>
+<li><strong>《中国社会保险法》第十条</strong>（法律）：职工应当参加基本养老保险，由单位和个人共同缴费。</li>
+<li><strong>灵活就业参保</strong>（中国制度）：法律规定范围内可选择参加，也可参加居民养老。</li>
+<li><strong>美国社保</strong>（Social Security）：绝大多数有工作者强制缴纳；不能因不想要养老金就不交。</li>
+<li><strong>美国社保税率</strong>（数字）：普通雇员和雇主各缴工资百分之六点二，合计百分之十二点四。</li>
+<li><strong>自雇社保税率</strong>（数字）：社保部分百分之十二点四，全额自付；Medicare 也全额自付。</li>
+<li><strong>Medicare</strong>（美国医保税）：主要覆盖六十五岁及以上老人、部分残疾和特定重病患者。</li>
+<li><strong>自雇税门槛</strong>（数字）：美国自雇者年净收益达到四百美元，就需缴自雇税。</li>
+<li><strong>欠税后果</strong>（美国规则）：不缴形成欠税，迟缴有罚金利息，可扣存款工资、扣押出售财产。</li>
+<li><strong>刑责</strong>（美国规则）：故意不申报或拒不缴税，达到犯罪构成，单项罪最高可判一年。</li>
+<li><strong>约三千一百三十美元</strong>（数字）：稿中称两项合计，体制内比体制外至少多拿一倍养老金。</li>
+<li><strong>四零一K / TSP</strong>（账户）：企业员工四零一K，公务员 TSP，偏投资，取决于缴款、收益和领取方式。</li>
+<li><strong>马斯克效率部</strong>（事件）：称裁掉百分之五十公务员未成，最多提前一年退休，工资照给。</li>
+<li><strong>公平方向</strong>（观点）：不是让公务员退休金减少，而是让其他人的退休金提高。</li>
+<li><strong>法币时代</strong>（概念）：钱是印出来的，要多少有多少；养老看真实商品和服务。</li>
+<li><strong>养老金账户</strong>（概念）：只是记账符号，不等于整个社会的养老能力。</li>
+<li><strong>长期巨额财政赤字</strong>（缺钱条件）：表示政府调动税收的能力有限。</li>
+<li><strong>通货膨胀居高不下</strong>（缺钱条件）：表示钱可能已经印多了。</li>
+<li><strong>失业率极低</strong>（缺钱条件）：表示没有多余劳动力，印钱也难组织新生产。</li>
+<li><strong>中国失业率</strong>（数字）：失业率百分之五点二，稿称有上千万闲置劳动力，还没算农村老家待着的人。</li>
+<li><strong>社保税</strong>（主张）：直接按收入标准采取不同税率，从累退变累进。</li>
+<li><strong>财政养老</strong>（主张）：税源可来自财产税、国企资产划拨，资格不依赖缴费记录。</li>
+<li><strong>加拿大等</strong>（国家）：加拿大、新西兰、澳大利亚直接由税收支持养老。</li>
+<li><strong>中国旧养老</strong>（制度）：以前不需要单独缴纳养老保险，符合退休条件就可以领。</li>
+<li><strong>按收入和资产发</strong>（主张）：不看工作年限；低收无房多给，多套房不应拿。</li>
+<li><strong>AGI筛选</strong>（原话）：省内比你更适合现职、干得更好的人“没有八千也有一万”。</li>
+<li><strong>劫贫济富</strong>（原话）：作者称社保应起再分配作用，而不是劫贫济富。</li>
+<li><strong>体制内外</strong>（观点）：不能只说公务员特权，他们按制度交得多；根本是制度不对。</li>
+</ul>
+</div></div><div class="demo-panel"><div class="demo-panel-label">D · 同一条 Markdown，只加 CSS 片段（条目名上色、整块做成卡片）</div><div class="markdown-preview-view scribeflow"><h2>速查</h2>
+<ul>
+<li><strong>人社部“数据找人”</strong>（事件）：只能动员灵活就业人员参保，不能强制。</li>
+<li><strong>《中国社会保险法》第十条</strong>（法律）：职工应当参加基本养老保险，由单位和个人共同缴费。</li>
+<li><strong>灵活就业参保</strong>（中国制度）：法律规定范围内可选择参加，也可参加居民养老。</li>
+<li><strong>美国社保</strong>（Social Security）：绝大多数有工作者强制缴纳；不能因不想要养老金就不交。</li>
+<li><strong>美国社保税率</strong>（数字）：普通雇员和雇主各缴工资百分之六点二，合计百分之十二点四。</li>
+<li><strong>自雇社保税率</strong>（数字）：社保部分百分之十二点四，全额自付；Medicare 也全额自付。</li>
+<li><strong>Medicare</strong>（美国医保税）：主要覆盖六十五岁及以上老人、部分残疾和特定重病患者。</li>
+<li><strong>自雇税门槛</strong>（数字）：美国自雇者年净收益达到四百美元，就需缴自雇税。</li>
+<li><strong>欠税后果</strong>（美国规则）：不缴形成欠税，迟缴有罚金利息，可扣存款工资、扣押出售财产。</li>
+<li><strong>刑责</strong>（美国规则）：故意不申报或拒不缴税，达到犯罪构成，单项罪最高可判一年。</li>
+<li><strong>约三千一百三十美元</strong>（数字）：稿中称两项合计，体制内比体制外至少多拿一倍养老金。</li>
+<li><strong>四零一K / TSP</strong>（账户）：企业员工四零一K，公务员 TSP，偏投资，取决于缴款、收益和领取方式。</li>
+<li><strong>马斯克效率部</strong>（事件）：称裁掉百分之五十公务员未成，最多提前一年退休，工资照给。</li>
+<li><strong>公平方向</strong>（观点）：不是让公务员退休金减少，而是让其他人的退休金提高。</li>
+<li><strong>法币时代</strong>（概念）：钱是印出来的，要多少有多少；养老看真实商品和服务。</li>
+<li><strong>养老金账户</strong>（概念）：只是记账符号，不等于整个社会的养老能力。</li>
+<li><strong>长期巨额财政赤字</strong>（缺钱条件）：表示政府调动税收的能力有限。</li>
+<li><strong>通货膨胀居高不下</strong>（缺钱条件）：表示钱可能已经印多了。</li>
+<li><strong>失业率极低</strong>（缺钱条件）：表示没有多余劳动力，印钱也难组织新生产。</li>
+<li><strong>中国失业率</strong>（数字）：失业率百分之五点二，稿称有上千万闲置劳动力，还没算农村老家待着的人。</li>
+<li><strong>社保税</strong>（主张）：直接按收入标准采取不同税率，从累退变累进。</li>
+<li><strong>财政养老</strong>（主张）：税源可来自财产税、国企资产划拨，资格不依赖缴费记录。</li>
+<li><strong>加拿大等</strong>（国家）：加拿大、新西兰、澳大利亚直接由税收支持养老。</li>
+<li><strong>中国旧养老</strong>（制度）：以前不需要单独缴纳养老保险，符合退休条件就可以领。</li>
+<li><strong>按收入和资产发</strong>（主张）：不看工作年限；低收无房多给，多套房不应拿。</li>
+<li><strong>AGI筛选</strong>（原话）：省内比你更适合现职、干得更好的人“没有八千也有一万”。</li>
+<li><strong>劫贫济富</strong>（原话）：作者称社保应起再分配作用，而不是劫贫济富。</li>
+<li><strong>体制内外</strong>（观点）：不能只说公务员特权，他们按制度交得多；根本是制度不对。</li>
+</ul>
+</div></div><div class="demo-panel"><div class="demo-panel-label">B · 折叠 callout（默认，只占一行）</div><div class="markdown-preview-view"><details class="callout is-collapsible" data-callout="example"><summary class="callout-title"><div class="callout-icon"><svg class="svg-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 5h.01"/><path d="M3 12h.01"/><path d="M3 19h.01"/><path d="M8 5h13"/><path d="M8 12h13"/><path d="M8 19h13"/></svg></div><div class="callout-title-inner">速查</div><div class="callout-fold is-collapsed"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg></div></summary><div class="callout-content"><p><strong>数字</strong></p>
+<ul>
+<li><strong>美国社保税率</strong>：普通雇员和雇主各缴工资百分之六点二，合计百分之十二点四。</li>
+<li><strong>自雇社保税率</strong>：社保部分百分之十二点四，全额自付；Medicare 也全额自付。</li>
+<li><strong>自雇税门槛</strong>：美国自雇者年净收益达到四百美元，就需缴自雇税。</li>
+<li><strong>约三千一百三十美元</strong>：稿中称两项合计，体制内比体制外至少多拿一倍养老金。</li>
+<li><strong>中国失业率</strong>：百分之五点二；稿称有上千万闲置劳动力，还没算农村老家待着的人。</li>
+</ul>
+<p><strong>制度与法律</strong></p>
+<ul>
+<li><strong>《中国社会保险法》第十条</strong>：职工应当参加基本养老保险，由单位和个人共同缴费。</li>
+<li><strong>灵活就业参保</strong>：法律规定范围内可选择参加，也可参加居民养老。</li>
+<li><strong>美国社保</strong>：绝大多数有工作者强制缴纳；不能因不想要养老金就不交。</li>
+<li><strong>中国旧养老</strong>：以前不需要单独缴纳养老保险，符合退休条件就可以领。</li>
+<li><strong>加拿大等</strong>：加拿大、新西兰、澳大利亚直接由税收支持养老。</li>
+<li><strong>四零一K / TSP</strong>：企业员工四零一K，公务员 TSP，偏投资，取决于缴款、收益和领取方式。</li>
+</ul>
+<p><strong>美国规则与后果</strong></p>
+<ul>
+<li><strong>Medicare</strong>：主要覆盖六十五岁及以上老人、部分残疾和特定重病患者。</li>
+<li><strong>欠税后果</strong>：不缴形成欠税，迟缴有罚金利息，可扣存款工资、扣押出售财产。</li>
+<li><strong>刑责</strong>：故意不申报或拒不缴税，达到犯罪构成，单项罪最高可判一年。</li>
+</ul>
+<p><strong>概念</strong></p>
+<ul>
+<li><strong>法币时代</strong>：钱是印出来的，要多少有多少；养老看真实商品和服务。</li>
+<li><strong>养老金账户</strong>：只是记账符号，不等于整个社会的养老能力。</li>
+<li><strong>长期巨额财政赤字</strong>：表示政府调动税收的能力有限。</li>
+<li><strong>通货膨胀居高不下</strong>：表示钱可能已经印多了。</li>
+<li><strong>失业率极低</strong>：表示没有多余劳动力，印钱也难组织新生产。</li>
+</ul>
+<p><strong>主张</strong></p>
+<ul>
+<li><strong>公平方向</strong>：不是让公务员退休金减少，而是让其他人的退休金提高。</li>
+<li><strong>社保税</strong>：直接按收入标准采取不同税率，从累退变累进。</li>
+<li><strong>财政养老</strong>：税源可来自财产税、国企资产划拨，资格不依赖缴费记录。</li>
+<li><strong>按收入和资产发</strong>：不看工作年限；低收无房多给，多套房不应拿。</li>
+<li><strong>体制内外</strong>：不能只说公务员特权，他们按制度交得多；根本是制度不对。</li>
+</ul>
+<p><strong>事件与原话</strong></p>
+<ul>
+<li><strong>人社部“数据找人”</strong>：只能动员灵活就业人员参保，不能强制。</li>
+<li><strong>马斯克效率部</strong>：称裁掉百分之五十公务员未成，最多提前一年退休，工资照给。</li>
+<li><strong>AGI筛选</strong>：省内比你更适合现职、干得更好的人“没有八千也有一万”。</li>
+<li><strong>劫贫济富</strong>：作者称社保应起再分配作用，而不是劫贫济富。</li>
+</ul>
+</div></details></div></div><div class="demo-panel"><div class="demo-panel-label">B · 点开之后（分组标签 + 每组 3-6 条）</div><div class="markdown-preview-view"><details class="callout is-collapsible" data-callout="example" open><summary class="callout-title"><div class="callout-icon"><svg class="svg-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 5h.01"/><path d="M3 12h.01"/><path d="M3 19h.01"/><path d="M8 5h13"/><path d="M8 12h13"/><path d="M8 19h13"/></svg></div><div class="callout-title-inner">速查</div><div class="callout-fold"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg></div></summary><div class="callout-content"><p><strong>数字</strong></p>
+<ul>
+<li><strong>美国社保税率</strong>：普通雇员和雇主各缴工资百分之六点二，合计百分之十二点四。</li>
+<li><strong>自雇社保税率</strong>：社保部分百分之十二点四，全额自付；Medicare 也全额自付。</li>
+<li><strong>自雇税门槛</strong>：美国自雇者年净收益达到四百美元，就需缴自雇税。</li>
+<li><strong>约三千一百三十美元</strong>：稿中称两项合计，体制内比体制外至少多拿一倍养老金。</li>
+<li><strong>中国失业率</strong>：百分之五点二；稿称有上千万闲置劳动力，还没算农村老家待着的人。</li>
+</ul>
+<p><strong>制度与法律</strong></p>
+<ul>
+<li><strong>《中国社会保险法》第十条</strong>：职工应当参加基本养老保险，由单位和个人共同缴费。</li>
+<li><strong>灵活就业参保</strong>：法律规定范围内可选择参加，也可参加居民养老。</li>
+<li><strong>美国社保</strong>：绝大多数有工作者强制缴纳；不能因不想要养老金就不交。</li>
+<li><strong>中国旧养老</strong>：以前不需要单独缴纳养老保险，符合退休条件就可以领。</li>
+<li><strong>加拿大等</strong>：加拿大、新西兰、澳大利亚直接由税收支持养老。</li>
+<li><strong>四零一K / TSP</strong>：企业员工四零一K，公务员 TSP，偏投资，取决于缴款、收益和领取方式。</li>
+</ul>
+<p><strong>美国规则与后果</strong></p>
+<ul>
+<li><strong>Medicare</strong>：主要覆盖六十五岁及以上老人、部分残疾和特定重病患者。</li>
+<li><strong>欠税后果</strong>：不缴形成欠税，迟缴有罚金利息，可扣存款工资、扣押出售财产。</li>
+<li><strong>刑责</strong>：故意不申报或拒不缴税，达到犯罪构成，单项罪最高可判一年。</li>
+</ul>
+<p><strong>概念</strong></p>
+<ul>
+<li><strong>法币时代</strong>：钱是印出来的，要多少有多少；养老看真实商品和服务。</li>
+<li><strong>养老金账户</strong>：只是记账符号，不等于整个社会的养老能力。</li>
+<li><strong>长期巨额财政赤字</strong>：表示政府调动税收的能力有限。</li>
+<li><strong>通货膨胀居高不下</strong>：表示钱可能已经印多了。</li>
+<li><strong>失业率极低</strong>：表示没有多余劳动力，印钱也难组织新生产。</li>
+</ul>
+<p><strong>主张</strong></p>
+<ul>
+<li><strong>公平方向</strong>：不是让公务员退休金减少，而是让其他人的退休金提高。</li>
+<li><strong>社保税</strong>：直接按收入标准采取不同税率，从累退变累进。</li>
+<li><strong>财政养老</strong>：税源可来自财产税、国企资产划拨，资格不依赖缴费记录。</li>
+<li><strong>按收入和资产发</strong>：不看工作年限；低收无房多给，多套房不应拿。</li>
+<li><strong>体制内外</strong>：不能只说公务员特权，他们按制度交得多；根本是制度不对。</li>
+</ul>
+<p><strong>事件与原话</strong></p>
+<ul>
+<li><strong>人社部“数据找人”</strong>：只能动员灵活就业人员参保，不能强制。</li>
+<li><strong>马斯克效率部</strong>：称裁掉百分之五十公务员未成，最多提前一年退休，工资照给。</li>
+<li><strong>AGI筛选</strong>：省内比你更适合现职、干得更好的人“没有八千也有一万”。</li>
+<li><strong>劫贫济富</strong>：作者称社保应起再分配作用，而不是劫贫济富。</li>
+</ul>
+</div></details></div></div></div>
+  </section>
+
+  <section><div class="demo-strip"><h2 class="demo-strip-title">0 · 现状基线（现在导出的样子）</h2><div data-shot="obsidian-note-typography-baseline-full"><div class="properties"><div class="prop-row"><div class="prop-name">标题</div><div class="prop-value">中美社保对比，有哪些不同?</div></div><div class="prop-row"><div class="prop-name">类型</div><div class="prop-value">学习笔记</div></div><div class="prop-row"><div class="prop-name">来源</div><div class="prop-value">文本</div></div><div class="prop-row"><div class="prop-name">创建日期</div><div class="prop-value">2026-10-14</div></div><div class="prop-row"><div class="prop-name">tags</div><div class="prop-value"><span class="prop-chip">来源/文本</span></div></div></div><div class="markdown-preview-view"><h1>中美社保对比，有哪些不同?</h1>
+<h2>速览</h2>
+<ul>
+<li>人社部“用数据找人”只能动员，因为中国职工养老强制，灵活就业人员自愿。</li>
+<li>美国 Social Security 对绝大多数有工作者强制，雇员雇主各缴工资的百分之六点二，自雇者百分之十二点四全额自付，Medicare 另扣。</li>
+<li>中美公共部门退休待遇都高于企业部门；作者认为公平方向是提高其他人，而不是降降公务员。</li>
+<li>养老金会不会崩，关键不是账户余额和年轻人数量，而是法币时代的生产力与商品服务供给。</li>
+<li>中国低通胀、失业率百分之五点二，有闲置劳动力和财政空间，问题不在没钱，而在分配。</li>
+<li>作者主张取消社保费、改征累进社保税，由财政支持养老，资格不依赖缴费记录。</li>
+</ul>
+<h2>正文</h2>
+<h3>人社部能“用数据找人”，但法律给灵活就业人员留的是自愿选择</h3>
+<p>在中国，按照《中国社会保险法》第十条，职工应当参加基本养老保险，由单位和个人共同缴费。这一部分是强制的。但是属于法律规定范围的灵活就业人员，则可以选择参加。这一部分是自愿的。所以人社部虽然要说用数据找人，也只能是动员他们参保。在现行法律之下，你要是不交，谁也没招。真正的问题不是要如何去想办法动员大家去交社保，而是这个制度本身就是一个累退的制度，收入越低的人越不划算。</p>
+<h3>美国 Social Security 是强制税，雇员和雇主各缴百分之六点二</h3>
+<p>美国的社保叫做 Social Security，对绝大多数有工作的人来说是强制缴纳的。你不能因为自己不想养老选择不交。根据美国国税局的说明，普通雇员和雇主通常应各缴纳工资的百分之六点二，合计是百分之十二点四，雇员部分由雇主代扣。此外还要单独扣 Medicare，就是医保税。它和中国的医保不一样：中国是通过职工医保和居民医保，给不同年龄段的人提供基本覆盖；美国的 Medicare 主要覆盖六十五岁及以上的老人，以及部分残疾和特定重病患者。一般人在日常生活中不能一直依赖 Medicare，通常还是需要通过雇主或者自己购买医疗保险。所以美国的这笔医保税，对于很多人来说，真的是交了你也用不上。</p>
+<h3>美国自雇者不缴不是“少领养老金”，而是欠税、罚息、扣款甚至刑责</h3>
+<p>美国法律下，自由职业者接单或者自己经营的，也通常有缴税义务。一般情况下，如果你的年净收益达到了四百美元，就需要缴纳自雇税。其中社保部分就是百分之十二点四，全额自付；另外还有 Medicare 的部分，也是全额自付的。符合纳税条件的灵活就业人员，不缴自雇税会形成欠税，追缴的会有罚金和利息，不按期申报还有可能有另外的罚金。经过法定通知等程序之后，税务局还可以直接从你的银行存款、从你的工资里面去扣，还可以依法扣押出售你的财产来抵税。所以如果长期不缴，后果可不只是将来少领养老金。如果明知有纳税义务却故意不申报或者拒不缴税的，达到犯罪构成，还可能承担刑事责任，单项罪最高可判一年。如果隐瞒收入、转移资产等行为构成逃税重罪，口播稿在此处截断，没有讲完。中国法律相当于是给灵活就业人员保留了选择空间：你可以参保也可以不参保，还可以参加居民养老，这样缴纳的钱就比较少，不过以后领的养老金也会少。</p>
+<h3>中美公共部门退休待遇都高于企业部门，但公平方向应是提高其他人</h3>
+<p>口播稿在讲美国公共部门待遇时提到：“两项合起来就是约三千一百三十美元。”也就是说，体制内比体制外至少要多拿一倍的养老金。这里还没有计算企业员工的四零一K账户，还有公务员的 TSP 账户。这个账户属于偏投资的那种账户，最后能提供多少退休收入，主要还是看你个人缴了多少、投资的收益和领取的方式。如果只看所有人都有的那一部分，在美国，体制内的退休金也是远远高于体制外的。美国做公务员和中国差不多：第一，它是一个铁饭碗，你基本没有被开除的风险。马斯克的效率部折腾了半天，说要裁掉百分之五十的公务员，最后也没裁掉，最多就是让一些人提前一年退休了，工资你还得照给。第二，公务员除了工资以外，其他待遇都是按照顶格给的。原因也很简单：你公务员待遇都不好，那其他企业有样学样的就更差了，这不相当于给资本家兜底吗？中美都有公共部门与企业部门退休保障不同的现象，但追求公平的方向不要错了，不是让公务员的退休金减少，而是让其他人的退休金提高。比如说，杜绝企业不按照实际工资标准缴纳的现象，这也是体制内外差别的主要原因之一。</p>
+<h3>养老金账户余额不是社会养老能力，法币时代真正养老的是商品和服务</h3>
+<p>现在已经是法币时代了，钱是印出来的，这个东西是无限的，你要多少有多少。大家一定不要被货币的迷雾给影响，而是看到它背后真实的商品和服务。养老金问题最容易被混淆的，就是把一个基金账户的余额直接当成了整个社会的养老能力，仿佛只要养老金这个池子枯竭了，所有老人就吃不上饭了。养老金账户就是一个记账符号罢了。一个国家能不能养老，最终要看老人需要的东西，社会能不能生产得出来。吃的饭、住的房子、要用的药、医生提供的诊疗，还有护理人员每天付出的劳动，这些才是养老真正的内容，而不是钱。相反，即便你买了一堆的股票债券，养老金账户里有好几个亿，可是你退休的时候，你拿钱买不到这些商品和服务，那也没有用。你要的是退休时候能够获得当时商品和服务的购买力。</p>
+<h2>速查</h2>
+<ul>
+<li><strong>人社部“数据找人”</strong>（事件）：只能动员灵活就业人员参保，不能强制。</li>
+<li><strong>《中国社会保险法》第十条</strong>（法律）：职工应当参加基本养老保险，由单位和个人共同缴费。</li>
+<li><strong>灵活就业参保</strong>（中国制度）：法律规定范围内可选择参加，也可参加居民养老。</li>
+<li><strong>美国社保</strong>（Social Security）：绝大多数有工作者强制缴纳；不能因不想要养老金就不交。</li>
+<li><strong>美国社保税率</strong>（数字）：普通雇员和雇主各缴工资百分之六点二，合计百分之十二点四。</li>
+<li><strong>自雇社保税率</strong>（数字）：社保部分百分之十二点四，全额自付；Medicare 也全额自付。</li>
+<li><strong>Medicare</strong>（美国医保税）：主要覆盖六十五岁及以上老人、部分残疾和特定重病患者。</li>
+<li><strong>自雇税门槛</strong>（数字）：美国自雇者年净收益达到四百美元，就需缴自雇税。</li>
+<li><strong>欠税后果</strong>（美国规则）：不缴形成欠税，迟缴有罚金利息，可扣存款工资、扣押出售财产。</li>
+<li><strong>刑责</strong>（美国规则）：故意不申报或拒不缴税，达到犯罪构成，单项罪最高可判一年。</li>
+<li><strong>约三千一百三十美元</strong>（数字）：稿中称两项合计，体制内比体制外至少多拿一倍养老金。</li>
+<li><strong>四零一K / TSP</strong>（账户）：企业员工四零一K，公务员 TSP，偏投资，取决于缴款、收益和领取方式。</li>
+<li><strong>马斯克效率部</strong>（事件）：称裁掉百分之五十公务员未成，最多提前一年退休，工资照给。</li>
+<li><strong>公平方向</strong>（观点）：不是让公务员退休金减少，而是让其他人的退休金提高。</li>
+<li><strong>法币时代</strong>（概念）：钱是印出来的，要多少有多少；养老看真实商品和服务。</li>
+<li><strong>养老金账户</strong>（概念）：只是记账符号，不等于整个社会的养老能力。</li>
+<li><strong>长期巨额财政赤字</strong>（缺钱条件）：表示政府调动税收的能力有限。</li>
+<li><strong>通货膨胀居高不下</strong>（缺钱条件）：表示钱可能已经印多了。</li>
+<li><strong>失业率极低</strong>（缺钱条件）：表示没有多余劳动力，印钱也难组织新生产。</li>
+<li><strong>中国失业率</strong>（数字）：失业率百分之五点二，稿称有上千万闲置劳动力，还没算农村老家待着的人。</li>
+<li><strong>社保税</strong>（主张）：直接按收入标准采取不同税率，从累退变累进。</li>
+<li><strong>财政养老</strong>（主张）：税源可来自财产税、国企资产划拨，资格不依赖缴费记录。</li>
+<li><strong>加拿大等</strong>（国家）：加拿大、新西兰、澳大利亚直接由税收支持养老。</li>
+<li><strong>中国旧养老</strong>（制度）：以前不需要单独缴纳养老保险，符合退休条件就可以领。</li>
+<li><strong>按收入和资产发</strong>（主张）：不看工作年限；低收无房多给，多套房不应拿。</li>
+<li><strong>AGI筛选</strong>（原话）：省内比你更适合现职、干得更好的人“没有八千也有一万”。</li>
+<li><strong>劫贫济富</strong>（原话）：作者称社保应起再分配作用，而不是劫贫济富。</li>
+<li><strong>体制内外</strong>（观点）：不能只说公务员特权，他们按制度交得多；根本是制度不对。</li>
+</ul>
+</div></div></div>
+<div class="demo-strip"><h2 class="demo-strip-title">A · 纯 Markdown 骨架（不用 callout）</h2><div><div class="properties"><div class="prop-row"><div class="prop-name">标题</div><div class="prop-value">中美社保对比，有哪些不同?</div></div><div class="prop-row"><div class="prop-name">类型</div><div class="prop-value">学习笔记</div></div><div class="prop-row"><div class="prop-name">来源</div><div class="prop-value">文本</div></div><div class="prop-row"><div class="prop-name">创建日期</div><div class="prop-value">2026-10-14</div></div><div class="prop-row"><div class="prop-name">tags</div><div class="prop-value"><span class="prop-chip">来源/文本</span></div></div></div><div class="markdown-preview-view"><h1>中美社保对比，有哪些不同?</h1>
+<h2>速览</h2>
+<ul>
+<li>人社部“用数据找人”只能动员，因为中国职工养老强制，灵活就业人员自愿。</li>
+<li>美国 Social Security 对绝大多数有工作者强制，雇员雇主各缴工资的百分之六点二，自雇者百分之十二点四全额自付，Medicare 另扣。</li>
+<li>中美公共部门退休待遇都高于企业部门；作者认为公平方向是提高其他人，而不是降降公务员。</li>
+<li>养老金会不会崩，关键不是账户余额和年轻人数量，而是法币时代的生产力与商品服务供给。</li>
+<li>中国低通胀、失业率百分之五点二，有闲置劳动力和财政空间，问题不在没钱，而在分配。</li>
+<li>作者主张取消社保费、改征累进社保税，由财政支持养老，资格不依赖缴费记录。</li>
+</ul>
+<hr>
+<h2>人社部能“用数据找人”，但法律给灵活就业人员留的是自愿选择</h2>
+<p>在中国，按照《中国社会保险法》第十条，职工应当参加基本养老保险，由单位和个人共同缴费。这一部分是强制的。但是属于法律规定范围的灵活就业人员，则可以选择参加。这一部分是自愿的。所以人社部虽然要说用数据找人，也只能是动员他们参保。在现行法律之下，你要是不交，谁也没招。真正的问题不是要如何去想办法动员大家去交社保，而是这个制度本身就是一个累退的制度，收入越低的人越不划算。</p>
+<h2>美国 Social Security 是强制税，雇员和雇主各缴百分之六点二</h2>
+<p>美国的社保叫做 Social Security，对绝大多数有工作的人来说是强制缴纳的。你不能因为自己不想养老选择不交。根据美国国税局的说明，普通雇员和雇主通常应各缴纳工资的百分之六点二，合计是百分之十二点四，雇员部分由雇主代扣。此外还要单独扣 Medicare，就是医保税。它和中国的医保不一样：中国是通过职工医保和居民医保，给不同年龄段的人提供基本覆盖；美国的 Medicare 主要覆盖六十五岁及以上的老人，以及部分残疾和特定重病患者。一般人在日常生活中不能一直依赖 Medicare，通常还是需要通过雇主或者自己购买医疗保险。所以美国的这笔医保税，对于很多人来说，真的是交了你也用不上。</p>
+<h2>美国自雇者不缴不是“少领养老金”，而是欠税、罚息、扣款甚至刑责</h2>
+<p>美国法律下，自由职业者接单或者自己经营的，也通常有缴税义务。一般情况下，如果你的年净收益达到了四百美元，就需要缴纳自雇税。其中社保部分就是百分之十二点四，全额自付；另外还有 Medicare 的部分，也是全额自付的。符合纳税条件的灵活就业人员，不缴自雇税会形成欠税，追缴的会有罚金和利息，不按期申报还有可能有另外的罚金。经过法定通知等程序之后，税务局还可以直接从你的银行存款、从你的工资里面去扣，还可以依法扣押出售你的财产来抵税。所以如果长期不缴，后果可不只是将来少领养老金。如果明知有纳税义务却故意不申报或者拒不缴税的，达到犯罪构成，还可能承担刑事责任，单项罪最高可判一年。如果隐瞒收入、转移资产等行为构成逃税重罪，口播稿在此处截断，没有讲完。中国法律相当于是给灵活就业人员保留了选择空间：你可以参保也可以不参保，还可以参加居民养老，这样缴纳的钱就比较少，不过以后领的养老金也会少。</p>
+<h2>中美公共部门退休待遇都高于企业部门，但公平方向应是提高其他人</h2>
+<p>口播稿在讲美国公共部门待遇时提到：“两项合起来就是约三千一百三十美元。”也就是说，体制内比体制外至少要多拿一倍的养老金。这里还没有计算企业员工的四零一K账户，还有公务员的 TSP 账户。这个账户属于偏投资的那种账户，最后能提供多少退休收入，主要还是看你个人缴了多少、投资的收益和领取的方式。如果只看所有人都有的那一部分，在美国，体制内的退休金也是远远高于体制外的。美国做公务员和中国差不多：第一，它是一个铁饭碗，你基本没有被开除的风险。马斯克的效率部折腾了半天，说要裁掉百分之五十的公务员，最后也没裁掉，最多就是让一些人提前一年退休了，工资你还得照给。第二，公务员除了工资以外，其他待遇都是按照顶格给的。原因也很简单：你公务员待遇都不好，那其他企业有样学样的就更差了，这不相当于给资本家兜底吗？中美都有公共部门与企业部门退休保障不同的现象，但追求公平的方向不要错了，不是让公务员的退休金减少，而是让其他人的退休金提高。比如说，杜绝企业不按照实际工资标准缴纳的现象，这也是体制内外差别的主要原因之一。</p>
+<h2>养老金账户余额不是社会养老能力，法币时代真正养老的是商品和服务</h2>
+<p>现在已经是法币时代了，钱是印出来的，这个东西是无限的，你要多少有多少。大家一定不要被货币的迷雾给影响，而是看到它背后真实的商品和服务。养老金问题最容易被混淆的，就是把一个基金账户的余额直接当成了整个社会的养老能力，仿佛只要养老金这个池子枯竭了，所有老人就吃不上饭了。养老金账户就是一个记账符号罢了。一个国家能不能养老，最终要看老人需要的东西，社会能不能生产得出来。吃的饭、住的房子、要用的药、医生提供的诊疗，还有护理人员每天付出的劳动，这些才是养老真正的内容，而不是钱。相反，即便你买了一堆的股票债券，养老金账户里有好几个亿，可是你退休的时候，你拿钱买不到这些商品和服务，那也没有用。你要的是退休时候能够获得当时商品和服务的购买力。</p>
+<hr>
+<h2>速查</h2>
+<p><strong>数字</strong></p>
+<ul>
+<li><strong>美国社保税率</strong>：普通雇员和雇主各缴工资百分之六点二，合计百分之十二点四。</li>
+<li><strong>自雇社保税率</strong>：社保部分百分之十二点四，全额自付；Medicare 也全额自付。</li>
+<li><strong>自雇税门槛</strong>：美国自雇者年净收益达到四百美元，就需缴自雇税。</li>
+<li><strong>约三千一百三十美元</strong>：稿中称两项合计，体制内比体制外至少多拿一倍养老金。</li>
+<li><strong>中国失业率</strong>：百分之五点二；稿称有上千万闲置劳动力，还没算农村老家待着的人。</li>
+</ul>
+<p><strong>制度与法律</strong></p>
+<ul>
+<li><strong>《中国社会保险法》第十条</strong>：职工应当参加基本养老保险，由单位和个人共同缴费。</li>
+<li><strong>灵活就业参保</strong>：法律规定范围内可选择参加，也可参加居民养老。</li>
+<li><strong>美国社保</strong>：绝大多数有工作者强制缴纳；不能因不想要养老金就不交。</li>
+<li><strong>中国旧养老</strong>：以前不需要单独缴纳养老保险，符合退休条件就可以领。</li>
+<li><strong>加拿大等</strong>：加拿大、新西兰、澳大利亚直接由税收支持养老。</li>
+<li><strong>四零一K / TSP</strong>：企业员工四零一K，公务员 TSP，偏投资，取决于缴款、收益和领取方式。</li>
+</ul>
+<p><strong>美国规则与后果</strong></p>
+<ul>
+<li><strong>Medicare</strong>：主要覆盖六十五岁及以上老人、部分残疾和特定重病患者。</li>
+<li><strong>欠税后果</strong>：不缴形成欠税，迟缴有罚金利息，可扣存款工资、扣押出售财产。</li>
+<li><strong>刑责</strong>：故意不申报或拒不缴税，达到犯罪构成，单项罪最高可判一年。</li>
+</ul>
+<p><strong>概念</strong></p>
+<ul>
+<li><strong>法币时代</strong>：钱是印出来的，要多少有多少；养老看真实商品和服务。</li>
+<li><strong>养老金账户</strong>：只是记账符号，不等于整个社会的养老能力。</li>
+<li><strong>长期巨额财政赤字</strong>：表示政府调动税收的能力有限。</li>
+<li><strong>通货膨胀居高不下</strong>：表示钱可能已经印多了。</li>
+<li><strong>失业率极低</strong>：表示没有多余劳动力，印钱也难组织新生产。</li>
+</ul>
+<p><strong>主张</strong></p>
+<ul>
+<li><strong>公平方向</strong>：不是让公务员退休金减少，而是让其他人的退休金提高。</li>
+<li><strong>社保税</strong>：直接按收入标准采取不同税率，从累退变累进。</li>
+<li><strong>财政养老</strong>：税源可来自财产税、国企资产划拨，资格不依赖缴费记录。</li>
+<li><strong>按收入和资产发</strong>：不看工作年限；低收无房多给，多套房不应拿。</li>
+<li><strong>体制内外</strong>：不能只说公务员特权，他们按制度交得多；根本是制度不对。</li>
+</ul>
+<p><strong>事件与原话</strong></p>
+<ul>
+<li><strong>人社部“数据找人”</strong>：只能动员灵活就业人员参保，不能强制。</li>
+<li><strong>马斯克效率部</strong>：称裁掉百分之五十公务员未成，最多提前一年退休，工资照给。</li>
+<li><strong>AGI筛选</strong>：省内比你更适合现职、干得更好的人“没有八千也有一万”。</li>
+<li><strong>劫贫济富</strong>：作者称社保应起再分配作用，而不是劫贫济富。</li>
+</ul>
+</div></div></div>
+<div class="demo-strip"><h2 class="demo-strip-title">B · Callout 容器（推荐）</h2><div data-shot="obsidian-note-typography-b-full"><div class="properties"><div class="prop-row"><div class="prop-name">标题</div><div class="prop-value">中美社保对比，有哪些不同?</div></div><div class="prop-row"><div class="prop-name">类型</div><div class="prop-value">学习笔记</div></div><div class="prop-row"><div class="prop-name">来源</div><div class="prop-value">文本</div></div><div class="prop-row"><div class="prop-name">创建日期</div><div class="prop-value">2026-10-14</div></div><div class="prop-row"><div class="prop-name">tags</div><div class="prop-value"><span class="prop-chip">来源/文本</span></div></div></div><div class="markdown-preview-view"><h1>中美社保对比，有哪些不同?</h1>
+<div class="callout" data-callout="summary"><div class="callout-title"><div class="callout-icon"><svg class="svg-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="8" height="4" x="8" y="2" rx="1" ry="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><path d="M12 11h4"/><path d="M12 16h4"/><path d="M8 11h.01"/><path d="M8 16h.01"/></svg></div><div class="callout-title-inner">速览</div></div><div class="callout-content"><ul>
+<li>人社部“用数据找人”只能动员，因为中国职工养老强制，灵活就业人员自愿。</li>
+<li>美国 Social Security 对绝大多数有工作者强制，雇员雇主各缴工资的百分之六点二，自雇者百分之十二点四全额自付，Medicare 另扣。</li>
+<li>中美公共部门退休待遇都高于企业部门；作者认为公平方向是提高其他人，而不是降降公务员。</li>
+<li>养老金会不会崩，关键不是账户余额和年轻人数量，而是法币时代的生产力与商品服务供给。</li>
+<li>中国低通胀、失业率百分之五点二，有闲置劳动力和财政空间，问题不在没钱，而在分配。</li>
+<li>作者主张取消社保费、改征累进社保税，由财政支持养老，资格不依赖缴费记录。</li>
+</ul>
+</div></div><h2>人社部能“用数据找人”，但法律给灵活就业人员留的是自愿选择</h2>
+<p>在中国，按照《中国社会保险法》第十条，职工应当参加基本养老保险，由单位和个人共同缴费。这一部分是强制的。但是属于法律规定范围的灵活就业人员，则可以选择参加。这一部分是自愿的。所以人社部虽然要说用数据找人，也只能是动员他们参保。在现行法律之下，你要是不交，谁也没招。真正的问题不是要如何去想办法动员大家去交社保，而是这个制度本身就是一个累退的制度，收入越低的人越不划算。</p>
+<h2>美国 Social Security 是强制税，雇员和雇主各缴百分之六点二</h2>
+<p>美国的社保叫做 Social Security，对绝大多数有工作的人来说是强制缴纳的。你不能因为自己不想养老选择不交。根据美国国税局的说明，普通雇员和雇主通常应各缴纳工资的百分之六点二，合计是百分之十二点四，雇员部分由雇主代扣。此外还要单独扣 Medicare，就是医保税。它和中国的医保不一样：中国是通过职工医保和居民医保，给不同年龄段的人提供基本覆盖；美国的 Medicare 主要覆盖六十五岁及以上的老人，以及部分残疾和特定重病患者。一般人在日常生活中不能一直依赖 Medicare，通常还是需要通过雇主或者自己购买医疗保险。所以美国的这笔医保税，对于很多人来说，真的是交了你也用不上。</p>
+<h2>美国自雇者不缴不是“少领养老金”，而是欠税、罚息、扣款甚至刑责</h2>
+<p>美国法律下，自由职业者接单或者自己经营的，也通常有缴税义务。一般情况下，如果你的年净收益达到了四百美元，就需要缴纳自雇税。其中社保部分就是百分之十二点四，全额自付；另外还有 Medicare 的部分，也是全额自付的。符合纳税条件的灵活就业人员，不缴自雇税会形成欠税，追缴的会有罚金和利息，不按期申报还有可能有另外的罚金。经过法定通知等程序之后，税务局还可以直接从你的银行存款、从你的工资里面去扣，还可以依法扣押出售你的财产来抵税。所以如果长期不缴，后果可不只是将来少领养老金。如果明知有纳税义务却故意不申报或者拒不缴税的，达到犯罪构成，还可能承担刑事责任，单项罪最高可判一年。如果隐瞒收入、转移资产等行为构成逃税重罪，口播稿在此处截断，没有讲完。中国法律相当于是给灵活就业人员保留了选择空间：你可以参保也可以不参保，还可以参加居民养老，这样缴纳的钱就比较少，不过以后领的养老金也会少。</p>
+<h2>中美公共部门退休待遇都高于企业部门，但公平方向应是提高其他人</h2>
+<p>口播稿在讲美国公共部门待遇时提到：“两项合起来就是约三千一百三十美元。”也就是说，体制内比体制外至少要多拿一倍的养老金。这里还没有计算企业员工的四零一K账户，还有公务员的 TSP 账户。这个账户属于偏投资的那种账户，最后能提供多少退休收入，主要还是看你个人缴了多少、投资的收益和领取的方式。如果只看所有人都有的那一部分，在美国，体制内的退休金也是远远高于体制外的。美国做公务员和中国差不多：第一，它是一个铁饭碗，你基本没有被开除的风险。马斯克的效率部折腾了半天，说要裁掉百分之五十的公务员，最后也没裁掉，最多就是让一些人提前一年退休了，工资你还得照给。第二，公务员除了工资以外，其他待遇都是按照顶格给的。原因也很简单：你公务员待遇都不好，那其他企业有样学样的就更差了，这不相当于给资本家兜底吗？中美都有公共部门与企业部门退休保障不同的现象，但追求公平的方向不要错了，不是让公务员的退休金减少，而是让其他人的退休金提高。比如说，杜绝企业不按照实际工资标准缴纳的现象，这也是体制内外差别的主要原因之一。</p>
+<h2>养老金账户余额不是社会养老能力，法币时代真正养老的是商品和服务</h2>
+<p>现在已经是法币时代了，钱是印出来的，这个东西是无限的，你要多少有多少。大家一定不要被货币的迷雾给影响，而是看到它背后真实的商品和服务。养老金问题最容易被混淆的，就是把一个基金账户的余额直接当成了整个社会的养老能力，仿佛只要养老金这个池子枯竭了，所有老人就吃不上饭了。养老金账户就是一个记账符号罢了。一个国家能不能养老，最终要看老人需要的东西，社会能不能生产得出来。吃的饭、住的房子、要用的药、医生提供的诊疗，还有护理人员每天付出的劳动，这些才是养老真正的内容，而不是钱。相反，即便你买了一堆的股票债券，养老金账户里有好几个亿，可是你退休的时候，你拿钱买不到这些商品和服务，那也没有用。你要的是退休时候能够获得当时商品和服务的购买力。</p>
+<details class="callout is-collapsible" data-callout="example"><summary class="callout-title"><div class="callout-icon"><svg class="svg-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 5h.01"/><path d="M3 12h.01"/><path d="M3 19h.01"/><path d="M8 5h13"/><path d="M8 12h13"/><path d="M8 19h13"/></svg></div><div class="callout-title-inner">速查</div><div class="callout-fold is-collapsed"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg></div></summary><div class="callout-content"><p><strong>数字</strong></p>
+<ul>
+<li><strong>美国社保税率</strong>：普通雇员和雇主各缴工资百分之六点二，合计百分之十二点四。</li>
+<li><strong>自雇社保税率</strong>：社保部分百分之十二点四，全额自付；Medicare 也全额自付。</li>
+<li><strong>自雇税门槛</strong>：美国自雇者年净收益达到四百美元，就需缴自雇税。</li>
+<li><strong>约三千一百三十美元</strong>：稿中称两项合计，体制内比体制外至少多拿一倍养老金。</li>
+<li><strong>中国失业率</strong>：百分之五点二；稿称有上千万闲置劳动力，还没算农村老家待着的人。</li>
+</ul>
+<p><strong>制度与法律</strong></p>
+<ul>
+<li><strong>《中国社会保险法》第十条</strong>：职工应当参加基本养老保险，由单位和个人共同缴费。</li>
+<li><strong>灵活就业参保</strong>：法律规定范围内可选择参加，也可参加居民养老。</li>
+<li><strong>美国社保</strong>：绝大多数有工作者强制缴纳；不能因不想要养老金就不交。</li>
+<li><strong>中国旧养老</strong>：以前不需要单独缴纳养老保险，符合退休条件就可以领。</li>
+<li><strong>加拿大等</strong>：加拿大、新西兰、澳大利亚直接由税收支持养老。</li>
+<li><strong>四零一K / TSP</strong>：企业员工四零一K，公务员 TSP，偏投资，取决于缴款、收益和领取方式。</li>
+</ul>
+<p><strong>美国规则与后果</strong></p>
+<ul>
+<li><strong>Medicare</strong>：主要覆盖六十五岁及以上老人、部分残疾和特定重病患者。</li>
+<li><strong>欠税后果</strong>：不缴形成欠税，迟缴有罚金利息，可扣存款工资、扣押出售财产。</li>
+<li><strong>刑责</strong>：故意不申报或拒不缴税，达到犯罪构成，单项罪最高可判一年。</li>
+</ul>
+<p><strong>概念</strong></p>
+<ul>
+<li><strong>法币时代</strong>：钱是印出来的，要多少有多少；养老看真实商品和服务。</li>
+<li><strong>养老金账户</strong>：只是记账符号，不等于整个社会的养老能力。</li>
+<li><strong>长期巨额财政赤字</strong>：表示政府调动税收的能力有限。</li>
+<li><strong>通货膨胀居高不下</strong>：表示钱可能已经印多了。</li>
+<li><strong>失业率极低</strong>：表示没有多余劳动力，印钱也难组织新生产。</li>
+</ul>
+<p><strong>主张</strong></p>
+<ul>
+<li><strong>公平方向</strong>：不是让公务员退休金减少，而是让其他人的退休金提高。</li>
+<li><strong>社保税</strong>：直接按收入标准采取不同税率，从累退变累进。</li>
+<li><strong>财政养老</strong>：税源可来自财产税、国企资产划拨，资格不依赖缴费记录。</li>
+<li><strong>按收入和资产发</strong>：不看工作年限；低收无房多给，多套房不应拿。</li>
+<li><strong>体制内外</strong>：不能只说公务员特权，他们按制度交得多；根本是制度不对。</li>
+</ul>
+<p><strong>事件与原话</strong></p>
+<ul>
+<li><strong>人社部“数据找人”</strong>：只能动员灵活就业人员参保，不能强制。</li>
+<li><strong>马斯克效率部</strong>：称裁掉百分之五十公务员未成，最多提前一年退休，工资照给。</li>
+<li><strong>AGI筛选</strong>：省内比你更适合现职、干得更好的人“没有八千也有一万”。</li>
+<li><strong>劫贫济富</strong>：作者称社保应起再分配作用，而不是劫贫济富。</li>
+</ul>
+</div></details></div></div></div>
+<div class="demo-strip"><h2 class="demo-strip-title">C · Obsidian 语法上限</h2><div><div class="properties"><div class="prop-row"><div class="prop-name">标题</div><div class="prop-value">中美社保对比，有哪些不同?</div></div><div class="prop-row"><div class="prop-name">类型</div><div class="prop-value">学习笔记</div></div><div class="prop-row"><div class="prop-name">来源</div><div class="prop-value">文本</div></div><div class="prop-row"><div class="prop-name">创建日期</div><div class="prop-value">2026-10-14</div></div><div class="prop-row"><div class="prop-name">tags</div><div class="prop-value"><span class="prop-chip">来源/文本</span></div></div></div><div class="markdown-preview-view"><h1>中美社保对比，有哪些不同?</h1>
+<div class="callout" data-callout="summary"><div class="callout-title"><div class="callout-icon"><svg class="svg-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="8" height="4" x="8" y="2" rx="1" ry="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><path d="M12 11h4"/><path d="M12 16h4"/><path d="M8 11h.01"/><path d="M8 16h.01"/></svg></div><div class="callout-title-inner">速览</div></div><div class="callout-content"><ul>
+<li>人社部“用数据找人”只能动员，因为中国职工养老强制，灵活就业人员自愿。</li>
+<li>美国 Social Security 对绝大多数有工作者强制，雇员雇主各缴工资的百分之六点二，自雇者百分之十二点四全额自付，Medicare 另扣。</li>
+<li>中美公共部门退休待遇都高于企业部门；作者认为公平方向是提高其他人，而不是降降公务员。</li>
+<li>养老金会不会崩，关键不是账户余额和年轻人数量，而是法币时代的生产力与商品服务供给。</li>
+<li>中国低通胀、失业率百分之五点二，有闲置劳动力和财政空间，问题不在没钱，而在分配。</li>
+<li>作者主张取消社保费、改征累进社保税，由财政支持养老，资格不依赖缴费记录。</li>
+</ul>
+</div></div><h2>人社部能“用数据找人”，但法律给灵活就业人员留的是自愿选择</h2>
+<p>在中国，按照《中国社会保险法》第十条，职工应当参加基本养老保险，由单位和个人共同缴费。这一部分是强制的。但是属于法律规定范围的灵活就业人员，则可以选择参加。这一部分是自愿的。所以人社部虽然要说用数据找人，也只能是动员他们参保。在现行法律之下，你要是不交，谁也没招。真正的问题不是要如何去想办法动员大家去交社保，而是这个制度本身就是一个累退的制度，收入越低的人越不划算。</p>
+<h2>美国 Social Security 是强制税，雇员和雇主各缴百分之六点二</h2>
+<p>美国的社保叫做 Social Security，对绝大多数有工作的人来说是强制缴纳的。你不能因为自己不想养老选择不交。根据美国国税局的说明，普通雇员和雇主通常应各缴纳工资的百分之六点二，合计是百分之十二点四，雇员部分由雇主代扣。此外还要单独扣 Medicare，就是医保税。它和中国的医保不一样：中国是通过职工医保和居民医保，给不同年龄段的人提供基本覆盖；美国的 Medicare 主要覆盖六十五岁及以上的老人，以及部分残疾和特定重病患者。一般人在日常生活中不能一直依赖 Medicare，通常还是需要通过雇主或者自己购买医疗保险。所以美国的这笔医保税，对于很多人来说，真的是交了你也用不上。</p>
+<h2>美国自雇者不缴不是“少领养老金”，而是欠税、罚息、扣款甚至刑责</h2>
+<p>美国法律下，自由职业者接单或者自己经营的，也通常有缴税义务。一般情况下，如果你的年净收益达到了四百美元，就需要缴纳自雇税。其中社保部分就是百分之十二点四，全额自付；另外还有 Medicare 的部分，也是全额自付的。符合纳税条件的灵活就业人员，不缴自雇税会形成欠税，追缴的会有罚金和利息，不按期申报还有可能有另外的罚金。经过法定通知等程序之后，税务局还可以直接从你的银行存款、从你的工资里面去扣，还可以依法扣押出售你的财产来抵税。所以如果长期不缴，后果可不只是将来少领养老金。如果明知有纳税义务却故意不申报或者拒不缴税的，达到犯罪构成，还可能承担刑事责任，单项罪最高可判一年。如果隐瞒收入、转移资产等行为构成逃税重罪，口播稿在此处截断，没有讲完。中国法律相当于是给灵活就业人员保留了选择空间：你可以参保也可以不参保，还可以参加居民养老，这样缴纳的钱就比较少，不过以后领的养老金也会少。</p>
+<h2>中美公共部门退休待遇都高于企业部门，但公平方向应是提高其他人</h2>
+<p>口播稿在讲美国公共部门待遇时提到：</p>
+<div class="callout" data-callout="quote"><div class="callout-title"><div class="callout-icon"><svg class="svg-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 3a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2 1 1 0 0 1 1 1v1a2 2 0 0 1-2 2 1 1 0 0 0-1 1v2a1 1 0 0 0 1 1 6 6 0 0 0 6-6V5a2 2 0 0 0-2-2z"/><path d="M5 3a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2 1 1 0 0 1 1 1v1a2 2 0 0 1-2 2 1 1 0 0 0-1 1v2a1 1 0 0 0 1 1 6 6 0 0 0 6-6V5a2 2 0 0 0-2-2z"/></svg></div><div class="callout-title-inner">原话</div></div><div class="callout-content"><p>两项合起来就是约三千一百三十美元。</p>
+</div></div><p>也就是说，体制内比体制外至少要多拿一倍的养老金，自雇者一方的负担是 <mark>百分之十二点四全额自付</mark>。这里还没有计算企业员工的四零一K账户，还有公务员的 TSP 账户。这个账户属于偏投资的那种账户，最后能提供多少退休收入，主要还是看你个人缴了多少、投资的收益和领取的方式。如果只看所有人都有的那一部分，在美国，体制内的退休金也是远远高于体制外的。美国做公务员和中国差不多：第一，它是一个铁饭碗，你基本没有被开除的风险。马斯克的效率部折腾了半天，说要裁掉百分之五十的公务员，最后也没裁掉，最多就是让一些人提前一年退休了，工资你还得照给。第二，公务员除了工资以外，其他待遇都是按照顶格给的。原因也很简单：你公务员待遇都不好，那其他企业有样学样的就更差了，这不相当于给资本家兜底吗？中美都有公共部门与企业部门退休保障不同的现象，但追求公平的方向不要错了，不是让公务员的退休金减少，而是让其他人的退休金提高。比如说，杜绝企业不按照实际工资标准缴纳的现象，这也是体制内外差别的主要原因之一。</p>
+<h2>养老金账户余额不是社会养老能力，法币时代真正养老的是商品和服务</h2>
+<p>现在已经是法币时代了，钱是印出来的，这个东西是无限的，你要多少有多少。大家一定不要被货币的迷雾给影响，而是看到它背后真实的商品和服务。养老金问题最容易被混淆的，就是把一个基金账户的余额直接当成了整个社会的养老能力，仿佛只要养老金这个池子枯竭了，所有老人就吃不上饭了。养老金账户就是一个记账符号罢了。一个国家能不能养老，最终要看老人需要的东西，社会能不能生产得出来。吃的饭、住的房子、要用的药、医生提供的诊疗，还有护理人员每天付出的劳动，这些才是养老真正的内容，而不是钱。相反，即便你买了一堆的股票债券，养老金账户里有好几个亿，可是你退休的时候，你拿钱买不到这些商品和服务，那也没有用。你要的是退休时候能够获得当时商品和服务的购买力。</p>
+<details class="callout is-collapsible" data-callout="example"><summary class="callout-title"><div class="callout-icon"><svg class="svg-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 5h.01"/><path d="M3 12h.01"/><path d="M3 19h.01"/><path d="M8 5h13"/><path d="M8 12h13"/><path d="M8 19h13"/></svg></div><div class="callout-title-inner">速查 · 数字</div><div class="callout-fold is-collapsed"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg></div></summary><div class="callout-content"><ul>
+<li><strong>美国社保税率</strong>：普通雇员和雇主各缴工资百分之六点二，合计百分之十二点四。</li>
+<li><strong>自雇社保税率</strong>：社保部分百分之十二点四，全额自付；Medicare 也全额自付。</li>
+<li><strong>自雇税门槛</strong>：美国自雇者年净收益达到四百美元，就需缴自雇税。</li>
+<li><strong>约三千一百三十美元</strong>：稿中称两项合计，体制内比体制外至少多拿一倍养老金。</li>
+<li><strong>中国失业率</strong>：百分之五点二；稿称有上千万闲置劳动力，还没算农村老家待着的人。</li>
+</ul>
+</div></details><details class="callout is-collapsible" data-callout="example"><summary class="callout-title"><div class="callout-icon"><svg class="svg-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 5h.01"/><path d="M3 12h.01"/><path d="M3 19h.01"/><path d="M8 5h13"/><path d="M8 12h13"/><path d="M8 19h13"/></svg></div><div class="callout-title-inner">速查 · 制度与法律</div><div class="callout-fold is-collapsed"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg></div></summary><div class="callout-content"><ul>
+<li><strong>《中国社会保险法》第十条</strong>：职工应当参加基本养老保险，由单位和个人共同缴费。</li>
+<li><strong>灵活就业参保</strong>：法律规定范围内可选择参加，也可参加居民养老。</li>
+<li><strong>美国社保</strong>：绝大多数有工作者强制缴纳；不能因不想要养老金就不交。</li>
+<li><strong>中国旧养老</strong>：以前不需要单独缴纳养老保险，符合退休条件就可以领。</li>
+<li><strong>加拿大等</strong>：加拿大、新西兰、澳大利亚直接由税收支持养老。</li>
+<li><strong>四零一K / TSP</strong>：企业员工四零一K，公务员 TSP，偏投资，取决于缴款、收益和领取方式。</li>
+</ul>
+</div></details><details class="callout is-collapsible" data-callout="example"><summary class="callout-title"><div class="callout-icon"><svg class="svg-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 5h.01"/><path d="M3 12h.01"/><path d="M3 19h.01"/><path d="M8 5h13"/><path d="M8 12h13"/><path d="M8 19h13"/></svg></div><div class="callout-title-inner">速查 · 美国规则与后果</div><div class="callout-fold is-collapsed"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg></div></summary><div class="callout-content"><ul>
+<li><strong>Medicare</strong>：主要覆盖六十五岁及以上老人、部分残疾和特定重病患者。</li>
+<li><strong>欠税后果</strong>：不缴形成欠税，迟缴有罚金利息，可扣存款工资、扣押出售财产。</li>
+<li><strong>刑责</strong>：故意不申报或拒不缴税，达到犯罪构成，单项罪最高可判一年。</li>
+</ul>
+</div></details><details class="callout is-collapsible" data-callout="example"><summary class="callout-title"><div class="callout-icon"><svg class="svg-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 5h.01"/><path d="M3 12h.01"/><path d="M3 19h.01"/><path d="M8 5h13"/><path d="M8 12h13"/><path d="M8 19h13"/></svg></div><div class="callout-title-inner">速查 · 概念</div><div class="callout-fold is-collapsed"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg></div></summary><div class="callout-content"><ul>
+<li><strong>法币时代</strong>：钱是印出来的，要多少有多少；养老看真实商品和服务。</li>
+<li><strong>养老金账户</strong>：只是记账符号，不等于整个社会的养老能力。</li>
+<li><strong>长期巨额财政赤字</strong>：表示政府调动税收的能力有限。</li>
+<li><strong>通货膨胀居高不下</strong>：表示钱可能已经印多了。</li>
+<li><strong>失业率极低</strong>：表示没有多余劳动力，印钱也难组织新生产。</li>
+</ul>
+</div></details><details class="callout is-collapsible" data-callout="example"><summary class="callout-title"><div class="callout-icon"><svg class="svg-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 5h.01"/><path d="M3 12h.01"/><path d="M3 19h.01"/><path d="M8 5h13"/><path d="M8 12h13"/><path d="M8 19h13"/></svg></div><div class="callout-title-inner">速查 · 主张</div><div class="callout-fold is-collapsed"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg></div></summary><div class="callout-content"><ul>
+<li><strong>公平方向</strong>：不是让公务员退休金减少，而是让其他人的退休金提高。</li>
+<li><strong>社保税</strong>：直接按收入标准采取不同税率，从累退变累进。</li>
+<li><strong>财政养老</strong>：税源可来自财产税、国企资产划拨，资格不依赖缴费记录。</li>
+<li><strong>按收入和资产发</strong>：不看工作年限；低收无房多给，多套房不应拿。</li>
+<li><strong>体制内外</strong>：不能只说公务员特权，他们按制度交得多；根本是制度不对。</li>
+</ul>
+</div></details><details class="callout is-collapsible" data-callout="example"><summary class="callout-title"><div class="callout-icon"><svg class="svg-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 5h.01"/><path d="M3 12h.01"/><path d="M3 19h.01"/><path d="M8 5h13"/><path d="M8 12h13"/><path d="M8 19h13"/></svg></div><div class="callout-title-inner">速查 · 事件与原话</div><div class="callout-fold is-collapsed"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg></div></summary><div class="callout-content"><ul>
+<li><strong>人社部“数据找人”</strong>：只能动员灵活就业人员参保，不能强制。</li>
+<li><strong>马斯克效率部</strong>：称裁掉百分之五十公务员未成，最多提前一年退休，工资照给。</li>
+<li><strong>AGI筛选</strong>：省内比你更适合现职、干得更好的人“没有八千也有一万”。</li>
+<li><strong>劫贫济富</strong>：作者称社保应起再分配作用，而不是劫贫济富。</li>
+</ul>
+</div></details></div></div></div>
+<div class="demo-strip"><h2 class="demo-strip-title">D · 只改样式（cssclasses + CSS 片段）</h2><div><div class="properties"><div class="prop-row"><div class="prop-name">标题</div><div class="prop-value">中美社保对比，有哪些不同?</div></div><div class="prop-row"><div class="prop-name">类型</div><div class="prop-value">学习笔记</div></div><div class="prop-row"><div class="prop-name">来源</div><div class="prop-value">文本</div></div><div class="prop-row"><div class="prop-name">创建日期</div><div class="prop-value">2026-10-14</div></div><div class="prop-row"><div class="prop-name">cssclasses</div><div class="prop-value"><span class="prop-chip">scribeflow</span></div></div><div class="prop-row"><div class="prop-name">tags</div><div class="prop-value"><span class="prop-chip">来源/文本</span></div></div></div><div class="markdown-preview-view scribeflow"><h1>中美社保对比，有哪些不同?</h1>
+<h2>速览</h2>
+<ul>
+<li>人社部“用数据找人”只能动员，因为中国职工养老强制，灵活就业人员自愿。</li>
+<li>美国 Social Security 对绝大多数有工作者强制，雇员雇主各缴工资的百分之六点二，自雇者百分之十二点四全额自付，Medicare 另扣。</li>
+<li>中美公共部门退休待遇都高于企业部门；作者认为公平方向是提高其他人，而不是降降公务员。</li>
+<li>养老金会不会崩，关键不是账户余额和年轻人数量，而是法币时代的生产力与商品服务供给。</li>
+<li>中国低通胀、失业率百分之五点二，有闲置劳动力和财政空间，问题不在没钱，而在分配。</li>
+<li>作者主张取消社保费、改征累进社保税，由财政支持养老，资格不依赖缴费记录。</li>
+</ul>
+<h2>正文</h2>
+<h3>人社部能“用数据找人”，但法律给灵活就业人员留的是自愿选择</h3>
+<p>在中国，按照《中国社会保险法》第十条，职工应当参加基本养老保险，由单位和个人共同缴费。这一部分是强制的。但是属于法律规定范围的灵活就业人员，则可以选择参加。这一部分是自愿的。所以人社部虽然要说用数据找人，也只能是动员他们参保。在现行法律之下，你要是不交，谁也没招。真正的问题不是要如何去想办法动员大家去交社保，而是这个制度本身就是一个累退的制度，收入越低的人越不划算。</p>
+<h3>美国 Social Security 是强制税，雇员和雇主各缴百分之六点二</h3>
+<p>美国的社保叫做 Social Security，对绝大多数有工作的人来说是强制缴纳的。你不能因为自己不想养老选择不交。根据美国国税局的说明，普通雇员和雇主通常应各缴纳工资的百分之六点二，合计是百分之十二点四，雇员部分由雇主代扣。此外还要单独扣 Medicare，就是医保税。它和中国的医保不一样：中国是通过职工医保和居民医保，给不同年龄段的人提供基本覆盖；美国的 Medicare 主要覆盖六十五岁及以上的老人，以及部分残疾和特定重病患者。一般人在日常生活中不能一直依赖 Medicare，通常还是需要通过雇主或者自己购买医疗保险。所以美国的这笔医保税，对于很多人来说，真的是交了你也用不上。</p>
+<h3>美国自雇者不缴不是“少领养老金”，而是欠税、罚息、扣款甚至刑责</h3>
+<p>美国法律下，自由职业者接单或者自己经营的，也通常有缴税义务。一般情况下，如果你的年净收益达到了四百美元，就需要缴纳自雇税。其中社保部分就是百分之十二点四，全额自付；另外还有 Medicare 的部分，也是全额自付的。符合纳税条件的灵活就业人员，不缴自雇税会形成欠税，追缴的会有罚金和利息，不按期申报还有可能有另外的罚金。经过法定通知等程序之后，税务局还可以直接从你的银行存款、从你的工资里面去扣，还可以依法扣押出售你的财产来抵税。所以如果长期不缴，后果可不只是将来少领养老金。如果明知有纳税义务却故意不申报或者拒不缴税的，达到犯罪构成，还可能承担刑事责任，单项罪最高可判一年。如果隐瞒收入、转移资产等行为构成逃税重罪，口播稿在此处截断，没有讲完。中国法律相当于是给灵活就业人员保留了选择空间：你可以参保也可以不参保，还可以参加居民养老，这样缴纳的钱就比较少，不过以后领的养老金也会少。</p>
+<h3>中美公共部门退休待遇都高于企业部门，但公平方向应是提高其他人</h3>
+<p>口播稿在讲美国公共部门待遇时提到：“两项合起来就是约三千一百三十美元。”也就是说，体制内比体制外至少要多拿一倍的养老金。这里还没有计算企业员工的四零一K账户，还有公务员的 TSP 账户。这个账户属于偏投资的那种账户，最后能提供多少退休收入，主要还是看你个人缴了多少、投资的收益和领取的方式。如果只看所有人都有的那一部分，在美国，体制内的退休金也是远远高于体制外的。美国做公务员和中国差不多：第一，它是一个铁饭碗，你基本没有被开除的风险。马斯克的效率部折腾了半天，说要裁掉百分之五十的公务员，最后也没裁掉，最多就是让一些人提前一年退休了，工资你还得照给。第二，公务员除了工资以外，其他待遇都是按照顶格给的。原因也很简单：你公务员待遇都不好，那其他企业有样学样的就更差了，这不相当于给资本家兜底吗？中美都有公共部门与企业部门退休保障不同的现象，但追求公平的方向不要错了，不是让公务员的退休金减少，而是让其他人的退休金提高。比如说，杜绝企业不按照实际工资标准缴纳的现象，这也是体制内外差别的主要原因之一。</p>
+<h3>养老金账户余额不是社会养老能力，法币时代真正养老的是商品和服务</h3>
+<p>现在已经是法币时代了，钱是印出来的，这个东西是无限的，你要多少有多少。大家一定不要被货币的迷雾给影响，而是看到它背后真实的商品和服务。养老金问题最容易被混淆的，就是把一个基金账户的余额直接当成了整个社会的养老能力，仿佛只要养老金这个池子枯竭了，所有老人就吃不上饭了。养老金账户就是一个记账符号罢了。一个国家能不能养老，最终要看老人需要的东西，社会能不能生产得出来。吃的饭、住的房子、要用的药、医生提供的诊疗，还有护理人员每天付出的劳动，这些才是养老真正的内容，而不是钱。相反，即便你买了一堆的股票债券，养老金账户里有好几个亿，可是你退休的时候，你拿钱买不到这些商品和服务，那也没有用。你要的是退休时候能够获得当时商品和服务的购买力。</p>
+<h2>速查</h2>
+<ul>
+<li><strong>人社部“数据找人”</strong>（事件）：只能动员灵活就业人员参保，不能强制。</li>
+<li><strong>《中国社会保险法》第十条</strong>（法律）：职工应当参加基本养老保险，由单位和个人共同缴费。</li>
+<li><strong>灵活就业参保</strong>（中国制度）：法律规定范围内可选择参加，也可参加居民养老。</li>
+<li><strong>美国社保</strong>（Social Security）：绝大多数有工作者强制缴纳；不能因不想要养老金就不交。</li>
+<li><strong>美国社保税率</strong>（数字）：普通雇员和雇主各缴工资百分之六点二，合计百分之十二点四。</li>
+<li><strong>自雇社保税率</strong>（数字）：社保部分百分之十二点四，全额自付；Medicare 也全额自付。</li>
+<li><strong>Medicare</strong>（美国医保税）：主要覆盖六十五岁及以上老人、部分残疾和特定重病患者。</li>
+<li><strong>自雇税门槛</strong>（数字）：美国自雇者年净收益达到四百美元，就需缴自雇税。</li>
+<li><strong>欠税后果</strong>（美国规则）：不缴形成欠税，迟缴有罚金利息，可扣存款工资、扣押出售财产。</li>
+<li><strong>刑责</strong>（美国规则）：故意不申报或拒不缴税，达到犯罪构成，单项罪最高可判一年。</li>
+<li><strong>约三千一百三十美元</strong>（数字）：稿中称两项合计，体制内比体制外至少多拿一倍养老金。</li>
+<li><strong>四零一K / TSP</strong>（账户）：企业员工四零一K，公务员 TSP，偏投资，取决于缴款、收益和领取方式。</li>
+<li><strong>马斯克效率部</strong>（事件）：称裁掉百分之五十公务员未成，最多提前一年退休，工资照给。</li>
+<li><strong>公平方向</strong>（观点）：不是让公务员退休金减少，而是让其他人的退休金提高。</li>
+<li><strong>法币时代</strong>（概念）：钱是印出来的，要多少有多少；养老看真实商品和服务。</li>
+<li><strong>养老金账户</strong>（概念）：只是记账符号，不等于整个社会的养老能力。</li>
+<li><strong>长期巨额财政赤字</strong>（缺钱条件）：表示政府调动税收的能力有限。</li>
+<li><strong>通货膨胀居高不下</strong>（缺钱条件）：表示钱可能已经印多了。</li>
+<li><strong>失业率极低</strong>（缺钱条件）：表示没有多余劳动力，印钱也难组织新生产。</li>
+<li><strong>中国失业率</strong>（数字）：失业率百分之五点二，稿称有上千万闲置劳动力，还没算农村老家待着的人。</li>
+<li><strong>社保税</strong>（主张）：直接按收入标准采取不同税率，从累退变累进。</li>
+<li><strong>财政养老</strong>（主张）：税源可来自财产税、国企资产划拨，资格不依赖缴费记录。</li>
+<li><strong>加拿大等</strong>（国家）：加拿大、新西兰、澳大利亚直接由税收支持养老。</li>
+<li><strong>中国旧养老</strong>（制度）：以前不需要单独缴纳养老保险，符合退休条件就可以领。</li>
+<li><strong>按收入和资产发</strong>（主张）：不看工作年限；低收无房多给，多套房不应拿。</li>
+<li><strong>AGI筛选</strong>（原话）：省内比你更适合现职、干得更好的人“没有八千也有一万”。</li>
+<li><strong>劫贫济富</strong>（原话）：作者称社保应起再分配作用，而不是劫贫济富。</li>
+<li><strong>体制内外</strong>（观点）：不能只说公务员特权，他们按制度交得多；根本是制度不对。</li>
+</ul>
+</div></div></div></section>
+</div>
+</body>
+</html>

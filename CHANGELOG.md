@@ -65,8 +65,96 @@
   - **顺带发现两条断言不严**（都是这次才暴露的）：① 分支产物全为空时「都压平进同一篇笔记」会**真空通过**——
     现在把「每段非空」也算进条件；② 「笔记真的落盘」当时是拿**上一轮留下的那篇笔记**在充数——
     现在起跑前记 mtime，跑完断言「本次的 mtime 更新了」（实测输出：本次 01:20:27 · 跑前 22:36:11）。
+- **Obsidian 笔记节点新增「每个输入一篇笔记」开关**（`packages/shared/src/graph.ts` 的 `ObsidianData.splitByInput`、
+  `packages/shared/src/schema.ts`、`apps/server/src/lib/engine.ts`、`apps/web/src/components/canvas/ScribeNode.vue`）：
+  同一个文稿挂了几版提示词配方（详尽版 / 成文版 / 连贯版 / 速览版 / 问答）时，这些产物汇进同一个 Obsidian 节点会被
+  合并成**一篇**——读完第一篇才发现另外几版也在里面，各版的标题与导读挤在同一份文档里。
+  开关在高级设置里，**默认开**：每个输入各写一篇，各自有自己的 front matter、标签与属性抽取；关掉才合并成一篇
+  （默认值当日又反转过一次，理由与代价见下面「变更」那条）。
+  - **篇名取各篇正文的第一个 H1**：这时几篇讲的是同一个素材，沿用「素材标题优先」的名字规则会让几篇全撞在一个名字上，
+    只能靠 `(2)`、`(3)` 区分，等于没有名字。同一批里撞名的按 `(2)`、`(3)` 继续排，两篇不会互相覆盖（哪怕「同名笔记直接覆盖」开着）。
+  - 实现上把「写一篇」抽成 `writeObsidianNote`（定标签 → 抽属性 → 拼 frontmatter → 关联 → 落盘），
+    合并模式与多篇模式走**同一段**实现，只是调用方定正文、标题与文件名——两条路径若各留一份，标签与 frontmatter 迟早分叉。
+  - 代价：模型调用按篇数增加（每篇各判一次话题标签、各抽一次属性）。
+  - **实测**：`engine.obsidian.test.ts` 该 describe 6 条用例（默认各写一篇且只装自己那份正文 / 关掉才合并成一篇 / 单输入不分流 /
+    同一批里撞名排 `(2)` / 默认不覆盖库里已有的同名笔记 / 覆盖开着时同一批内照样排 `(2)`），加上同名覆盖那组重排后的 3 条，
+    该文件 **17/17 通过**。
+  - **已知限制**：运行收尾往输出目录落的那一份仍是**合并稿**（输出目录按「一个节点一行结果」组织），分开的只有写进库里的笔记。
 
 #### 变更
+
+- **产品用词「提示词块」→「提示词」、「提示词块库」→「提示词库」**（36 个文件：`apps/web` / `apps/server` /
+  `packages/shared` / `scripts` / 根目录文档 / AGENTS.md）。起因是用户一句「提示词块库能不能优化一下命名，
+  调研一下别的平台这种叫做什么，这个总感觉怪怪的」。
+  - **「怪」在哪：名实不符**。中文技术语境里「块」指片段/积木（代码块、内容块），暗示这是**提示词的一部分、
+    需要拼装**；而本仓每一个都是**一篇完整的 system prompt**（几百到上千字，自带版本与配方）。
+    调研 20 家产品后确认：**没有一家用 block 指这种对象**。
+  - **业界事实标准（带来源）**：英文侧是 prompt / prompt library——Claude Code 官方页面标题就叫
+    `Prompt library`（https://code.claude.com/docs/en/prompt-library），Microsoft Copilot Studio 的
+    `prompt library` 定义原文是「a collection of predesigned prompts, serving as templates…」
+    （https://learn.microsoft.com/en-us/microsoft-copilot-studio/prompt-library）；中文侧 Coze 官方文案直接写
+    「提示词库图标」，阿里云百炼写「预置 Prompt 模板 / 自定义 Prompt 模板」。
+  - **唯一叫 Snippet/片段的是 Dify，但不能借**：Dify 的 Snippet 是**节点组**（无版本、无引用、插入即副本），
+    语义与本仓正相反；Raycast / Alfred 的 Snippet 是文本扩展，同样无版本无引用。
+  - **刻意没改成「提示词模板」**：本仓「模板」已经指两个别的东西——文本工具的「模板渲染」（`{{input}}` 占位）
+    与设置页的「文件名模板」（`{project}`）；再加一层会打架，而且「模板」暗示填空生成，
+    带配方的提示词是多步程序，说小了。
+  - **只动产品用词，代码标识一个没动**：`PromptBlock` / `BUILTIN_PROMPT_BLOCKS` / `promptBlockId` /
+    `aiPromptBlocks` 与 `.sf-block-*` 类名保持不变——`promptBlockId` 写进了每个工程的图 JSON，
+    改名要迁移，而本仓的库没有迁移工具（只能加列）。
+  - **历史文档不追改**：`docs/research/*`（只追加）、`docs/decisions/*`（拍板记录）与本文件旧条目里的
+    「提示词块」保持原样，它们记的是当时的用词；要反映今天的只有 `docs/` 根目录那几篇。
+  - 一并修掉一处**过期描述**：`docs/nodes.md` 写「下拉 label 形如「名称 · 版本 · 配方 · 内置」」，
+    而代码里下拉只写名字（自己写的标「我的」），版本号与「推荐」留在设置页——这句从
+    「AI 加工卡片改名」那次起就旧了。
+  - **验收（真跑，不是改完字就算）**：`pnpm typecheck && pnpm test && pnpm lint` 全过
+    （shared 192 / web 102 / server 375 用例，`docs:gen` 报「生成块已是最新」）；
+    **`pnpm smoke:ui` 65/65 项通过**——其中三项直接盯着这次改名：设置页新导航「提示词库」渲染出
+    **18 个**提示词卡片、「AI 加工」提示词下拉 **5 个选项**且能选中回显。
+
+- **Obsidian 笔记节点的两个默认值反转：「每个输入一篇笔记」默认开、「同名笔记直接覆盖」默认关**
+  （`apps/server/src/lib/engine.ts`、`apps/web/src/components/canvas/ScribeNode.vue`、`packages/shared/src/graph.ts` 与
+  `schema.ts`、`apps/web/src/utils/flow.ts`、`docs/nodes.md` §1.2/§7）。
+  起因是用户对着卡片给的验收口径：「抽取哪些属性默认为空，这两个选项的默认按图示设置」——图里「每个输入一篇笔记」开着、
+  「同名笔记直接覆盖」关着（「抽取哪些属性」本来就是留空＝跟随设置页的默认，没动）。
+  - **反转的是缺省的含义，不只是新建节点时写进去的值**：卡片上这两个开关只有开/关两态，显示的就是缺省值；
+    缺省若另算一套（旧行为：缺省合并、缺省覆盖），开关显示的就是假的——显示开着而引擎在合并。
+    现在两处的口径是 `data.splitByInput !== false` 才分流（缺省＝开）、`data.overwrite === true` 才覆盖（缺省＝关）。
+  - **对已有工程的影响（本机数据实测，读的是 `apps/server/data` 那份库的副本）**：现有 16 个 Obsidian 节点里
+    15 个没写过 `splitByInput`、10 个没写过 `overwrite`。其中**只有 1 个节点会因分流反转改变产物**
+    （「中美社保对比」那张卡，5 条入边：下次运行从 1 篇合并稿变成 5 篇），其余入边 ≤ 1，两种模式等价；
+    那 10 个未写 `overwrite` 的节点下次运行不再原地更新同名笔记，改排 `(2)`、`(3)`——要原地更新就在节点上打开那个开关。
+  - **代价（明说）**：默认不覆盖＝重复运行会在库里堆 `(2)` 副本，不再自动更新同一篇；默认分流＝多份输入时模型调用按篇数增加。
+  - **自检与断言跟着改**：`pnpm check:api:chain` 是往**用户真实库**里写文件的，脚本自己把那两项钉成「合并 + 覆盖自己」
+    （模板不钉——模板跟着产品默认走，与「不写 `data.folder`」同一条理由），并加一条前置断言确认这两项真进了图；
+    `engine.obsidian.test.ts` 改成按「什么都不写」的工程图验默认值，**17/17 通过**；
+    `templates.test.ts` 那条「几版收进同一张 Obsidian 卡」的注释同步改口径（断言本身没变）。
+
+- **「观点笔记（速览与速查）」改成 Obsidian 排版（方案 B）：速览与速查装进标注框、正文小节升到二级**
+  （`packages/shared/src/prompt.ts`、`apps/web/src/lib/obsidian-callout.ts`、`apps/web/src/lib/markdown.ts`、
+  `apps/web/src/styles/markdown.css`）。起因是用户拿真实产物反馈「内容不错、导出到 Ob 里很丑」，
+  调研（四套方案 + 出处 + 实测高度）见 `docs/research/obsidian-note-typography.md`。
+  - **产物形状**：速览 `> [!summary] 速览`（展开，官方为摘要预留的类型）、正文小节从 `###` 升到 `##`
+    并删掉 `## 正文` 空壳（它只宣布「下面是正文」，却占着二级标题、把阅读器大纲挤满）、
+    速查 `> [!example]- 速查`（**默认折叠**、按类别分组、每组 3-6 条，类别从行内圆括号提升成组名）。
+    实测高度（700px 栏宽）：速查区 28 条平铺 1093px → 折叠后 **125px**；速览区 370 → 399px。
+  - **应用内跟着认 callout**：marked 不认识 `> [!summary]`，不处理的话结果页、画布卡片预览、设置页预览里
+    会直接显示字面的 `[!summary]`（本次做预览时第一版就复现了）。新增 `obsidian-callout.ts`（块级扩展，
+    折叠用原生 `<details>`），三条渲染路径共用 `markdown.ts` 里的这一处注册；样式只走颜色令牌，
+    **不搬 Obsidian 的图标与自带配色**——那是 Obsidian 的视觉语言，应用里有自己的令牌体系。
+  - **真跑实测**（同一份 2,884 字校对稿、deepseek-flash、新旧排版各 3 次、同一套脚本）：
+    **同区重复 3/3 次为 0**；专名 2/3 次无丢失（一次丢了「范永鹏」）；
+    二元组覆盖 **83-93%，旧排版 93-95%**，落差全在**正文段**（速查段两边相当：B 15-26% / 旧 14-19%）。
+    三对三均值差约 6 个百分点、区间在 93% 处相叠，**准确说法是「正文覆盖可能低了几个百分点」**，
+    不是精确损失；这是本次改版的已知代价，要覆盖更全请用成文版。
+  - **形状断言**：`note-candidates/run-sulan-sample-b.mjs` 14 项（callout 写法、逐行 `> ` 前缀、
+    组数 3-6、每组 3-6 条、条目与说明长度、无 `###`、无空壳标题、无表格），第三次 14/14；
+    前两次各有一处软约束没达标（「四个制高点」四条被挤成一条、两条说明超 40 字），措辞已随之收紧。
+    应用内渲染另有端到端验证：真 Chrome 里调 `renderMarkdown` 9/9 通过
+    （`data-callout` / `data-tone` 过 DOMPurify 白名单、`-` 出不带 `open` 的 `<details>`、`+` 带 `open`）。
+  - **对比材料**：五份同一内容、只改排版的笔记在 `note-candidates/排版方案demo/`（可直接当 Obsidian 库打开），
+    含一份**改版后真跑出来的产物** `B2-真实产物（改版后真跑）.md`；对比图与自包含 HTML 在
+    `docs/research/obsidian-note-typography-*.png|html`。
 
 - **高级设置改成「行式」排法：文案左、控件右**（`apps/web/src/components/canvas/ScribeNode.vue`、
   `apps/web/src/components/canvas/NodeFieldLabel.vue`、`node-cards/RetryFields.vue`）：
@@ -164,6 +252,48 @@
   `.sf-settings-hint` 并成一个，见 `apps/web/src/views/SettingsView.vue` 的样式注释），改名的同时没跟着改断言。
   它拦的是「产物目录要显示服务端解析后的绝对路径」——**而它因为查不到元素，恰恰红在这条上**，
   看起来像应用坏了。实测改前 64/65、改后 65/65。来源：改模板后跑冒烟的顺带发现，与本次模板改动无关。
+
+- **B 站来源卡片拖出视野再拖回，会把已解析出来的内容丢一次**（`apps/web/src/components/canvas/ScribeNode.vue`、
+  新增 `apps/web/src/utils/bili-preview-cache.ts`）：画布开着视口裁剪（`onlyRenderVisibleElements`），
+  节点离开视野会被**卸载**；而封面/标题/分P/合集列表这份解析结果只活在组件的本地 `ref` 里，卸载即丢，
+  拖回来重新挂载时只能重新走一遍 `POST /api/videos/preview`——卡片在这段时间里退回「正在解析视频信息…」。
+  **这不是新隐患**：开裁剪那次的调研已经点名过这条路径（`ScribeNode.vue` 的 `onMounted` 会重复发请求、
+  重复写图），并写明「基准图里没有 B 站卡片，这一点没有验证」。这次补上了验证并修掉。
+  - **实测（CDP 逐帧录制；`/api/videos/preview` 在页面里拦掉、返回固定合集数据并加 120ms 延迟，离线可复现）**：
+    改前请求数 **1 → 2**、重新挂载后第 0 帧即进转圈、持续 **610ms**、录制到的 192 个已挂载帧里 **38 帧**内容不完整、
+    **627ms** 后才恢复；改后请求数 **1 → 1**、不完整帧 **0 帧**（193 个已挂载帧）、**0ms** 即完整（封面/标题/109 行选集第 0 帧就在）。
+  - 改法：解析结果按链接原文缓存在**内存**里（TTL 5 分钟、上限 30 条，与后端预览缓存的
+    `PREVIEW_CACHE_TTL` / `PREVIEW_CACHE_MAX` 同口径），重挂载时同步命中——不转圈、不重复请求；
+    「解析结果落到卡片」抽成 `applyPreview` 由「缓存命中」与「请求回来」共用一份，勾选状态不会两条路径走歪。
+  - 同一段代码里顺手修掉第二条：**链接解析在飞时把输入清空，转圈会永久卡住**（`previewLoading` 没人负责关）。
+    单变量对照：单独去掉那行复位就复现（清空 1.6s 后仍在转圈），加回来即恢复空态。
+  - 边界与未验证项：缓存只在内存、刷新即失效（运行态不进工程图）；只动了 `source.bili` 这条路径，
+    `SourcePickerDialog.vue` 仍直连接口；**`patchChanged` 省下的那次「重复写图」没能量出来**——
+    单变量对照发现重挂载的写入与平移的 viewport 写入落在同一个 500ms 防抖窗口里被合并；
+    这条路径**没有回归门禁**（`pnpm smoke:ui` 不在 CI，加用例与「门禁总行数只降不升」冲突），
+    证据是一次性 CDP 脚本。口径、复现步骤与完整诚实清单见
+    [docs/research/canvas-viewport-culling-remount.md](./docs/research/canvas-viewport-culling-remount.md)。
+
+- **画布里那两个 Element Plus 下拉，浮层不跟画布缩放**（`apps/web/src/components/canvas/node-cards/ObsidianCard.vue`、
+  `apps/web/src/components/canvas/ScribeNode.vue`、`apps/web/src/styles/element-theme.css`）：
+  画布上只有「保存目录」「抽取哪些属性」是 `el-select`，其余下拉都是自研 `ModelSelect`。两者都把浮层 Teleport 到 body，
+  但自研那套给浮层补了 `zoom`（`sf-flow-zoom` 注入），`el-select` 没有——于是触发器跟着 Vue Flow 的 transform 缩、
+  浮层按屏幕 1:1 渲染，**缩放 ≠ 1 时两边必然脱节**；z=1 附近看不出来，所以一直没被当成缺陷。
+  - **实测（CDP，headless Chrome 1440×900，DPR=1）**：改前浮层/触发器屏宽比 = **2.007**（z=0.598）/ **0.968**（z=1.033）/
+    **0.467**（z=2.143），即恰好 **1/zoom**；选项行高恒为 **33.9px**、字号恒 14px，而 ModelSelect 同档位是 21.5 / 37.2 / 77.1。
+    改后两个家族都回到 **1.000**（el 侧实测 1.006 / 1.000 / 0.995 / 0.997），选项行高跟着缩（20.3 / 35.1 / 72.7），
+    箭头 **6 / 10.3 / 21.4px**（= 10×zoom）、与触发器中线偏差 ≤1px。
+  - 改法：两个 `el-select` 加 `popper-class="sf-canvas-zoom-popper"`，由卡片把 `--sf-canvas-zoom` 写进 `popper-style`（来源就是 ModelSelect 那个 `sf-flow-zoom` 注入）。
+    `zoom` **只加在内层 `.el-select-dropdown`**——外层 `.el-popper` 是用 `inset` 定位的，zoom 会把 left/top 一起放大、浮层直接跑偏；
+    箭头是外层的兄弟节点，只能按 `transform: scale()` 缩（它由 floating-ui 写内联 `left`，同样经不起 zoom 放大）。
+  - **一条行为变化的边界**：浮层现在与触发器等宽，放不下时 Element Plus 会自己翻转方向——实测 z=1.79（列表高约 485px）时
+    翻成 `placement=left`，面板落在触发器左侧、箭头仍对齐中线（偏差 0.1px）。这是 EP 的正常行为，也与自研下拉一致，
+    不是这次修复引入的缺陷。
+  - **没有自动化断言**：`pnpm test` 覆盖不到「浮层跟不跟缩放」。这次证据是一次性 CDP 探针（脚本、原始读数与前后对照截图
+    在 `.tmp-cdp-zoom/`，被 `.gitignore` 覆盖、不进仓库）；探针本身在过程中修过两处测量口径（节点被视口裁剪后漂出视野、
+    「任意节点被选中」误判成目标节点已选中），前后各跑通 12/12。
+  - 未验证：滚轮/触控板缩放路径（探针只用左下角 ± 按钮）、DPR≠1 的屏、以及 `zoom` 属性在非 Chromium 内核下的表现
+    （自研下拉早在用同一个属性，这次没有引入新的兼容面）。
 
 ### 2026-10-13
 

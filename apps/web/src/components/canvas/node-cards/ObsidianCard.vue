@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from "vue";
+import { computed, inject, ref } from "vue";
 import { ElButton } from "element-plus/es/components/button/index.mjs";
 import { ElOption, ElSelect } from "element-plus/es/components/select/index.mjs";
 import { RefreshCw } from "lucide-vue-next";
@@ -8,6 +8,15 @@ import NodeFieldLabel from "../NodeFieldLabel.vue";
 
 defineProps<{ folder?: string }>();
 const emit = defineEmits<{ update: [value: { folder?: string }] }>();
+
+/**
+ * 画布缩放（由节点外壳 provide）：这个 el-select 的浮层会被 Teleport 到 body，
+ * 出了 Vue Flow 的 transform 子树，所以得把缩放一路写进浮层里 —— 口径与自研 ModelSelect 一致，
+ * 落点与理由见 element-theme.css 的 `.sf-canvas-zoom-popper` 那条。
+ */
+const flowZoom = inject<{ value: number } | number>("sf-flow-zoom", 1);
+const canvasZoom = computed(() => (typeof flowZoom === "number" ? flowZoom : flowZoom.value));
+const popperStyle = computed(() => ({ "--sf-canvas-zoom": String(canvasZoom.value) }));
 
 const store = useSettingsStore();
 const folders = computed(() => store.obsidianFolders);
@@ -52,6 +61,8 @@ function onFolderChange(value: string | number | undefined) {
           size="small"
           clearable
           filterable
+          popper-class="sf-canvas-zoom-popper"
+          :popper-style="popperStyle"
           :loading="refreshing"
           :placeholder="defaultFolder ? `跟随设置：${defaultFolder}` : '跟随设置'"
           @update:model-value="onFolderChange"

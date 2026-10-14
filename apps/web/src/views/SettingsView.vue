@@ -37,7 +37,7 @@ const groups = [
   { key: "visibility", label: "展示范围" },
   { key: "obsidian", label: "Obsidian" },
   { key: "nutstore", label: "坚果云" },
-  { key: "prompts", label: "提示词块库" },
+  { key: "prompts", label: "提示词库" },
   { key: "data", label: "数据与工程" },
 ] as const;
 
@@ -795,7 +795,7 @@ const versionOptions = computed(() => {
 
 const filteredBlocks = computed(() => {
   return promptsStore.allBlocks.filter((block) => {
-    // 展示范围里收起的节点，它的块也不在这里出现（如阴阳师攻略系列）。
+    // 展示范围里收起的节点，它的提示词也不在这里出现（如阴阳师攻略系列）。
     if (block.requiresNode && form.hiddenNodes.includes(block.requiresNode)) return false;
     if (seriesFilter.value !== "all" && blockSeries(block) !== seriesFilter.value) return false;
     if (versionFilter.value !== "all" && block.version !== versionFilter.value) return false;
@@ -862,7 +862,7 @@ async function saveBlock() {
     if (blockForm.id) await promptsStore.updateBlock(blockForm.id, { name: blockForm.name, prompt: blockForm.prompt });
     else await promptsStore.addBlock(blockForm.name, blockForm.prompt);
     resetBlockForm();
-    toast.success("提示词块已保存");
+    toast.success("提示词已保存");
   } catch (err) {
     toast.error(err instanceof Error ? err.message : "保存失败");
   }
@@ -870,7 +870,7 @@ async function saveBlock() {
 
 async function removeBlock(block: PromptBlock) {
   try {
-    await ElMessageBox.confirm(`删除提示词块「${block.name}」？引用它的节点将无法再选中该块。`, "删除提示词块", {
+    await ElMessageBox.confirm(`删除提示词「${block.name}」？引用它的节点将无法再选中该提示词。`, "删除提示词", {
       confirmButtonText: "删除",
       cancelButtonText: "取消",
       type: "warning",
@@ -1403,7 +1403,7 @@ async function restoreNutstoreBackup(backup: { path: string; name: string }) {
   const where = nutstoreBackupLocation.value === "local" ? "本地备份文件夹" : "坚果云云端";
   try {
     await ElMessageBox.confirm(
-      `用备份「${backup.name}」覆盖本机全部数据（项目/文件夹/运行记录/设置/提示词块）？恢复前会自动把当前数据再备份一份到${where}；此操作不可撤销。`,
+      `用备份「${backup.name}」覆盖本机全部数据（项目/文件夹/运行记录/设置/提示词）？恢复前会自动把当前数据再备份一份到${where}；此操作不可撤销。`,
       "从备份恢复",
       {
         confirmButtonText: "恢复",
@@ -1664,7 +1664,7 @@ async function restoreNutstoreBackup(backup: { path: string; name: string }) {
       <template v-else-if="active === 'visibility'">
         <h2 class="sf-settings-title">展示范围</h2>
         <p class="sf-settings-desc">
-          勾上的节点<strong>不出现在界面里</strong>：节点面板、新建工程与快捷新建的链路列表、提示词块库
+          勾上的节点<strong>不出现在界面里</strong>：节点面板、新建工程与快捷新建的链路列表、提示词库
           都会把它连同用到它的链路一起收起来。适合演示时先把用不到的能力收好，或者自己不用某个垂直节点。
         </p>
         <p class="sf-settings-desc">
@@ -2469,14 +2469,14 @@ async function restoreNutstoreBackup(backup: { path: string; name: string }) {
       </template>
 
       <template v-else-if="active === 'prompts'">
-        <h2 class="sf-settings-title">提示词块库</h2>
-        <p class="sf-settings-desc">内置块只读，可按模板系列与版本筛选；自定义块由 AI 加工节点引用，修改后下一次运行生效。</p>
+        <h2 class="sf-settings-title">提示词库</h2>
+        <p class="sf-settings-desc">内置提示词只读，可按系列与版本筛选；自定义提示词由 AI 加工节点引用，修改后下一次运行生效。</p>
         <div class="sf-block-toolbar">
-          <button type="button" class="sf-btn" @click="openBlockCompare()">对比任意块</button>
+          <button type="button" class="sf-btn" @click="openBlockCompare()">对比任意提示词</button>
         </div>
         <div class="sf-block-filters">
           <label class="sf-field sf-block-filter">
-            <span class="sf-field-label">模板系列</span>
+            <span class="sf-field-label">系列</span>
             <el-select v-model="seriesFilter" class="sf-field-control" size="small">
               <el-option label="全部系列" value="all" />
               <el-option v-for="series in seriesOptions" :key="series" :label="series" :value="series" />
@@ -2502,7 +2502,7 @@ async function restoreNutstoreBackup(backup: { path: string; name: string }) {
                 <button type="button" class="sf-text-btn" @click="toggleBlockExpanded(block)">{{ expandedBlockId === block.id ? "收起" : "查看全文" }}</button>
                 <template v-if="!block.builtin">
                   <button type="button" class="sf-text-btn" @click="editBlock(block)">编辑</button>
-                  <button type="button" class="sf-text-btn sf-text-btn--danger" aria-label="删除提示词块" @click="removeBlock(block)"><Trash2 :size="13" /></button>
+                  <button type="button" class="sf-text-btn sf-text-btn--danger" aria-label="删除提示词" @click="removeBlock(block)"><Trash2 :size="13" /></button>
                 </template>
               </span>
             </header>
@@ -2529,7 +2529,7 @@ async function restoreNutstoreBackup(backup: { path: string; name: string }) {
         </div>
 
         <div class="sf-block-form">
-          <h3 class="sf-block-form-title">{{ blockForm.id ? "编辑自定义块" : "新增自定义块" }}</h3>
+          <h3 class="sf-block-form-title">{{ blockForm.id ? "编辑自定义提示词" : "新增自定义提示词" }}</h3>
           <label class="sf-field">
             <span class="sf-field-label">名称</span>
             <el-input v-model="blockForm.name" class="sf-field-control" placeholder="如：会议纪要提炼" />
@@ -2539,7 +2539,7 @@ async function restoreNutstoreBackup(backup: { path: string; name: string }) {
             <el-input v-model="blockForm.prompt" type="textarea" :rows="6" class="sf-field-control" placeholder="输入系统提示词…" />
           </label>
           <div class="sf-settings-actions">
-            <button type="button" class="sf-btn sf-btn--primary" :disabled="!blockForm.name.trim() || !blockForm.prompt.trim()" @click="saveBlock"><Save :size="14" /><span>保存提示词块</span></button>
+            <button type="button" class="sf-btn sf-btn--primary" :disabled="!blockForm.name.trim() || !blockForm.prompt.trim()" @click="saveBlock"><Save :size="14" /><span>保存提示词</span></button>
             <button v-if="blockForm.id" type="button" class="sf-btn" @click="resetBlockForm"><span>取消编辑</span></button>
           </div>
         </div>

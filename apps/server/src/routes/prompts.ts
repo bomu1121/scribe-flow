@@ -40,13 +40,13 @@ export function promptsApi(db: AppDatabase) {
 
   api.patch("/:id", async (c) => {
     const id = c.req.param("id");
-    if (id.startsWith("builtin.")) return c.json({ error: "内置提示词块不可修改" }, 400);
+    if (id.startsWith("builtin.")) return c.json({ error: "内置提示词不可修改" }, 400);
     const parsed = updateSchema.safeParse(await c.req.json());
     if (!parsed.success) {
       return badRequest(c, parsed);
     }
     const row = db.select().from(promptBlocks).where(eq(promptBlocks.id, id)).get();
-    if (!row) return c.json({ error: "提示词块不存在" }, 404);
+    if (!row) return c.json({ error: "提示词不存在" }, 404);
     db.update(promptBlocks)
       .set({ ...(parsed.data.name ? { name: parsed.data.name } : {}), ...(parsed.data.prompt ? { prompt: parsed.data.prompt } : {}), updatedAt: Date.now() })
       .where(eq(promptBlocks.id, id))
@@ -57,9 +57,9 @@ export function promptsApi(db: AppDatabase) {
 
   api.delete("/:id", async (c) => {
     const id = c.req.param("id");
-    if (id.startsWith("builtin.")) return c.json({ error: "内置提示词块不可删除" }, 400);
+    if (id.startsWith("builtin.")) return c.json({ error: "内置提示词不可删除" }, 400);
     const row = db.select().from(promptBlocks).where(eq(promptBlocks.id, id)).get();
-    if (!row) return c.json({ error: "提示词块不存在" }, 404);
+    if (!row) return c.json({ error: "提示词不存在" }, 404);
     db.delete(promptBlocks).where(eq(promptBlocks.id, id)).run();
     return c.json({ ok: true });
   });

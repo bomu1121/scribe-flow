@@ -57,14 +57,14 @@ export interface WorkflowTemplate {
 const TEMPLATE_H_GAP = 80;
 
 /**
- * 「全提示词对照」的分支来源：**当前已放开的通用提示词块**，与画布节点下拉、快捷新建下拉同一份清单
+ * 「全提示词对照」的分支来源：**当前已放开的通用提示词**，与画布节点下拉、快捷新建下拉同一份清单
  * （`aiPromptBlocks`，见 `prompt.ts` 的审核白名单）。
  *
  * 刻意**算出来**而不是写死一份 id 清单：这条链路的名字承诺「全部开放提示词」，写死的话白名单里
- * 放开或新增一个块之后，它会悄悄少一条分支、而它自己看不出来。`searchReady = true`：需要联网核查的
- * 块也进模板（没配检索密钥时那条分支跳过核查，不会失败）。
+ * 放开或新增一个提示词之后，它会悄悄少一条分支、而它自己看不出来。`searchReady = true`：需要联网核查的
+ * 提示词也进模板（没配检索密钥时那条分支跳过核查，不会失败）。
  *
- * 已知边界：只含**内置**已放开块——模板在 shared 里构建，读不到用户库里的自定义块。
+ * 已知边界：只含**内置**已放开提示词——模板在 shared 里构建，读不到用户库里的自定义提示词。
  */
 const OPEN_PROMPT_BLOCKS: PromptBlock[] = aiPromptBlocks([], true);
 
@@ -77,13 +77,13 @@ const OPEN_PROMPT_BLOCKS: PromptBlock[] = aiPromptBlocks([], true);
  */
 const TEMPLATE_BRANCH_GAP = 220;
 
-/** 「全提示词对照」的五个（或更多）分支：一条分支一个块，纵向错开铺在同一列。 */
+/** 「全提示词对照」的五个（或更多）分支：一条分支一个提示词，纵向错开铺在同一列。 */
 const ALL_PROMPT_STAGES: TemplateStage[] = OPEN_PROMPT_BLOCKS.map((block, index) => ({
   key: `p${index + 1}`,
   type: "process.prompt",
   from: ["refine"],
   dy: Math.round((index - (OPEN_PROMPT_BLOCKS.length - 1) / 2) * TEMPLATE_BRANCH_GAP),
-  // 分支卡片的默认名是类型名，几张卡长得一模一样：用块名，才分得清哪份结果对应哪套提示词。
+  // 分支卡片的默认名是类型名，几张卡长得一模一样：用提示词名，才分得清哪份结果对应哪套提示词。
   label: block.name,
   data: { promptBlockId: block.id },
 }));
@@ -123,13 +123,15 @@ export const WORKFLOW_TEMPLATES: WorkflowTemplate[] = [
     id: "template.all-prompts",
     name: "全提示词对照",
     // 分支数不写在这句话里：它跟着白名单走，写「五版」明天就可能是六版。
-    description: "同一份内容过一遍全部已放开的提示词块，几版一起写进一篇 Obsidian 笔记",
+    description: "同一份内容过一遍全部已放开的提示词，几版各写一篇 Obsidian 笔记",
     group: "通用",
     defaultSource: "bili",
     stages: [
       { key: "refine", type: "process.refine" },
       ...ALL_PROMPT_STAGES,
-      // 分支收敛到一张 Obsidian：它是压平节点，几版内容会按连接顺序拼成一篇（见 docs/nodes.md §1.2）。
+      // 分支收敛到一张 Obsidian：几版内容都交到同一个节点上（见 docs/nodes.md §1.2）。
+      // 这个节点不写 data，跟着产品默认走——默认「每个输入一篇笔记」＝几版各写一篇；
+      // 想在一篇里连着读几版（这条链路叫「对照」，那也是一种用法）就在节点高级设置里关掉那个开关。
       // 不写 data.folder：写了会永久压住设置页的「笔记写进哪个文件夹」。
       { key: "obsidian", type: "process.obsidian", from: ALL_PROMPT_STAGES.map((stage) => stage.key) },
     ],
@@ -261,7 +263,7 @@ export interface BuildTemplateOptions {
    */
   bili?: BiliLinkSource;
   /**
-   * 预绑到「AI 加工」（`process.prompt`）节点的提示词块 id。
+   * 预绑到「AI 加工」（`process.prompt`）节点的提示词 id。
    * 自带提示词的加工节点（攻略加工、练一练）不受影响。
    */
   promptBlockId?: string;
@@ -350,8 +352,8 @@ export function buildTemplateGraph(templateId: string, options: BuildTemplateOpt
     const fromKeys = stage.from?.length ? stage.from : [previousKey];
     const column = Math.max(...fromKeys.map((key) => columnOf.get(key) ?? 0)) + 1;
     const data = { ...(stage.data ?? {}) } as GraphNode["data"];
-    // 模板自己给节点写死的块优先：`options.promptBlockId` 是「一层链路一个块」的旧口径，
-    // 而「全提示词对照」的每条分支各绑一个块——被它统一覆盖会把几条分支压成同一套提示词。
+    // 模板自己给节点写死的提示词优先：`options.promptBlockId` 是「一层链路一个提示词」的旧口径，
+    // 而「全提示词对照」的每条分支各绑一个提示词——被它统一覆盖会把几条分支压成同一套提示词。
     if (stage.type === "process.prompt" && options.promptBlockId && !(data as { promptBlockId?: string }).promptBlockId) {
       (data as { promptBlockId?: string }).promptBlockId = options.promptBlockId;
     }

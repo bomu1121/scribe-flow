@@ -25,6 +25,7 @@ import PickCard from "./node-cards/PickCard.vue";
 import PickFields from "./node-cards/PickFields.vue";
 import { useSegmentPick } from "@/composables/useSegmentPick";
 import { renderMarkdown } from "@/lib/markdown";
+import { cachePreview, readCachedPreview } from "@/utils/bili-preview-cache";
 import { fmtCharCount, fmtDuration } from "@/utils/run-segments";
 import { usePromptsStore } from "@/stores/prompts";
 import { useSettingsStore } from "@/stores/settings";
@@ -55,6 +56,11 @@ const props = defineProps<NodeProps<ScribeNodeData>>();
 const { viewport } = useVueFlow();
 const flowZoom = computed(() => viewport.value.zoom);
 const flowMenuStyle = computed(() => ({ zoom: String(flowZoom.value) }));
+/**
+ * el-select 的浮层同样 Teleport 到 body、同样不跟画布缩放（自研菜单走上面那份 `flowMenuStyle`）。
+ * 它没法直接给浮层内层元素加 zoom，所以把缩放值以 CSS 变量的形式写进浮层，由 element-theme.css 那条规则消费。
+ */
+const selectPopperStyle = computed(() => ({ "--sf-canvas-zoom": String(flowZoom.value) }));
 provide("sf-flow-zoom", flowZoom);
 
 const promptsStore = usePromptsStore();
@@ -104,16 +110,70 @@ let previewTimer: ReturnType<typeof setTimeout> | null = null;
 /** 链接解析的序号：链接被改过或节点换了视频时，让在飞的那次结果作废。 */
 let previewSeq = 0;
 
+/**
+ * 只把真正变了的字段写回工程图。
+ *
+ * `updateData` 会立刻 emit 整张图，500ms 防抖后 PUT /graph，所以「照写一遍」不是空操作：
+ * 画布开了视口裁剪，节点滚出视野会卸载、滚回来重新挂载，而重新挂载时这些远端值通常已经在了。
+ */
+function patchChanged(next: Partial<ScribeNodeData>) {
+  const current = data.value as Partial<ScribeNodeData>;
+  const changed = Object.fromEntries(
+    Object.entries(next).filter(([key, value]) => JSON.stringify(current[key as keyof ScribeNodeData]) !== JSON.stringify(value)),
+  );
+  if (Object.keys(changed).length > 0) patch(changed);
+}
+
+/**
+ * 解析结果落到卡片：预览本体 + 「哪些分P/哪几集勾着」的还原。
+ * 缓存命中与真的请求回来共用这一份——两条路径要是各写一遍，拖出视野再拖回来的勾选状态
+ * 就会和首次解析不一样。
+ */
+function applyPreview(url: string, result: VideoPreview) {
+  preview.value = result;
+  const bvid = result.bvid || url.match(/BV[0-9A-Za-z]+/)?.[0] || "";
+  patchChanged({ bvid, title: result.title, cover: result.cover, uploader: result.uploader, duration: result.duration });
+  if (result.pages.length > 0) {
+    const savedPages = (data.value.items ?? []).map((item) => item.page).filter(Boolean);
+    const savedPage = Number(data.value.pageInfo?.page ?? 0);
+    const initial = result.pages.find((p) => p.page === savedPage) ?? result.pages[0];
+    const restored = result.pages.filter((p) => savedPages.includes(p.page)).map((p) => p.page);
+    selectedPages.value = restored.length > 0 ? restored : [initial.page];
+    patchChanged({ pageInfo: { cid: initial.cid, page: initial.page, part: initial.part, duration: initial.duration } });
+  } else {
+    selectedPages.value = [];
+  }
+  // UGC 合集：优先还原卡片里已合并的选集（与上面的分P还原对称），否则默认勾选当前链接所在的这一集。
+  seasonSelected.value = [];
+  if (result.ugcSeason && result.ugcSeason.episodes.length > 0) {
+    const savedBvids = (data.value.items ?? []).map((item) => item.bvid);
+    const restored = result.ugcSeason.episodes.filter((ep) => savedBvids.includes(ep.bvid)).map((ep) => ep.bvid);
+    const own = result.ugcSeason.episodes.find((ep) => ep.bvid === result.bvid);
+    seasonSelected.value = restored.length > 0 ? restored : own ? [own.bvid] : [];
+  }
+}
+
 function schedulePreview(url: string) {
   if (previewTimer) clearTimeout(previewTimer);
   const seq = ++previewSeq;
   preview.value = null;
   previewError.value = "";
+  // 每次进来都要收掉上一次的转圈：改链接的请求在飞时被作废，finally 里看不到同一个 seq，
+  // 而新链接又是空的（或在飞的那次已经被丢弃）时就没人负责关它，卡片会一直转。
+  previewLoading.value = false;
 
   const value = url.trim();
   if (!value) return;
   if (!extractBiliUrl(value)) {
     previewError.value = "需要 B 站视频链接（支持 BV 号或 av 号）";
+    return;
+  }
+
+  // 这个链接刚解析过就直接用缓存结果：节点滚出视野会被卸载，重新挂载时没有这一条
+  // 会先闪一次「正在解析视频信息…」（实测 610ms）再白发一次请求。
+  const cached = readCachedPreview(value);
+  if (cached) {
+    applyPreview(value, cached);
     return;
   }
 
@@ -124,33 +184,8 @@ function schedulePreview(url: string) {
       // 请求在飞的时候链接又变了（继续输入/切了工程）：这次结果作废，
       // 否则旧视频的 bvid/标题/封面会被 patch 进新节点。
       if (seq !== previewSeq) return;
-      preview.value = result;
-      const bvid = result.bvid || value.match(/BV[0-9A-Za-z]+/)?.[0] || "";
-      patch({
-        bvid,
-        title: result.title,
-        cover: result.cover,
-        uploader: result.uploader,
-        duration: result.duration,
-      });
-      if (result.pages.length > 0) {
-        const savedPages = (data.value.items ?? []).map((item) => item.page).filter(Boolean);
-        const savedPage = Number(data.value.pageInfo?.page ?? 0);
-        const initial = result.pages.find((p) => p.page === savedPage) ?? result.pages[0];
-        const restored = result.pages.filter((p) => savedPages.includes(p.page)).map((p) => p.page);
-        selectedPages.value = restored.length > 0 ? restored : [initial.page];
-        patch({ pageInfo: { cid: initial.cid, page: initial.page, part: initial.part, duration: initial.duration } });
-      } else {
-        selectedPages.value = [];
-      }
-      // UGC 合集：优先还原卡片里已合并的选集（与上面的分P还原对称），否则默认勾选当前链接所在的这一集。
-      seasonSelected.value = [];
-      if (result.ugcSeason && result.ugcSeason.episodes.length > 0) {
-        const savedBvids = (data.value.items ?? []).map((item) => item.bvid);
-        const restored = result.ugcSeason.episodes.filter((ep) => savedBvids.includes(ep.bvid)).map((ep) => ep.bvid);
-        const own = result.ugcSeason.episodes.find((ep) => ep.bvid === result.bvid);
-        seasonSelected.value = restored.length > 0 ? restored : own ? [own.bvid] : [];
-      }
+      cachePreview(value, result);
+      applyPreview(value, result);
     } catch (err) {
       if (seq !== previewSeq) return;
       previewError.value = err instanceof Error ? err.message : "解析失败，请检查链接";
@@ -350,7 +385,7 @@ function onNodeBodyWheel(event: WheelEvent) {
 }
 
 onMounted(() => {
-  // 提示词块列表要按「有没有配检索密钥」过滤，而用户未必进过设置页。
+  // 提示词列表要按「有没有配检索密钥」过滤，而用户未必进过设置页。
   void settingsStore.ensureLoaded();
   // 多选收藏卡片不需要解析“第一个视频”的预览，所有项平等展示。
   if (props.data.url && !isCollection.value) schedulePreview(props.data.url);
@@ -434,7 +469,7 @@ const nodeDescriptions: Record<NodeType, string> = {
   "source.text": "粘贴已有文稿作为处理起点",
   "process.transcribe": "将音频/视频转写为文稿",
   "process.refine": "对文稿进行 AI 校对与修正",
-  "process.prompt": "使用提示词块对文稿做 AI 加工",
+  "process.prompt": "使用提示词对文稿做 AI 加工",
   "process.merge": "将多个笔记块合并为一份文档",
   "process.output": "将结果保存为 Markdown 文件",
   "flow.if": "根据条件决定下游执行分支",
@@ -762,10 +797,10 @@ const gameGuideModeOptions = [
 const searchReady = computed(() => Boolean(settingsStore.settings?.search.hasKey));
 
 /**
- * 提示词块下拉的选项文案：只写名字，自己写的块标一个「我的」。
- * 版本号、配方、内置、推荐这些说法都留在设置页的块库里（那里才是管版本的地方），卡片上不出现。
+ * 提示词下拉的选项文案：只写名字，自己写的提示词标一个「我的」。
+ * 版本号、配方、内置、推荐这些说法都留在设置页的提示词库里（那里才是管版本的地方），卡片上不出现。
  *
- * 可选块本身与快捷新建共用一份（`aiPromptBlocks`）：同一个块在两处必须都选得到，
+ * 可选提示词本身与快捷新建共用一份（`aiPromptBlocks`）：同一个提示词在两处必须都选得到，
  * 否则会出现画布上选得到、建工程时选不到的情况。
  */
 const promptOptions = computed(() =>
@@ -865,9 +900,20 @@ function setVideoQn(qn: number) {
   commit();
 }
 
-/** overwrite：关掉后保存目录里已有同名笔记就退让成「标题 (2).md」，不覆盖已有那篇。 */
+/** overwrite：打开后保存目录里已有同名笔记就整篇重写它；默认关＝退让成「标题 (2).md」，不动已有那篇。 */
 function setOverwrite(value: string | number | boolean) {
   patch({ overwrite: Boolean(value) });
+  commit();
+}
+
+/**
+ * splitByInput：一次运行收到多个输入时，每个输入各写一篇，而不是合并成一篇（默认开）。
+ *
+ * 单输入时两种模式等价，所以这里不做任何"输入数"的判断——开关只是把意图存下来，
+ * 是不是真的分流由引擎在运行时按当时的输入份数决定（画布上的连线随时会变）。
+ */
+function setSplitByInput(value: string | number | boolean) {
+  patch({ splitByInput: Boolean(value) });
   commit();
 }
 
@@ -1310,14 +1356,14 @@ const themeOptions = [
 
           <template v-else-if="nodeType === 'process.prompt'">
             <div class="sf-node-field">
-              <span class="sf-node-field-label">提示词块</span>
+              <span class="sf-node-field-label">提示词</span>
               <ModelSelect
                 v-model="promptBlockId"
                 :options="promptOptions"
                 size="small"
                 clearable
                 filterable
-                placeholder="选择提示词块"
+                placeholder="选择提示词"
                 :prefix-icon="PhSparkle"
               />
             </div>
@@ -1520,6 +1566,8 @@ const themeOptions = [
                     allow-create
                     default-first-option
                     clearable
+                    popper-class="sf-canvas-zoom-popper"
+                    :popper-style="selectPopperStyle"
                     :reserve-keyword="false"
                     :multiple-limit="MAX_EXTRACT_FIELDS"
                     :model-value="nodeExtractFields"
@@ -1551,12 +1599,24 @@ const themeOptions = [
                     @update:model-value="(v: string) => { patch({ upTag: triStatePatch(v) }); commit(); }"
                   />
                 </label>
+                <!--
+                  写几篇、撞名怎么办，是两件事：先决定「多篇」，再决定「同名覆盖」。
+                  这一版把顺序按这条链路排——上面的开关管篇数，下面的管名字。
+                  两态的显示与引擎同一套口径：这里显示什么，运行时就按什么走（缺省＝开 / 缺省＝关）。
+                -->
                 <div class="sf-node-advanced-row">
                   <span
                     class="sf-node-advanced-label"
-                    title="关掉后：保存目录里已有同名笔记时，改写「标题 (2).md」而不动已有那篇；重复运行会接着排 (3)、(4)。"
+                    title="默认开：一次运行收到多个输入（比如同一个文稿挂了几版提示词配方）时，每个输入各写一篇笔记，篇名取各篇正文的第一个 H1，各篇各自判标签、抽属性（模型调用按篇数增加）。关掉＝合并成一篇，几版的标题与导读挤在同一份文档里。只有一份输入时两种模式一样。"
+                  >每个输入一篇笔记</span>
+                  <el-switch size="small" :model-value="data.splitByInput !== false" @update:model-value="setSplitByInput" />
+                </div>
+                <div class="sf-node-advanced-row">
+                  <span
+                    class="sf-node-advanced-label"
+                    title="默认关：保存目录里已有同名笔记时，改写「标题 (2).md」而不动已有那篇；重复运行会接着排 (3)、(4)。打开＝直接覆盖已有那篇（整篇重写，人写的正文会被替换，人写的标签留下），重复运行只更新它自己，不产生 (2)。"
                   >同名笔记直接覆盖</span>
-                  <el-switch size="small" :model-value="data.overwrite !== false" @update:model-value="setOverwrite" />
+                  <el-switch size="small" :model-value="data.overwrite === true" @update:model-value="setOverwrite" />
                 </div>
               </template>
               <template v-if="nodeType === 'process.mindmap'">

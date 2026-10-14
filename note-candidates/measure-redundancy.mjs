@@ -39,8 +39,11 @@ function units(text) {
   for (const line of text.split("\n")) {
     const t = line.trim();
     if (!t) continue;
-    if (/^#{1,6}\s/.test(t) || /^\*\*[^*]+\*\*$/.test(t)) {
-      section = t.replace(/[*#]/g, "").trim().slice(0, 24);
+    // 分区：标题、独立成行的加粗主张句，以及 **Obsidian callout 的标记行**（`> [!summary] 速览`）。
+    // 最后一条是 2026-10-14 补的：产物改版后速览与速查都装进 callout，不认它的话，速查里的条目
+    // 会落到它上面那个正文章节里，「正文 vs 速查」的重复就被误判成「同区」。
+    if (/^#{1,6}\s/.test(t) || /^\*\*[^*]+\*\*$/.test(t) || /^> \[!/.test(t)) {
+      section = t.replace(/^>\s*/, "").replace(/\[![^\]]+\]/, "").replace(/[*#]/g, "").trim().slice(0, 24);
       continue;
     }
     if (/^\|/.test(t)) {
@@ -113,7 +116,10 @@ function score(file) {
   let hitBi = 0;
   const outBi = bigrams(text);
   for (const g of srcBi) if (outBi.has(g)) hitBi += 1;
-  const missed = SPOT_TERMS.filter((t) => !text.includes(t));
+  // 专名抽查对**半角空格**不敏感：产出里写「民主 AI」（词与英文之间按习惯加了空格）时，
+  // 不该报成「丢了」。只去空格与制表符，不去换行——跨行的两个词不算同一个专名。
+  const missTarget = text.replace(/[ \t]/g, "");
+  const missed = SPOT_TERMS.filter((t) => !missTarget.includes(t.replace(/[ \t]/g, "")));
   const tableRows = (text.match(/^\|/gm) ?? []).length;
   const quotes = (text.match(/^>\s?\S/gm) ?? []).length;
   return {

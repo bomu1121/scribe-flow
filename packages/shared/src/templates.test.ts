@@ -175,7 +175,7 @@ describe("buildTemplateGraph", () => {
     expect(graph.nodes[0]).toMatchObject({ type: "source.text", data: { text: "" } });
   });
 
-  it("预绑提示词块只落在 AI 加工节点，自带提示词的加工节点不被覆盖", () => {
+  it("预绑提示词只落在 AI 加工节点，自带提示词的加工节点不被覆盖", () => {
     const graph = buildTemplateGraph("template.gameguide", { source: "bili", promptBlockId: "builtin.insight.v4" })!;
     const guide = graph.nodes.find((node) => node.type === "process.gameguide")!;
     expect((guide.data as Record<string, unknown>).promptBlockId).toBeUndefined();
@@ -243,26 +243,26 @@ describe("buildTemplateGraph", () => {
     expect([...seen].sort()).toEqual([...OBSIDIAN_TEMPLATES].sort());
   });
 
-  it("「全提示词对照」的分支 = 当前已放开的全部提示词块，末端收进同一张 Obsidian", () => {
+  it("「全提示词对照」的分支 = 当前已放开的全部提示词，末端收进同一张 Obsidian", () => {
     const open = aiPromptBlocks([], true);
     const graph = buildTemplateGraph(ALL_PROMPTS, { source: "bili" })!;
     const branches = graph.nodes.filter((node) => node.type === "process.prompt");
 
-    // 分支内容跟着白名单走：审核放开或新增一个块，这里自动多一条（模板里没有写死的 id 清单）。
+    // 分支内容跟着白名单走：审核放开或新增一个提示词，这里自动多一条（模板里没有写死的 id 清单）。
     expect(branches.map((node) => (node.data as { promptBlockId?: string }).promptBlockId)).toEqual(open.map((block) => block.id));
     // 名字也要跟上：分支卡片默认叫「AI 加工」，几张卡长得一样，只能靠名字认。
     expect(branches.map((node) => node.data.label)).toEqual(open.map((block) => block.name));
     // 纵向各自一行，别叠在一起
     expect(new Set(branches.map((node) => node.position.y)).size).toBe(branches.length);
 
-    // 几版是拼成**一篇**笔记（压平语义），不是各写一份
+    // 几版都收进**同一张** Obsidian 卡（各写一篇还是合并成一篇由那张卡上的开关决定，默认各写一篇）
     const obsidian = graph.nodes.find((node) => node.type === "process.obsidian")!;
     expect(graph.edges.filter((edge) => edge.target === obsidian.id)).toHaveLength(branches.length);
     const leaves = new Set(graph.edges.map((edge) => edge.source));
     expect(graph.nodes.filter((node) => !leaves.has(node.id)).map((node) => node.type)).toEqual(["process.obsidian"]);
   });
 
-  it("模板写死的提示词块不被 promptBlockId 覆盖（覆盖会把几条分支压成同一套）", () => {
+  it("模板写死的提示词不被 promptBlockId 覆盖（覆盖会把几条分支压成同一套）", () => {
     const open = aiPromptBlocks([], true);
     const graph = buildTemplateGraph(ALL_PROMPTS, { source: "text", promptBlockId: "builtin.insight.v4" })!;
     const ids = graph.nodes

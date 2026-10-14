@@ -25,5 +25,5 @@ const quickList = availablePromptBlocks(bindablePromptBlocks(custom), searchRead
 console.log(`\n快捷新建下拉（${quickList.length} 项）:`);
 for (const b of quickList) console.log("  ·", b.name);
 
-console.log(`\n被隐藏的内置块（${BUILTIN_PROMPT_BLOCKS.length - nodeList.length} 个）:`);
+console.log(`\n被隐藏的内置提示词（${BUILTIN_PROMPT_BLOCKS.length - nodeList.length} 个）:`);
 for (const b of BUILTIN_PROMPT_BLOCKS) if (!nodeList.some((x) => x.id === b.id)) console.log("  ✗", b.name, `(${b.id})`);

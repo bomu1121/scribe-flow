@@ -6,8 +6,8 @@
  * 它建的工程与用户在「新建工程」里点出来的那条一模一样，所以这条自检同时也是那条模板的端到端验收。
  *
  * 前置：pnpm dev + 设置页配好 AI 模型与语音识别密钥。本脚本会**真的**下载音频、真的转写、真的调模型，
- * 结尾会往设置页指向的 Obsidian 库里真的写一篇笔记（标题固定成测试标题，反复跑只覆盖它自己，
- * 不会盖住同名真实笔记——模板本身不写死标题，是脚本建的临时工程里改的）。
+ * 结尾会往设置页指向的 Obsidian 库里真的写一篇笔记（标题固定成测试标题，且把节点钉成「合并成一篇 + 覆盖自己」，
+ * 所以反复跑只覆盖它自己，不会盖住同名真实笔记——模板本身不写死标题、也不钉这两种模式，是脚本建的临时工程里改的）。
  * **跑的过程中别改 `apps/server` 或 `packages/shared` 的源码**：dev server 是 `node --watch`，
  * 一重启就会把正在跑的运行打断成 `interrupted`（实测踩过，报出来的是「节点被 cancelled」）。
  * 用法：pnpm check:api:chain
@@ -15,11 +15,11 @@
  *       node scripts/m-chain-api-check.mjs --dry-run                              # 只建图并校验，不起跑（几秒）
  *
  * 断言挑的都是**运行成功也照样会漏过去**的地方：
- * 1. 模板的分支 = 当前已放开的提示词块。分支数跟着 `aiPromptBlocks`（画布下拉同一份）走，
+ * 1. 模板的分支 = 当前已放开的提示词。分支数跟着 `aiPromptBlocks`（画布下拉同一份）走，
  *    写死一份 id 清单、白名单变了没跟上的话，这一条会红；
- * 2. 每个分支真的各跑各的块——节点没读到 `promptBlockId` 时，所有分支会一起退化成引擎默认提示词、
+ * 2. 每个分支真的各跑各的提示词——节点没读到 `promptBlockId` 时，所有分支会一起退化成引擎默认提示词、
  *    产物雷同，**而运行状态仍是 success**，所以「产物两两不同」单列一条；
- * 3. 全部分支按压平语义进同一篇笔记，且库里那份文件真的在盘上。
+ * 3. 全部分支进同一篇笔记（节点上钉了合并模式），且库里那份文件真的在盘上。
  *
  * 自建自清：跑通就删掉临时工程（连同运行记录）；有断言失败则留下来供查看画布与结果页。
  */
@@ -110,16 +110,16 @@ async function main() {
   }
 
   const settings = (await j("GET", "/api/settings")).data ?? {};
-  // 与模板同一口径：模板在 shared 里构建，只含内置已放开块（见 templates.ts 的 OPEN_PROMPT_BLOCKS）。
+  // 与模板同一口径：模板在 shared 里构建，只含内置已放开提示词（见 templates.ts 的 OPEN_PROMPT_BLOCKS）。
   const expected = aiPromptBlocks([], true);
   const customBlocks = ((await j("GET", "/api/prompts")).data?.items ?? []).filter((block) => !block.builtin);
   check(
-    "已放开的提示词块 ≥ 2（少于 2 个就不成对照）",
+    "已放开的提示词 ≥ 2（少于 2 个就不成对照）",
     expected.length >= 2,
     `n=${expected.length}：${expected.map((block) => block.name).join("、")}`,
   );
   if (customBlocks.length > 0) {
-    console.log(`  （另有 ${customBlocks.length} 个自定义块不进这条链路：模板在 shared 里构建，读不到用户库里的块）`);
+    console.log(`  （另有 ${customBlocks.length} 个自定义提示词不进这条链路：模板在 shared 里构建，读不到用户库里的提示词）`);
   }
 
   /*
@@ -137,8 +137,10 @@ async function main() {
   check("按模板建出工程", created.status === 201 && Boolean(projectId), created.status === 201 ? projectId : JSON.stringify(created.data).slice(0, 160));
   if (!projectId) return;
 
-  // 2. 只改测试用的两处：来源卡填素材、笔记标题固定。
+  // 2. 只改测试用的几处：来源卡填素材、笔记标题固定，外加**把节点上两种模式钉死**。
   //    （模板不写死标题是对的——用户用它时应该跟着视频标题走；自检则必须固定，否则会盖住同名真实笔记。）
+  //    钉死模式同理：产品默认是「每个输入一篇 + 不覆盖」，那样自检会往用户库里写 5 篇、重复跑还会排 (2)；
+  //    这条自检要的是**确定的形状**（几版都进同一篇，下面第 3 条断言就是照这个写的）与**自己覆盖自己**。
   const graph = created.data.graph;
   const sourceNode = graph.nodes.find((node) => node.type === "source.bili");
   // 节点 id 由模板的 stage key 决定，脚本不写死它们——按类型取，模板改名也不会把自检搞哑。
@@ -146,12 +148,20 @@ async function main() {
   const obsidianNode = graph.nodes.find((node) => node.type === "process.obsidian");
   sourceNode.data.url = BILI_URL;
   obsidianNode.data.title = NOTE_TITLE;
+  obsidianNode.data.splitByInput = false;
+  obsidianNode.data.overwrite = true;
   const put = await j("PUT", `/api/projects/${projectId}/graph`, { graph });
   check("把素材填进来源卡", put.status === 200, put.status === 200 ? "" : JSON.stringify(put.data).slice(0, 160));
+  // 前置断言：这两项若被图校验吃掉，下面的断言会静默换口径——「一篇」会变成 5 篇的表象、mtime 那条也会失去意义。
+  check(
+    "自检钉住的两种模式进了图（合并成一篇 + 覆盖自己）",
+    obsidianNode.data.splitByInput === false && obsidianNode.data.overwrite === true,
+    `splitByInput=${obsidianNode.data.splitByInput} overwrite=${obsidianNode.data.overwrite}`,
+  );
 
   const branchNodes = graph.nodes.filter((node) => node.type === "process.prompt");
   check(
-    `模板分支 = 当前放开的 ${expected.length} 个块（分支跟着白名单走）`,
+    `模板分支 = 当前放开的 ${expected.length} 个提示词（分支跟着白名单走）`,
     branchNodes.map((node) => node.data.promptBlockId).join(",") === expected.map((block) => block.id).join(","),
     branchNodes.map((node) => node.data.label ?? node.data.promptBlockId).join("、"),
   );
@@ -196,7 +206,7 @@ async function main() {
   check("每个分支产物都非空（> 200 字）", texts.every((text) => text.length > 200), texts.map((text) => text.length).join("/"));
   const distinct = new Set(texts.map((text) => text.replace(/\s+/g, "")));
   check(
-    `${branchNodes.length} 个分支产物两两不同（各自真的用了自己的块）`,
+    `${branchNodes.length} 个分支产物两两不同（各自真的用了自己的提示词）`,
     texts.length > 0 && distinct.size === texts.length,
     `去重后 ${distinct.size} 份`,
   );

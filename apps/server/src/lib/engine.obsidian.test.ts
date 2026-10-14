@@ -14,10 +14,12 @@ import { updateSettings } from "./settings";
 import { sleep } from "./sleep";
 
 /**
- * Obsidian 笔记节点：保存目录里已有同名笔记时，是覆盖它还是退让成 `标题 (2).md`。
+ * Obsidian 笔记节点：保存目录里已有同名笔记时，是覆盖它还是退让成 `标题 (2).md`（**默认退让**）；
+ * 一次运行收到多份输入时，是各写一篇还是合并成一篇（**默认各写一篇**）。
  *
- * 走真实引擎与真实磁盘：这个开关的价值就在「最后落在文件系统上的那个名字」，
- * 只调纯函数测不出引擎有没有真的用上它。全程离线——不配 AI 密钥，标签判定与属性抽取两条模型路径都不会触发。
+ * 走真实引擎与真实磁盘：这两个开关的价值就在「最后落在文件系统上的那个名字与那几篇文件」，
+ * 只调纯函数测不出引擎有没有真的用上它们。全程离线——不配 AI 密钥，标签判定与属性抽取两条模型路径都不会触发。
+ * 两个开关的**默认值**都按「什么都不写」的工程图来验（缺省口径与卡片上的开关一致，见 graph.ts 的 ObsidianData）。
  */
 
 const tmpDirs: string[] = [];
@@ -124,6 +126,52 @@ async function runNote(
   return { status: row?.status, summary: row?.summary };
 }
 
+/** 跑一次「多个文本 → Obsidian 笔记」：验的是与输入份数有关的开关（每个输入一篇）。 */
+async function runNoteMulti(
+  vaultPath: string,
+  sources: { id: string; text: string }[],
+  data: Record<string, unknown>,
+  tag: string,
+): Promise<NoteRunResult> {
+  const dataDir = await tempDir(`scribe-obsidian-${tag}-`);
+  const db = createDatabase(dataDir);
+  updateSettings(db, { obsidian: { vaultPath, autoLinkEnabled: false, extractFields: [] } });
+  const graph = parseGraph({
+    schemaVersion: 1,
+    nodes: [
+      ...sources.map((source, index) => ({
+        id: source.id,
+        type: "source.text",
+        position: { x: 0, y: index * 120 },
+        data: { label: `文稿${index + 1}`, text: source.text },
+      })),
+      { id: "n_note", type: "process.obsidian", position: { x: 320, y: 0 }, data: { label: "Obsidian 笔记", ...data } },
+    ],
+    edges: sources.map((source, index) => ({ id: `e${index + 1}`, source: source.id, target: "n_note", sourceHandle: "transcript", targetHandle: "in" })),
+    viewport: { x: 0, y: 0, zoom: 1 },
+  });
+  // 前置断言：这两个字段若在图校验里被吃掉，下面的用例会静默退化成产品默认（各写一篇、不覆盖），
+  // 看着是绿的实际什么都没验。
+  for (const key of ["splitByInput", "overwrite"]) {
+    if (data[key] === undefined) continue;
+    const kept = (graph.nodes.find((node) => node.id === "n_note")?.data as Record<string, unknown> | undefined)?.[key];
+    expect(kept, `parseGraph 丢掉了 ${key}`).toEqual(data[key]);
+  }
+
+  const projectId = `prj_${tag}`;
+  const runId = `run_${tag}`;
+  const now = Date.now();
+  db.insert(projects)
+    .values({ id: projectId, name: tag, description: "", graphJson: JSON.stringify(graph), schemaVersion: 1, createdAt: now, updatedAt: now })
+    .run();
+  db.insert(runs).values({ id: runId, projectId, status: "running", scope: "all", createdAt: now, graphJson: JSON.stringify(graph) }).run();
+  new RunEngine(db, dataDir).start(runId, projectId, graph, "all");
+
+  await waitUntilFinished(db, runId, tag);
+  const row = db.select().from(runNodeResults).where(and(eq(runNodeResults.runId, runId), eq(runNodeResults.nodeId, "n_note"))).get();
+  return { status: row?.status, summary: row?.summary };
+}
+
 async function waitUntilFinished(db: AppDatabase, runId: string, tag: string, timeoutMs = 8000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   let row = db.select().from(runs).where(eq(runs.id, runId)).get();
@@ -148,27 +196,12 @@ async function noteFiles(dir: string): Promise<string[]> {
   return (await readdir(dir)).filter((name) => name.endsWith(".md")).sort();
 }
 
-describe("Obsidian 笔记：同名时覆盖还是退让", () => {
-  it("默认覆盖：同名笔记整篇重写，人写的正文被替换、人写的标签留下", async () => {
-    const handWritten = "---\ntags:\n  - 我自己打的标签\n---\n\n人手写的正文，这次运行会把它盖掉。\n";
+describe("Obsidian 笔记：同名时覆盖还是退让（默认退让）", () => {
+  it("默认（开关关着）：已有同名笔记时另写 (2)，那篇人手写的原样不动", async () => {
+    const handWritten = "---\ntags:\n  - 我自己打的标签\n---\n\n人手写的正文，默认不该被动。\n";
     const { vault, dir } = await makeVault({ [`${TITLE}.md`]: handWritten });
 
-    const first = await runNote(vault, {}, "overwrite-first");
-    expect(first.status).toBe("done");
-
-    // 只该有那一篇：覆盖模式下不生成 (2)。
-    expect(await noteFiles(dir)).toEqual([`${TITLE}.md`]);
-    const content = await readFile(join(dir, `${TITLE}.md`), "utf8");
-    expect(content).toContain("我自己打的标签");
-    expect(content).toContain(BODY);
-    expect(content).not.toContain("人手写的正文");
-  });
-
-  it("关掉覆盖：已有同名笔记时另写 (2)，那篇人手写的原样不动", async () => {
-    const handWritten = "---\ntags:\n  - 我自己打的标签\n---\n\n人手写的正文，关掉覆盖后不该被动。\n";
-    const { vault, dir } = await makeVault({ [`${TITLE}.md`]: handWritten });
-
-    const result = await runNote(vault, { overwrite: false }, "keep-hand");
+    const result = await runNote(vault, {}, "keep-default");
     expect(result.status).toBe("done");
     // 摘要里报的就是实际落盘的那个名字，用户不用去猜写哪儿了。
     expect(result.summary).toContain(`${TITLE} (2).md`);
@@ -179,14 +212,29 @@ describe("Obsidian 笔记：同名时覆盖还是退让", () => {
     expect(await readFile(join(dir, `${TITLE} (2).md`), "utf8")).toContain(BODY);
   });
 
-  it("关掉覆盖：重复运行接着排 (3)、(4)", async () => {
+  it("默认：重复运行接着排 (3)、(4)", async () => {
     const { vault, dir } = await makeVault();
 
-    await runNote(vault, { overwrite: false }, "seq-1");
-    await runNote(vault, { overwrite: false }, "seq-2");
-    await runNote(vault, { overwrite: false }, "seq-3");
+    await runNote(vault, {}, "seq-1");
+    await runNote(vault, {}, "seq-2");
+    await runNote(vault, {}, "seq-3");
 
     expect(await noteFiles(dir)).toEqual([`${TITLE} (2).md`, `${TITLE} (3).md`, `${TITLE}.md`]);
+  });
+
+  it("打开覆盖：同名笔记整篇重写，人写的正文被替换、人写的标签留下", async () => {
+    const handWritten = "---\ntags:\n  - 我自己打的标签\n---\n\n人手写的正文，这次运行会把它盖掉。\n";
+    const { vault, dir } = await makeVault({ [`${TITLE}.md`]: handWritten });
+
+    const first = await runNote(vault, { overwrite: true }, "overwrite-on");
+    expect(first.status).toBe("done");
+
+    // 只该有那一篇：覆盖模式下不生成 (2)。
+    expect(await noteFiles(dir)).toEqual([`${TITLE}.md`]);
+    const content = await readFile(join(dir, `${TITLE}.md`), "utf8");
+    expect(content).toContain("我自己打的标签");
+    expect(content).toContain(BODY);
+    expect(content).not.toContain("人手写的正文");
   });
 });
 
@@ -259,7 +307,8 @@ describe("Obsidian 笔记：保存时写相关笔记", () => {
     const { vault, dir } = await makeVault({ "张三访谈.md": existing });
     const settings = { autoTagEnabled: true, extractFields: ["人物"], autoLinkEnabled: true, autoLinkMax: 5 };
 
-    const first = await runNote(vault, {}, "link-first", settings);
+    // 覆盖这一项得显式打开：默认是「退让」（另写 (2)），而这条用例验的是覆盖模式下的重写语义。
+    const first = await runNote(vault, { overwrite: true }, "link-first", settings);
     expect(first.status).toBe("done");
     expect(first.summary).toContain("关联 1 篇");
 
@@ -269,7 +318,7 @@ describe("Obsidian 笔记：保存时写相关笔记", () => {
     expect(readRelatedSectionNames(saved)).toEqual(["张三访谈"]);
 
     // 重跑同一个视频：文件名相同 → 整篇重写，段落仍该是替换而不是叠第二段。
-    await runNote(vault, {}, "link-second", settings);
+    await runNote(vault, { overwrite: true }, "link-second", settings);
     const again = await readFile(join(dir, `${TITLE}.md`), "utf8");
     expect(again.match(/## 相关笔记/g)).toHaveLength(1);
     expect(readRelatedSectionNames(again)).toEqual(["张三访谈"]);
@@ -323,5 +372,105 @@ describe("Obsidian 笔记：两个自动标签（来源 / UP 主）由元数据�
     const saved = await readFile(join(dir, `${TITLE}.md`), "utf8");
     expect(saved).toContain("来源/文本");
     expect(saved).toContain("UP主名称/某个-UP-主");
+  });
+});
+
+describe("Obsidian 笔记：每个输入一篇（splitByInput，默认开）", () => {
+  /** 三份带各自 H1 的文稿：同一个素材挂几版提示词配方就是这个形状。 */
+  const THREE = [
+    { id: "n_a", text: "# 第一篇\n\n详尽版正文。" },
+    { id: "n_b", text: "# 第二篇\n\n成文版正文。" },
+    { id: "n_c", text: "# 第三篇\n\n速览版正文。" },
+  ];
+
+  it("默认（开关开着）：三份输入写成三篇，篇名取各篇正文的 H1（不沿用节点标题）", async () => {
+    const { vault, dir } = await makeVault();
+
+    // 顺带钉死篇名规则：几篇讲的是同一个素材，若沿用节点标题（TITLE）会三篇撞一个名字，
+    // 只能靠 (2)(3) 区分，等于没有名字。所以多篇模式下 H1 优先于节点标题。
+    const run = await runNoteMulti(vault, THREE, { title: TITLE }, "split-default");
+    expect(run.status).toBe("done");
+    expect(run.summary).toContain("已保存 3 篇");
+
+    expect(await noteFiles(dir)).toEqual(["第一篇.md", "第二篇.md", "第三篇.md"].sort());
+    // 各篇只装自己那份正文：合并模式下"读完一篇才发现另外几版也在里面"的问题在这里被钉死。
+    expect(await readFile(join(dir, "第一篇.md"), "utf8")).toContain("详尽版正文。");
+    expect(await readFile(join(dir, "第一篇.md"), "utf8")).not.toContain("成文版正文。");
+    // 每篇都有自己完整的 front matter（标题按本篇取，不是素材标题）。
+    const first = await readFile(join(dir, "第一篇.md"), "utf8");
+    expect(first).toContain("标题: 第一篇");
+  });
+
+  it("关掉开关：多份输入合并成一篇，篇名沿用节点标题，三份正文都在这篇里", async () => {
+    const { vault, dir } = await makeVault();
+
+    const run = await runNoteMulti(vault, THREE, { splitByInput: false, title: TITLE }, "merge-off");
+    expect(run.status).toBe("done");
+
+    expect(await noteFiles(dir)).toEqual([`${TITLE}.md`]);
+    const saved = await readFile(join(dir, `${TITLE}.md`), "utf8");
+    for (const body of ["详尽版正文。", "成文版正文。", "速览版正文。"]) expect(saved).toContain(body);
+  });
+
+  it("开关开着、只有一份输入时不分流，行为与合并模式一致", async () => {
+    const { vault, dir } = await makeVault();
+
+    const run = await runNoteMulti(vault, [{ id: "n_a", text: BODY }], { splitByInput: true, title: TITLE }, "split-single");
+    expect(run.status).toBe("done");
+
+    expect(await noteFiles(dir)).toEqual([`${TITLE}.md`]);
+    expect(run.summary).toContain(`已保存到 Obsidian：${FOLDER}/${TITLE}.md`);
+  });
+
+  it("同一批里两篇撞同一个 H1：按 (2) 排，正文不互相覆盖", async () => {
+    const { vault, dir } = await makeVault();
+    const same = [
+      { id: "n_a", text: "# 同名\n\n甲的正文。" },
+      { id: "n_b", text: "# 同名\n\n乙的正文。" },
+    ];
+
+    const run = await runNoteMulti(vault, same, {}, "split-same-title");
+    expect(run.status).toBe("done");
+
+    expect(await noteFiles(dir)).toEqual(["同名.md", "同名 (2).md"].sort());
+    const bodies = [await readFile(join(dir, "同名.md"), "utf8"), await readFile(join(dir, "同名 (2).md"), "utf8")];
+    expect(bodies.join("\n")).toContain("甲的正文。");
+    expect(bodies.join("\n")).toContain("乙的正文。");
+  });
+
+  it("默认关覆盖：目录里已有的同名笔记一个字节不动，新写的接着排 (2)", async () => {
+    const handWritten = "# 同名\n\n人写的正文。\n";
+    const { vault, dir } = await makeVault({ "同名.md": handWritten });
+    const same = [
+      { id: "n_a", text: "# 同名\n\n甲的新正文。" },
+      { id: "n_b", text: "# 同名\n\n乙的新正文。" },
+    ];
+
+    const run = await runNoteMulti(vault, same, {}, "split-keep-hand");
+    expect(run.status).toBe("done");
+
+    expect(await noteFiles(dir)).toEqual(["同名.md", "同名 (2).md", "同名 (3).md"].sort());
+    expect(await readFile(join(dir, "同名.md"), "utf8")).toBe(handWritten);
+    const fresh = [await readFile(join(dir, "同名 (2).md"), "utf8"), await readFile(join(dir, "同名 (3).md"), "utf8")].join("\n");
+    expect(fresh).toContain("甲的新正文。");
+    expect(fresh).toContain("乙的新正文。");
+  });
+
+  it("打开覆盖也不互相覆盖：覆盖只看库里已有的文件，同一批里撞名照样排 (2)", async () => {
+    // 覆盖模式下不读目录，但**同一批内**的去重仍必须生效——否则第二篇会把刚写好的第一篇盖掉。
+    const { vault, dir } = await makeVault({ "同名.md": "# 同名\n\n人写的旧笔记。\n" });
+    const same = [
+      { id: "n_a", text: "# 同名\n\n甲的正文。" },
+      { id: "n_b", text: "# 同名\n\n乙的正文。" },
+    ];
+
+    const run = await runNoteMulti(vault, same, { overwrite: true }, "split-overwrite-on");
+    expect(run.status).toBe("done");
+
+    // 库里那篇被整篇重写（覆盖），第二篇另起 (2)。
+    expect(await noteFiles(dir)).toEqual(["同名.md", "同名 (2).md"].sort());
+    const bodies = [await readFile(join(dir, "同名.md"), "utf8"), await readFile(join(dir, "同名 (2).md"), "utf8")].join("\n");
+    expect(bodies).toContain("甲的正文。");
+    expect(bodies).toContain("乙的正文。");
   });
 });

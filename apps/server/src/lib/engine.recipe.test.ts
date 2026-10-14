@@ -553,7 +553,7 @@ describe("RunEngine 配方执行（M8-1）", () => {
     expect(aiRequests.map((row) => row.step)).toEqual(["scan", "audit", "finalize"]);
   });
 
-  it("无配方块（观点提炼 v2）：仍走单次调用，日志无 step（零回归）", async () => {
+  it("无配方提示词（观点提炼 v2）：仍走单次调用，日志无 step（零回归）", async () => {
     chatCalls = 0;
     const dataDir = await mkdtemp(join(tmpdir(), "scribe-recipe-v2-"));
     tmpDirs.push(dataDir);
@@ -568,11 +568,11 @@ describe("RunEngine 配方执行（M8-1）", () => {
     const aiRequests = logs.filter((row) => row.kind === "ai-request" && row.nodeId === "n_prompt");
     expect(aiRequests).toHaveLength(1);
     expect(aiRequests[0]?.step).toBeNull();
-    expect(aiRequests[0]?.content).toContain("你是一位深度内容编辑"); // system 来自 v2 块本身
+    expect(aiRequests[0]?.content).toContain("你是一位深度内容编辑"); // system 来自 v2 提示词本身
     expect(chatCalls).toBe(1);
   });
 
-  it("配方块 + 自定义提示词覆盖：忽略配方按单步执行并记录说明", async () => {
+  it("配方提示词 + 自定义提示词覆盖：忽略配方按单步执行并记录说明", async () => {
     chatCalls = 0;
     const dataDir = await mkdtemp(join(tmpdir(), "scribe-recipe-ov-"));
     tmpDirs.push(dataDir);

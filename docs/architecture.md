@@ -22,7 +22,7 @@ class: doc
 | `scripts` | 自研门禁与自检（无独立测试框架） | `docs-gen.mjs` / `docs-lint.mjs` / `slop-lint.mjs` / `ui-lint.mjs` / `cdp-ui-smoke.mjs` / `*-api-check.mjs` |
 
 `packages/shared` 是**契约唯一来源**：节点类型与端口、Zod 图模型、运行状态与 SSE 事件、段标识规则、配方与断言、
-内置提示词块、工程模板、各领域（drill / trace / media / video / bili / nutstore / docs）的类型都在这里。
+内置提示词、工程模板、各领域（drill / trace / media / video / bili / nutstore / docs）的类型都在这里。
 前端与后端都依赖它，因此「改契约」总是从它开始。
 
 ## 2. 技术栈与许可证实况
@@ -164,7 +164,7 @@ POST /api/projects/:id/runs
 | 运行 | `run_node_inputs` | 每个输入一行；`item_key`（段标识）/ `excluded` / `result_text` |
 | 运行 | `run_node_logs` | `kind`（input / ai-request / ai-response / info / error）/ `step` / `input_index` |
 | 配置 | `app_settings` | KV（键名形如 `ai.apiKey`、`nutstore.password`），密钥明文存库 |
-| 配置 | `prompt_blocks` | 自定义提示词块；`builtin` 标记与 `recipe`（配方 JSON） |
+| 配置 | `prompt_blocks` | 自定义提示词；`builtin` 标记与 `recipe`（配方 JSON） |
 | 登录 | `bili_sessions` · `bili_cookies` | 扫码会话状态；Cookie 固定单行 `id=1`（单用户设计） |
 | 媒体 | `media_assets` | `content_key`（唯一，内容寻址）、`file_path`、`status`、`meta_json`（B 站溯源信息） |
 | 媒体 | `run_media` | 某次运行的某节点用了哪个媒体资产（`run_id`+`node_id`+`source_index` 唯一） |
@@ -343,7 +343,7 @@ ASR 支持两种引擎——MiMo 走 `input_audio` data URL（超过 7MB 自动�
 | `projects` | 工程与文件夹树、当前工程、图保存与导入导出 |
 | `runs` | 全局最近运行（供计数与「上次结果」）、按工程缓存 |
 | `settings` | 设置读写、Obsidian 目录、AI/ASR/坚果云测试与同步；密钥草稿存 sessionStorage |
-| `prompts` | 内置块与自定义块的合并列表 |
+| `prompts` | 内置与自定义提示词的合并列表 |
 | `auth` | B 站登录态与扫码轮询 |
 | `ui` | 浮层开关、面板状态、**节点添加总线**（面板写入、画布消费） |
 

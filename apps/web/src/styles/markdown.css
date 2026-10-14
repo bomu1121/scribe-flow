@@ -47,6 +47,91 @@
   color: var(--color-text-secondary);
 }
 
+/*
+ * Obsidian callout（`> [!summary] 速览`）：带标题的盒子。结构与色调映射见
+ * `lib/obsidian-callout.ts`；这里只消费令牌，颜色与 z-index 都不散写（lint:ui 管这条）。
+ * 折叠态是原生 `<details>`，标题走 `<summary>`——自带的三角要藏掉，换成右侧的 ›。
+ */
+.markdown-body .callout {
+  margin: 0.8em 0;
+  padding: 0.5em 0.9em;
+  border-left: 3px solid var(--color-info);
+  border-radius: var(--radius-md);
+  background: var(--color-info-soft);
+}
+
+.markdown-body .callout-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+  color: var(--color-info);
+}
+
+.markdown-body .callout-content > :first-child {
+  margin-top: 0.4em;
+}
+
+.markdown-body .callout-content > :last-child {
+  margin-bottom: 0.2em;
+}
+
+.markdown-body .callout[data-tone="success"] {
+  border-left-color: var(--color-success);
+  background: var(--color-success-soft);
+}
+
+.markdown-body .callout[data-tone="success"] .callout-title {
+  color: var(--color-success);
+}
+
+.markdown-body .callout[data-tone="warning"] {
+  border-left-color: var(--color-warning);
+  background: var(--color-warning-soft);
+}
+
+.markdown-body .callout[data-tone="warning"] .callout-title {
+  color: var(--color-warning);
+}
+
+.markdown-body .callout[data-tone="error"] {
+  border-left-color: var(--color-error);
+  background: var(--color-error-soft);
+}
+
+.markdown-body .callout[data-tone="error"] .callout-title {
+  color: var(--color-error);
+}
+
+.markdown-body .callout[data-tone="neutral"] {
+  border-left-color: var(--color-border-strong);
+  background: var(--color-surface-muted);
+}
+
+.markdown-body .callout[data-tone="neutral"] .callout-title {
+  color: var(--color-text-secondary);
+}
+
+.markdown-body summary.callout-title {
+  list-style: none;
+  cursor: pointer;
+}
+
+.markdown-body summary.callout-title::-webkit-details-marker {
+  display: none;
+}
+
+.markdown-body summary.callout-title::after {
+  content: "›";
+  margin-left: auto;
+  color: var(--color-text-tertiary);
+  transition: transform 120ms ease;
+}
+
+.markdown-body details.callout[open] > summary.callout-title::after {
+  transform: rotate(90deg);
+}
+
 .markdown-body code {
   padding: 0.15em 0.4em;
   border-radius: var(--radius-xs);

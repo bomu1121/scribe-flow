@@ -9,7 +9,7 @@ describe("builtin prompt blocks", () => {
     }
   });
 
-  it("内置块 id 不重复", () => {
+  it("内置提示词 id 不重复", () => {
     const ids = BUILTIN_PROMPT_BLOCKS.map((block) => block.id);
     expect(new Set(ids).size).toBe(ids.length);
   });
@@ -21,13 +21,13 @@ describe("builtin prompt blocks", () => {
     expect(insightBlocks.find((block) => block.id === "builtin.insight.v4")?.recommended).toBe(true);
   });
 
-  it("三个试用块都在、都是单次调用、都不抢推荐位", () => {
+  it("三个试用提示词都在、都是单次调用、都不抢推荐位", () => {
     for (const id of ["builtin.insight.v5", "builtin.insight.v6", "builtin.qa"]) {
       const block = BUILTIN_PROMPT_BLOCKS.find((item) => item.id === id);
       expect(block, id).toBeDefined();
       // 挂配方就是 4 次调用，与「先试用对比」的定位不符
       expect(block?.recipe, id).toBeUndefined();
-      // 推荐位仍归成文版，试用块不夺位
+      // 推荐位仍归成文版，试用提示词不夺位
       expect(block?.recommended, id).toBeUndefined();
     }
     expect(BUILTIN_PROMPT_BLOCKS.find((block) => block.id === "builtin.qa")?.series).toBe("问答笔记");
@@ -80,6 +80,19 @@ describe("builtin prompt blocks", () => {
     expect(p).toContain("一条一行、一事只说一遍");
   });
 
+  it("速览与速查写成 Obsidian callout：速览不折叠、速查折叠并分组，正文小节升到二级", () => {
+    // 依据与实测（平铺 28 条 1093px → 折叠 125px）见 docs/research/obsidian-note-typography.md。
+    // 两个容易静默出错的地方也都钉住：类型名要写全（不认识/写不全的类型要么回落 note 要么显示英文标题）、
+    // 折叠标记 `-` 不能省（省了默认展开，几十条会把页面铺满）。
+    const p = BUILTIN_PROMPT_BLOCKS.find((b) => b.id === "builtin.insight.v6")?.prompt ?? "";
+    expect(p).toContain("> [!summary] 速览");
+    expect(p).toContain("> [!example]- 速查");
+    expect(p).toContain("**默认折叠**，不能省");
+    expect(p).toContain("类别要当结构写，不要塞进圆括号");
+    expect(p).toContain("小标题用**二级**");
+    expect(p).not.toContain("（〈类别〉）");
+  });
+
   it("观点速读：单次调用、自成一个系列、不抢推荐位", () => {
     const brief = BUILTIN_PROMPT_BLOCKS.find((block) => block.id === "builtin.brief");
     expect(brief).toBeDefined();
@@ -105,7 +118,7 @@ describe("builtin prompt blocks", () => {
     expect(prompt).not.toContain("信息不缩水");
   });
 
-  it("忽略清单槽接进了观点笔记全系列（单次块 + v3/v4 配方的拆解与起草步）", () => {
+  it("忽略清单槽接进了观点笔记全系列（单次提示词 + v3/v4 配方的拆解与起草步）", () => {
     const full = "片尾求关注、求点赞、求收藏、转发、投币、三连与下期预告";
     const brief = "不要为它们建 block，也不要在 quotes 里摘它们";
     const byId = (id: string) => BUILTIN_PROMPT_BLOCKS.find((block) => block.id === id);
@@ -121,7 +134,7 @@ describe("builtin prompt blocks", () => {
     }
   });
 
-  it("新增知识科普提炼内置块", () => {
+  it("新增知识科普提炼内置提示词", () => {
     const knowledge = BUILTIN_PROMPT_BLOCKS.find((block) => block.id === "builtin.knowledge");
     expect(knowledge).toBeDefined();
     expect(knowledge?.series).toBe("科普笔记");
@@ -142,7 +155,7 @@ describe("builtin prompt blocks", () => {
     expect(ids).toContain("builtin.knowledge");
   });
 
-  it("新增历史认知加工内置块", () => {
+  it("新增历史认知加工内置提示词", () => {
     const history = BUILTIN_PROMPT_BLOCKS.find((block) => block.id === "builtin.history");
     expect(history).toBeDefined();
     expect(history?.series).toBe("历史脉络梳理");
@@ -214,7 +227,7 @@ describe("builtin prompt blocks", () => {
 });
 
 describe("availablePromptBlocks", () => {
-  it("只放出已过审核的内置块（当前 5 个），其余一律不出现在可选列表里", () => {
+  it("只放出已过审核的内置提示词（当前 5 个），其余一律不出现在可选列表里", () => {
     const ids = availablePromptBlocks(BUILTIN_PROMPT_BLOCKS, true).map((block) => block.id);
     expect([...ids].sort()).toEqual([
       "builtin.insight",
@@ -238,18 +251,18 @@ describe("availablePromptBlocks", () => {
     }
   });
 
-  it("未过审核只影响可选列表：块本身还在 BUILTIN_PROMPT_BLOCKS 里，老工程照常解析", () => {
-    // 引擎按 id 从 BUILTIN_PROMPT_BLOCKS 里解析，不看白名单——已有工程绑过的块不能被这次收紧搞失效
+  it("未过审核只影响可选列表：提示词本身还在 BUILTIN_PROMPT_BLOCKS 里，老工程照常解析", () => {
+    // 引擎按 id 从 BUILTIN_PROMPT_BLOCKS 里解析，不看白名单——已有工程绑过的提示词不能被这次收紧搞失效
     const allIds = BUILTIN_PROMPT_BLOCKS.map((block) => block.id);
     for (const id of ["builtin.insight.v3", "builtin.brief", "builtin.trace.v3"]) expect(allIds).toContain(id);
   });
 
-  it("自定义块不受审核白名单约束（是用户自己写的）", () => {
+  it("自定义提示词不受审核白名单约束（是用户自己写的）", () => {
     const custom = { id: "custom.1", name: "我的块", prompt: "x", builtin: false };
     expect(availablePromptBlocks([...BUILTIN_PROMPT_BLOCKS, custom], true).map((block) => block.id)).toContain("custom.1");
   });
 
-  it("没配检索密钥时不列出以联网核查为核心的模版，其余照常（用注入的块验证，不受白名单影响）", () => {
+  it("没配检索密钥时不列出以联网核查为核心的模版，其余照常（用注入的提示词验证，不受白名单影响）", () => {
     const injected = [
       { id: "x.required", name: "需核查", prompt: "x", builtin: false, externalCheck: "required" as const },
       { id: "x.optional", name: "可选核查", prompt: "x", builtin: false, externalCheck: "optional" as const },
@@ -258,7 +271,7 @@ describe("availablePromptBlocks", () => {
     expect(availablePromptBlocks(injected, true).map((block) => block.id)).toEqual(["x.required", "x.optional"]);
   });
 
-  it("展示范围里收起的节点，它的块也不列出（用注入的块验证）", () => {
+  it("展示范围里收起的节点，它的提示词也不列出（用注入的提示词验证）", () => {
     const injected = [
       { id: "n.a", name: "A", prompt: "x", builtin: false, requiresNode: "process.gameguide" as const },
       { id: "n.b", name: "B", prompt: "x", builtin: false },
@@ -268,8 +281,8 @@ describe("availablePromptBlocks", () => {
   });
 });
 
-describe("aiPromptBlocks（画布节点与快捷新建共用的「AI 加工」可选块）", () => {
-  it("两处下拉是同一份列表：已过审核的 5 个通用块，顺序稳定", () => {
+describe("aiPromptBlocks（画布节点与快捷新建共用的「AI 加工」可选提示词）", () => {
+  it("两处下拉是同一份列表：已过审核的 5 个通用提示词，顺序稳定", () => {
     expect(aiPromptBlocks([], true).map((block) => block.id)).toEqual([
       "builtin.insight",
       "builtin.insight.v4",
@@ -279,21 +292,21 @@ describe("aiPromptBlocks（画布节点与快捷新建共用的「AI 加工」�
     ]);
   });
 
-  it("由专属节点承载的块（阴阳师攻略 / 练一练）不属于「AI 加工」，一次也不出现", () => {
+  it("由专属节点承载的提示词（阴阳师攻略 / 练一练）不属于「AI 加工」，一次也不出现", () => {
     const ids = aiPromptBlocks([], true).map((block) => block.id);
     for (const id of ["builtin.gameguide", "builtin.gameguide.v2", "builtin.drill"]) expect(ids).not.toContain(id);
-    // 反过来也成立：列表里没有任何标了 requiresNode 的块
+    // 反过来也成立：列表里没有任何标了 requiresNode 的提示词
     expect(aiPromptBlocks([], true).every((block) => !block.requiresNode)).toBe(true);
   });
 
-  it("自定义块追加在内置块之后，且不受审核白名单约束", () => {
+  it("自定义提示词追加在内置提示词之后，且不受审核白名单约束", () => {
     const custom = { id: "custom.1", name: "我的块", prompt: "x", builtin: false };
     const blocks = aiPromptBlocks([custom], true);
     expect(blocks.at(-1)).toBe(custom);
     expect(blocks.length).toBe(aiPromptBlocks([], true).length + 1);
   });
 
-  it("没配检索密钥时不列出需要联网核查的块", () => {
+  it("没配检索密钥时不列出需要联网核查的提示词", () => {
     expect(aiPromptBlocks([], false).every((block) => block.externalCheck !== "required")).toBe(true);
   });
 });

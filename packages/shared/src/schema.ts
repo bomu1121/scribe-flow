@@ -116,6 +116,8 @@ const nodeDataByType = {
     url: z.string().optional(),
     folder: z.string().optional(),
     overwrite: z.boolean().optional(),
+    // 缺省＝开（多个输入各写一篇）；关掉才合并成一篇（见 graph.ts 的 ObsidianData）。
+    splitByInput: z.boolean().optional(),
     // 这两个是「这一篇怎么办」的覆盖项，缺省跟随设置页的默认（见 graph.ts 的 ObsidianData）。
     // 字段名沿用设置页那一套校验：单名 12 字、最多 MAX_EXTRACT_FIELDS 个——引擎会再 sanitize 一次，
     // 这里拦住的是"图里存了明显不合法的值"。

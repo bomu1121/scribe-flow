@@ -79,8 +79,10 @@ export interface ScribeNodeData {
   source?: string;
   author?: string;
   folder?: string;
-  /** 保存目录里已有同名笔记时是否直接覆盖；缺省覆盖，关掉则退让成「标题 (2).md」。 */
+  /** 保存目录里已有同名笔记时是否整篇重写它；缺省关＝退让成「标题 (2).md」。 */
   overwrite?: boolean;
+  /** 一次运行收到多个输入时，每个输入各写一篇笔记（缺省＝开；关掉才合并成一篇）。 */
+  splitByInput?: boolean;
   /**
    * 这一篇要不要让 AI 读一遍（判话题标签 + 抽属性）。
    * 三态：`undefined`＝跟随设置页的默认；`true`／`false`＝这一篇明确要 / 不要。

@@ -91,9 +91,9 @@ function writePrefs() {
 const videoTemplates = computed<WorkflowTemplate[]>(() =>
   visibleTemplates(settingsStore.settings?.visibility?.hiddenNodes).filter((tpl) => supportsSource(tpl, "bili")),
 );
-/** 检索密钥没配时，需要联网核查的块不出现在可选列表里（跑出来只有一份没核查的清单）。 */
+/** 检索密钥没配时，需要联网核查的提示词不出现在可选列表里（跑出来只有一份没核查的清单）。 */
 const searchReady = computed(() => Boolean(settingsStore.settings?.search.hasKey));
-/** 与画布节点上的提示词下拉共用一份列表（`aiPromptBlocks`），两处能选到的块必须一致。 */
+/** 与画布节点上的提示词下拉共用一份列表（`aiPromptBlocks`），两处能选到的提示词必须一致。 */
 const promptOptions = computed(() => aiPromptBlocks(promptsStore.customBlocks, searchReady.value));
 
 const link = ref("");
@@ -116,20 +116,20 @@ const hasPromptNode = computed(
   () => buildTemplateGraph(templateId.value, { source: "bili" })?.nodes.some((node) => node.type === "process.prompt") ?? false,
 );
 /**
- * 这里选块有没有意义：要有「AI 加工」节点，且**节点自己没带块**。
+ * 这里选提示词有没有意义：要有「AI 加工」节点，且**节点自己没带提示词**。
  *
- * 有节点但块已经绑好的是「全提示词对照」——每条分支各绑一个（`buildTemplateGraph` 里模板写死的块优先），
+ * 有节点但块已经绑好的是「全提示词对照」——每条分支各绑一个（`buildTemplateGraph` 里模板写死的提示词优先），
  * 在这里选一个会以为生效了，其实一个都不会被覆盖。
  */
 const promptSelectable = computed(() => {
   const nodes = buildTemplateGraph(templateId.value, { source: "bili" })?.nodes ?? [];
   return nodes.some((node) => node.type === "process.prompt" && !(node.data as { promptBlockId?: string }).promptBlockId);
 });
-/** 选择框下面那行小字：说明这里选的块会不会生效，以及为什么。 */
+/** 选择框下面那行小字：说明这里选的提示词会不会生效，以及为什么。 */
 const promptHint = computed(() => {
-  if (promptSelectable.value) return selectedBlock.value?.description || "该块没有说明文案，可在设置页查看正文。";
+  if (promptSelectable.value) return selectedBlock.value?.description || "该提示词没有说明文案，可在设置页查看正文。";
   return hasPromptNode.value
-    ? "该链路的每条 AI 加工分支都已各自绑好提示词块，这里选了不会覆盖（进画布可逐个改）。"
+    ? "该链路的每条 AI 加工分支都已各自绑好提示词，这里选了不会覆盖（进画布可逐个改）。"
     : "该链路没有 AI 加工节点，加工节点自带提示词。";
 });
 const selectedBlock = computed(() => promptOptions.value.find((block) => block.id === promptBlockId.value));
@@ -213,7 +213,7 @@ watch(
   () => props.open,
   async (open) => {
     if (!open) return;
-    // 先拿到设置：可选提示词块要看「有没有配检索密钥」，否则 reset 会挑出一个之后被过滤掉的块。
+    // 先拿到设置：可选提示词要看「有没有配检索密钥」，否则 reset 会挑出一个之后被过滤掉的提示词。
     await settingsStore.ensureLoaded();
     reset();
     void promptsStore.load();

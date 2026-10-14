@@ -6,7 +6,7 @@ import { WORKFLOW_TEMPLATES } from "./templates";
 
 /**
  * 展示范围（设置页「收起哪些节点」）的规则：只影响新建时的可选项，
- * 而且链路与提示词块要跟着各自的节点一起收起来——四处入口共用这一份判定。
+ * 而且链路与提示词要跟着各自的节点一起收起来——四处入口共用这一份判定。
  */
 
 describe("NODE_TYPE_ORDER", () => {
@@ -76,7 +76,7 @@ describe("visibleTemplates", () => {
 });
 
 describe("availablePromptBlocks 与展示范围", () => {
-  it("承载块的节点被收起时，它的块不再出现；通用块不受影响", () => {
+  it("承载提示词的节点被收起时，它的提示词不再出现；通用提示词不受影响", () => {
     const visible = availablePromptBlocks(BUILTIN_PROMPT_BLOCKS, true, ["process.gameguide", "process.drill"]);
     const ids = visible.map((block) => block.id);
     expect(ids).not.toContain("builtin.gameguide");
@@ -85,9 +85,9 @@ describe("availablePromptBlocks 与展示范围", () => {
     expect(ids).toContain("builtin.insight.v4");
   });
 
-  it("不传展示范围时仍受「已过审核」白名单约束，不再把全部内置块交回", () => {
+  it("不传展示范围时仍受「已过审核」白名单约束，不再把全部内置提示词交回", () => {
     // 这条原来断言「与从前一致、原样交回」，2026-10-12 起不成立了：
-    // 只放出经过确认的 5 个块，其余等重构审核完成后再逐个放开。
+    // 只放出经过确认的 5 个提示词，其余等重构审核完成后再逐个放开。
     const before = availablePromptBlocks(BUILTIN_PROMPT_BLOCKS, true);
     expect(before.length).toBeLessThan(BUILTIN_PROMPT_BLOCKS.length);
     expect(before.map((block) => block.id)).toEqual([
@@ -99,7 +99,7 @@ describe("availablePromptBlocks 与展示范围", () => {
     ]);
   });
 
-  it("检索密钥没配时不列出「必须有联网核查」的块（用注入的块验证，不受白名单影响）", () => {
+  it("检索密钥没配时不列出「必须有联网核查」的提示词（用注入的提示词验证，不受白名单影响）", () => {
     const injected = [
       { id: "x.required", name: "需核查", prompt: "x", builtin: false, externalCheck: "required" as const },
     ];

@@ -63,7 +63,7 @@ const seriesOptions = computed(() => {
     const series = blockSeries(block);
     counts.set(series, (counts.get(series) ?? 0) + 1);
   }
-  const options: Array<{ value: string; label: string }> = [{ value: ALL_SERIES, label: "全部系列（可跨块对比）" }];
+  const options: Array<{ value: string; label: string }> = [{ value: ALL_SERIES, label: "全部系列（可跨系列对比）" }];
   for (const [series, count] of counts) {
     if (count >= 2) options.push({ value: series, label: `${series}（${count}）` });
   }
@@ -153,10 +153,10 @@ function copyBlock(block: PromptBlock | undefined) {
   <Teleport to="body">
     <Transition name="pbd-fade">
       <div v-if="open" class="pbd-overlay" @click.self="emit('update:open', false)">
-        <section class="pbd-panel" role="dialog" aria-modal="true" aria-label="提示词块版本对比">
+        <section class="pbd-panel" role="dialog" aria-modal="true" aria-label="提示词版本对比">
           <header class="pbd-header">
             <div class="pbd-heading">
-              <h2 class="pbd-title">提示词块对比</h2>
+              <h2 class="pbd-title">提示词对比</h2>
               <p class="pbd-sub">对比内容包含「提示词 + 配方步骤」，同一系列版本差异会高亮显示。</p>
             </div>
             <button type="button" class="pbd-close" aria-label="关闭对比" @click="emit('update:open', false)">
@@ -164,11 +164,11 @@ function copyBlock(block: PromptBlock | undefined) {
             </button>
           </header>
 
-          <div v-if="seriesOptions.length === 0" class="pbd-state">当前没有可对比的系列（同一系列至少需要 2 个块）。</div>
+          <div v-if="seriesOptions.length === 0" class="pbd-state">当前没有可对比的系列（同一系列至少需要 2 个提示词）。</div>
           <template v-else>
             <div class="pbd-controls">
               <label class="pbd-field">
-                <span class="pbd-field-label">模板系列</span>
+                <span class="pbd-field-label">系列</span>
                 <el-select v-model="seriesFilter" class="pbd-select" size="small">
                   <el-option v-for="series in seriesOptions" :key="series.value" :label="series.label" :value="series.value" />
                 </el-select>
@@ -235,7 +235,7 @@ function copyBlock(block: PromptBlock | undefined) {
 </template>
 
 <style>
-/* 提示词块对比浮层：与运行日志浮层保持同一套纸面风格。 */
+/* 提示词对比浮层：与运行日志浮层保持同一套纸面风格。 */
 .pbd-overlay {
   position: fixed;
   inset: 0;

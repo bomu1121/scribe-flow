@@ -120,7 +120,7 @@ export const appSettings = sqliteTable("app_settings", {
 });
 
 
-/** 提示词块：内置块在 shared 中，这里只存自定义块。 */
+/** 提示词：内置提示词在 shared 中，这里只存自定义提示词。 */
 export const promptBlocks = sqliteTable("prompt_blocks", {
   id: text("id").primaryKey(),
   name: text("name").notNull(),

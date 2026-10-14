@@ -24,6 +24,7 @@ import {
   tagPathGroup,
   managedTags,
   uniqueNoteFileName,
+  type AppSettings,
   type GraphNode,
   type NodeOutput,
   type NodePick,
@@ -268,7 +269,7 @@ const REFINE_DEFAULT_SYSTEM = [
   "「当前素材信息」只用来校订专有名词，不要据此补充文稿中没有的内容。",
 ].join("\n");
 
-/** 逐项加工节点的兜底提示词（节点既没选提示词块、也没写覆盖提示词时用它）。 */
+/** 逐项加工节点的兜底提示词（节点既没选提示词、也没写覆盖提示词时用它）。 */
 const DEFAULT_EDIT_SYSTEM = "你是内容编辑。按用户要求整理文稿，只输出整理结果。";
 
 /**
@@ -276,7 +277,7 @@ const DEFAULT_EDIT_SYSTEM = "你是内容编辑。按用户要求整理文稿，
  *
  * 校对节点原本只看得到转写稿本身，遇到 ASR 自己都没把握的新词就只能靠猜。来源标签
  * （`InputSourceMeta.label`，形如 `《视频标题》 P1 · UP：xxx · 链接`）是**素材自己的
- * 元信息**，不是模型补的背景知识，所以用它校字与内置块里那条「不添加原文没有的知识」
+ * 元信息**，不是模型补的背景知识，所以用它校字与内置提示词里那条「不添加原文没有的知识」
  * 不冲突——提示词里也写明了它的用途只限于校订专有名词。
  */
 function withSourceMetaHint(system: string, sourceMeta: InputSourceMeta | undefined): string {
@@ -1401,7 +1402,7 @@ export class RunEngine {
         /** 知识巩固产物编译后的摘要；空串表示沿用通用摘要。 */
         let drillSummary = "";
 
-        // 配方分支：process.prompt / process.gameguide / process.drill 且块带 recipe、且无自定义提示词覆盖时执行多步链。
+        // 配方分支：process.prompt / process.gameguide / process.drill 且选中的提示词带 recipe、且无自定义提示词覆盖时执行多步链。
         const recipe =
           (node.type === "process.prompt" || node.type === "process.gameguide" || isDrill) && !override.trim()
             ? builtin?.recipe
@@ -1428,7 +1429,7 @@ export class RunEngine {
               drillParams,
             );
             let finalText = recipeRun.text;
-            // 联网核查：由提示词块自己声明（PromptBlock.externalCheck），不再硬编码具体块 id。
+            // 联网核查：由提示词自己声明（PromptBlock.externalCheck），不再硬编码具体提示词 id。
             if (builtin?.externalCheck) {
               const searchConfig = getSearchConfig(this.db);
               if (!searchConfig.apiKey) {
@@ -1486,7 +1487,7 @@ export class RunEngine {
         /**
          * 只有走引擎默认提示词的校对节点才追加素材信息。
          *
-         * 用户自己写的覆盖提示词、或选中提示词块时都不追加：那两种情况下的指令是用户/内置块
+         * 用户自己写的覆盖提示词、或选中提示词时都不追加：那两种情况下的指令是用户/内置提示词
          * 自己的事，引擎往里塞内容会出现「我明明覆盖了提示词，它却还在加东西」。
          */
         const attachSourceMeta = node.type === "process.refine" && !override.trim() && !builtin?.prompt;
@@ -1711,152 +1712,230 @@ export class RunEngine {
           dir = join(vaultPath, ...segments);
           await mkdir(dir, { recursive: true });
         }
-        const text = inputs.text.trim();
-        const meta = this.upstreamSourceMeta(active, node.id);
-        const source = String(data.source ?? "").trim() || meta.source || "";
-        const author = String(data.author ?? "").trim() || meta.author || "";
-        const url = String(data.url ?? "").trim() || meta.url || "";
-        let title = String(data.title ?? "").trim();
-        if (!title) {
-          const firstHeading = text.match(/^#\s+(.+)$/m)?.[1]?.trim() ?? "";
-          title = meta.title || firstHeading || "未命名笔记";
-        }
-        const created = new Date().toISOString().slice(0, 10);
-        const noteType = source === "文本" ? "学习笔记" : source === "B站" || source === "本地文件" ? "视频笔记" : "笔记";
-        const explicitTags = String(data.tags ?? "")
-          .split(/[,，\s]+/)
-          .map((tag) => normalizeTagSegment(tag))
-          .filter(Boolean);
-        // 先定文件名：「同名覆盖」关着时它会退让成「标题 (2).md」。名字必须在写盘前定死——
-        // 下面的读旧标签、关联扫描、记指纹三处都按最终名走，等到写盘那一刻才改名，前面就都落在旧名上。
-        const stem = escapePathName(title);
-        let fileName = `${stem}.md`;
-        if (data.overwrite === false) {
-          const taken = await this.takenNoteNames(nutstoreMode && config ? { config, remoteDir } : undefined, dir);
-          fileName = uniqueNoteFileName(stem, (name) => taken.has(name));
-        }
-        const outPath = nutstoreMode ? `${remoteDir}/${fileName}` : join(dir, fileName);
+        const target = {
+          folder,
+          vaultPath,
+          dir,
+          remote: config ? { config, remoteDir, remoteRoot: remoteObsidianRoot } : undefined,
+        };
 
         /*
-         * 「这一篇怎么抽」由节点决定，设置页只提供默认值——与保存目录（`folder`）同一套约定。
-         * 理由：一个人会用不同风格处理不同视频，若只能改全局设置，每换一类都得回去改一次设置页。
+         * 「每个输入一篇」：同一个文稿挂了几个提示词配方（详尽版 / 成文版 / 速览版…）时，
+         * 每个输入各自成篇——合并的话，读完第一篇才发现另外几版也在里面，各版的标题与导读挤在同一份文档里。
+         * **默认开**：`splitByInput` 缺省＝开，与卡片上的开关同一套口径（卡片只有开/关两态，
+         * 缺省另算一套的话开关显示的就是假的：显示开着而引擎在合并）。
+         * 关掉开关（`data.splitByInput === false`）才走压平语义，见 docs/nodes.md §1.2。
+         * 只有一份输入时两种模式等价，所以分流条件里带上「多于一份」，
+         * 免得单输入也白白多走一遍「每篇各自判标签」的模型调用。
+         */
+        const textItems = inputs.items.filter((item) => item.output.kind !== "audio" && (item.output.text ?? "").trim());
+        const split = data.splitByInput !== false && textItems.length > 1;
+        const pending = split
+          ? textItems.map((item) => ({
+              text: (item.output.text ?? "").trim(),
+              meta: this.upstreamSourceMeta(active, item.sourceNodeId),
+              itemKey: item.itemKey,
+            }))
+          : [{ text: inputs.text.trim(), meta: this.upstreamSourceMeta(active, node.id), itemKey: undefined as string | undefined }];
+
+        /*
+         * 先定文件名：名字必须在写盘前定死——下面每篇的读旧标签、关联扫描、记指纹三处都按最终名走，
+         * 等到写盘那一刻才改名，前面就都落在旧名上。
          *
-         * · autoTag 是三态：`undefined`＝跟随设置；`true`／`false`＝这一篇明确要 / 不要。
-         *   它是唯一能连话题标签一起关掉的地方（属性抽取与标签判定共用这一个开关）。
-         * · extractFields 留空或全清＝跟随设置（所以没有"明确不抽"这个单独状态）。
+         * 多篇模式的篇名取各篇正文的第一个 H1：这时几篇讲的是同一个素材，沿用「素材标题优先」的话
+         * 名字会全撞在一起，只能靠 (2) (3) 区分，等于没有名字。
          */
-        const aiNote = data.autoTag === undefined ? settings.obsidian.autoTagEnabled : data.autoTag === true;
-        const nodeFields = sanitizeExtractFields(data.extractFields);
-        const extractFields = nodeFields.length > 0 ? nodeFields : settings.obsidian.extractFields;
-        const entities = aiNote && extractFields.length > 0 ? await this.extractEntities(text, extractFields, signal) : {};
-        const body = text.startsWith("# ") ? text : `# ${title}\n\n${text}`;
-
         /*
-         * 标签三类：
-         * · **自动标签**：来源（取自 `来源:` 那个值）与 UP 主（作者），都是确定性的、不花模型钱，
-         *   用户只能决定写不写——设置页给默认，节点卡片可逐篇覆盖（与保存目录同一套约定）；
-         * · **话题标签**：词库 + AI 判定；
-         * · 人写在文件里的标签：原样保留（`humanTags`）。
+         * `taken`＝保存目录里已有的文件名。**默认不覆盖**（`overwrite` 缺省＝关，与卡片上的开关同一套口径）：
+         * 缺省这一趟得先把目录读出来，已有的同名笔记才不会被盖掉——要省这一次目录列举（坚果云模式是一次
+         * PROPFIND）就在节点上打开「同名笔记直接覆盖」（`data.overwrite === true`）。
          */
-        const sourceName = normalizeTagSegment(source);
-        const upName = normalizeTagSegment(author);
-        const wantSourceTag = data.sourceTag === undefined ? settings.obsidian.sourceTagEnabled : data.sourceTag === true;
-        const wantUpTag = data.upTag === undefined ? settings.obsidian.upTagEnabled : data.upTag === true;
-        let taxonomy = settings.obsidian.tagTaxonomy;
-        let topicTags: string[] = [];
-        if (aiNote && Object.keys(taxonomy).length > 0) {
-          const aiConfig = getAiConfig(this.db);
-          if (aiConfig.apiKey) {
-            const tagged = await tagNoteContent(aiConfig, taxonomy, {
-              key: "note",
-              fileName: title,
-              content: body,
-              allowNewTags: settings.obsidian.allowNewTags,
-              signal,
-            });
-            topicTags = tagged.topicTags;
-            if (tagged.error) await this.log(active, node.id, "info", `话题标签判定失败，本次只写 UP 标签：${tagged.error}`);
-            if (tagged.learnedTags.length > 0) {
-              taxonomy = await this.learnTags(tagged.learnedTags);
-              // 词库是聚合口径，被 AI 补了叶子必须留痕——悄悄变化比变化本身更糟。
-              await this.log(active, node.id, "info", `词库新增标签：${tagged.learnedTags.join("、")}`);
-            }
-          }
-        }
-        // 入库是"再写一次"：目标文件已存在时，保留人手补过的标签，别把人的劳动抹掉。
-        const existing = nutstoreMode ? "" : await readFile(outPath, "utf8").catch(() => "");
-        const ours = new Set(managedTags(taxonomy).map((tag) => tag.toLowerCase()));
-        const humanTags = existing
-          ? parseNoteTags(existing).frontmatter.filter((tag) => !ours.has(tag.toLowerCase()) && !isAutoTag(tag))
-          : [];
-        // 自动分组由这里统一写：开关关掉就不写，文件里同组的旧标签也一并不留（那是这个开关管的东西）。
-        // 要留着就把它打开，或者改完元数据（来源/作者）再重跑。
-        const autoTags = [
-          ...(wantSourceTag && sourceName ? [`${SOURCE_TAXONOMY_GROUP}/${sourceName}`] : []),
-          ...(wantUpTag && upName ? [`${UP_TAXONOMY_GROUP}/${upName}`] : []),
-        ];
-        const tags = [...new Set([...explicitTags, ...humanTags, ...autoTags, ...topicTags])];
+        const explicitTitle = String(data.title ?? "").trim();
+        const taken = data.overwrite === true ? undefined : await this.takenNoteNames(config ? { config, remoteDir } : undefined, dir);
+        const used = new Set<string>();
+        const planned = pending.map((note) => {
+          const heading = note.text.match(/^#\s+(.+)$/m)?.[1]?.trim() ?? "";
+          const title = split
+            ? heading || explicitTitle || note.meta.title || "未命名笔记"
+            : explicitTitle || note.meta.title || heading || "未命名笔记";
+          const fileName = uniqueNoteFileName(escapePathName(title), (name) => Boolean(taken?.has(name)) || used.has(name));
+          used.add(fileName);
+          return { ...note, title, fileName };
+        });
 
-        const frontmatterLines = [
-          "---",
-          `标题: ${title}`,
-          `类型: ${noteType}`,
-          source ? `来源: ${source}` : undefined,
-          author ? `作者: ${author}` : undefined,
-          url ? `原始链接: ${url}` : undefined,
-          `创建日期: ${created}`,
-          // 抽取出来的属性一律写成列表：字段名是用户配的，不该再为"某个字段是单值"写特例。
-          ...extractFields.flatMap((field) =>
-            (entities[field] ?? []).length > 0 ? [`${field}:`, ...(entities[field] ?? []).map((value) => `  - ${value}`)] : [],
-          ),
-          "---",
-        ].filter((line): line is string => typeof line === "string");
-        let markdown = `${frontmatterLines.join("\n")}\n\n${body}\n`;
-        // 走 upsert 而不是在这里手拼 YAML：它带写完自校验，也负责必要的引号。
-        if (tags.length > 0) {
-          const applied = upsertFrontMatterTags(markdown, tags);
-          if (applied.ok) markdown = applied.content;
-          else await this.log(active, node.id, "info", `标签未写入 front matter（${applied.reason}），笔记仍已保存`);
+        const written: { path: string; fileName: string; markdown: string; tags: string[]; relatedCount: number }[] = [];
+        for (const note of planned) {
+          written.push(await this.writeObsidianNote(active, node, settings, note, target, signal));
         }
 
-        // 自动关联：按设置里配置的抽取字段在库里找相关笔记（字段留空时没有可比的东西，自然不关联）。
-        // 判定与段落写法都走 `related-notes.ts`，设置页的「回补相关笔记」用的是同一份实现。
-        let relatedNames: string[] = [];
-        if (settings.obsidian.autoLinkEnabled && settings.obsidian.autoLinkMax > 0 && extractFields.length > 0) {
-          const existingNotes =
-            nutstoreMode && config
-              ? await this.scanRemoteObsidianNotes(config, remoteObsidianRoot, extractFields)
-              : await scanVaultNotes(vaultPath, extractFields, { excludePaths: [outPath] });
-          relatedNames = findRelatedNoteNames(
-            { fields: entities, title },
-            prepareRelatedNotes(existingNotes),
-            settings.obsidian.autoLinkMax || 5,
-          );
-          if (relatedNames.length > 0) markdown = upsertRelatedSection(markdown, relatedNames).content;
-        }
-
-        if (nutstoreMode && config) {
-          await writeRemoteFile(config, outPath, markdown);
-          await this.log(active, node.id, "info", `已写入坚果云 Obsidian：${outPath}`);
-        } else {
-          await writeFile(outPath, markdown, "utf8");
-          await this.log(active, node.id, "info", `已写入 Obsidian：${outPath}`);
-          // 记下判定指纹，全库重打标时才能跳过这一篇（没有它会把刚入库的笔记重判一遍）。
-          if (vaultPath && tags.length > 0) {
-            rememberNoteTags(this.db, vaultPath, [...segments, fileName].join("/"), markdown, tags, taxonomy);
-          }
-        }
-        const linkText = relatedNames.length > 0 ? ` · 关联 ${relatedNames.length} 篇` : "";
-        const tagText = tags.length > 0 ? ` · ${tags.length} 个标签` : "";
+        const label = nutstoreMode ? "坚果云 Obsidian" : "Obsidian";
+        const outputs: NodeOutput[] = written.map((note, index) => ({
+          kind: "noteDoc",
+          text: note.markdown,
+          size: note.markdown.length,
+          path: note.path,
+          itemKey: planned[index]?.itemKey,
+        }));
+        // 多篇时标签按去重后的总数目报（每篇的标签各自写在自己那篇的 front matter 里）。
+        const tagCount = split ? new Set(written.flatMap((note) => note.tags)).size : written[0]!.tags.length;
+        const relatedTotal = written.reduce((sum, note) => sum + note.relatedCount, 0);
         return {
-          outputs: [{ kind: "noteDoc", text: markdown, size: markdown.length, path: outPath }],
-          summary: `已保存到 ${nutstoreMode ? "坚果云 Obsidian" : "Obsidian"}：${folder}/${fileName}${tagText}${linkText}`,
+          outputs,
+          summary: `${split ? `已保存 ${written.length} 篇` : "已保存"}到 ${label}：${split ? `${folder}/` : `${folder}/${written[0]!.fileName}`}${
+            tagCount > 0 ? ` · ${tagCount} 个标签` : ""
+          }${relatedTotal > 0 ? ` · 关联 ${relatedTotal} 篇` : ""}`,
         };
       }
 
       default:
         throw new Error(`节点类型暂不支持：${(node as { type: string }).type}`);
     }
+  }
+
+  /**
+   * 写一篇 Obsidian 笔记：定标签 → 抽属性 → 拼 frontmatter → 找相关笔记 → 落盘。
+   *
+   * 「多个输入合并成一篇」与「每个输入各写一篇」共用这一段：调用方负责定好这一篇的正文、
+   * 标题与文件名，这里只管把「这一篇」写出来。两条路径若各留一份实现，标签与 frontmatter 迟早会分叉。
+   */
+  private async writeObsidianNote(
+    active: ActiveRun,
+    node: GraphNode,
+    settings: AppSettings,
+    note: {
+      text: string;
+      title: string;
+      fileName: string;
+      meta: { source?: string; author?: string; url?: string; title?: string };
+    },
+    target: {
+      folder: string;
+      vaultPath: string;
+      dir: string;
+      remote?: { config: NutstoreConfig; remoteDir: string; remoteRoot: string };
+    },
+    signal?: AbortSignal,
+  ): Promise<{ path: string; fileName: string; markdown: string; tags: string[]; relatedCount: number }> {
+    const data = node.data as Record<string, unknown>;
+    const { text, title, fileName, meta } = note;
+    const nutstoreMode = Boolean(target.remote);
+    const source = String(data.source ?? "").trim() || meta.source || "";
+    const author = String(data.author ?? "").trim() || meta.author || "";
+    const url = String(data.url ?? "").trim() || meta.url || "";
+    const created = new Date().toISOString().slice(0, 10);
+    const noteType = source === "文本" ? "学习笔记" : source === "B站" || source === "本地文件" ? "视频笔记" : "笔记";
+    const explicitTags = String(data.tags ?? "")
+      .split(/[,，\s]+/)
+      .map((tag) => normalizeTagSegment(tag))
+      .filter(Boolean);
+    const outPath = target.remote ? `${target.remote.remoteDir}/${fileName}` : join(target.dir, fileName);
+
+    /*
+     * 「这一篇怎么抽」由节点决定，设置页只提供默认值——与保存目录（`folder`）同一套约定。
+     * 理由：一个人会用不同风格处理不同视频，若只能改全局设置，每换一类都得回去改一次设置页。
+     *
+     * · autoTag 是三态：`undefined`＝跟随设置；`true`／`false`＝这一篇明确要 / 不要。
+     *   它是唯一能连话题标签一起关掉的地方（属性抽取与标签判定共用这一个开关）。
+     * · extractFields 留空或全清＝跟随设置（所以没有"明确不抽"这个单独状态）。
+     */
+    const aiNote = data.autoTag === undefined ? settings.obsidian.autoTagEnabled : data.autoTag === true;
+    const nodeFields = sanitizeExtractFields(data.extractFields);
+    const extractFields = nodeFields.length > 0 ? nodeFields : settings.obsidian.extractFields;
+    const entities = aiNote && extractFields.length > 0 ? await this.extractEntities(text, extractFields, signal) : {};
+    const body = text.startsWith("# ") ? text : `# ${title}\n\n${text}`;
+
+    /*
+     * 标签三类：
+     * · **自动标签**：来源（取自 `来源:` 那个值）与 UP 主（作者），都是确定性的、不花模型钱，
+     *   用户只能决定写不写——设置页给默认，节点卡片可逐篇覆盖（与保存目录同一套约定）；
+     * · **话题标签**：词库 + AI 判定；
+     * · 人写在文件里的标签：原样保留（`humanTags`）。
+     */
+    const sourceName = normalizeTagSegment(source);
+    const upName = normalizeTagSegment(author);
+    const wantSourceTag = data.sourceTag === undefined ? settings.obsidian.sourceTagEnabled : data.sourceTag === true;
+    const wantUpTag = data.upTag === undefined ? settings.obsidian.upTagEnabled : data.upTag === true;
+    let taxonomy = settings.obsidian.tagTaxonomy;
+    let topicTags: string[] = [];
+    if (aiNote && Object.keys(taxonomy).length > 0) {
+      const aiConfig = getAiConfig(this.db);
+      if (aiConfig.apiKey) {
+        const tagged = await tagNoteContent(aiConfig, taxonomy, {
+          key: "note",
+          fileName: title,
+          content: body,
+          allowNewTags: settings.obsidian.allowNewTags,
+          signal,
+        });
+        topicTags = tagged.topicTags;
+        if (tagged.error) await this.log(active, node.id, "info", `话题标签判定失败，本次只写 UP 标签：${tagged.error}`);
+        if (tagged.learnedTags.length > 0) {
+          taxonomy = await this.learnTags(tagged.learnedTags);
+          // 词库是聚合口径，被 AI 补了叶子必须留痕——悄悄变化比变化本身更糟。
+          await this.log(active, node.id, "info", `词库新增标签：${tagged.learnedTags.join("、")}`);
+        }
+      }
+    }
+    // 入库是"再写一次"：目标文件已存在时，保留人手补过的标签，别把人的劳动抹掉。
+    const existing = nutstoreMode ? "" : await readFile(outPath, "utf8").catch(() => "");
+    const ours = new Set(managedTags(taxonomy).map((tag) => tag.toLowerCase()));
+    const humanTags = existing
+      ? parseNoteTags(existing).frontmatter.filter((tag) => !ours.has(tag.toLowerCase()) && !isAutoTag(tag))
+      : [];
+    // 自动分组由这里统一写：开关关掉就不写，文件里同组的旧标签也一并不留（那是这个开关管的东西）。
+    // 要留着就把它打开，或者改完元数据（来源/作者）再重跑。
+    const autoTags = [
+      ...(wantSourceTag && sourceName ? [`${SOURCE_TAXONOMY_GROUP}/${sourceName}`] : []),
+      ...(wantUpTag && upName ? [`${UP_TAXONOMY_GROUP}/${upName}`] : []),
+    ];
+    const tags = [...new Set([...explicitTags, ...humanTags, ...autoTags, ...topicTags])];
+
+    const frontmatterLines = [
+      "---",
+      `标题: ${title}`,
+      `类型: ${noteType}`,
+      source ? `来源: ${source}` : undefined,
+      author ? `作者: ${author}` : undefined,
+      url ? `原始链接: ${url}` : undefined,
+      `创建日期: ${created}`,
+      // 抽取出来的属性一律写成列表：字段名是用户配的，不该再为"某个字段是单值"写特例。
+      ...extractFields.flatMap((field) =>
+        (entities[field] ?? []).length > 0 ? [`${field}:`, ...(entities[field] ?? []).map((value) => `  - ${value}`)] : [],
+      ),
+      "---",
+    ].filter((line): line is string => typeof line === "string");
+    let markdown = `${frontmatterLines.join("\n")}\n\n${body}\n`;
+    // 走 upsert 而不是在这里手拼 YAML：它带写完自校验，也负责必要的引号。
+    if (tags.length > 0) {
+      const applied = upsertFrontMatterTags(markdown, tags);
+      if (applied.ok) markdown = applied.content;
+      else await this.log(active, node.id, "info", `标签未写入 front matter（${applied.reason}），笔记仍已保存`);
+    }
+
+    // 自动关联：按设置里配置的抽取字段在库里找相关笔记（字段留空时没有可比的东西，自然不关联）。
+    // 判定与段落写法都走 `related-notes.ts`，设置页的「回补相关笔记」用的是同一份实现。
+    let relatedNames: string[] = [];
+    if (settings.obsidian.autoLinkEnabled && settings.obsidian.autoLinkMax > 0 && extractFields.length > 0) {
+      const existingNotes = target.remote
+        ? await this.scanRemoteObsidianNotes(target.remote.config, target.remote.remoteRoot, extractFields)
+        : await scanVaultNotes(target.vaultPath, extractFields, { excludePaths: [outPath] });
+      relatedNames = findRelatedNoteNames({ fields: entities, title }, prepareRelatedNotes(existingNotes), settings.obsidian.autoLinkMax || 5);
+      if (relatedNames.length > 0) markdown = upsertRelatedSection(markdown, relatedNames).content;
+    }
+
+    if (target.remote) {
+      await writeRemoteFile(target.remote.config, outPath, markdown);
+      await this.log(active, node.id, "info", `已写入坚果云 Obsidian：${outPath}`);
+    } else {
+      await writeFile(outPath, markdown, "utf8");
+      await this.log(active, node.id, "info", `已写入 Obsidian：${outPath}`);
+      // 记下判定指纹，全库重打标时才能跳过这一篇（没有它会把刚入库的笔记重判一遍）。
+      if (target.vaultPath && tags.length > 0) {
+        const segments = target.folder.split(/[\\/]+/).filter(Boolean);
+        rememberNoteTags(this.db, target.vaultPath, [...segments, fileName].join("/"), markdown, tags, taxonomy);
+      }
+    }
+    return { path: outPath, fileName, markdown, tags, relatedCount: relatedNames.length };
   }
 
   /**

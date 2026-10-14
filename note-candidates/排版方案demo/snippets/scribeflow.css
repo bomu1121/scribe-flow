@@ -1,0 +1,37 @@
+/*
+ * ScribeFlow 笔记样式片段（方案 D 用的那份 CSS）
+ *
+ * 装法：把本文件拷进 <库>/.obsidian/snippets/ 下 → 设置 → 外观 → CSS 片段 → 刷新 → 打开开关。
+ * 只作用于 frontmatter 里写了 `cssclasses: [scribeflow]` 的笔记，不动库里其他笔记。
+ *
+ * 变量名取自 Obsidian 官方开发者文档的 CSS 变量参考（--background-secondary /
+ * --background-modifier-border / --text-accent / --radius-m）。个别主题里若某个变量
+ * 没定义，括号里给了兜底值；再不行就先在你的主题里确认变量名。
+ */
+
+/* 小节标题：一条淡分隔线，让 ## 级标题在长文里"站得住" */
+.scribeflow h2 {
+  padding-bottom: 0.2em;
+  border-bottom: 1px solid var(--background-modifier-border, #e0e0e0);
+  margin-top: 1.8em;
+}
+
+/* 速览与速查：紧跟在小标题后的那一串清单，做成浅色卡片——
+   这两块是"旁注型"内容（扫一眼 / 回头查），与正文段落分开更好认 */
+.scribeflow h2 + ul {
+  background: var(--background-secondary, #f6f6f6);
+  border-radius: var(--radius-m, 8px);
+  padding: 0.7em 1.2em 0.7em 2.2em;
+  line-height: 1.7;
+}
+
+/* 速查条目：条目名（每条的**加粗**）用强调色，正文说明保持常规色——
+   28 条平铺时，靠颜色给"条目名 → 说明"这道分隔一个视觉落点 */
+.scribeflow li > strong:first-child {
+  color: var(--text-accent, #705dcf);
+}
+
+/* 正文段落：行距放宽一点，几百字一段的长文更好读 */
+.scribeflow p {
+  line-height: 1.85;
+}

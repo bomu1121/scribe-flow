@@ -80,7 +80,7 @@ afterAll(async () => {
 
 const config: SearchConfig = { provider: "zhipu", apiKey: "zhipu-key", maxResults: 5 };
 
-/** 出题步的 system 模板（真实内置块，不复制一份到测试里，避免两处漂移）。 */
+/** 出题步的 system 模板（真实内置提示词，不复制一份到测试里，避免两处漂移）。 */
 function authorStep() {
   const block = BUILTIN_PROMPT_BLOCKS.find((entry) => entry.id === "builtin.drill");
   const recipe = block?.recipe as Recipe | undefined;

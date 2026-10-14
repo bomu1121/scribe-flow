@@ -15,7 +15,7 @@ ScribeFlow 把视频与文稿加工成笔记：用户不写代码，而是在画
 | --- | --- |
 | `apps/web` | Vue 3 + Vite 单页应用（Pinia、Element Plus、Vue Flow 画布） |
 | `apps/server` | Hono + Drizzle + SQLite：运行引擎、B 站/ASR/AI 调用、SSE 推送 |
-| `packages/shared` | 类型、Zod 图模型校验、内置提示词块、工程模板 |
+| `packages/shared` | 类型、Zod 图模型校验、内置提示词、工程模板 |
 
 产品怎么用看 [docs/usage.md](./docs/usage.md)，每个节点要填什么看 [docs/nodes.md](./docs/nodes.md)，
 实现总览看 [docs/architecture.md](./docs/architecture.md)。
@@ -31,7 +31,7 @@ pnpm build      # 前端真实构建；server 的 build 只是 tsc --noEmit
 ```
 
 **改动源码后必须跑：`pnpm typecheck && pnpm test && pnpm lint`。**
-动了**节点类型 / 端口 / 接口路由 / 内置提示词块**时，再跑一次 `pnpm docs:gen` 并一并提交，
+动了**节点类型 / 端口 / 接口路由 / 内置提示词**时，再跑一次 `pnpm docs:gen` 并一并提交，
 否则 CI 会红（生成块与源码不一致）。
 
 加新检查时：**先问已有测试或已有工具能不能覆盖**；能就别新建脚本。自研门禁脚本的总行数
@@ -47,7 +47,7 @@ Windows 上可以直接双击根目录的 `start-dev.cmd`（内部跑 `scripts/s
 | --- | --- | --- |
 | `packages/shared/src/graph.ts` | 节点类型联合与 `NODE_TYPE_LABELS` | 新增节点必改，画布与引擎都会跟着动 |
 | `packages/shared/src/schema.ts` | Zod 图模型校验，`nodeDataByType` 按类型分别校验 `data` | 边界：个别字段只有类型校验（如文本工具的 `pattern`/`flags` 没有长度与白名单限制） |
-| `packages/shared/src/prompt.ts` | 内置提示词块与配方（`BUILTIN_PROMPT_BLOCKS`） | 改了要重跑 `docs:gen` |
+| `packages/shared/src/prompt.ts` | 内置提示词与配方（`BUILTIN_PROMPT_BLOCKS`） | 改了要重跑 `docs:gen` |
 | `apps/server/src/lib/engine.ts` | 运行引擎。单文件很大，`runNode` 是一个巨型 switch | 运行链路的改动都在这里 |
 | `apps/web/src/components/canvas/` | `FlowCanvas.vue` 管交互；`ScribeNode.vue` 是唯一注册的节点外壳，卡片按类型分派 | 新增节点要在这里加一条分派 |
 | `apps/web/src/styles/tokens.css` | 颜色令牌的唯一来源 | 页面里不许散写色值（`pnpm lint:ui` 会拦） |

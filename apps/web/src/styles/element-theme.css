@@ -239,6 +239,27 @@
   line-height: 1.5;
 }
 
+/**
+ * 画布里的 el-select（Obsidian 卡片的「保存目录」「抽取哪些属性」）：
+ * 浮层被 Teleport 到 body，出了 Vue Flow 的 transform 子树 —— 触发器跟着画布缩放、浮层不跟，
+ * 于是缩放 ≠ 1 时两边必然脱节（实测 z=0.5 时浮层是触发器的 2.007 倍宽，z=2.14 时反过来只剩 0.467 倍）。
+ * 自研 ModelSelect 是靠给浮层加 `zoom` 补回来的，这里给 el-select 补同一层：缩放值由卡片用
+ * `popper-style` 写成内联 CSS 变量（来源是跟 ModelSelect 同一个 `sf-flow-zoom` 注入）。
+ *
+ * 两个落点都是按 DOM 实测挑的：
+ * - `zoom` 只能加在内层 `.el-select-dropdown`：外层 `.el-popper` 是用 `inset` 定位的，
+ *   `zoom` 会把 left/top 一起放大，浮层直接跑偏。
+ * - 箭头是外层另一个子元素，只按 `transform: scale()` 缩：它的 `left` 偏移由 floating-ui 写成内联值，
+ *   经不起 `zoom` 的放大；`scale` 不动布局、绕自身中心缩放，箭头仍落在触发器中线上。
+ */
+.sf-canvas-zoom-popper .el-select-dropdown {
+  zoom: var(--sf-canvas-zoom, 1);
+}
+
+.sf-canvas-zoom-popper .el-popper__arrow {
+  transform: scale(var(--sf-canvas-zoom, 1));
+}
+
 /* Element Plus 下拉浮层统一：让下拉菜单/选择器也有足够宽度和一致圆角 */
 .el-dropdown__popper .el-dropdown-menu {
   min-width: 180px;

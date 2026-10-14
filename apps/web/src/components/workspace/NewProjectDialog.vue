@@ -237,7 +237,7 @@ async function onPickerConfirm(videos: SourceVideoItem[]) {
       <span class="np-hint">
         当前来源「{{ SOURCE_LABELS[source] }}」有 {{ templateGroups.reduce((sum, group) => sum + group.items.length, 0) }} 条链路
         <template v-if="firstAvailable">，不确定就从「{{ firstAvailable.name }}」开始</template>。
-        需要选提示词块的链路，建好后在画布上的「AI 加工」节点里选。
+        需要选提示词的链路，建好后在画布上的「AI 加工」节点里选。
       </span>
       <el-button plain :disabled="creating" @click="close">取消</el-button>
     </div>

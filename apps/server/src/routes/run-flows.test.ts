@@ -192,10 +192,10 @@ describe("文本链路端到端（原 scripts/m3-api-check.mjs）", () => {
   });
 });
 
-/* -------------------------------------------------- 提示词块 / 日志 / 账本 */
+/* -------------------------------------------------- 提示词 / 日志 / 账本 */
 
-describe("提示词块、运行日志与数据账本（原 scripts/m4-api-check.mjs）", () => {
-  it("提示词块库 CRUD，且内置块不可删", async () => {
+describe("提示词、运行日志与数据账本（原 scripts/m4-api-check.mjs）", () => {
+  it("提示词库 CRUD，且内置提示词不可删", async () => {
     const { app } = await setup();
 
     const created = await json(app, "/api/prompts", "POST", { name: "验收块", prompt: "这是验收提示词。" });
@@ -208,7 +208,7 @@ describe("提示词块、运行日志与数据账本（原 scripts/m4-api-check.
 
     const list = await getJson<{ items: { id: string; name?: string; builtin?: boolean }[] }>(app, "/api/prompts");
     expect(list.items.some((b) => b.id === blockId && b.name?.includes("（改）"))).toBe(true);
-    // 内置块数量不写死：新增内置块是常态，写死只会记录过去的事实。
+    // 内置提示词数量不写死：新增内置提示词是常态，写死只会记录过去的事实。
     expect(list.items.filter((b) => b.builtin).length).toBeGreaterThan(0);
 
     expect((await json(app, `/api/prompts/${blockId}`, "DELETE")).status).toBe(200);

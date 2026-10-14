@@ -432,7 +432,7 @@ async function run() {
     JSON.stringify(quickFields),
   );
   check(
-    "快捷新建默认值：单线笔记链路 + 推荐提示词块",
+    "快捷新建默认值：单线笔记链路 + 推荐提示词",
     Boolean(quickFields?.values?.some((v) => v.includes("单线笔记"))) &&
       Boolean(quickFields?.values?.some((v) => v.includes("观点笔记"))),
     (quickFields?.values ?? []).join(" / "),
@@ -691,9 +691,9 @@ async function run() {
     await evalJs("[...document.querySelectorAll('.sf-settings-nav-item')].find((b) => b.textContent.trim() === '语音识别')?.click(); true");
     const asrOk = await waitFor("!!document.querySelector('.sf-settings-form .sf-model-select')", 5000);
     check("设置页 ASR 引擎为下拉控件（ModelSelect）", asrOk);
-    await evalJs("[...document.querySelectorAll('.sf-settings-nav-item')].find((b) => b.textContent.trim() === '提示词块库')?.click(); true");
+    await evalJs("[...document.querySelectorAll('.sf-settings-nav-item')].find((b) => b.textContent.trim() === '提示词库')?.click(); true");
     const blocksOk = await waitFor("document.querySelectorAll('.sf-block-card').length >= 4", 6000);
-    check("提示词块库渲染内置块（≥4）", blocksOk, `${await evalJs("document.querySelectorAll('.sf-block-card').length")} 块`);
+    check("提示词库渲染内置提示词（≥4）", blocksOk, `${await evalJs("document.querySelectorAll('.sf-block-card').length")} 个提示词`);
     // 「联网检索」是溯源与知识巩固共用的检索渠道（原名「外部溯源」）：按分组名点进去，
     // 并确认说明里写明了两个消费方——名字改了而说明没跟上，这里会红。
     await evalJs("[...document.querySelectorAll('.sf-settings-nav-item')].find((b) => b.textContent.trim() === '联网检索')?.click(); true");
@@ -826,18 +826,18 @@ async function run() {
       `input=${epInputs.input} textarea=${epInputs.textarea} modelSelect=${epInputs.modelSelect}`,
     );
 
-    // 提示词块下拉：AI 加工节点 → 打开 → 选项 ≥3 → 选中回显
+    // 提示词下拉：AI 加工节点 → 打开 → 选项 ≥3 → 选中回显
     await evalJs("document.querySelector('.vue-flow__node .sf-node--process-prompt .sf-model-select__trigger')?.click(); true");
     const promptOpen = await waitFor("document.querySelectorAll('.sf-model-select__option').length >= 3", 5000);
     const optionLabels = await evalJs("[...document.querySelectorAll('.sf-model-select__option-label')].map((n) => n.textContent.trim())");
-    check("提示词块下拉打开且有选项（≥3）", promptOpen, `${optionLabels.length} 个选项`);
+    check("提示词下拉打开且有选项（≥3）", promptOpen, `${optionLabels.length} 个选项`);
     const clickedLabel = await evalJs(`(() => {
       const el = [...document.querySelectorAll('.sf-model-select__option')].find((b) => /观点笔记|技术点拆解|信息溯源/.test(b.textContent ?? ''));
       if (!el) return '';
       el.click();
       return el.querySelector('.sf-model-select__option-label')?.textContent?.trim() ?? '';
     })()`);
-    check("提示词块下拉选中回显", /观点笔记|技术点拆解|信息溯源/.test(clickedLabel), clickedLabel);
+    check("提示词下拉选中回显", /观点笔记|技术点拆解|信息溯源/.test(clickedLabel), clickedLabel);
 
     // ASR 引擎下拉：转写节点默认 MiMo-V2.5 → 切到 OpenAI 兼容
     const asrBefore = await evalJs("document.querySelector('.vue-flow__node .sf-node--process-transcribe .sf-model-select__value')?.textContent?.trim() ?? ''");
