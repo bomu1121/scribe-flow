@@ -7,7 +7,7 @@ import { ElOption, ElSelect } from "element-plus/es/components/select/index.mjs"
 import { ElSwitch } from "element-plus/es/components/switch/index.mjs";
 import { ElTooltip } from "element-plus/es/components/tooltip/index.mjs";
 import { ElUpload, type UploadRequestOptions } from "element-plus/es/components/upload/index.mjs";
-import { PhBookOpenText, PhCloud, PhDotsThreeVertical, PhFileArrowDown, PhFileText, PhFunnel, PhGitBranch, PhGitMerge, PhListChecks, PhMagicWand, PhMicrophone, PhPlay, PhShareNetwork, PhSlidersHorizontal, PhSparkle, PhSwap, PhTreeStructure, PhUploadSimple, PhVideo } from "@phosphor-icons/vue";
+import { PhBookOpenText, PhCloud, PhDotsThreeVertical, PhFileArrowDown, PhFileText, PhFunnel, PhGitBranch, PhGitMerge, PhListChecks, PhMagicWand, PhMicrophone, PhPlay, PhShareNetwork, PhSlidersHorizontal, PhSparkle, PhSwap, PhTreeStructure, PhUploadSimple, PhVideo, PhX } from "@phosphor-icons/vue";
 import { CircleAlert } from "lucide-vue-next";
 import { toast } from "@/lib/toast";
 import { Handle, Position, useVueFlow, type NodeProps } from "@vue-flow/core";
@@ -471,18 +471,26 @@ const isVideoSource = computed(() => nodeType.value === "source.bili" || nodeTyp
 const advancedTitle = computed(() =>
   isVideoSource.value || nodeType.value === "process.mindmap" || nodeType.value === "process.obsidian" ? "高级设置" : "高级（失败重试）",
 );
+/**
+ * 高级设置面板的开合**只由用户决定**：展开后不跟选中态走——点画布空白、点别的节点都不会把它收掉，
+ * 只有面板头的「收起」和选中条上的「高级设置」两个入口能关。
+ *
+ * 原先写的是「取消选中就收起」，于是任何一次把卡片点掉选的点击都会顺手收掉面板：
+ * 最常撞上的是收起卡内下拉那一下（浮层打开时点卡片，命中判定落在画布上）。
+ * 那次点击本身已经不再取消选中（见 FlowCanvas 的 markDropdownOwner），但「点别处就把你刚展开的面板收走」
+ * 这件事本身也不该发生——面板是用户为这一篇专门打开的，关它得由用户说。
+ *
+ * 取消选中时选中条会隐藏，所以面板自己必须带一个收起入口（见 .sf-node-advanced-close）。
+ */
 const advancedOpen = ref(false);
-
-watch(
-  () => props.selected,
-  (selected) => {
-    if (!selected) advancedOpen.value = false;
-  },
-);
 
 function toggleAdvanced() {
   if (!hasAdvanced.value) return;
   advancedOpen.value = !advancedOpen.value;
+}
+
+function closeAdvanced() {
+  advancedOpen.value = false;
 }
 
 /**
@@ -1450,7 +1458,19 @@ const themeOptions = [
           </template>
 
           <div v-if="hasAdvanced && advancedOpen" class="sf-node-advanced">
-            <div class="sf-node-advanced-title">{{ advancedTitle }}</div>
+            <div class="sf-node-advanced-head">
+              <span class="sf-node-advanced-title">{{ advancedTitle }}</span>
+              <button
+                type="button"
+                class="sf-node-advanced-close"
+                title="收起高级设置"
+                aria-label="收起高级设置"
+                @click.stop="closeAdvanced"
+                @dblclick.stop
+              >
+                <PhX :size="11" />
+              </button>
+            </div>
             <template v-if="isVideoSource">
               <div class="sf-node-advanced-row">
                 <span class="sf-node-advanced-label" title="运行时下载完整视频，可在结果页直接播放；文件较大且默认不进云备份。">保留可播放视频</span>
@@ -1490,7 +1510,7 @@ const themeOptions = [
                     @update:model-value="(v: string) => setAiNoteMode(v)"
                   />
                 </label>
-                <label class="sf-node-field">
+                <label class="sf-node-field sf-node-field--stack">
                   <NodeFieldLabel label="抽取哪些属性" :hint="nodeExtractFieldsHint" />
                   <el-select
                     class="sf-node-control"
@@ -2626,22 +2646,152 @@ const themeOptions = [
   text-align: right;
 }
 
-/* 高级设置：不用整行分割线，收进与 .sf-node-preview/.sf-node-picker 同级的柔和底纹小卡片 */
+/*
+ * 高级设置：**不画分界线、也不套盒子**，靠 24px 留白 + 11px 小标题分组。
+ *
+ * 两步都记在这里：
+ * ① 去盒子——调研的 10 个画布/工作流产品 + 7 套设计系统里没有第二家把高级设置放进卡内嵌套盒子
+ *    （n8n/Node-RED 的卡片只有标题、配置在 NDV/modal；Dify/Langflow/Tines 是右侧面板），
+ *    GOV.UK 更明确要求「别把 Details/Accordion/Tabs 互相嵌套」。实测高级区 339.2 → 247.8px。
+ * ② 去分界线——那条线原来是满宽的，而 Material 对满宽分隔线的定义是 "separate larger sections of
+ *    unrelated content" / "separate interactive areas from non-interactive areas"：画在同一张卡的表单区
+ *    中间、两边还是同一组设置，属于用错了层级（读起来像「把卡片切断」）。
+ *    "separate related content within a section" 对应的是内缩线，不是满宽线。
+ *    密集设置区用留白 + 小标题分节是有系统级出处的：Windows 11 官方设置页示例的区块标题就是
+ *    「Margin="1,30,0,6" + 小标题」（注释写明 following the correct Windows 11 design specifications）、
+ *    GNOME HIG「each list can be given a heading」、libadwaita AdwPreferencesGroup 本身就是 title + description。
+ *    我们按 300px 卡片把 30px 收到 24px（上间距 = 这里的 16px + body 的 8px gap）。
+ *
+ * 实测（四字段的 Obsidian 卡片，真机 Chrome，设计像素）：
+ *   盒式 339.2 / 卡片 525.1 → 行式+分界线 247.8 / 431.7 → 行式+留白（现在）238.8 / 430.7。
+ * 依据、候选与取舍见 docs/research/advanced-settings-card-styles.md §6.2 与
+ * docs/research/advanced-settings-divider-demos.html。
+ */
 .sf-node-advanced {
+  margin-top: 16px;
+  padding-top: 0;
+}
+
+/*
+ * 行式排法：文案左、控件右（Windows 11 SettingsExpander 的 SettingsCard 就是「控件右对齐」+ 文案在左；
+ * libadwaita 的 AdwActionRow 是「标题 + 右侧控件」）。
+ * 原文给的 12/16epx 间距是给 1000px 宽设置页的，这里按 300px 卡片收窄成 gap 8px、行距 6px（有意偏离）。
+ * justify-content 用 space-between：标签保持自己的文字宽度、控件贴右边；标签只在装不下时收缩并截断
+ * （flex 是 `0 1 auto` 而不是 `1 1 auto`——后者会让标签和「吃剩余宽度」的输入框互相抢：
+ * 实测「导图标题（可选）」被压到 71px 截了尾，改 0 1 auto + 输入框基准 0 之后标签是 99.8px、不再截断）。
+ */
+.sf-node-advanced > .sf-node-field {
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: var(--control-height-sm);
+}
+
+.sf-node-advanced > .sf-node-field > .sf-node-field-label {
+  flex: 0 1 auto;
+  min-width: 0;
+}
+
+/*
+ * 紧凑控件定宽 → 右边缘成一条线；--stack 那一段（整行字段）不进这套，控件仍是全宽。
+ * 128px 不是拍的：最长的一个选项是「自动（4-7 个）」，104px 时会被截成「自动(4-7 …」（实测），
+ * 128px 能放下它，同时三个标签订单行（让 AI 读一遍笔记 109.6 + 8 + 128 = 245.6 ≤ 273 的内容宽）。
+ */
+.sf-node-advanced > .sf-node-field:not(.sf-node-field--stack) > .sf-model-select {
+  flex: none;
+  width: 128px;
+}
+
+.sf-node-advanced > .sf-node-field:not(.sf-node-field--stack) > .el-select {
+  flex: none;
+  width: 148px;
+}
+
+/*
+ * 文本输入不是「一格选项」，让它吃掉剩余宽度，别也压到 104px。
+ * 基准必须写 `0`（而不是 auto）：`.sf-node-control` 把宽度设成了 100%，用 auto 基准时
+ * 输入框的基准宽度就是整行宽，撑爆行后按比例反向挤压标签——实测「导图标题（可选）」被压到 71px 截了尾。
+ */
+.sf-node-advanced > .sf-node-field:not(.sf-node-field--stack) > .el-input {
+  flex: 1 1 0;
+  width: auto;
+  min-width: 96px;
+}
+
+/*
+ * 例外：标签型控件（「抽取哪些属性」是 multiple 的 el-select）不进行式。
+ * 它的取值是 chips，塞进 148px 会换行成两三行；而且默认态的占位文案
+ * 「跟随设置：人物 / 事件 / 时期」本身就有 11 个字，窄格子里会被截掉关键信息。
+ * 它按整行「标签在上、控件全宽」排，与卡片正文里的字段一致。
+ */
+.sf-node-advanced > .sf-node-field--stack {
+  flex-direction: column;
+  /* 行式那套是「水平居中 + 两端对齐」，换成纵向排法后这两个值会把标签水平居中——必须显式还原 */
+  align-items: stretch;
+  justify-content: flex-start;
+  gap: 6px;
+}
+
+/* 行与行 6px；--stack 那段是整行字段，前后各留 10px 与行分开 */
+.sf-node-advanced > .sf-node-field + .sf-node-field,
+.sf-node-advanced > .sf-node-field + .sf-node-advanced-row,
+.sf-node-advanced > .sf-node-advanced-row + .sf-node-field {
+  margin-top: 6px;
+}
+
+.sf-node-advanced > .sf-node-field--stack + .sf-node-field,
+.sf-node-advanced > .sf-node-field + .sf-node-field--stack,
+.sf-node-advanced > .sf-node-advanced-row + .sf-node-field--stack {
   margin-top: 10px;
-  padding: 10px 12px;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
-  background: var(--color-surface-muted);
+}
+
+.sf-node-advanced-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 6px;
 }
 
 .sf-node-advanced-title {
-  margin-bottom: 8px;
   font-size: 11px;
   font-weight: 600;
   letter-spacing: 0.02em;
   color: var(--color-text-secondary);
 }
+
+/*
+ * 面板自己的收起入口：取消选中时选中条会隐藏（「高级设置」按钮在里面），
+ * 只留选中条那一个入口的话，面板会留在卡片上没法关。尺寸对齐 .sf-node-hint-trigger 那种小图标按钮。
+ */
+.sf-node-advanced-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text-tertiary);
+  cursor: pointer;
+  transition:
+    color var(--dur-1) var(--ease-out),
+    background-color var(--dur-1) var(--ease-out);
+}
+
+.sf-node-advanced-close:hover {
+  background: var(--color-ink-soft);
+  color: var(--color-text);
+}
+
+/*
+ * 高级设置里相邻字段之间的间距，见上方 .sf-node-advanced 那一段（行式 6px、整行字段前后 10px）。
+ * 历史：这里曾经是「字段之间 0px」→ 先改成 12px（标签在上的排法下那是对的）→ 改行式后由上面那组规则接管。
+ */
 
 .sf-node-advanced-subtitle {
   margin-top: 12px;
@@ -3130,7 +3280,8 @@ const themeOptions = [
   align-items: center;
   justify-content: space-between;
   gap: 10px;
-  min-height: 24px;
+  /* 与行式字段同高：开关行和下拉行并排时不出现两种行高 */
+  min-height: var(--control-height-sm);
 }
 
 .sf-node-advanced-row + .sf-node-advanced-row {

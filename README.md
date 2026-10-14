@@ -99,6 +99,7 @@ pnpm check:api:chain # B站 → 校对 → 全部开放提示词分支 → Obsid
 
 **调研**（`docs/research/`）
 
+- [节点卡片上的「高级设置」怎么排](./docs/research/advanced-settings-card-styles.md)
 - [AI 加工节点内部多步链：收益调研与进阶实现方案](./docs/research/ai-node-multistep-research.md)
 - [BibiGPT 的视频笔记提示词工程：原文提取、槽位框架与实测对照](./docs/research/bibigpt-note-prompt-engineering.md)
 - [双维度知识库：按「UP」与按「议题」检索](./docs/research/dual-axis-knowledge-base.md)

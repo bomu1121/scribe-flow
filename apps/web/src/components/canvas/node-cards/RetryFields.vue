@@ -30,6 +30,27 @@ function setBackoff(value: number | undefined) {
 .sf-retry-fields {
   display: flex;
   flex-direction: column;
+  gap: 6px;
+}
+
+/*
+ * 与高级设置其余部分同一套行式排法（文案左、控件右），见 ScribeNode 的 .sf-node-advanced。
+ * 这两项紧跟「失败重试」小标题，如果还按「标签在上」排会和上面的行走两种节奏。
+ */
+.sf-retry-fields .sf-node-field {
+  flex-direction: row;
+  align-items: center;
   gap: 8px;
+  min-height: var(--control-height-sm);
+}
+
+.sf-retry-fields .sf-node-field-label {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.sf-retry-fields .el-input-number {
+  flex: none;
+  width: 108px;
 }
 </style>

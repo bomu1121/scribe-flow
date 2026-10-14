@@ -173,6 +173,22 @@ function isDropdownControlTarget(target: Element): boolean {
   return Boolean(target.closest(DROPDOWN_CONTROL_SELECTOR));
 }
 
+/**
+ * 打开下拉的那张卡片的标记属性。
+ *
+ * 用 data 属性而不是 class：节点外层元素是 Vue Flow 自己渲染的，`class` 由它绑定，
+ * 它重渲（选中态、拖拽态变化）时会把自己那份 class 覆盖回去，我们加的会一起没。
+ */
+const DROPDOWN_OWNER_ATTR = "data-sf-dropdown-owner";
+/** 浮层打开期间唯一保持可交互的卡片；见 app.css 的守卫例外规则。 */
+let dropdownOwnerEl: HTMLElement | null = null;
+
+function markDropdownOwner(el: HTMLElement | null) {
+  if (dropdownOwnerEl && dropdownOwnerEl !== el) dropdownOwnerEl.removeAttribute(DROPDOWN_OWNER_ATTR);
+  dropdownOwnerEl = el;
+  el?.setAttribute(DROPDOWN_OWNER_ATTR, "");
+}
+
 /** 在 Vue Flow 处理 pointerdown 前记录：本次是否从小卡内部的下拉控件发起。 */
 function onWindowPointerDownCapture(event: PointerEvent) {
   const target = event.target;
@@ -180,9 +196,11 @@ function onWindowPointerDownCapture(event: PointerEvent) {
   const nodeEl = target.closest<HTMLElement>(".vue-flow__node");
   if (nodeEl && isDropdownControlTarget(target)) {
     nodeDropdownOpen = true;
+    markDropdownOwner(nodeEl);
   } else if (!document.documentElement.classList.contains("sf-dropdown-modal-open")) {
     // 没有浮层打开时的普通点击，清除可能残留的“小卡下拉交互”标记。
     nodeDropdownOpen = false;
+    markDropdownOwner(null);
   }
 }
 
@@ -329,12 +347,20 @@ function onWindowPointerDown(event: PointerEvent) {
     closeEdgeMenu();
   }
 
-  // 仅处理“小卡内部下拉”的交互：浮层打开期间，如果点击位置不在浮层内
-  // （也就是落在卡片外/画布空白处），直接取消小卡选中态；点击浮层内的选项时仍保留选中态。
+  // 仅处理“小卡内部下拉”的交互：浮层打开期间，如果点击位置不在浮层内，
+  // 直接取消小卡选中态；点击浮层内的选项时仍保留选中态。
   if (!nodeDropdownOpen) return;
   if (!(target instanceof Element) || isDropdownPopupTarget(target)) return;
   if (!document.documentElement.classList.contains("sf-dropdown-modal-open")) return;
   nodeDropdownOpen = false;
+  /*
+   * 落在「打开浮层那张卡」上的点击只是收起浮层，不是“点到别处去”：
+   * 取消选中会把卡片上的高级设置一起收掉，而那正是用户想留着的东西。
+   * 标记留到下一次普通点击再清（见 onWindowPointerDownCapture）——本次点击的命中判定
+   * 还需要它，提前摘掉就等于这次点击又穿透回画布。
+   */
+  if (target instanceof Element && dropdownOwnerEl?.contains(target)) return;
+  markDropdownOwner(null);
   clearNodeSelection();
 }
 
@@ -548,6 +574,7 @@ function onKeydown(event: KeyboardEvent) {
     // 键盘取消下拉时结束“小卡下拉交互”，避免标记残留影响后续点击。
     if (nodeDropdownOpen) {
       nodeDropdownOpen = false;
+      markDropdownOwner(null);
       return;
     }
   }

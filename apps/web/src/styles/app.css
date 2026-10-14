@@ -179,6 +179,19 @@ html.sf-dropdown-modal-open body :is(
 }
 
 /*
+ * 浮层例外：**打开这个下拉的那张节点卡**保持可交互。
+ *
+ * 不加这条时，点「卡片内、浮层外」的那一下会被守卫放行到卡片下面 —— 画布成了命中目标，
+ * Vue Flow 把这次点击当成「点空白」取消节点选中，卡片上的「高级设置」跟着塌掉
+ * （收起下拉最顺手的位置就是卡片自己，实测这是稳定复现的一条路径）。
+ * 标记由 FlowCanvas 在下拉控件按下时写到卡片上（见 `markDropdownOwner`）。
+ */
+html.sf-dropdown-modal-open body [data-sf-dropdown-owner],
+html.sf-dropdown-modal-open body [data-sf-dropdown-owner] * {
+  pointer-events: auto !important;
+}
+
+/*
  * 统一下拉浮层动效：只做轻微透明度 + 缩放，避免大幅位移造成的“抖动”感。
  * Reka UI 会提供 --reka-popper-transform-origin，EP 的 popper 也有自己的过渡，
  * 这里主要服务自研/无样式菜单。

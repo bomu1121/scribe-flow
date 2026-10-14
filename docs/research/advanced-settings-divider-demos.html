@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>「高级设置」与上方常规设置的分界 —— 五种做法对照</title>
+<!--
+  用途：比较「高级设置」这一段与上方常规设置之间的分界处理，供选型。
+  **图是真机卡片截的**：往运行中的应用注入一份覆盖 CSS、把画布缩放到 3.31（接近用户放大后的视角），
+  再按设计像素裁出「分界线附近」这块区域；小地图与缩放控件在截图前临时隐藏。
+  切换按钮换的是同一张卡片的同一块区域，所以五张图上下位置可直接对。
+  本轮没有改产品代码：注入的样式只存在于那次渲染进程里，仓库里仍是「V1 现状」。
+  调研来源与取舍见 docs/research/advanced-settings-card-styles.md §6.2。
+-->
+<style>
+:root {
+  --color-bg: #f4f5f6;
+  --color-surface: #ffffff;
+  --color-surface-muted: #f7f8f9;
+  --color-border: #e4e7eb;
+  --color-border-strong: #cdd3da;
+  --color-text: #16181d;
+  --color-text-secondary: #545b66;
+  --color-text-tertiary: #8a929e;
+  --color-success: #18a058;
+  --color-ink-soft: #f0f1f3;
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --font-family: "Geist Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+    "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans SC", sans-serif;
+}
+*, *::before, *::after { box-sizing: border-box; }
+body {
+  margin: 0; padding: 28px 32px 64px;
+  font-family: var(--font-family); font-size: 14px; line-height: 1.6;
+  color: var(--color-text); background: var(--color-bg);
+}
+h1 { margin: 0 0 6px; font-size: 20px; font-weight: 600; }
+.intro { max-width: 940px; margin: 0 0 18px; font-size: 13px; line-height: 1.75; color: var(--color-text-secondary); }
+.intro code { padding: 1px 4px; border-radius: 4px; background: var(--color-ink-soft); font-size: 12px; }
+
+.bar {
+  position: sticky; top: 0; z-index: 5;
+  display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
+  margin: 0 0 18px; padding: 10px 12px;
+  border: 1px solid var(--color-border); border-radius: var(--radius-md);
+  background: var(--color-surface);
+}
+.bar-label { margin-right: 2px; font-size: 12px; color: var(--color-text-tertiary); }
+.bar button {
+  display: inline-flex; align-items: center; gap: 5px;
+  height: 28px; padding: 0 12px;
+  border: 1px solid var(--color-border); border-radius: var(--radius-sm);
+  background: var(--color-surface); color: var(--color-text-secondary);
+  font-family: inherit; font-size: 12px; cursor: pointer;
+  transition: background-color 120ms cubic-bezier(0.2, 0.8, 0.2, 1), color 120ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.bar button:hover { background: var(--color-ink-soft); color: var(--color-text); }
+.bar button.active { border-color: var(--color-text); background: var(--color-text); color: #fff; }
+.bar button .tag { font-size: 10px; opacity: 0.8; }
+.bar button.active .tag { opacity: 0.95; }
+
+.stage { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 20px; }
+.shot {
+  border: 1px solid var(--color-border-strong); border-radius: var(--radius-md);
+  background: var(--color-surface); overflow: hidden;
+  box-shadow: 0 1px 2px rgba(22, 24, 29, 0.05), 0 4px 12px rgba(22, 24, 29, 0.04);
+}
+.shot img { display: block; max-width: 100%; height: auto; }
+.facts { width: 380px; padding: 14px 16px; border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--color-surface); }
+.facts h2 { margin: 0 0 4px; font-size: 14px; font-weight: 600; }
+.facts .verdict { margin: 0 0 10px; font-size: 12px; color: var(--color-text-tertiary); }
+.facts dl { display: grid; grid-template-columns: 72px 1fr; gap: 6px 10px; margin: 0; font-size: 12px; }
+.facts dt { color: var(--color-text-tertiary); }
+.facts dd { margin: 0; color: var(--color-text); }
+.facts dd.num { font-variant-numeric: tabular-nums; }
+.facts .src { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--color-border); font-size: 11px; line-height: 1.65; color: var(--color-text-secondary); }
+.facts .src a { color: var(--color-text-secondary); }
+
+h3 { margin: 34px 0 8px; font-size: 14px; font-weight: 600; }
+table.cmp { width: 100%; max-width: 1180px; border-collapse: collapse; font-size: 12px; }
+table.cmp th, table.cmp td { padding: 8px 10px; border-bottom: 1px solid var(--color-border); text-align: left; vertical-align: top; }
+table.cmp th { font-weight: 600; color: var(--color-text-secondary); }
+table.cmp td.num { font-variant-numeric: tabular-nums; white-space: nowrap; }
+table.cmp tr.is-picked td { background: #f2fbf5; }
+.why { max-width: 940px; font-size: 12px; line-height: 1.75; color: var(--color-text-secondary); }
+.why table { width: 100%; border-collapse: collapse; font-size: 12px; margin: 8px 0 12px; }
+.why th, .why td { padding: 7px 10px; border-bottom: 1px solid var(--color-border); text-align: left; vertical-align: top; }
+.why th { color: var(--color-text-secondary); font-weight: 600; }
+.why code { padding: 1px 4px; border-radius: 4px; background: var(--color-ink-soft); font-size: 11.5px; }
+footer { max-width: 940px; margin-top: 34px; padding-top: 12px; border-top: 1px solid var(--color-border); font-size: 11.5px; line-height: 1.7; color: var(--color-text-tertiary); }
+</style>
+</head>
+<body>
+
+<h1>「高级设置」与上方常规设置的分界 —— 五种做法</h1>
+<p class="intro">
+  同一张 Obsidian 卡片、同一块区域（上方那个 <code>保存目录</code> 下拉 → 分界处 → 「高级设置」标题 → 第一行设置），
+  只换分界的处理方式。<strong>图是真机卡片截的</strong>：把画布缩放到 3.31 倍（接近你放大后的视角），
+  按设计像素裁出这块区域；五张图上下位置对齐，可以直接翻着比。
+  做法依据、取舍与诚实清单见 <code>docs/research/advanced-settings-card-styles.md</code> §6.2。
+</p>
+
+<div class="bar">
+  <span class="bar-label">看哪一套</span>
+  <button data-v="v1-current">V1 现状：满宽细线</button>
+  <button data-v="v2-space" class="active">V2 只留白 <span class="tag">已落地</span></button>
+  <button data-v="v6-inset">V6 内缩细线</button>
+  <button data-v="v3-faint">V3 线淡化</button>
+  <button data-v="v4-headline">V4 标题下划线</button>
+  <button data-v="v5-tint">V5 浅底分组</button>
+</div>
+
+<div class="stage">
+  <div class="shot"><img id="shot" src="advanced-settings-divider-v2-space.png" alt="分界处截图" width="993" height="497"></div>
+  <div class="facts">
+    <h2 id="f-name">—</h2>
+    <p class="verdict" id="f-verdict">—</p>
+    <dl>
+      <dt>做法</dt><dd id="f-how">—</dd>
+      <dt>分界间距</dt><dd class="num" id="f-gap">—</dd>
+      <dt>面板高</dt><dd class="num" id="f-panel">—</dd>
+      <dt>卡片高</dt><dd class="num" id="f-card">—</dd>
+      <dt>代价</dt><dd id="f-cost">—</dd>
+    </dl>
+    <p class="src" id="f-src">—</p>
+  </div>
+</div>
+
+<h3>六套做法的数字（真机实测，设计像素）</h3>
+<table class="cmp">
+  <thead>
+    <tr><th>做法</th><th>分界处怎么处理</th><th>分界间距<br>（上 / 下）</th><th>面板高</th><th>卡片高</th><th>依据</th></tr>
+  </thead>
+  <tbody>
+    <tr data-row="v1-current"><td>V1 现状</td><td>满宽 1px 细线</td><td class="num">16 / 8</td><td class="num">247.8px</td><td class="num">431.7px</td><td>—（Material 把满宽线定义为「分隔无关的大段落」）</td></tr>
+    <tr data-row="v2-space" class="is-picked"><td><strong>V2 只留白</strong><br><span style="color:var(--color-success)">已落地</span></td><td>去掉线，靠间距 + 11px 小标题分组</td><td class="num">24 / 0</td><td class="num">238.8px</td><td class="num">430.7px</td><td>Windows 11 官方设置页示例 / GNOME HIG / libadwaita <code>AdwPreferencesGroup</code></td></tr>
+    <tr data-row="v6-inset"><td>V6 内缩细线</td><td>线保留，两侧各内缩 16px</td><td class="num">22 / 10</td><td class="num">251.8px</td><td class="num">441.7px</td><td>Material 的 inset 分隔线：<code>"separate related content within a section"</code></td></tr>
+    <tr data-row="v3-faint"><td>V3 线淡化</td><td>同位置，颜色混到 55% 深度</td><td class="num">22 / 10</td><td class="num">251.8px</td><td class="num">441.7px</td><td>—（仍满宽，只是让线安静一点）</td></tr>
+    <tr data-row="v4-headline"><td>V4 标题下划线</td><td>线不横贯整卡，压在「高级设置」这行下面</td><td class="num">22 / 8</td><td class="num">247.8px</td><td class="num">437.7px</td><td><code>el-divider content-position="left"</code> / antd <code>titlePlacement="start"</code>（两家文档把该用途限定在文章章节 / 行内文字）</td></tr>
+    <tr data-row="v5-tint"><td>V5 浅底分组</td><td>不画线，整段加一层浅底 + 圆角</td><td class="num">20 / 0</td><td class="num">258.8px</td><td class="num">446.7px</td><td>libadwaita <code>.boxed-list</code> / Windows <code>SettingsCard</code></td></tr>
+  </tbody>
+</table>
+
+<h3>为什么现在这条线会显得「丑」</h3>
+<div class="why">
+  <p>不是粗细或颜色的问题，是<strong>层级用错了</strong>。Material 对分隔线分了两类用途：</p>
+  <table>
+    <thead><tr><th>官方原文</th><th>说的是哪一类</th></tr></thead>
+    <tbody>
+      <tr><td><code>"separate larger sections of unrelated content"</code>、<code>"separate interactive areas from non-interactive areas"</code></td><td><strong>满宽</strong> 线（我们现在这种）</td></tr>
+      <tr><td><code>"separate related content within a section"</code>，默认「两侧等距内缩」</td><td><strong>内缩</strong> 线（V6）</td></tr>
+    </tbody>
+  </table>
+  <p>
+    我们这条线是<strong>满宽、画在同一张卡的表单区中间、两边是同一组设置</strong>——按上表它干的是「分隔无关大段落」的活，
+    所以读起来像「把卡片切断」而不是「这里开始新段落」。Carbon 有句同类的告诫：<code>"The divider should not be used to separate every switcher item."</code>
+  </p>
+  <p>
+    另一条路在系统级文档里更直接：<strong>密集设置区用间距 + 小标题分节，不画线</strong>——
+    Windows 11 官方设置页示例里的区块标题就是「<code>Margin="1,30,0,6"</code> + 小标题」，注释写明
+    <code>"following the correct Windows 11 design specifications for things like spacing, section headers"</code>；
+    GNOME HIG 写「each list can be given a heading」；libadwaita 的 <code>AdwPreferencesGroup</code> 本身就是 title + description、不画线。
+    这就是 V2。
+  </p>
+</div>
+
+<footer>
+  图怎么来的：往运行中的应用注入一份覆盖样式（组件的样式是 scoped 的，注入时把选择器抬到同等特异性），
+  把画布缩放到 3.31 倍，按设计像素裁出「分界线附近」这块；截图前临时隐藏了画布右下角的小地图与缩放控件。
+  <br>
+  <strong>V2 已落地</strong>（2026-10-14）：其余五套的样式只存在于那次渲染进程里，仓库里现在跑的是 V2（V1 那张图是改前的样子）。高度与间距是脚本量的（设计像素），
+  不是从图上读的。视觉判断由我逐张看图得出：独立 <code>visual-judge</code> 额度冷却中（明天 09:12 恢复），这次没能跑。
+</footer>
+
+<script>
+const DATA = {
+  "v1-current": {
+    name: "V1 现状：满宽细线",
+    verdict: "现在仓库里的样子",
+    how: "1px 细线横贯整卡内容宽度（上下各留 8px）",
+    gap: "上 16px / 下 8px",
+    panel: "247.8px", card: "431.7px",
+    cost: "按 Material 的措辞属于「分隔无关的大段落」，在卡片内部用错了层级",
+    src: "无出处（本仓现状）。相关原文见下方「为什么现在这条线会显得丑」。",
+    srcLink: "",
+  },
+  "v2-space": {
+    name: "V2 只留白（推荐）",
+    verdict: "已落地（2026-10-14）——去掉线，让间距 + 小标题说话",
+    how: "删掉那条线；间距 16px → 24px；「高级设置」保持 11px/600 的小标题",
+    gap: "上 24px / 下 0",
+    panel: "238.8px", card: "430.7px",
+    cost: "少了显式的「新段落」信号，全靠标题；卡片高度几乎不变（只差 1px）",
+    src: '依据：<a href="https://learn.microsoft.com/en-us/windows/apps/design/app-settings/guidelines-for-app-settings">Windows 11 设置页官方指南</a>（区块标题 = 30px 上间距 + 小标题，注释 "following the correct Windows 11 design specifications"）；<a href="https://developer.gnome.org/hig/patterns/controls/lists.html">GNOME HIG</a>「each list can be given a heading」；<a href="https://gnome.pages.gitlab.gnome.org/libadwaita/doc/1-latest/class.PreferencesGroup.html">libadwaita AdwPreferencesGroup</a>（title + description，不画线）。',
+  },
+  "v6-inset": {
+    name: "V6 内缩细线",
+    verdict: "保留线，但别横贯整卡",
+    how: "线保留，从两侧各内缩 16px（顶距 14px、标题前 10px）",
+    gap: "上 22px / 下 10px",
+    panel: "251.8px", card: "441.7px",
+    cost: "线还在，视觉重量比现状小；内缩量是新的旋钮，要跟着卡片圆角一起调",
+    src: '依据：Material 的 inset 分隔线是「separate related content within a section」，且默认「equally indented from both sides」（满宽那条才是分隔无关大段落用的）。',
+  },
+  "v3-faint": {
+    name: "V3 线淡化（最小改动）",
+    verdict: "位置不动，只把线变淡、拉开距离",
+    how: "线仍在原位；颜色混到 55% 深度（<code>color-mix</code> 引用令牌）；上下间距拉到 22 / 10",
+    gap: "上 22px / 下 10px",
+    panel: "251.8px", card: "441.7px",
+    cost: "改一处颜色即可，但「满宽」这个层级问题没解决，只是线安静了些",
+    src: "无出处。列在这里是因为它是最小改动：如果只想让它别那么抢眼、不想动结构，就选它。",
+  },
+  "v4-headline": {
+    name: "V4 线跟着标题走（标题下划线）",
+    verdict: "线不横贯整卡，改压在「高级设置」这一行下面",
+    how: "去掉顶上那条线；「高级设置」标题行加 1px 下划线（标题行高 18 → 25px）",
+    gap: "上 22px / 下 8px",
+    panel: "247.8px", card: "437.7px",
+    cost: "线从「卡片的分割」变成「标题的归属」，读起来像新章节；但比 V2 多一条线",
+    src: '同类 API：<a href="https://element-plus.org/zh-CN/component/divider.html">Element Plus el-divider</a> 的 <code>content-position="left"</code> 与 <a href="https://ant.design/components/divider">antd Divider</a> 的 <code>titlePlacement="start"</code>。注意两家的文档把这类用途限定在「文章章节 / 行内文字」，没有支持「设置组」场景。',
+  },
+  "v5-tint": {
+    name: "V5 浅底分组",
+    verdict: "不画线，整段给一层浅底",
+    how: "删掉线；整段加 --color-surface-muted 底色 + 8px 圆角 + 10/12px 内边距",
+    gap: "上 20px / 下 0",
+    panel: "258.8px", card: "446.7px",
+    cost: "分组感最强，但等于把刚拆掉的「卡内盒子」以无边框的形式请回来；卡片最高",
+    src: '依据：libadwaita <code>.boxed-list</code>：<code>"each row as a separate card instead of the whole list being a single card with separators"</code>；Windows <code>SettingsCard</code>（"uses the default styling found in Windows 11"，官方未给色值）。',
+  },
+};
+
+const shot = document.getElementById("shot");
+const f = (id) => document.getElementById(id);
+function select(v) {
+  const d = DATA[v];
+  shot.src = `advanced-settings-divider-${v}.png`;
+  f("f-name").textContent = d.name;
+  f("f-verdict").textContent = d.verdict;
+  f("f-how").innerHTML = d.how;
+  f("f-gap").textContent = d.gap;
+  f("f-panel").textContent = d.panel;
+  f("f-card").textContent = d.card;
+  f("f-cost").textContent = d.cost;
+  f("f-src").innerHTML = d.src;
+  document.querySelectorAll(".bar button").forEach((b) => b.classList.toggle("active", b.dataset.v === v));
+  document.querySelectorAll("table.cmp tbody tr").forEach((tr) => tr.classList.toggle("is-picked", tr.dataset.row === v));
+}
+document.querySelectorAll(".bar button").forEach((b) => b.addEventListener("click", () => select(b.dataset.v)));
+select("v2-space");
+</script>
+</body>
+</html>

@@ -1,0 +1,744 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>「高级设置」在卡片上的五种排法 —— 候选方案对照</title>
+<!--
+  用途：比较「高级设置」展开后节点卡片的几种排法，供选型。
+  这是**交互原型**，不是生产代码：
+  · 颜色/圆角/间距全部取自 apps/web/src/styles/tokens.css（同一份令牌，此处内联是为了双击打开也能渲染）；
+  · 卡片外壳与控件的尺寸照**真机计算样式**重画（脚本 .tmp-cdp-styles/probe.mjs 取样，值见各段注释），
+    但控件外形是手画的，**不是 Element Plus 的真实渲染**——落地的圆角/阴影/键盘态会有差异；
+  · 落地实现按仓库规范必须用 Element Plus 组件（下拉、开关一律不自研）。
+  调研来源、取舍与诚实清单见 docs/research/advanced-settings-card-styles.md。
+-->
+<style>
+/* ===================== 令牌（内联自 apps/web/src/styles/tokens.css） ===================== */
+:root {
+  --color-bg: #f4f5f6;
+  --color-canvas: #f8f9fa;
+  --color-surface: #ffffff;
+  --color-surface-muted: #f7f8f9;
+  --color-border: #e4e7eb;
+  --color-border-strong: #cdd3da;
+  --color-text: #16181d;
+  --color-text-secondary: #545b66;
+  --color-text-tertiary: #8a929e;
+  --color-brand: #00aeec;
+  --color-ink: #16181d;
+  --color-ink-soft: #f0f1f3;
+  --color-success: #18a058;
+  --node-radius: 10px;
+  --node-border: var(--color-border);
+  --node-selected-border: var(--color-text);
+  --font-family: "Geist Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+    "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans SC", sans-serif;
+  --radius-xs: 4px;
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 10px;
+  --control-height-sm: 32px;
+  --control-padding-x: 10px;
+  --control-radius-sm: 4px;
+  --control-font-size-sm: 12px;
+  --control-border: var(--color-border);
+  --control-bg: var(--color-surface);
+  --control-placeholder: var(--color-text-tertiary);
+  --shadow-card: 0 1px 2px rgba(22, 24, 29, 0.05), 0 4px 12px rgba(22, 24, 29, 0.04);
+  --shadow-overlay: 0 8px 24px rgba(22, 24, 29, 0.12);
+  --ease-out: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --dur-1: 120ms;
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  padding: 28px 32px 64px;
+  font-family: var(--font-family);
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--color-text);
+  background: var(--color-canvas);
+}
+
+/* ===================== 页面外壳 ===================== */
+.page-title { margin: 0 0 6px; font-size: 20px; font-weight: 600; }
+.page-sub { margin: 0 0 18px; max-width: 900px; font-size: 13px; line-height: 1.75; color: var(--color-text-secondary); }
+.page-sub code { padding: 1px 4px; border-radius: 4px; background: var(--color-ink-soft); font-size: 12px; }
+
+.bar {
+  position: sticky; top: 0; z-index: 5;
+  display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
+  margin: 0 0 20px; padding: 10px 12px;
+  border: 1px solid var(--color-border); border-radius: var(--radius-md);
+  background: var(--color-surface);
+}
+.bar-label { margin-right: 2px; font-size: 12px; color: var(--color-text-tertiary); }
+.bar button {
+  height: 28px; padding: 0 12px;
+  border: 1px solid var(--color-border); border-radius: var(--radius-sm);
+  background: var(--color-surface); color: var(--color-text-secondary);
+  font-family: inherit; font-size: 12px; cursor: pointer;
+  transition: background-color var(--dur-1) var(--ease-out), color var(--dur-1) var(--ease-out);
+}
+.bar button:hover { background: var(--color-ink-soft); color: var(--color-text); }
+.bar button.active { border-color: var(--color-text); background: var(--color-text); color: #fff; }
+.bar-sep { width: 1px; height: 18px; margin: 0 4px; background: var(--color-border); }
+
+.grid { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 28px; }
+.demo { width: 300px; }
+.demo[hidden] { display: none; }
+.demo h2 { margin: 0 0 2px; font-size: 13px; font-weight: 600; }
+.demo .src { margin: 0 0 10px; font-size: 11px; line-height: 1.6; color: var(--color-text-tertiary); }
+.demo .src a { color: var(--color-text-secondary); }
+.notes { margin: 10px 0 0; padding: 0; list-style: none; font-size: 11px; line-height: 1.7; color: var(--color-text-secondary); }
+.notes li { display: flex; gap: 6px; }
+.notes b { flex: none; font-weight: 600; color: var(--color-text); }
+.meter { margin: 8px 0 0; padding: 6px 8px; border-radius: var(--radius-sm); background: var(--color-ink-soft); font-size: 11px; color: var(--color-text-secondary); }
+.meter b { color: var(--color-text); font-weight: 600; font-variant-numeric: tabular-nums; }
+
+.zoomed .card { zoom: 1.6; }
+.zoomed .demo { width: 470px; }
+.zoomed .grid { gap: 40px; }
+
+/* ===================== 卡片外壳（照真机计算样式重画） =====================
+   真机取样值（设计像素，来自 .tmp-cdp-styles/probe.mjs）：
+   卡片 300 宽 · padding 10/12/12 · 边框 1.5px --node-border · 圆角 10 · 白底
+   标题 13px/500 · 副标题 11px/--text-tertiary · body 子项 gap 8
+   控件高 32 · 圆角 4 · 边框 --control-border · 字号 12 · 内边距 0 10
+   开关 30x16（真机 el-switch 元素 30x24，含内边距） */
+.card {
+  position: relative;
+  width: 300px;
+  padding: 10px 12px 12px;
+  border: 1.5px solid var(--node-border);
+  border-radius: var(--node-radius);
+  background: var(--color-surface);
+}
+.card.is-hover { box-shadow: var(--shadow-card); }
+.card.is-selected { border-color: var(--node-selected-border); }
+
+.sel-bar {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  width: 300px; margin: 0 0 6px; padding: 0 6px 0 10px;
+  height: 32px;
+  border: 1px solid var(--color-border-strong); border-radius: var(--radius-md);
+  background: var(--color-surface);
+  font-size: 11.5px; color: var(--color-text-secondary);
+}
+.sel-bar-left { display: flex; align-items: center; gap: 8px; }
+.sel-bar-btn {
+  display: inline-flex; align-items: center; gap: 5px;
+  height: 24px; padding: 0 8px;
+  border: none; border-radius: var(--radius-sm);
+  background: var(--color-ink-soft); color: var(--color-text);
+  font-family: inherit; font-size: 11.5px; font-weight: 500; cursor: pointer;
+}
+.sel-bar-btn.is-quiet { background: transparent; color: var(--color-text-tertiary); }
+.sel-bar-dots { font-size: 13px; line-height: 1; color: var(--color-text-tertiary); }
+
+.head { display: flex; align-items: flex-start; gap: 8px; padding: 4px 0 8px; }
+.head-icon { flex: none; display: grid; place-items: center; width: 16px; height: 16px; margin-top: 1px; color: var(--color-text-secondary); }
+.head-text { display: block; min-width: 0; flex: 1; }
+.head-title { display: block; font-size: 13px; font-weight: 500; line-height: 1.4; }
+.head-desc { display: block; margin-top: 2px; font-size: 11px; line-height: 1.4; color: var(--color-text-tertiary); }
+.head-play { flex: none; width: 20px; height: 20px; color: var(--color-text-secondary); }
+
+.body { display: flex; flex-direction: column; gap: 8px; }
+
+.foot {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-top: 10px; padding-top: 8px;
+  border-top: 1px solid var(--color-border);
+  font-size: 11px; color: var(--color-text-tertiary);
+}
+.foot-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--color-border-strong); }
+
+/* 字段（标签在上）：真机 .sf-node-field gap 6px；标签 12px/500/--text-secondary */
+.field { display: flex; flex-direction: column; gap: 6px; }
+.field-label { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; font-weight: 500; line-height: 1.4; color: var(--color-text-secondary); }
+.hint-icon { width: 13px; height: 13px; flex: none; color: var(--color-text-tertiary); }
+.field-row { display: flex; align-items: center; gap: 6px; }
+
+/* 控件 */
+.mk-select {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  width: 100%; height: var(--control-height-sm);
+  padding: 0 var(--control-padding-x);
+  border-radius: var(--control-radius-sm);
+  background: var(--control-bg);
+  box-shadow: inset 0 0 0 1px var(--control-border);
+  font-size: var(--control-font-size-sm); line-height: 1.2; color: var(--color-text);
+  white-space: nowrap; overflow: hidden;
+}
+.mk-select > span:first-child { overflow: hidden; text-overflow: ellipsis; }
+.mk-select.is-placeholder { color: var(--control-placeholder); }
+.mk-caret { flex: none; width: 12px; height: 12px; color: var(--color-text-tertiary); }
+.mk-icon-btn { flex: none; display: grid; place-items: center; width: 28px; height: 28px; color: var(--color-text-secondary); }
+.mk-switch { flex: none; position: relative; width: 30px; height: 16px; border-radius: 8px; background: var(--color-border-strong); transition: background-color var(--dur-1) var(--ease-out); }
+.mk-switch::after { content: ""; position: absolute; top: 2px; left: 2px; width: 12px; height: 12px; border-radius: 50%; background: #fff; transition: transform var(--dur-1) var(--ease-out); }
+.mk-switch.on { background: var(--color-ink); }
+.mk-switch.on::after { transform: translateX(14px); }
+.mk-chevron { flex: none; width: 12px; height: 12px; color: var(--color-text-tertiary); }
+
+/* ===================== A. 现状：卡内嵌套小卡片 ===================== */
+.v-a .adv { margin-top: 2px; padding: 10px 12px; border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--color-surface-muted); }
+.v-a .adv-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
+.v-a .adv-title { font-size: 11px; font-weight: 600; letter-spacing: 0.02em; color: var(--color-text-secondary); }
+.v-a .adv-close { display: grid; place-items: center; width: 18px; height: 18px; border: none; border-radius: var(--radius-sm); background: transparent; color: var(--color-text-tertiary); cursor: pointer; }
+.v-a .adv > .field + .field, .v-a .adv > .field + .switch-row { margin-top: 12px; }
+.v-a .switch-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 24px; font-size: 12px; color: var(--color-text); }
+
+/* ===================== B. 行式（Win11 SettingsExpander / libadwaita 行） =====================
+   依据：Windows「guidelines for app settings」的 SettingsExpander（组内每行= SettingsCard：文案左、控件右对齐，
+   "12epx between control and label"）+ libadwaita AdwActionRow/AdwExpanderRow（标题+副标题+右侧控件；开关可常驻头部行）。
+   本仓 300px 卡片里取 gap 8px（原文 12/16epx 是给 1000px 宽设置页的，这里按卡片宽度收窄，属**有意偏离**）。 */
+.v-b .adv { margin-top: 8px; border-top: 1px solid var(--color-border); padding-top: 8px; }
+.v-b .adv-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; height: 24px; }
+.v-b .adv-title { font-size: 11px; font-weight: 600; letter-spacing: 0.02em; color: var(--color-text-secondary); }
+.v-b .adv-chevron { width: 13px; height: 13px; color: var(--color-text-tertiary); }
+.v-b .row { display: flex; align-items: center; gap: 8px; min-height: 32px; }
+.v-b .row + .row { margin-top: 6px; }
+.v-b .row-label { display: flex; align-items: center; gap: 4px; flex: 1 1 auto; min-width: 0; font-size: 12px; color: var(--color-text); }
+.v-b .row-label-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.v-b .row-hint { flex: none; width: 13px; height: 13px; color: var(--color-text-tertiary); }
+.v-b .row .mk-select { flex: 0 1 auto; width: 104px; }
+.v-b .row .mk-select.wide { width: 148px; }
+
+/* ===================== C. 轻量内联（GOV.UK Details / Polaris details-summary） =====================
+   依据：GOV.UK Design System 的 details 组件——「summary 写主题，不写 Show/Hide」「比 tabs/accordion 更弱」，
+   以及 Polaris 迁移示例里 <summary>Advanced settings</summary>。本方案只借「一句 summary + 无框内容」，
+   不引入嵌套（GOV.UK 明确禁止把 Accordion/Tabs/Details 互相嵌套）。 */
+.v-c .sum {
+  display: flex; align-items: center; gap: 6px;
+  margin-top: 8px; padding-top: 8px;
+  border-top: 1px solid var(--color-border);
+  font-size: 11.5px; color: var(--color-text-secondary); cursor: pointer;
+}
+.v-c .sum b { font-weight: 500; color: var(--color-text); }
+.v-c .sum .mk-chevron { margin-left: auto; }
+.v-c .adv { padding-top: 10px; }
+.v-c .adv .field + .field, .v-c .adv .field + .switch-row { margin-top: 12px; }
+.v-c .switch-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 24px; font-size: 12px; color: var(--color-text); }
+
+/* ===================== D. 侧栏 Inspector（Dify / Langflow / Tines） ===================== */
+.v-d { width: 588px; }
+.v-d .pair { display: flex; align-items: flex-start; gap: 12px; }
+.v-d .card { width: 240px; }
+.v-d .sel-bar { width: 240px; }
+.v-d .inspector {
+  flex: none;
+  width: 300px; padding: 0;
+  border: 1px solid var(--color-border-strong); border-radius: var(--radius-md);
+  background: var(--color-surface); box-shadow: var(--shadow-overlay);
+  overflow: hidden;
+}
+.v-d .insp-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 10px 12px; border-bottom: 1px solid var(--color-border); }
+.v-d .insp-title { display: flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 500; }
+.v-d .insp-close { width: 18px; height: 18px; color: var(--color-text-tertiary); }
+.v-d .insp-body { display: flex; flex-direction: column; gap: 12px; padding: 12px; }
+.v-d .insp-group-title { margin-bottom: 8px; font-size: 11px; font-weight: 600; letter-spacing: 0.02em; color: var(--color-text-tertiary); }
+.v-d .insp-group .field + .field, .v-d .insp-group .field + .switch-row { margin-top: 12px; }
+.v-d .switch-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 24px; font-size: 12px; color: var(--color-text); }
+
+/* ===================== E. 卡片内 Tab（n8n NDV / Node-RED 对话框） ===================== */
+.v-e .seg {
+  display: flex; gap: 2px; margin-bottom: 10px; padding: 2px;
+  border-radius: var(--radius-sm); background: var(--color-ink-soft);
+}
+.v-e .seg button {
+  flex: 1; height: 24px;
+  border: none; border-radius: var(--radius-xs);
+  background: transparent; color: var(--color-text-secondary);
+  font-family: inherit; font-size: 11.5px; cursor: pointer;
+}
+.v-e .seg button.active { background: var(--color-surface); color: var(--color-text); font-weight: 500; box-shadow: var(--shadow-xs, 0 1px 2px rgba(22, 24, 29, 0.04)); }
+.v-e .tabpane[hidden] { display: none; }
+.v-e .row { display: flex; align-items: center; gap: 8px; min-height: 32px; }
+.v-e .row + .row { margin-top: 6px; }
+.v-e .row-label { display: flex; align-items: center; gap: 4px; flex: 1 1 auto; min-width: 0; font-size: 12px; color: var(--color-text); }
+.v-e .row-label-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.v-e .row-hint { flex: none; width: 13px; height: 13px; color: var(--color-text-tertiary); }
+.v-e .row .mk-select { flex: 0 1 auto; width: 104px; }
+.v-e .row .mk-select.wide { width: 148px; }
+
+/* ===================== 对照表 ===================== */
+table.cmp { width: 100%; max-width: 1100px; margin: 40px 0 0; border-collapse: collapse; font-size: 12px; }
+table.cmp caption { margin-bottom: 8px; text-align: left; font-size: 12px; color: var(--color-text-tertiary); }
+table.cmp th, table.cmp td { padding: 8px 10px; border-bottom: 1px solid var(--color-border); text-align: left; vertical-align: top; }
+table.cmp th { font-weight: 600; color: var(--color-text-secondary); }
+table.cmp td.num { font-variant-numeric: tabular-nums; color: var(--color-text); }
+</style>
+</head>
+<body>
+
+<h1 class="page-title">「高级设置」展开后的卡片 —— 五种排法对照</h1>
+<p class="page-sub">
+  同一张 Obsidian 卡片、同一组设置（4 个下拉 + 1 个开关），只换「高级设置」的排法与呈现方式。
+  颜色与圆角全部引用 <code>tokens.css</code> 的令牌；卡片外壳与控件尺寸照真机计算样式重画。
+  <strong>这是手写原型，不是 Element Plus 真实渲染</strong>，落地实现必须用 EP 组件——
+  来源、取舍与诚实清单见 <code>docs/research/advanced-settings-card-styles.md</code>。
+</p>
+
+<div class="bar">
+  <span class="bar-label">看哪几套</span>
+  <button data-filter="all" class="active">全部</button>
+  <button data-filter="A">A 现状</button>
+  <button data-filter="B">B 行式（推荐）</button>
+  <button data-filter="C">C 轻量内联</button>
+  <button data-filter="D">D 侧栏 Inspector</button>
+  <button data-filter="E">E 卡片内 Tab</button>
+  <span class="bar-sep"></span>
+  <button id="zoom">放大 1.6×</button>
+</div>
+
+<div class="grid" id="grid">
+
+  <!-- ============================ A ============================ -->
+  <section class="demo v-a" data-variant="A">
+    <h2>A. 现状：卡内嵌套小卡片</h2>
+    <p class="src">当前实现（<code>.sf-node-advanced</code>）：带边框的浅底小盒子 + 自己的标题行与「×」。</p>
+    <div class="sel-bar">
+      <span class="sel-bar-left"><button class="sel-bar-btn"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M4 7h10M18 7h2M4 12h2M10 12h10M4 17h8M16 17h4"/><circle cx="16" cy="7" r="2"/><circle cx="8" cy="12" r="2"/><circle cx="14" cy="17" r="2"/></svg> 高级设置</button></span>
+      <span class="sel-bar-dots">⋮</span>
+    </div>
+    <div class="card is-selected">
+      <div class="head">
+        <span class="head-icon">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
+        </span>
+        <span class="head-text">
+          <span class="head-title">Obsidian 笔记</span>
+          <span class="head-desc">将结果写入 Obsidian 笔记库</span>
+        </span>
+        <svg class="head-play" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M6 4l14 8-14 8z"/></svg>
+      </div>
+      <div class="body">
+        <div class="field">
+          <span class="field-label">保存目录
+            <svg class="hint-icon" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="6.3" stroke="currentColor" stroke-width="1.3"/><path d="M6.3 6.2c0-1 .8-1.7 1.7-1.7 1 0 1.7.7 1.7 1.6 0 1.3-1.7 1.2-1.7 2.4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/><circle cx="8" cy="11.4" r="0.75" fill="currentColor"/></svg>
+          </span>
+          <div class="field-row">
+            <div class="mk-select"><span>未分类</span><svg class="mk-caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg></div>
+            <span class="mk-icon-btn"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.6-6.4"/><path d="M21 3v6h-6"/></svg></span>
+          </div>
+        </div>
+        <div class="adv" data-adv>
+          <div class="adv-head">
+            <span class="adv-title">高级设置</span>
+            <button class="adv-close" title="收起高级设置">✕</button>
+          </div>
+          <div class="field">
+            <span class="field-label">让 AI 读一遍笔记 <svg class="hint-icon" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="6.3" stroke="currentColor" stroke-width="1.3"/><path d="M6.3 6.2c0-1 .8-1.7 1.7-1.7 1 0 1.7.7 1.7 1.6 0 1.3-1.7 1.2-1.7 2.4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/><circle cx="8" cy="11.4" r="0.75" fill="currentColor"/></svg></span>
+            <div class="mk-select"><span>跟随设置</span><svg class="mk-caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg></div>
+          </div>
+          <div class="field">
+            <span class="field-label">抽取哪些属性 <svg class="hint-icon" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="6.3" stroke="currentColor" stroke-width="1.3"/><path d="M6.3 6.2c0-1 .8-1.7 1.7-1.7 1 0 1.7.7 1.7 1.6 0 1.3-1.7 1.2-1.7 2.4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/><circle cx="8" cy="11.4" r="0.75" fill="currentColor"/></svg></span>
+            <div class="mk-select is-placeholder"><span>跟随设置：人物 / 事件 / 时期</span><svg class="mk-caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg></div>
+          </div>
+          <div class="field">
+            <span class="field-label">写来源标签 <svg class="hint-icon" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="6.3" stroke="currentColor" stroke-width="1.3"/><path d="M6.3 6.2c0-1 .8-1.7 1.7-1.7 1 0 1.7.7 1.7 1.6 0 1.3-1.7 1.2-1.7 2.4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/><circle cx="8" cy="11.4" r="0.75" fill="currentColor"/></svg></span>
+            <div class="mk-select"><span>跟随设置</span><svg class="mk-caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg></div>
+          </div>
+          <div class="field">
+            <span class="field-label">写 UP 主标签 <svg class="hint-icon" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="6.3" stroke="currentColor" stroke-width="1.3"/><path d="M6.3 6.2c0-1 .8-1.7 1.7-1.7 1 0 1.7.7 1.7 1.6 0 1.3-1.7 1.2-1.7 2.4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/><circle cx="8" cy="11.4" r="0.75" fill="currentColor"/></svg></span>
+            <div class="mk-select"><span>跟随设置</span><svg class="mk-caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg></div>
+          </div>
+          <div class="switch-row"><span>同名笔记直接覆盖</span><span class="mk-switch on"></span></div>
+        </div>
+      </div>
+      <div class="foot"><span>等待运行</span><span class="foot-dot"></span></div>
+    </div>
+    <ul class="notes">
+      <li><b>来源</b><span>无（本仓当前实现，作为基线）</span></li>
+      <li><b>代价</b><span>十款被调研的画布/工作流产品里没有第二家把高级设置放进卡内嵌套边框盒子</span></li>
+    </ul>
+    <p class="meter" data-meter>量中…</p>
+  </section>
+
+  <!-- ============================ B ============================ -->
+  <section class="demo v-b" data-variant="B">
+    <h2>B. 行式：文案左、控件右（推荐 · <span style="color:var(--color-success)">已落地 2026-10-14</span>）</h2>
+    <p class="src">Windows 11 <a href="https://learn.microsoft.com/en-us/windows/apps/design/app-settings/guidelines-for-app-settings">SettingsExpander</a> / libadwaita <a href="https://gnome.pages.gitlab.gnome.org/libadwaita/doc/1-latest/class.ActionRow.html">AdwActionRow</a>：设置项排成一列行，控件右对齐。</p>
+    <div class="sel-bar">
+      <span class="sel-bar-left"><button class="sel-bar-btn"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M4 7h10M18 7h2M4 12h2M10 12h10M4 17h8M16 17h4"/><circle cx="16" cy="7" r="2"/><circle cx="8" cy="12" r="2"/><circle cx="14" cy="17" r="2"/></svg> 高级设置</button></span>
+      <span class="sel-bar-dots">⋮</span>
+    </div>
+    <div class="card is-selected">
+      <div class="head">
+        <span class="head-icon">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
+        </span>
+        <span class="head-text">
+          <span class="head-title">Obsidian 笔记</span>
+          <span class="head-desc">将结果写入 Obsidian 笔记库</span>
+        </span>
+        <svg class="head-play" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M6 4l14 8-14 8z"/></svg>
+      </div>
+      <div class="body">
+        <div class="field">
+          <span class="field-label">保存目录
+            <svg class="hint-icon" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="6.3" stroke="currentColor" stroke-width="1.3"/><path d="M6.3 6.2c0-1 .8-1.7 1.7-1.7 1 0 1.7.7 1.7 1.6 0 1.3-1.7 1.2-1.7 2.4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/><circle cx="8" cy="11.4" r="0.75" fill="currentColor"/></svg>
+          </span>
+          <div class="field-row">
+            <div class="mk-select"><span>未分类</span><svg class="mk-caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg></div>
+            <span class="mk-icon-btn"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.6-6.4"/><path d="M21 3v6h-6"/></svg></span>
+          </div>
+        </div>
+        <div class="adv" data-adv>
+          <div class="adv-head">
+            <span class="adv-title">高级设置</span>
+            <svg class="adv-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 15l-6-6-6 6"/></svg>
+          </div>
+          <div class="row">
+            <span class="row-label"><span class="row-label-text">让 AI 读一遍笔记</span><svg class="row-hint" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="6.3" stroke="currentColor" stroke-width="1.3"/><path d="M6.3 6.2c0-1 .8-1.7 1.7-1.7 1 0 1.7.7 1.7 1.6 0 1.3-1.7 1.2-1.7 2.4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/><circle cx="8" cy="11.4" r="0.75" fill="currentColor"/></svg></span>
+            <div class="mk-select"><span>跟随设置</span><svg class="mk-caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg></div>
+          </div>
+          <div class="row">
+            <span class="row-label"><span class="row-label-text">抽取哪些属性</span><svg class="row-hint" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="6.3" stroke="currentColor" stroke-width="1.3"/><path d="M6.3 6.2c0-1 .8-1.7 1.7-1.7 1 0 1.7.7 1.7 1.6 0 1.3-1.7 1.2-1.7 2.4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/><circle cx="8" cy="11.4" r="0.75" fill="currentColor"/></svg></span>
+            <div class="mk-select wide"><span>跟随设置：人物 / 事件 / 时期</span><svg class="mk-caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg></div>
+          </div>
+          <div class="row">
+            <span class="row-label"><span class="row-label-text">写来源标签</span><svg class="row-hint" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="6.3" stroke="currentColor" stroke-width="1.3"/><path d="M6.3 6.2c0-1 .8-1.7 1.7-1.7 1 0 1.7.7 1.7 1.6 0 1.3-1.7 1.2-1.7 2.4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/><circle cx="8" cy="11.4" r="0.75" fill="currentColor"/></svg></span>
+            <div class="mk-select"><span>跟随设置</span><svg class="mk-caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg></div>
+          </div>
+          <div class="row">
+            <span class="row-label"><span class="row-label-text">写 UP 主标签</span><svg class="row-hint" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="6.3" stroke="currentColor" stroke-width="1.3"/><path d="M6.3 6.2c0-1 .8-1.7 1.7-1.7 1 0 1.7.7 1.7 1.6 0 1.3-1.7 1.2-1.7 2.4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/><circle cx="8" cy="11.4" r="0.75" fill="currentColor"/></svg></span>
+            <div class="mk-select"><span>跟随设置</span><svg class="mk-caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg></div>
+          </div>
+          <div class="row">
+            <span class="row-label">同名笔记直接覆盖</span>
+            <span class="mk-switch on"></span>
+          </div>
+        </div>
+      </div>
+      <div class="foot"><span>等待运行</span><span class="foot-dot"></span></div>
+    </div>
+    <ul class="notes">
+      <li><b>来源</b><span>Windows 11 设置行的 SettingsExpander / libadwaita AdwActionRow（标题+右侧控件）</span></li>
+      <li><b>取舍</b><span>高度大幅下降、无嵌套盒子；代价是「标签在上」的垂直排法没了，长标签会被截断</span></li>
+      <li><b>落地差异</b><span>实现时「抽取哪些属性」这类标签型控件没进行式（chips 会换行），控件列从 104px 放宽到 128px；重试两项也改成了行式。见调研文档 §6.1</span></li>
+    </ul>
+    <p class="meter" data-meter>量中…</p>
+  </section>
+
+  <!-- ============================ C ============================ -->
+  <section class="demo v-c" data-variant="C">
+    <h2>C. 轻量内联：一句 summary，展开无框</h2>
+    <p class="src">GOV.UK <a href="https://design-system.service.gov.uk/components/details/">Details</a> / Polaris <code>&lt;summary&gt;Advanced settings&lt;/summary&gt;</code>：默认只占一行，内容不加框。</p>
+    <div class="sel-bar">
+      <span class="sel-bar-left"><button class="sel-bar-btn is-quiet"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M4 7h10M18 7h2M4 12h2M10 12h10M4 17h8M16 17h4"/><circle cx="16" cy="7" r="2"/><circle cx="8" cy="12" r="2"/><circle cx="14" cy="17" r="2"/></svg> 高级设置</button></span>
+      <span class="sel-bar-dots">⋮</span>
+    </div>
+    <div class="card is-selected">
+      <div class="head">
+        <span class="head-icon">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
+        </span>
+        <span class="head-text">
+          <span class="head-title">Obsidian 笔记</span>
+          <span class="head-desc">将结果写入 Obsidian 笔记库</span>
+        </span>
+        <svg class="head-play" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M6 4l14 8-14 8z"/></svg>
+      </div>
+      <div class="body">
+        <div class="field">
+          <span class="field-label">保存目录
+            <svg class="hint-icon" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="6.3" stroke="currentColor" stroke-width="1.3"/><path d="M6.3 6.2c0-1 .8-1.7 1.7-1.7 1 0 1.7.7 1.7 1.6 0 1.3-1.7 1.2-1.7 2.4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/><circle cx="8" cy="11.4" r="0.75" fill="currentColor"/></svg>
+          </span>
+          <div class="field-row">
+            <div class="mk-select"><span>未分类</span><svg class="mk-caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg></div>
+            <span class="mk-icon-btn"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.6-6.4"/><path d="M21 3v6h-6"/></svg></span>
+          </div>
+        </div>
+        <!-- 收起态：只有这一行。展开态见下方 d 元素（原型里两个状态同时展示，便于比较） -->
+        <div class="sum"><span>高级设置 <b>（5 项）</b></span><svg class="mk-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg></div>
+        <div class="adv" data-adv>
+          <div class="field">
+            <span class="field-label">让 AI 读一遍笔记 <svg class="hint-icon" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="6.3" stroke="currentColor" stroke-width="1.3"/><path d="M6.3 6.2c0-1 .8-1.7 1.7-1.7 1 0 1.7.7 1.7 1.6 0 1.3-1.7 1.2-1.7 2.4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/><circle cx="8" cy="11.4" r="0.75" fill="currentColor"/></svg></span>
+            <div class="mk-select"><span>跟随设置</span><svg class="mk-caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg></div>
+          </div>
+          <div class="field">
+            <span class="field-label">抽取哪些属性 <svg class="hint-icon" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="6.3" stroke="currentColor" stroke-width="1.3"/><path d="M6.3 6.2c0-1 .8-1.7 1.7-1.7 1 0 1.7.7 1.7 1.6 0 1.3-1.7 1.2-1.7 2.4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/><circle cx="8" cy="11.4" r="0.75" fill="currentColor"/></svg></span>
+            <div class="mk-select is-placeholder"><span>跟随设置：人物 / 事件 / 时期</span><svg class="mk-caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg></div>
+          </div>
+          <div class="field">
+            <span class="field-label">写来源标签 <svg class="hint-icon" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="6.3" stroke="currentColor" stroke-width="1.3"/><path d="M6.3 6.2c0-1 .8-1.7 1.7-1.7 1 0 1.7.7 1.7 1.6 0 1.3-1.7 1.2-1.7 2.4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/><circle cx="8" cy="11.4" r="0.75" fill="currentColor"/></svg></span>
+            <div class="mk-select"><span>跟随设置</span><svg class="mk-caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg></div>
+          </div>
+          <div class="field">
+            <span class="field-label">写 UP 主标签 <svg class="hint-icon" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="6.3" stroke="currentColor" stroke-width="1.3"/><path d="M6.3 6.2c0-1 .8-1.7 1.7-1.7 1 0 1.7.7 1.7 1.6 0 1.3-1.7 1.2-1.7 2.4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/><circle cx="8" cy="11.4" r="0.75" fill="currentColor"/></svg></span>
+            <div class="mk-select"><span>跟随设置</span><svg class="mk-caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg></div>
+          </div>
+          <div class="switch-row"><span>同名笔记直接覆盖</span><span class="mk-switch on"></span></div>
+        </div>
+      </div>
+      <div class="foot"><span>等待运行</span><span class="foot-dot"></span></div>
+    </div>
+    <ul class="notes">
+      <li><b>来源</b><span>GOV.UK Details（一句 summary + 无框内容）／Polaris 的 <code>Advanced settings</code> summary</span></li>
+      <li><b>取舍</b><span>视觉重量最低、没有嵌套盒子；但高度几乎不降（字段排法没变），GOV.UK 同时警告「别用它藏大多数人要用的东西」</span></li>
+      <li><b>原型</b><span>收起态只到 summary 那一行为止；本页把收起态与展开态连着放，便于对照</span></li>
+    </ul>
+    <p class="meter" data-meter>量中…</p>
+  </section>
+
+  <!-- ============================ D ============================ -->
+  <section class="demo v-d" data-variant="D">
+    <h2>D. 侧栏 Inspector：配置搬出卡片</h2>
+    <p class="src">Langflow（<a href="https://docs.langflow.org/concepts-overview">inspection panel on the right</a>）／Dify／Tines：卡片只留常用项，配置在右侧面板分组呈现。</p>
+    <div class="pair">
+      <div>
+        <div class="sel-bar">
+          <span class="sel-bar-left"><button class="sel-bar-btn is-quiet"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M4 7h10M18 7h2M4 12h2M10 12h10M4 17h8M16 17h4"/><circle cx="16" cy="7" r="2"/><circle cx="8" cy="12" r="2"/><circle cx="14" cy="17" r="2"/></svg> 高级设置</button></span>
+          <span class="sel-bar-dots">⋮</span>
+        </div>
+        <div class="card is-selected">
+          <div class="head">
+            <span class="head-icon">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
+            </span>
+            <span class="head-text">
+              <span class="head-title">Obsidian 笔记</span>
+              <span class="head-desc">将结果写入 Obsidian 笔记库</span>
+            </span>
+            <svg class="head-play" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M6 4l14 8-14 8z"/></svg>
+          </div>
+          <div class="body">
+            <div class="field">
+              <span class="field-label">保存目录
+                <svg class="hint-icon" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="6.3" stroke="currentColor" stroke-width="1.3"/><path d="M6.3 6.2c0-1 .8-1.7 1.7-1.7 1 0 1.7.7 1.7 1.6 0 1.3-1.7 1.2-1.7 2.4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/><circle cx="8" cy="11.4" r="0.75" fill="currentColor"/></svg>
+              </span>
+              <div class="mk-select"><span>未分类</span><svg class="mk-caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg></div>
+            </div>
+          </div>
+          <div class="foot"><span>等待运行</span><span class="foot-dot"></span></div>
+        </div>
+      </div>
+      <div class="inspector" data-panel>
+        <div class="insp-head">
+          <span class="insp-title">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
+            Obsidian 笔记
+          </span>
+          <span class="insp-close">✕</span>
+        </div>
+        <div class="insp-body">
+          <div class="insp-group">
+            <div class="insp-group-title">输出</div>
+            <div class="field">
+              <span class="field-label">保存目录
+                <svg class="hint-icon" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="6.3" stroke="currentColor" stroke-width="1.3"/><path d="M6.3 6.2c0-1 .8-1.7 1.7-1.7 1 0 1.7.7 1.7 1.6 0 1.3-1.7 1.2-1.7 2.4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/><circle cx="8" cy="11.4" r="0.75" fill="currentColor"/></svg>
+              </span>
+              <div class="mk-select"><span>未分类</span><svg class="mk-caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg></div>
+            </div>
+            <div class="switch-row"><span>同名笔记直接覆盖</span><span class="mk-switch on"></span></div>
+          </div>
+          <div class="insp-group">
+            <div class="insp-group-title">内容与标签</div>
+            <div class="field">
+              <span class="field-label">让 AI 读一遍笔记
+                <svg class="hint-icon" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="6.3" stroke="currentColor" stroke-width="1.3"/><path d="M6.3 6.2c0-1 .8-1.7 1.7-1.7 1 0 1.7.7 1.7 1.6 0 1.3-1.7 1.2-1.7 2.4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/><circle cx="8" cy="11.4" r="0.75" fill="currentColor"/></svg>
+              </span>
+              <div class="mk-select"><span>跟随设置</span><svg class="mk-caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg></div>
+            </div>
+            <div class="field">
+              <span class="field-label">抽取哪些属性
+                <svg class="hint-icon" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="6.3" stroke="currentColor" stroke-width="1.3"/><path d="M6.3 6.2c0-1 .8-1.7 1.7-1.7 1 0 1.7.7 1.7 1.6 0 1.3-1.7 1.2-1.7 2.4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/><circle cx="8" cy="11.4" r="0.75" fill="currentColor"/></svg>
+              </span>
+              <div class="mk-select is-placeholder"><span>跟随设置：人物 / 事件 / 时期</span><svg class="mk-caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg></div>
+            </div>
+            <div class="field">
+              <span class="field-label">写来源标签
+                <svg class="hint-icon" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="6.3" stroke="currentColor" stroke-width="1.3"/><path d="M6.3 6.2c0-1 .8-1.7 1.7-1.7 1 0 1.7.7 1.7 1.6 0 1.3-1.7 1.2-1.7 2.4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/><circle cx="8" cy="11.4" r="0.75" fill="currentColor"/></svg>
+              </span>
+              <div class="mk-select"><span>跟随设置</span><svg class="mk-caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg></div>
+            </div>
+            <div class="field">
+              <span class="field-label">写 UP 主标签
+                <svg class="hint-icon" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="6.3" stroke="currentColor" stroke-width="1.3"/><path d="M6.3 6.2c0-1 .8-1.7 1.7-1.7 1 0 1.7.7 1.7 1.6 0 1.3-1.7 1.2-1.7 2.4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/><circle cx="8" cy="11.4" r="0.75" fill="currentColor"/></svg>
+              </span>
+              <div class="mk-select"><span>跟随设置</span><svg class="mk-caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <ul class="notes">
+      <li><b>来源</b><span>Langflow 官方「component inspection panel appears on the right side… including hidden or advanced parameters」；Dify / Tines 同为右侧面板</span></li>
+      <li><b>取舍</b><span>卡片最干净、设置空间不受限；但要新增一个常驻面板与选中联动，改动量最大，且「配置在卡片上」这个直观性没了</span></li>
+    </ul>
+    <p class="meter" data-meter>量中…</p>
+  </section>
+
+  <!-- ============================ E ============================ -->
+  <section class="demo v-e" data-variant="E">
+    <h2>E. 卡片内 Tab：参数 / 高级 二选一</h2>
+    <p class="src">n8n 节点详情视图（Parameters 与 Settings 分 tab）/ Node-RED 编辑对话框（Properties / Description / Appearance）。</p>
+    <div class="sel-bar">
+      <span class="sel-bar-left"><button class="sel-bar-btn is-quiet"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M4 7h10M18 7h2M4 12h2M10 12h10M4 17h8M16 17h4"/><circle cx="16" cy="7" r="2"/><circle cx="8" cy="12" r="2"/><circle cx="14" cy="17" r="2"/></svg> 高级设置</button></span>
+      <span class="sel-bar-dots">⋮</span>
+    </div>
+    <div class="card is-selected">
+      <div class="head">
+        <span class="head-icon">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
+        </span>
+        <span class="head-text">
+          <span class="head-title">Obsidian 笔记</span>
+          <span class="head-desc">将结果写入 Obsidian 笔记库</span>
+        </span>
+        <svg class="head-play" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M6 4l14 8-14 8z"/></svg>
+      </div>
+      <div class="body">
+        <div class="seg" data-seg>
+          <button data-tab="main">参数</button>
+          <button data-tab="adv" class="active">高级</button>
+        </div>
+        <div class="tabpane" data-pane="main" hidden>
+          <div class="field">
+            <span class="field-label">保存目录</span>
+            <div class="mk-select"><span>未分类</span><svg class="mk-caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg></div>
+          </div>
+          <div class="field">
+            <span class="field-label">输出文件名</span>
+            <div class="mk-select"><span>笔记.md</span><svg class="mk-caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg></div>
+          </div>
+        </div>
+        <div class="tabpane" data-pane="adv">
+          <div class="row">
+            <span class="row-label"><span class="row-label-text">让 AI 读一遍笔记</span><svg class="row-hint" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="6.3" stroke="currentColor" stroke-width="1.3"/><path d="M6.3 6.2c0-1 .8-1.7 1.7-1.7 1 0 1.7.7 1.7 1.6 0 1.3-1.7 1.2-1.7 2.4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/><circle cx="8" cy="11.4" r="0.75" fill="currentColor"/></svg></span>
+            <div class="mk-select"><span>跟随设置</span><svg class="mk-caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg></div>
+          </div>
+          <div class="row">
+            <span class="row-label"><span class="row-label-text">抽取哪些属性</span><svg class="row-hint" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="6.3" stroke="currentColor" stroke-width="1.3"/><path d="M6.3 6.2c0-1 .8-1.7 1.7-1.7 1 0 1.7.7 1.7 1.6 0 1.3-1.7 1.2-1.7 2.4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/><circle cx="8" cy="11.4" r="0.75" fill="currentColor"/></svg></span>
+            <div class="mk-select wide"><span>跟随设置：人物 / 事件 / 时期</span><svg class="mk-caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg></div>
+          </div>
+          <div class="row">
+            <span class="row-label"><span class="row-label-text">写来源标签</span><svg class="row-hint" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="6.3" stroke="currentColor" stroke-width="1.3"/><path d="M6.3 6.2c0-1 .8-1.7 1.7-1.7 1 0 1.7.7 1.7 1.6 0 1.3-1.7 1.2-1.7 2.4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/><circle cx="8" cy="11.4" r="0.75" fill="currentColor"/></svg></span>
+            <div class="mk-select"><span>跟随设置</span><svg class="mk-caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg></div>
+          </div>
+          <div class="row">
+            <span class="row-label"><span class="row-label-text">写 UP 主标签</span><svg class="row-hint" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="6.3" stroke="currentColor" stroke-width="1.3"/><path d="M6.3 6.2c0-1 .8-1.7 1.7-1.7 1 0 1.7.7 1.7 1.6 0 1.3-1.7 1.2-1.7 2.4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/><circle cx="8" cy="11.4" r="0.75" fill="currentColor"/></svg></span>
+            <div class="mk-select"><span>跟随设置</span><svg class="mk-caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg></div>
+          </div>
+          <div class="row">
+            <span class="row-label">同名笔记直接覆盖</span>
+            <span class="mk-switch on"></span>
+          </div>
+        </div>
+      </div>
+      <div class="foot"><span>等待运行</span><span class="foot-dot"></span></div>
+    </div>
+    <ul class="notes">
+      <li><b>来源</b><span>n8n 的 Parameters / Settings 分 tab；Node-RED 编辑对话框三个 tab</span></li>
+      <li><b>取舍</b><span>两组设置不会同时挤在卡片里；代价是多一次点击、且「参数」与「高级」不能同时看（NN/g：揭示层级别超过 2 层，这条仍满足）</span></li>
+    </ul>
+    <p class="meter" data-meter>量中…</p>
+  </section>
+
+</div>
+
+<table class="cmp">
+  <caption>高度为本页原型在 1:1 下的实测（js 量的，见每张卡片下方的小字）；A 另有真机实测值可对照。落地后应按 Element Plus 真实渲染重新量。</caption>
+  <thead>
+    <tr><th>方案</th><th>高级区呈现</th><th>卡片总高</th><th>高级区高</th><th>来源（可查证）</th></tr>
+  </thead>
+  <tbody id="cmp-body"></tbody>
+</table>
+
+<script>
+(() => {
+  /* 切换「看哪几套」 */
+  const demos = [...document.querySelectorAll(".demo")];
+  document.querySelectorAll(".bar [data-filter]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const want = btn.dataset.filter;
+      document.querySelectorAll(".bar [data-filter]").forEach((b) => b.classList.toggle("active", b === btn));
+      demos.forEach((d) => { d.hidden = want !== "all" && d.dataset.variant !== want; });
+    });
+  });
+
+  /* 放大 */
+  const zoomBtn = document.getElementById("zoom");
+  zoomBtn.addEventListener("click", () => {
+    const on = document.body.classList.toggle("zoomed");
+    zoomBtn.classList.toggle("active", on);
+    zoomBtn.textContent = on ? "还原 1×" : "放大 1.6×";
+  });
+
+  /* E 的 tab 切换 */
+  document.querySelectorAll("[data-seg]").forEach((seg) => {
+    seg.addEventListener("click", (e) => {
+      const btn = e.target.closest("button[data-tab]");
+      if (!btn) return;
+      const card = seg.closest(".card");
+      seg.querySelectorAll("button").forEach((b) => b.classList.toggle("active", b === btn));
+      card.querySelectorAll(".tabpane").forEach((p) => { p.hidden = p.dataset.pane !== btn.dataset.tab; });
+      measure();
+    });
+  });
+
+  /* 量高：卡片总高 + 高级区高，写回小字与对照表 */
+  const rows = [];
+  const r1 = (n) => Math.round(n * 10) / 10;
+  /* E 的两个 tab 页高：量的时候要临时都显示出来（隐藏的拿到 0） */
+  function tabHeights(demo) {
+    const panes = [...demo.querySelectorAll(".tabpane")];
+    const saved = panes.map((p) => p.hidden);
+    panes.forEach((p) => { p.hidden = false; });
+    const hs = panes.map((p) => r1(p.getBoundingClientRect().height));
+    panes.forEach((p, i) => { p.hidden = saved[i]; });
+    return hs;
+  }
+  function measure() {
+    rows.length = 0;
+    for (const demo of demos) {
+      const card = demo.querySelector(".card");
+      const adv = demo.querySelector("[data-adv]");
+      const panel = demo.querySelector("[data-panel]");
+      const meter = demo.querySelector("[data-meter]");
+      const cardH = card ? r1(card.getBoundingClientRect().height) : null;
+      const advH = adv ? r1(adv.getBoundingClientRect().height) : null;
+      const panelH = panel ? r1(panel.getBoundingClientRect().height) : null;
+      const [mainH, advPaneH] = demo.dataset.variant === "E" ? tabHeights(demo) : [null, null];
+      const v = demo.dataset.variant;
+      const label = demo.querySelector("h2").textContent.trim();
+      const presentation = {
+        A: "卡内嵌套小盒子 + 自己的「×」",
+        B: "分隔线 + 行式（文案左 / 控件右）",
+        C: "一句 summary + 无框字段",
+        D: "搬出卡片，右侧面板分组",
+        E: "卡片内 tab「参数 / 高级」",
+      }[v];
+      const source = {
+        A: "—（本仓现状，基线）",
+        B: "Windows SettingsExpander / libadwaita AdwActionRow",
+        C: "GOV.UK Details / Polaris summary",
+        D: "Langflow / Dify / Tines 右侧面板",
+        E: "n8n NDV tab / Node-RED 对话框 tab",
+      }[v];
+      const meterText = {
+        A: `本页原型：卡片总高 <b>${cardH}</b>px · 高级区 <b>${advH}</b>px（真机实测 525.1 / 339.2px）`,
+        B: `卡片总高 <b>${cardH}</b>px · 高级区 <b>${advH}</b>px（比 A 矮 ${Math.round((521.4 - cardH) * 10) / 10}px）`,
+        C: `卡片总高 <b>${cardH}</b>px · 高级区 <b>${advH}</b>px —— 与 A 几乎同高（去掉的只是盒子）`,
+        D: `卡片总高 <b>${cardH}</b>px（不再有高级区）· 右侧面板 <b>${panelH}</b>px 且不受卡片高度限制`,
+        E: `卡片总高（高级 tab）<b>${cardH}</b>px · 参数 tab 下 <b>${r1(cardH - advPaneH + mainH)}</b>px`,
+      }[v];
+      if (meter) meter.innerHTML = meterText;
+      rows.push({ v, label, presentation, source, cardH, advH });
+    }
+    document.getElementById("cmp-body").innerHTML = rows
+      .map((r) => `<tr><td>${r.label}</td><td>${r.presentation}</td><td class="num">${r.cardH}px</td><td class="num">${r.advH === null ? "—" : r.advH + "px"}</td><td>${r.source}</td></tr>`)
+      .join("");
+  }
+  measure();
+  window.addEventListener("resize", measure);
+  /* 供 CDP 渲染脚本取数 */
+  window.__demoMetrics = () => rows.map((r) => ({ ...r }));
+})();
+</script>
+</body>
+</html>
