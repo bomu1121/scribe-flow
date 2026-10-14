@@ -2,7 +2,7 @@
 import { computed, ref, watch } from "vue";
 import { ElOption, ElSelect } from "element-plus/es/components/select/index.mjs";
 import { Copy, X } from "lucide-vue-next";
-import type { PromptBlock } from "@scribe-flow/shared";
+import { blockSeriesName, variantTitle, type PromptBlock } from "@scribe-flow/shared";
 import { useBodyScrollLock } from "@/composables/useBodyScrollLock";
 import { useEscapeClose } from "@/composables/useEscapeClose";
 import { copyText } from "@/lib/clipboard";
@@ -21,19 +21,20 @@ const seriesFilter = ref("");
 const leftId = ref("");
 const rightId = ref("");
 
+/** 系列名与完整标题都取自 shared：设置页、两个下拉、这里三处口径必须一致。 */
 function blockSeries(block: PromptBlock): string {
-  return block.series || (block.builtin ? "其他内置" : "自定义");
+  return blockSeriesName(block);
 }
 
 function blockOptionLabel(block: PromptBlock): string {
   const version = block.version ? ` · ${block.version}` : "";
   const recommended = block.recommended ? " · 推荐" : "";
-  return `${block.name}${version}${recommended}`;
+  return `${variantTitle(block)}${version}${recommended}`;
 }
 
 function blockMetaLabel(block: PromptBlock | undefined): string {
   if (!block) return "未选择";
-  return block.version ? `${block.name}（${block.version}）` : block.name;
+  return block.version ? `${variantTitle(block)}（${block.version}）` : variantTitle(block);
 }
 
 function blockRecipeSummary(block: PromptBlock | undefined): string {
@@ -144,7 +145,7 @@ watch(rightId, ensureDistinct);
 function copyBlock(block: PromptBlock | undefined) {
   if (!block) return;
   const content = blockComparableContent(block);
-  const label = block.version ? `${block.name} ${block.version}` : block.name;
+  const label = block.version ? `${variantTitle(block)} ${block.version}` : variantTitle(block);
   void copyText(content, `已复制「${label}」的提示词${block.recipe ? "与配方" : ""}`);
 }
 </script>
@@ -191,7 +192,7 @@ function copyBlock(block: PromptBlock | undefined) {
             <div class="pbd-meta">
               <article class="pbd-block-meta" :class="{ 'is-recommended': leftBlock?.recommended }">
                 <header class="pbd-meta-head">
-                  <span class="pbd-meta-name">{{ leftBlock?.name ?? "未选择" }}</span>
+                  <span class="pbd-meta-name">{{ leftBlock ? variantTitle(leftBlock) : "未选择" }}</span>
                   <span v-if="leftBlock?.version" class="pbd-chip">{{ leftBlock.version }}</span>
                   <span v-if="leftBlock?.builtin" class="pbd-chip pbd-chip--info">内置</span>
                   <span v-if="leftBlock?.recommended" class="pbd-chip pbd-chip--success">推荐</span>
@@ -205,7 +206,7 @@ function copyBlock(block: PromptBlock | undefined) {
               <span class="pbd-vs">对比</span>
               <article class="pbd-block-meta" :class="{ 'is-recommended': rightBlock?.recommended }">
                 <header class="pbd-meta-head">
-                  <span class="pbd-meta-name">{{ rightBlock?.name ?? "未选择" }}</span>
+                  <span class="pbd-meta-name">{{ rightBlock ? variantTitle(rightBlock) : "未选择" }}</span>
                   <span v-if="rightBlock?.version" class="pbd-chip">{{ rightBlock.version }}</span>
                   <span v-if="rightBlock?.builtin" class="pbd-chip pbd-chip--info">内置</span>
                   <span v-if="rightBlock?.recommended" class="pbd-chip pbd-chip--success">推荐</span>

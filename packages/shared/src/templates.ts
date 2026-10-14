@@ -1,5 +1,5 @@
 import { NODE_CARD_WIDTH, NODE_PORTS, type GraphEdge, type GraphNode, type NodeType, type PageRef, type WorkflowGraph } from "./graph";
-import { aiPromptBlocks, type PromptBlock } from "./prompt";
+import { aiPromptBlocks, variantTitle, type PromptBlock } from "./prompt";
 
 /**
  * 内置链路的组织方式：**模板 = 加工路径的形状，来源在新建时选**。
@@ -84,7 +84,8 @@ const ALL_PROMPT_STAGES: TemplateStage[] = OPEN_PROMPT_BLOCKS.map((block, index)
   from: ["refine"],
   dy: Math.round((index - (OPEN_PROMPT_BLOCKS.length - 1) / 2) * TEMPLATE_BRANCH_GAP),
   // 分支卡片的默认名是类型名，几张卡长得一模一样：用提示词名，才分得清哪份结果对应哪套提示词。
-  label: block.name,
+  // 画布上的卡片看不到分组标题，所以这里要完整标题（「观点提炼 · 成文版」），只用成员名会认不出系列。
+  label: variantTitle(block),
   data: { promptBlockId: block.id },
 }));
 

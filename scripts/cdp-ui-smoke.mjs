@@ -432,11 +432,26 @@ async function run() {
     JSON.stringify(quickFields),
   );
   check(
-    "快捷新建默认值：单线笔记链路 + 推荐提示词",
+    "快捷新建默认值：单线笔记链路 + 推荐提示词（成文版）",
     Boolean(quickFields?.values?.some((v) => v.includes("单线笔记"))) &&
-      Boolean(quickFields?.values?.some((v) => v.includes("观点笔记"))),
+      Boolean(quickFields?.values?.some((v) => v.includes("成文版"))),
     (quickFields?.values ?? []).join(" / "),
   );
+  // 提示词下拉按系列分组（el-option-group）：分组标题承担系列名，只在弹层打开时才可见。
+  await evalJs("[...document.querySelectorAll('.qc-field .el-select')][1]?.querySelector('.el-select__wrapper')?.click(); true");
+  const qcGroupOk = await waitFor("[...document.querySelectorAll('.el-select-group__title')].some((n) => n.offsetParent !== null)", 4000);
+  const qcGroupTitles = await evalJs("[...document.querySelectorAll('.el-select-group__title')].filter((n) => n.offsetParent !== null).map((n) => n.textContent.trim())");
+  check("快捷新建提示词下拉按系列分组", qcGroupOk && (qcGroupTitles ?? []).includes("观点提炼"), (qcGroupTitles ?? []).join(" / "));
+  // 收回下拉：点回当前已选的那一项。等价于真实操作，且不改值——直接再点触发器收不干净，
+  // 残留的下拉会吃掉下面「Esc 关闭快捷新建对话框」那次的第一次 Esc。
+  await evalJs(`(() => {
+    const item = [...document.querySelectorAll('.el-select-dropdown__item.is-selected')].find((n) => n.offsetParent !== null);
+    item?.click();
+    return true;
+  })()`);
+  await waitFor("[...document.querySelectorAll('.el-select-group__title')].every((n) => n.offsetParent === null)", 3000);
+  // 焦点还回去：下拉的输入框还占着焦点时 Esc 会被它先吃掉，下面那条「Esc 关闭对话框」就永远等不到。
+  await evalJs("document.activeElement?.blur(); true");
   await evalJs(`(() => {
     const ta = document.querySelector('.el-overlay .qc-link .el-textarea__inner');
     if (!ta) return false;
@@ -694,6 +709,38 @@ async function run() {
     await evalJs("[...document.querySelectorAll('.sf-settings-nav-item')].find((b) => b.textContent.trim() === '提示词库')?.click(); true");
     const blocksOk = await waitFor("document.querySelectorAll('.sf-block-card').length >= 4", 6000);
     check("提示词库渲染内置提示词（≥4）", blocksOk, `${await evalJs("document.querySelectorAll('.sf-block-card').length")} 个提示词`);
+
+    // 系列分组与去噪：卡片按系列归组（观点提炼 / 信息溯源各一个标题），列表上不再平铺版本号，
+    // 只有被迭代过的写法（当前是详尽版）才带「历史版本」入口。
+    const seriesHeads = await evalJs("[...document.querySelectorAll('.sf-block-series-head')].map((n) => n.textContent.trim())");
+    check("提示词库按系列分组（≥2 个分组标题）", (seriesHeads?.length ?? 0) >= 2, (seriesHeads ?? []).join(" / "));
+    const versionChips = await evalJs("document.querySelectorAll('.sf-blocks .sf-chip--warning').length");
+    check("提示词卡片不再平铺版本号", versionChips === 0, `${versionChips} 个版本徽章`);
+    const historyBtns = await evalJs("[...document.querySelectorAll('.sf-block-actions .sf-text-btn')].filter((b) => b.textContent.includes('历史版本')).length");
+    check("只有被迭代过的写法才有「历史版本」入口（当前 1 个）", historyBtns === 1, `${historyBtns} 个`);
+
+    // 展开历史版本：每一代列一行（不是把版本号平铺回卡片上），当前那代只留标记——
+    // 它的说明与正文就是卡片本身，所以既不给描述也不给按钮（上一版两者都重复，看着很挤）。
+    await evalJs("[...document.querySelectorAll('.sf-block-actions .sf-text-btn')].find((b) => b.textContent.includes('历史版本'))?.click(); true");
+    const versionRowsOk = await waitFor("document.querySelectorAll('.sf-block-version-tag').length >= 2", 4000);
+    const versionInfo = await evalJs(`(() => ({
+      tags: [...document.querySelectorAll('.sf-block-version-tag')].map((n) => n.textContent.trim()),
+      current: document.querySelectorAll('.sf-block-versions .sf-chip--success').length,
+      descs: document.querySelectorAll('.sf-block-version-desc').length,
+      opens: document.querySelectorAll('.sf-block-version-open').length,
+    }))()`);
+    const versionCount = versionInfo?.tags?.length ?? 0;
+    check(
+      "历史版本：一代一行、只标一个「当前」、描述与「查看全文」只给历史那几代",
+      versionRowsOk &&
+        versionCount >= 2 &&
+        (versionInfo?.tags ?? []).every(Boolean) &&
+        versionInfo?.current === 1 &&
+        versionInfo?.descs === versionCount - 1 &&
+        versionInfo?.opens === versionCount - 1,
+      JSON.stringify(versionInfo),
+    );
+    await evalJs("[...document.querySelectorAll('.sf-block-actions .sf-text-btn')].find((b) => b.textContent.includes('收起版本'))?.click(); true");
     // 「联网检索」是溯源与知识巩固共用的检索渠道（原名「外部溯源」）：按分组名点进去，
     // 并确认说明里写明了两个消费方——名字改了而说明没跟上，这里会红。
     await evalJs("[...document.querySelectorAll('.sf-settings-nav-item')].find((b) => b.textContent.trim() === '联网检索')?.click(); true");
@@ -831,13 +878,18 @@ async function run() {
     const promptOpen = await waitFor("document.querySelectorAll('.sf-model-select__option').length >= 3", 5000);
     const optionLabels = await evalJs("[...document.querySelectorAll('.sf-model-select__option-label')].map((n) => n.textContent.trim())");
     check("提示词下拉打开且有选项（≥3）", promptOpen, `${optionLabels.length} 个选项`);
+    // 按系列分组：标题承担系列名，组内只写成员名（选项里的正则是当前白名单，别再写已经不放开的那些）
+    const promptGroupTitles = await evalJs("[...document.querySelectorAll('.sf-model-select__group')].map((n) => n.textContent.trim())");
+    check("提示词下拉按系列分组（「观点提炼」做分组标题）", (promptGroupTitles ?? []).includes("观点提炼"), (promptGroupTitles ?? []).join(" / "));
     const clickedLabel = await evalJs(`(() => {
-      const el = [...document.querySelectorAll('.sf-model-select__option')].find((b) => /观点笔记|技术点拆解|信息溯源/.test(b.textContent ?? ''));
+      const el = [...document.querySelectorAll('.sf-model-select__option')].find((b) => /详尽版|成文版|速览版/.test(b.textContent ?? ''));
       if (!el) return '';
       el.click();
       return el.querySelector('.sf-model-select__option-label')?.textContent?.trim() ?? '';
     })()`);
-    check("提示词下拉选中回显", /观点笔记|技术点拆解|信息溯源/.test(clickedLabel), clickedLabel);
+    check("提示词下拉选中回显", /详尽版|成文版|速览版/.test(clickedLabel), clickedLabel);
+    const echoValue = await evalJs("document.querySelector('.vue-flow__node .sf-node--process-prompt .sf-model-select__value')?.textContent?.trim() ?? ''");
+    check("画布卡片收起时显示「系列 · 成员」", /^观点提炼 · /.test(echoValue), echoValue);
 
     // ASR 引擎下拉：转写节点默认 MiMo-V2.5 → 切到 OpenAI 兼容
     const asrBefore = await evalJs("document.querySelector('.vue-flow__node .sf-node--process-transcribe .sf-model-select__value')?.textContent?.trim() ?? ''");

@@ -1,23 +1,42 @@
 /**
  * 标签词库（受控词表）与标签名的规范化规则。
  *
- * 词库结构是「一级 → 二级」，两级都存成纯粹的字符串；其中有**两个保留分组**
- * （`UP主名称` / `来源`），它们由来源元数据自动写入、AI 不许碰、全库回补也不碰
- * （见 `AUTO_TAG_GROUPS` / `writableTags` / `managedTags`）。
+ * 词库结构是「一级 → 二级」，两级都存成纯粹的字符串；其中有两个**保留分组名**
+ * （`UP主名称` / `来源`）——它们只是词库这一侧的排除名单（AI 不许分配、全库回补不碰），
+ * 见 `AUTO_TAG_GROUPS` / `writableTags` / `managedTags`。
  *
- * 为什么需要规范化：Obsidian 的标签**不能含空格**，且只认字母/数字/`_`/`-`/`/`
- * （`/` 是层级分隔符）。UP 主名字里带空格是常态，不规范化就会写出一堆 Obsidian 读不出来的标签。
+ * **两个自动标签在笔记里不带一级**：UP 主写成 `UP：某某`，来源写成裸值 `B站`。
+ * 一级 `UP主名称/`、`来源/` 是历史形状——它们当初是词库里的组，现在只用来识别老笔记里的旧标签。
+ *
+ * 为什么需要规范化：Obsidian 的标签**不能含空白**，并且排除一批标点（半角 `:`、`[`、`]`、引号等，
+ * 见下面 `UP_TAG_PREFIX` 的注释）；`/` 是层级分隔符。UP 主名字里带空格是常态，
+ * 不规范化就会写出一堆 Obsidian 读不出来的标签。
  * 另外 Obsidian 的标签是**大小写不敏感**的，所以去重一律按小写比对。
  */
 
 /** 词库：一级分组 → 二级标签数组。二级为空数组表示该一级自己就是可用的标签。 */
 export type TagTaxonomy = Record<string, string[]>;
 
-/** 保留分组：这一支下的标签由来源元数据自动写入，AI 不可分配。 */
+/**
+ * 保留分组的名字。**只用于词库这一侧**（不让 AI 分配、不参与全库回补），笔记里已经不写这个形状了。
+ *
+ * 新笔记里 UP 主是 `UP：某某`、来源是裸值；老笔记里可能还留着 `UP主名称/某某`、`来源/B站`，
+ * 这两个名字同时是**旧标签的识别依据**（`isAutoTag`），写入时按开关把它们清掉。
+ */
 export const UP_TAXONOMY_GROUP = "UP主名称";
 
-/** 来源标签的分组名；取值与笔记 frontmatter 的 `来源:` 属性同源（B站 / 本地文件 / 文本…）。 */
+/** 来源标签的保留分组名；取值与笔记 frontmatter 的 `来源:` 属性同源（B站 / 本地文件 / 文本…）。 */
 export const SOURCE_TAXONOMY_GROUP = "来源";
+
+/**
+ * UP 主标签的前缀：写出来是 `UP：某某`。
+ *
+ * 用**全角**冒号是硬要求：Obsidian 的标签字符集来自它自己的正则，排除集合是
+ * 「U+2000–U+206F + U+2E00–U+2E7F + 一串半角标点（含 `:`、`.`、`[`、`]`、反引号）+ 空白」
+ * ——半角 `:` 在里面（`UP:某某` 会被当成读不出来的死标签），全角 `：`（U+FF1A）不在。
+ * 加前缀是为了在没有一级的情况下仍然看得出这是个 UP 主名——来源那支不需要，裸值（`B站`）本身认得出来。
+ */
+export const UP_TAG_PREFIX = "UP：";
 
 /**
  * 所有由元数据自动写入的保留分组。
@@ -85,14 +104,32 @@ export function tagPathGroup(tag: string): string {
   return tag.split("/")[0] ?? tag;
 }
 
-/** 是否是保留的 UP 主分组下的标签。 */
+/** 是否是 UP 主标签：新形状（`UP：某某`）与旧形状（`UP主名称/某某`）都算。 */
 export function isUpTag(tag: string): boolean {
-  return tagPathGroup(tag) === UP_TAXONOMY_GROUP;
+  return tag.startsWith(UP_TAG_PREFIX) || tagPathGroup(tag) === UP_TAXONOMY_GROUP;
 }
 
-/** 是否是自动写入的保留分组下的标签（UP 主 / 来源）。 */
+/**
+ * 是否是**由工具按元数据写进去的**标签（UP 主 / 来源），用于写入时按开关清理旧标签。
+ *
+ * 只认得出有形状的那几种：新的 `UP：某某`、旧的 `UP主名称/某某` 与 `来源/B站`。
+ * **来源那支的新写法是裸值**（`B站`），跟人自己写的标签在文件里长得一样——所以它认不出来，
+ * 也就不会被当成"我们写的"清掉。宁可留一个多余的标签，也不误删人写的东西。
+ */
 export function isAutoTag(tag: string): boolean {
-  return AUTO_TAG_GROUPS.includes(tagPathGroup(tag));
+  return tag.startsWith(UP_TAG_PREFIX) || AUTO_TAG_GROUPS.includes(tagPathGroup(tag));
+}
+
+/**
+ * 笔记里一个标签的规范化：`UP：某某` 原样保留，其余走 `normalizeTagPath` 逐段规范。
+ *
+ * UP 主标签必须单独放行：`normalizeTagSegment` 把非字母数字一律换成 `-`，于是 `UP：某某`
+ * 会被就地改成 `UP-某某`——一次全库回补就把已经写好的标签改坏了，而且看起来像模型改的。
+ * 旧写法（`UP主名称/某某`、`来源/B站`）本来就是路径形状，照旧逐段规范，不搞两套口径。
+ */
+export function normalizeNoteTag(tag: string): string {
+  const trimmed = String(tag ?? "").trim();
+  return trimmed.startsWith(UP_TAG_PREFIX) ? trimmed : normalizeTagPath(trimmed);
 }
 
 /**

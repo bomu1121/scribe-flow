@@ -18,6 +18,31 @@ import { sleep } from "./sleep";
 const INPUT_TEXT =
   "本文先讲示例原文关键句甲，再讲示例原文关键句乙，最后给出结论数据 42，供观点提炼测试使用。";
 
+/**
+ * 速览版（v6）第一步的 mock 产物：形状照 `PROMPT_SULAN` 的要求写，两个 callout 都在。
+ * 第二步的追加要按 `> [!example]-` 定位插入点，所以这里必须真的有那个标记。
+ */
+const SULAN_NOTE = [
+  "> [!summary] 速览",
+  "> - 第一条结论。",
+  "> - 第二条结论。",
+  "> - 第三条结论。",
+  "> - 第四条结论。",
+  "",
+  "## 第一段判断句",
+  "",
+  "正文第一段，示例原文关键句甲就在这里。",
+  "",
+  "## 第二段判断句",
+  "",
+  "正文第二段，示例原文关键句乙在这里。",
+  "",
+  "> [!example]- 速查",
+  "> **数字**",
+  ">",
+  "> - **结论数据**：42。",
+].join("\n");
+
 let server: Server;
 let baseUrl: string;
 let chatCalls = 0;
@@ -63,6 +88,14 @@ beforeAll(async () => {
       if (system.includes("你是文字校对编辑")) {
         // 模拟「拿到素材标题后改正专有名词」：把两种错拼统一成标题里的写法。
         reply(res, user.replace(/Jave|Java/g, "Jev"));
+      } else if (system.includes("你是笔记作者。把这份口播稿写成一份")) {
+        // 速览版第一步：按提示词要求的形状返回一整篇。
+        reply(res, SULAN_NOTE);
+      } else if (system.includes("给这份笔记补一节「弦外之音」")) {
+        // 第二步：只吐这一个标注框。注意这里**不能**把上一段 user（整篇笔记）回吐出去——
+        // 那样追加会把笔记复制一份，正是同一道断言门要拦的腐坏。
+        expect(system).toContain("示例原文关键句甲"); // {{input}} 展开了原文
+        reply(res, "> [!quote] 弦外之音\n> 他嘴上在比较制度，实际在替某一方说话。");
       } else if (system.includes("只输出攻略要素拆解 JSON")) {
         reply(
           res,
@@ -551,6 +584,42 @@ describe("RunEngine 配方执行（M8-1）", () => {
     const logs = db.select().from(runNodeLogs).where(eq(runNodeLogs.runId, runId)).all();
     const aiRequests = logs.filter((row) => row.kind === "ai-request" && row.nodeId === "n_prompt");
     expect(aiRequests.map((row) => row.step)).toEqual(["scan", "audit", "finalize"]);
+  });
+
+  it("速览版 v6：两步配方，第二步按 append 插到速查框之前，正文逐字不改", async () => {
+    /*
+     * 这条测的就是「单独开个模块，就不会影响正文」那句承诺：
+     * 摘掉新加的那一节之后，剩下的必须与第一步的产物**逐字相同**——保证来自拼接，
+     * 不来自模型听话（让末步重写整篇就做不到了，见 RECIPE_SULAN 的注释）。
+     */
+    chatCalls = 0;
+    const dataDir = await mkdtemp(join(tmpdir(), "scribe-recipe-sulan-"));
+    tmpDirs.push(dataDir);
+    const runId = "run_recipe_sulan";
+    const { db, engine, graph } = await setup(dataDir, runId, "builtin.insight.v6");
+
+    runWith(engine, runId, graph);
+    await waitFinished(db, runId);
+
+    expect(db.select().from(runs).where(eq(runs.id, runId)).get()?.status).toBe("success");
+    const nodeRow = db.select().from(runNodeResults).where(eq(runNodeResults.nodeId, "n_prompt")).get();
+    expect(nodeRow?.status).toBe("done");
+    expect(nodeRow?.summary).toContain("配方 2 步");
+    expect(nodeRow?.summary).toContain("2 次调用");
+
+    const text = nodeRow?.outputText ?? "";
+    const at = text.indexOf("> [!quote] 弦外之音");
+    const sucha = text.indexOf("> [!example]- 速查");
+    expect(at).toBeGreaterThan(-1);
+    // 内容排在附录之前：若是降级追加到末尾，这里就翻了。
+    expect(sucha).toBeGreaterThan(at);
+    const stripped = `${text.slice(0, at)}${text.slice(sucha)}`.replace(/\s+/g, "");
+    expect(stripped).toBe(SULAN_NOTE.replace(/\s+/g, ""));
+
+    expect(chatCalls).toBe(2);
+    const logs = db.select().from(runNodeLogs).where(eq(runNodeLogs.runId, runId)).all();
+    const aiRequests = logs.filter((row) => row.kind === "ai-request" && row.nodeId === "n_prompt");
+    expect(aiRequests.map((row) => row.step)).toEqual(["sulan", "xianyin"]);
   });
 
   it("无配方提示词（观点提炼 v2）：仍走单次调用，日志无 step（零回归）", async () => {

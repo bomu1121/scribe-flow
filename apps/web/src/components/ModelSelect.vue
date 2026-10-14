@@ -8,6 +8,12 @@ export interface ModelSelectOption {
   label: string;
   value: string;
   icon?: Component;
+  /**
+   * 可选的分组标题。同组的选项必须相邻（传进来之前就排好），分组只切**连续段**、不打乱顺序。
+   * 画布的提示词下拉用它按系列分组——「观点提炼」下挂详尽版 / 成文版 / …，是 VS Code Quick Pick
+   * 那种「一个下拉里带分组标题」的做法，不是先选系列再选成员的两段式。
+   */
+  group?: string;
 }
 
 const props = withDefaults(
@@ -52,11 +58,38 @@ const menuStyle = computed<Record<string, string>>(() => ({
 
 const selected = computed(() => props.options.find((option) => option.value === props.modelValue));
 const currentIcon = computed(() => props.prefixIcon || selected.value?.icon || props.options[0]?.icon);
-const filteredOptions = computed(() => {
-  if (!props.filterable) return props.options;
-  const q = keyword.value.trim().toLowerCase();
-  if (!q) return props.options;
-  return props.options.filter((option) => option.label.toLowerCase().includes(q));
+
+/**
+ * 选项按 `group` 切成若干段，顺序原样保留。
+ *
+ * 搜索时**按组过滤、整组不匹配才隐藏**（不是把命中的选项抽出来平铺）——VS Code 内置的 quick pick
+ * 过滤会连分隔标题一起打散，那是公认的坑：标题一没，几组选项混在一起就认不出哪个是哪个系列的了。
+ */
+const optionSections = computed<{ title: string; options: ModelSelectOption[] }[]>(() => {
+  const q = props.filterable ? keyword.value.trim().toLowerCase() : "";
+  const sections: { title: string; options: ModelSelectOption[] }[] = [];
+  for (const option of props.options) {
+    if (q && !option.label.toLowerCase().includes(q)) continue;
+    const title = option.group ?? "";
+    const last = sections.at(-1);
+    if (last && last.title === title) last.options.push(option);
+    else sections.push({ title, options: [option] });
+  }
+  return sections;
+});
+
+const matchedCount = computed(() => optionSections.value.reduce((total, section) => total + section.options.length, 0));
+
+/**
+ * 收起时触发器上的文案：带分组的选项补上组名（「观点提炼 · 成文版」）。
+ *
+ * 菜单展开时分组标题已经说明了系列，项里只写成员名最干净；但菜单收起后没有标题了，
+ * 只留「成文版」就认不出是哪个系列——触发器是唯一一直可见的地方，所以那里补全。
+ */
+const selectedLabel = computed(() => {
+  const option = selected.value;
+  if (!option) return "";
+  return option.group ? `${option.group} · ${option.label}` : option.label;
 });
 
 watch(open, (isOpen) => {
@@ -92,7 +125,7 @@ function choose(option: ModelSelectOption) {
             <component :is="currentIcon" :size="size === 'small' ? 14 : 15" />
           </span>
           <span class="sf-model-select__value" :class="{ 'is-placeholder': !selected }">
-            {{ selected?.label || placeholder }}
+            {{ selected ? selectedLabel : placeholder }}
           </span>
           <span v-if="clearable && selected" class="sf-model-select__clear" title="清除" @click.stop="clear">
             <X :size="14" />
@@ -123,21 +156,24 @@ function choose(option: ModelSelectOption) {
             />
           </div>
           <div class="sf-model-select__options">
-            <button
-              v-for="option in filteredOptions"
-              :key="option.value"
-              type="button"
-              class="sf-model-select__option"
-              :class="{ 'is-selected': option.value === modelValue }"
-              @click="choose(option)"
-            >
-              <span v-if="option.icon" class="sf-model-select__option-icon">
-                <component :is="option.icon" :size="15" />
-              </span>
-              <span class="sf-model-select__option-label">{{ option.label }}</span>
-              <Check :size="14" class="sf-model-select__check" />
-            </button>
-            <p v-if="filteredOptions.length === 0" class="sf-model-select__empty">无匹配项</p>
+            <template v-for="(section, index) in optionSections" :key="`${section.title}#${index}`">
+              <p v-if="section.title" class="sf-model-select__group">{{ section.title }}</p>
+              <button
+                v-for="option in section.options"
+                :key="option.value"
+                type="button"
+                class="sf-model-select__option"
+                :class="{ 'is-selected': option.value === modelValue }"
+                @click="choose(option)"
+              >
+                <span v-if="option.icon" class="sf-model-select__option-icon">
+                  <component :is="option.icon" :size="15" />
+                </span>
+                <span class="sf-model-select__option-label">{{ option.label }}</span>
+                <Check :size="14" class="sf-model-select__check" />
+              </button>
+            </template>
+            <p v-if="matchedCount === 0" class="sf-model-select__empty">无匹配项</p>
           </div>
         </PopoverContent>
       </PopoverPortal>
@@ -282,6 +318,17 @@ function choose(option: ModelSelectOption) {
   max-height: 260px;
   overflow-y: auto;
   overscroll-behavior: contain;
+}
+
+.sf-model-select__group {
+  margin: 6px 0 2px;
+  padding: 0 10px;
+  font-size: 11px;
+  color: var(--color-text-tertiary);
+}
+
+.sf-model-select__group:first-child {
+  margin-top: 0;
 }
 
 .sf-model-select__empty {

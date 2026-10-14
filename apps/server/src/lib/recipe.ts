@@ -44,6 +44,25 @@ export function appendAllOutput(prevAll: string, step: RecipeStep, text: string)
   return prevAll ? `${prevAll}\n\n${label}\n${text}` : `${label}\n${text}`;
 }
 
+/**
+ * 追加式步骤的拼接（`RecipeStep.append`）：把这一步的产物接在前一步产物后面，而不是替换它。
+ *
+ * 刻意做成纯字符串拼接而不是「让模型重写整篇」：正文一个字节都不动这条保证，
+ * 不能依赖模型听话。`before` 命中时插到那一行之前（速览版用它把「弦外之音」放到速查折叠框之前，
+ * 正文之后——内容在附录之前读起来才顺）；没命中就接到末尾，这是**降级而不是报错**：
+ * 速查框没写出来的产物本来就该照常出，不该因为插不进位置让整份作废。
+ */
+export function appendStepOutput(prev: string, text: string, before?: string): string {
+  const add = text.trim();
+  const lines = prev.split("\n");
+  const at = before ? lines.findIndex((line) => line.trimStart().startsWith(before)) : -1;
+  if (at < 0) return prev.trim() ? `${prev.trimEnd()}\n\n${add}` : add;
+  // 前插：前一段的尾随空行收掉再补一个，避免在同一个位置反复追加时空行越积越多。
+  const head = lines.slice(0, at).join("\n").trimEnd();
+  const tail = lines.slice(at).join("\n").trimEnd();
+  return head ? `${head}\n\n${add}\n\n${tail}` : `${add}\n\n${tail}`;
+}
+
 /** JSON 容错解析：裸 JSON → 剥离 Markdown 围栏 → 截取首尾大括号；全部失败抛中文错误。 */
 export function parseJsonLoose(raw: string): unknown {
   const trimmed = raw.trim();
@@ -203,7 +222,7 @@ function matchesAfterTrimmedLead(normInput: string, normQuote: string): boolean 
  * 这条是被一次真实失败逼出来的，不是预防性设计：那条视频里，转写把作者的话记成
  * 「美国文化里**面对对抗**的一种想象」——多出一个「对」（读起来仍然通顺，所以校对节点照原样留下了）。
  * 模型引用时按正常中文写成「文化里**面对抗**」，逐字比对判未命中、重问一次仍栽在同一条，整个节点作废。
- * 旁证是**两个互不相干的提示词（成文版 / 速览与速查）都独立地少写了那个「对」**，
+ * 旁证是**两个互不相干的提示词（成文版 / 速览版）都独立地少写了那个「对」**，
  * 说明这不是模型抄错，是转写在该处重复了一个字。
  *
  * 折叠是**对称的**（原文与引用两边同规则），所以它只让「只差一个重复字」的两串相等；

@@ -76,7 +76,7 @@ export function tagGroupTone(index: number): { dot: string; soft: string } {
 
 /** 一个标签在库里被多少篇笔记用过。 */
 export interface ObsidianTagUsage {
-  /** 完整标签名，形如 `来源/B站`（一级也是标签，可能没有 `/`）。 */
+  /** 完整标签名，形如 `话题/平台抽成`、`UP：某某`（没有 `/` 的也是标签）。 */
   tag: string;
   count: number;
 }

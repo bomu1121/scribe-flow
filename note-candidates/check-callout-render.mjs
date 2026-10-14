@@ -13,7 +13,7 @@
  *   REUSE=1 ...   连已开着的 Chrome（手动起过调试实例时用）
  */
 import { spawn } from "node:child_process";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 
 const CHROME = process.env.CHROME_PATH ?? "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe";
 const PORT = Number(process.env.CDP_PORT ?? 9347);
@@ -78,6 +78,7 @@ try {
         速览: "> [!summary] 速览\\n> - 第一条\\n> - 第二条",
         速查折叠: "> [!example]- 速查\\n> **数字**\\n>\\n> - **税率**：百分之十二点四",
         速查展开: "> [!example]+ 速查\\n> - 一",
+        弦外之音: "> [!quote] 弦外之音\\n> 他嘴上在比较制度，实际在替某一方说话。",
         普通引用: "> 普通引用",
       };
       const out = {};
@@ -103,6 +104,10 @@ try {
     ["速查：`+` 带 open（默认展开）", /<details[^>]*\sopen/.test(html["速查展开"])],
     ["速查：data-tone 通过白名单", html["速查折叠"].includes('data-tone="neutral"')],
     ["速查：组名与条目都在框内", html["速查折叠"].includes("数字") && html["速查折叠"].includes("税率")],
+    // 弦外之音：必须是标注框（跟正文小节同级同形会被读成正文的顺序续篇），且色调与速览的 info 不同。
+    ["弦外之音：`[!quote]` 还原成盒子，字面的 [!quote] 不出现", html["弦外之音"].includes('data-callout="quote"') && !html["弦外之音"].includes("[!quote]")],
+    ["弦外之音：默认展开（不带 open）", !/<details[^>]*\sopen/.test(html["弦外之音"])],
+    ["弦外之音：色调是 neutral，与速览的 info 区分开", html["弦外之音"].includes('data-tone="neutral"') && html["速览"].includes('data-tone="info"')],
     ["普通引用块没被误伤", html["普通引用"].includes("<blockquote>") && !html["普通引用"].includes("data-callout")],
   ];
   let failed = 0;
@@ -113,6 +118,7 @@ try {
   console.log(`\n[check-callout-render] ${checks.length - failed}/${checks.length} 项通过`);
   if (failed > 0) {
     console.log("\n--- 实际 HTML（速览）---\n" + html["速览"]);
+    console.log("\n--- 实际 HTML（弦外之音）---\n" + html["弦外之音"]);
     console.log("\n--- 实际 HTML（速查折叠）---\n" + html["速查折叠"]);
     process.exitCode = 1;
   }
@@ -161,6 +167,24 @@ try {
     await shoot(`${sulan}\n${zhengwen}`, false, "obsidian-note-typography-app-callout.png");
     await shoot(sucha, false, "obsidian-note-typography-app-sucha-folded.png");
     await shoot(sucha, true, "obsidian-note-typography-app-sucha-open.png");
+
+    /*
+     * 第四张：弦外之音那一节与正文、速查的相对观感。用**上线提示词真跑出来的产物**
+     * （`丁-上线提示词-3.md`），因为要判断的正是「读者会不会把它读成正文的下一节」——
+     * 拿一份真产物看才有意义。切片：速览框 + 正文开头几行 + 弦外之音框 + 折叠的速查。
+     */
+    const XIANYIN_SAMPLE = "note-candidates/弦外之音对照/丁-上线提示词-3.md";
+    if (existsSync(XIANYIN_SAMPLE)) {
+      const full = readFileSync(XIANYIN_SAMPLE, "utf8").trim();
+      const quoteAt = full.indexOf("\n> [!quote]");
+      const suchaAt = full.indexOf("\n> [!example]");
+      if (quoteAt < 0 || suchaAt < 0) throw new Error(`${XIANYIN_SAMPLE} 里找不到弦外之音或速查框`);
+      const head = full.slice(0, full.indexOf("\n## "));
+      const zhengwenHead = full.slice(full.indexOf("\n## ") + 1, quoteAt).split("\n").slice(0, 5).join("\n");
+      const xianyin = full.slice(quoteAt + 1, suchaAt).trim();
+      const suchaTail = full.slice(suchaAt + 1);
+      await shoot(`${head}\n${zhengwenHead}\n${xianyin}\n\n${suchaTail}`, false, "obsidian-note-typography-app-xianyin.png");
+    }
   }
 } finally {
   chrome.kill();

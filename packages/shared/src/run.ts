@@ -248,14 +248,14 @@ export interface AppSettings {
     /** 是否启用 AI 自动补全标签。 */
     autoTagEnabled: boolean;
     /**
-     * 要不要写**来源标签**（`来源/B站` 这种）。
+     * 要不要写**来源标签**（裸值 `B站`）。
      *
      * 这个标签不用维护、也不靠 AI 判断：它的取值跟笔记 frontmatter 的 `来源:` 属性同源，
      * 在生成笔记时就已经知道了。用户只有这一个决定权：写，还是不写。
      */
     sourceTagEnabled: boolean;
     /**
-     * 要不要写 **UP 主标签**（`UP主名称/某某`）。同上：取值来自视频元数据的作者，不靠 AI 判断。
+     * 要不要写 **UP 主标签**（`UP：某某`）。同上：取值来自视频元数据的作者，不靠 AI 判断。
      */
     upTagEnabled: boolean;
     /**

@@ -34,6 +34,7 @@ import {
   MULTI_PRODUCT_SEPARATOR,
   NODE_TYPE_LABELS,
   RUN_NAME_MAX_LENGTH,
+  isTraceBlock,
   parseTraceReports,
   traceReportToMarkdown,
 } from "@scribe-flow/shared";
@@ -331,11 +332,16 @@ function chainMetaOf(input: InputItem): string {
 const graph = computed<WorkflowGraph | undefined>(() => run.value?.graph);
 const nodeResultMap = computed(() => new Map((run.value?.nodeResults ?? []).map((n) => [n.nodeId, n])));
 
-/** 画布中配置了信息溯源块的 AI 节点；它们的结构化报告需要作为独立输出展示。 */
+/**
+ * 画布中配置了信息溯源块的 AI 节点；它们的结构化报告需要作为独立输出展示。
+ *
+ * 判定走 shared 的 `isTraceBlock`，不在这里写系列名字面量：写在这儿的话，系列一改名，这里会
+ * **静默**失效（分类不对、不报错、也掉不了任何测试）。
+ */
 const traceNodeIds = computed(() => {
   const ids = new Set<string>();
   const traceBlockIds = new Set(
-    BUILTIN_PROMPT_BLOCKS.filter((block) => block.series === "信息溯源").map((block) => block.id),
+    BUILTIN_PROMPT_BLOCKS.filter((block) => isTraceBlock(block)).map((block) => block.id),
   );
   for (const node of graph.value?.nodes ?? []) {
     const data = asRecord(node.data);

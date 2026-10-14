@@ -4,7 +4,7 @@ import { obsidianCallout } from "./obsidian-callout";
 
 /*
  * Obsidian 的 callout 语法（`> [!summary] 速览`）marked 不认，默认会渲染成「引用块 + 字面的
- * `[!summary]`」。内置提示词「观点笔记（速览与速查）」的输出里有它（见
+ * `[!summary]`」。内置提示词「观点提炼 · 速览版」的输出里有它（见
  * `docs/research/obsidian-note-typography.md`），所以这里全局挂一次，三条渲染路径
  * （结果页正文、画布卡片预览、设置页预览）一起生效。
  */

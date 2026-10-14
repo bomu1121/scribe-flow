@@ -1,17 +1,34 @@
 import type { NodeType } from "./graph";
 import type { Recipe } from "./recipe";
 
+/**
+ * 一条提示词。**两层身份 + 一个迭代号**：
+ *
+ * - `series` 是**系列**（要什么）：同一目标下的一组写法，如「观点提炼」「信息溯源」；
+ * - `name` 是**系列里的一个成员**（拿到什么）：如「详尽版」「成文版」「速览版」。
+ *   单成员系列里它就是完整名字（如「行动项清单」），此时与 `series` 相同。
+ * - `version` 是**这一条自己被迭代过几次**，只在同 (`series`, `name`) 存在多个块时才有值
+ *   （现在全库只有「详尽版」有 v1/v2）。没有值＝只有一代，界面上什么都不显示。
+ *
+ * 成员身份就是 (`series`, `name`)，不另设 `variant` 字段：多一个要和 `name` 同步的字段就是多一处漂移点。
+ * 「这一代是不是当前生效的」用 `currentPromptBlock` 取；平面语境（模板分支标题、对比浮层、日志）要完整
+ * 标题用 `variantTitle`。
+ *
+ * 背景：2026-10 之前 `version` 被同时当成「写法」与「迭代」——详尽版=v2、逐段核对=v3、成文版=v4，
+ * 于是每张卡片都挂一个版本徽章，可它们其实不是同一个提示词的迭代。
+ */
 export interface PromptBlock {
   id: string;
+  /** 成员名（系列内的一种写法）。单成员系列里即完整名字。 */
   name: string;
   prompt: string;
   builtin: boolean;
   description?: string;
-  /** 系列标识，用于把同一类模板的不同版本归组展示。 */
+  /** 系列名（意图）：把同一目标下的几种写法归成一组。 */
   series?: string;
-  /** 模板版本号，如 v1 / v2；用于设置页的版本选择与节点下拉区分。 */
+  /** 该成员的迭代号，如 v1 / v2；缺省＝只有一代、没被改过。 */
   version?: string;
-  /** 是否为该系列当前推荐使用的版本。 */
+  /** 是否为该系列当前推荐的那一条（也是快捷新建默认值的来源）。 */
   recommended?: boolean;
   /** M8-1：节点内多步链配方（可选）。无 recipe 的提示词走原有单次调用路径。 */
   recipe?: Recipe;
@@ -23,10 +40,10 @@ export interface PromptBlock {
    */
   requiresNode?: NodeType;
   /**
-   * 该模版需要外部联网核查：配方跑完后，服务端会按条目里的 `verify.queries`
+   * 该模板需要外部联网核查：配方跑完后，服务端会按条目里的 `verify.queries`
    * （没有则退回规划步）发起检索并回填 `items[].external`。
    *
-   * - `required`：联网核查就是该模版的核心价值，没配检索密钥时不提供它（见 `availablePromptBlocks`）；
+   * - `required`：联网核查就是该模板的核心价值，没配检索密钥时不提供它（见 `availablePromptBlocks`）；
    * - `optional`：主要价值在原文核对与结构化报告，联网核查是加分项，始终提供。
    */
   externalCheck?: "required" | "optional";
@@ -325,7 +342,7 @@ const PROMPT_TRACE = [
  * 让溯源结果可以被前端以卡片/原文定位的方式展示，也能直接复制为 Markdown。
  */
 /**
- * 溯源模版抽取步共用的字段约束（v2/v3）。
+ * 溯源模板抽取步共用的字段约束（v2/v3）。
  * 抽出来共用是为了让两版在「不许编造引用」「事实与观点不许混」这些铁律上不会各自漂移。
  */
 const TRACE_EXTRACT_RULES: string[] = [
@@ -1223,7 +1240,7 @@ const PROMPT_ACTION = [
   "",
   "## 行为边界",
   "- 只输出上述 Markdown 正文，不添加代码围栏、开场白、评价或额外建议。",
-  "- 如果用户发来的内容明显是一段纯叙述、不含任何决策或动作（如散文、科普讲解），回复：「这段内容里没有明确的决策或待办，建议用『观点笔记』或『科普笔记』加工。」",
+  "- 如果用户发来的内容明显是一段纯叙述、不含任何决策或动作（如散文、科普讲解），回复：「这段内容里没有明确的决策或待办，建议用『观点提炼』或『科普笔记』加工。」",
 ].join("\n");
 
 /**
@@ -1280,20 +1297,20 @@ const PROMPT_TRANSLATE = [
   "",
   "## 行为边界",
   "- 只输出上述 Markdown 正文，不添加代码围栏、开场白，也不要「以下是译文」这类说明。",
-  "- 如果用户发来的内容已经是中文，回复：「这段内容已是中文，用『观点笔记』或『科普笔记』加工更合适。」",
+  "- 如果用户发来的内容已经是中文，回复：「这段内容已是中文，用『观点提炼』或『科普笔记』加工更合适。」",
 ].join("\n");
 
 /**
  * 观点速读：把文稿压成一份「不看原片也能做判断」的决策摘要。
  *
- * **为什么单开一个提示词，而不是给「观点笔记」补一句长度上限**：实测过——在那类提示词的末尾追加
+ * **为什么单开一个提示词，而不是给「详尽版」补一句长度上限**：实测过——在那类提示词的末尾追加
  * 「全篇不超过 1500 字」是无效的，两层约束直接打架，模型牺牲预算写到上限的 2.94–3.04 倍
  * （见 `docs/research/bibigpt-note-prompt-engineering.md` §4.5）。所以这里把「压缩」设成
  * **首要目标**，并且刻意不复用「信息不缩水 / 宁可详尽」那类措辞。这也是 BibiGPT 公开槽位表里
  * 「把长度写成预算，不要写成『详细』」的做法，它同样要求速读版与详版分开存、不要混用。
  *
  * 实测（`deepseek-flash`，8,116 字真实校对稿，2 次调用）：这套槽位产出 4,411 / 4,563 字，
- * 是原稿的 0.54 / 0.56 倍；同输入的「观点笔记（详尽版）」是 1.58–2.27 倍。
+ * 是原稿的 0.54 / 0.56 倍；同输入的「详尽版」是 1.58–2.27 倍。
  */
 const PROMPT_BRIEF = [
   "你是一位为决策者写摘要的内容编辑。读者是「不会打开原片、但需要据此做判断或转述给别人」的人。你不做逐段转述，只给能被单独拿走、直接引用的结论。",
@@ -1341,7 +1358,7 @@ const PROMPT_BRIEF = [
 ].join("\n");
 
 /**
- * 观点笔记（连贯版）：只有一层，没有汇总区。
+ * 观点提炼 · 连贯版：只有一层，没有汇总区。
  *
  * 起因为是用户对现有两个提示词的具体抱怨：同一份内容要被写两遍——正文讲一遍、事实表里再列一遍、
  * 「金句摘录」里再抄一遍。实测 `builtin.insight.v4` 的 8 条内嵌引用里有 **6 条与「金句摘录」逐字相同**，
@@ -1373,7 +1390,7 @@ const PROMPT_LIANGUAN = [
 ].join("\n");
 
 /**
- * 观点笔记（速览与速查）：允许重复，但每一处重复都必须换用途。
+ * 观点提炼 · 速览版：允许重复，但每一处重复都必须换用途。
  *
  * 起因为是用户的第二条意见——「零冗余不要过于强制，做好笔记需要的重复要留着」。
  * 所以它跟连贯版相反，**明确保留**速览与速查段，只禁掉同一用途说两遍
@@ -1408,6 +1425,10 @@ const PROMPT_LIANGUAN = [
  *   **这是本次改版的已知代价**；要覆盖更全请用成文版（`builtin.insight.v4`）。
  * - 原始数据：`note-candidates/观点笔记（速览与速查）*.md`（新旧各三份）与
  *   `note-candidates/measure-redundancy.mjs` 的输出。
+ *
+ * **这一版起是两步配方**（2026-10-14）：这个常量是**第一步**的 system（也就是单次调用形态）。
+ * 第二步单独补「弦外之音」并机械追加到速查框之前，见下方 `RECIPE_SULAN` 与 `SLOT_XIANYIN`——
+ * 「为什么不塞进这一次调用」在里面有完整的三臂对照数字。
  */
 const PROMPT_SULAN = [
   "你是笔记作者。把这份口播稿写成一份「读完能讲给别人听、过一阵还能回来查」的笔记。",
@@ -1458,6 +1479,96 @@ const PROMPT_SULAN = [
 ].join("\n");
 
 /**
+ * 「弦外之音」槽：速览版配方的第二步（`RECIPE_SULAN`）。
+ *
+ * 措辞照「详尽版」那一栏的写法——它给出了**找什么**（情绪色彩 / 未明说的潜台词 /
+ * 反复流露的矛盾心态），而不是像成文版那样只留一个空壳标题。两者的产出实测差别很大：
+ * 详尽版那栏给的是正文里没有的判断（「对『民主AI』等话术作者直接表示存疑」），
+ * 成文版那栏把它自己正文第 8 段几乎逐字抄了一遍（只差一个「他」字和一个标点）。
+ *
+ * **这一节必须写成标注框，不能写成 `## ` 标题**（2026-10-14 用户拿真实产物反馈）：
+ * 第一版把它写成了二级标题，结果它跟正文小节**同级同形**，在阅读流里被读成
+ * 「作者接着讲的下一节」——而它其实是编辑的解读。速览与速查都有框、只有它没有框，
+ * 三节里就它一个混进正文。改用 `[!quote]`：Obsidian 里是灰色引用样式（与应用内 neutral 同调），
+ * 与速览的 `[!summary]`（蓝）、速查的 `[!example]`（折叠成一行）三色分明；
+ * 同时它不再进大纲——这正好，它本来就不是正文的一节。
+ */
+const SLOT_XIANYIN = [
+  "你是笔记编辑。上一条用户消息是一份已经写好的笔记，系统消息末尾附有原文全文（{{input}}）。",
+  "你只做一件事：给这份笔记补一节「弦外之音」，写一段连贯的话（1-3 句），点出作者的语气与他没说破的判断——",
+  "- 明显的情绪色彩（他在夸谁、在讽谁）；",
+  "- 未明说的潜台词（哪句话的言外之意和他的字面表述不是一回事）；",
+  "- 他反复流露的某种矛盾心态。",
+  "这一节要说出笔记正文与速览里没直接讲过的判断，不要把已经写过的话换个说法再写一遍。",
+  "原文确实没有这些的时候写「未见明显弦外之音」，不要硬凑。",
+  "",
+  "## 输出形状（照抄）",
+  "",
+  "```",
+  "> [!quote] 弦外之音",
+  "> 〈一段连贯的话〉",
+  "```",
+  "",
+  "- **写成标注框，不要写成 `## ` 标题**：这一节是编辑对作者语气与潜台词的解读，不是作者接着讲的下一节。跟正文小节同级同形时，读者会把它读成正文的顺序续篇——速览与速查都有框、只有它没有框的时候最容易被误读（用户拿真实产物反馈过这一点）。",
+  "- `[!quote]` 与「弦外之音」两个都要写全（只写 `[!quote]` 会显示成英文的 Quote）；框里每一行都要以 `> ` 开头；标注框前后各空一行。",
+  "- 框内用**一段连贯的话**，不要用列表或分点（这一节夹在散文正文与速查清单之间，夹一个列表两头都不像）。",
+  "",
+  "只输出这一个标注框，不要复述笔记的其他部分，不要写解释或前言。",
+].join("\n");
+
+/**
+ * 速览版的配方：第一步出整篇（就是 `PROMPT_SULAN`），第二步单独补「弦外之音」，
+ * 再按 `append.before` 机械插到速查折叠框之前——内容在附录之前，读起来才顺。
+ *
+ * **为什么排成两次调用而不是塞进第一步**（2026-10-14 三条臂对照，同一份 3,801 字社保稿、
+ * `deepseek-flash`、温度 0.3、各 3 次；产物在 `note-candidates/弦外之音对照/`，
+ * 测量在 `note-candidates/measure-xianyin.mjs`）：
+ * - 甲（现状，无此栏）：正文段 2,983 字 / 覆盖均值 78%；
+ * - 乙（塞进同一次调用）：正文段 3,121 字 / 79%，此栏与正文的 3-gram 重复度 0.11-0.22；
+ * - 丙（**本配方采用的形态**）：正文**逐字未改**，此栏 188-313 字 / 重复度 0.16-0.21。
+ *
+ * 关键在「乙会不会挤掉正文」**测不出来**：甲臂自己的正文覆盖六次采样落在 65%-94%
+ * （跨度 29 个百分点），而甲→乙的差只有 0.7 个百分点——噪声比要找的效应大四十倍。
+ * 所以取丙：它不靠统计证明安全，靠结构保证安全（第一步的输出原样保留，见 `appendStepOutput`）。
+ * 代价是多一次调用（实测第二次：输入 ~5,400 tok / 输出 726-1,093 tok / 6.5-9.7s）。
+ * 反过来，让末步**重写整篇**则是两头都差：输出 token 多花十几倍，正文还会被顺手改掉。
+ */
+const RECIPE_SULAN: Recipe = {
+  schema: 1,
+  steps: [
+    {
+      id: "sulan",
+      label: "速览与速查",
+      system: PROMPT_SULAN,
+      /*
+       * 只声明 kind、不挂断言：这一版单次调用路径本来就没有断言门，加上会让「速查框少了折叠标记」
+       * 这类形状小漂移从「照常出产物」变成「整节点失败」——那是对现有行为的收紧，不是这次要改的东西。
+       * 声明 kind 本身有用：文本步骤会先剥掉外层 ``` 围栏（见 engine 的 `stripOuterCodeFence`）。
+       */
+      expects: { kind: "text" },
+    },
+    {
+      id: "xianyin",
+      label: "补弦外之音",
+      system: SLOT_XIANYIN,
+      /*
+       * 两道门都对着一次真实的腐坏：写成 `## ` 标题（读者会把它读成正文的下一节，用户反馈过）
+       * → `contains` 那条门拦下来；把整篇笔记又抄一遍 → `lengthLte` 拦下来
+       * （实测这一节 273-326 字，整篇 4,000+ 字）。
+       */
+      expects: {
+        kind: "text",
+        asserts: [
+          { op: "contains", value: "> [!quote] 弦外之音" },
+          { op: "lengthLte", value: 1500 },
+        ],
+      },
+      append: { before: "> [!example]-" },
+    },
+  ],
+};
+
+/**
  * 问答笔记：把文稿变成「一问一答」，问题做成二级标题。
  *
  * 关键在**问题必须是 `## ` 标题**：结果页的目录只收 1–4 级标题（见 `apps/web/src/lib/markdown.ts`
@@ -1498,60 +1609,57 @@ const PROMPT_QA = [
 export const BUILTIN_PROMPT_BLOCKS: PromptBlock[] = [
   {
     id: "builtin.insight",
-    name: "观点笔记（详尽版）",
+    name: "详尽版",
     prompt: PROMPT_GUANDIAN,
     builtin: true,
-    series: "观点笔记",
+    series: "观点提炼",
     version: "v2",
     description: "信息留得最全的一版：单次调用，把文稿尽量完整地拆成观点块，另附事实数据表、金句、情绪与启发。代价是排版偏清单式，且没有「回原文逐句核对引用」这一步；想读一篇成文、引用更稳的笔记请用成文版。",
   },
   {
     id: "builtin.insight.v3",
-    name: "观点笔记（逐段核对）",
+    name: "逐段核对",
     prompt: PROMPT_GUANDIAN,
     builtin: true,
-    series: "观点笔记",
-    version: "v3",
+    series: "观点提炼",
     description: "多步配方试点：通读拆解 → 分块起草 → 回文核对 → 修正成稿。约 4 次调用且每步携带原文，成本显著高于单次；不设推荐，先试用对比。",
     recipe: RECIPE_INSIGHT_V3,
   },
   {
     id: "builtin.insight.v4",
-    name: "观点笔记（成文版）",
+    name: "成文版",
     prompt: PROMPT_GUANDIAN_V4,
     builtin: true,
-    series: "观点笔记",
-    version: "v4",
+    series: "观点提炼",
     recommended: true,
     description: "读起来是一篇文章的一版（推荐）：先把全文拆解 → 起草 → 回原文逐句核对引用 → 修正成稿，输出少层级、无占位词，开头带一句导读，观点用加粗主张句领起、引用就地呈现。约 4 次调用；只想快速拿到尽量全的素材请用详尽版。",
     recipe: RECIPE_INSIGHT_V4,
   },
   {
     id: "builtin.insight.v1",
-    name: "观点笔记（旧版）",
+    name: "详尽版",
     prompt: PROMPT_GUANDIAN_V1,
     builtin: true,
-    series: "观点笔记",
+    series: "观点提炼",
     version: "v1",
     description: "把口语化视频文案整理为有观点块结构的深度笔记（旧版格式，含总体概要、核心观点与支撑、情绪基调）。",
   },
   {
     id: "builtin.insight.v5",
-    name: "观点笔记（连贯版）",
+    name: "连贯版",
     prompt: PROMPT_LIANGUAN,
     builtin: true,
-    series: "观点笔记",
-    version: "v5",
+    series: "观点提炼",
     description: "只有一层的一版：不设事实表、金句区、要点回顾，事实与原话就地写在所属的那段行文里。单次调用、最短（实测 2,669 字 / 原稿 70% 覆盖），适合顺着读一遍；代价是没有速览也没有可回头查的表，要覆盖更全请用成文版。先试用对比，不占推荐位。",
   },
   {
     id: "builtin.insight.v6",
-    name: "观点笔记（速览与速查）",
+    name: "速览版",
     prompt: PROMPT_SULAN,
     builtin: true,
-    series: "观点笔记",
-    version: "v6",
-    description: "允许重复、但每处重复换一个用途的一版：开头速览（Obsidian 标注框）+ 连贯正文（二级小节）+ 文末速查（默认折叠的标注框，按类别分组，展开即横向可比），正文里不许把同一件事说第二遍。单次调用；新旧排版各跑 3 次的对比：同区重复 3/3 次为 0，二元组覆盖 83-93%（旧排版 93-95%，落差在正文段）。要覆盖更全请用成文版；先试用对比，不占推荐位。",
+    series: "观点提炼",
+    description: "允许重复、但每处重复换一个用途的一版：开头速览（Obsidian 标注框）+ 连贯正文（二级小节）+ 弦外之音（标注框，点出作者的语气与他没说破的判断）+ 文末速查（默认折叠的标注框，按类别分组，展开即横向可比），正文里不许把同一件事说第二遍。两次调用：第二步单独写弦外之音并机械插到速查之前，正文一个字节都不动；新旧排版各跑 3 次的对比：同区重复 3/3 次为 0，二元组覆盖 83-93%（旧排版 93-95%，落差在正文段）。要覆盖更全请用成文版；先试用对比，不占推荐位。",
+    recipe: RECIPE_SULAN,
   },
   {
     id: "builtin.qa",
@@ -1559,17 +1667,15 @@ export const BUILTIN_PROMPT_BLOCKS: PromptBlock[] = [
     prompt: PROMPT_QA,
     builtin: true,
     series: "问答笔记",
-    version: "v1",
     description: "一问一答的一版：6-8 组问答，问题做成二级标题，结果页的文档目录能逐问跳转，答案紧跟在标题下、第一句就给结论。单次调用、最短（实测 2,072 字 / 57% 覆盖）——「赢学是什么」这类定义和作者的私人观察容易被问答的形状挤掉，适合快速了解一件事，不适合当留档。先试用对比，不占推荐位。",
   },
   {
     id: "builtin.brief",
-    name: "观点速读（决策摘要）",
+    name: "观点速读",
     prompt: PROMPT_BRIEF,
     builtin: true,
     series: "观点速读",
-    version: "v1",
-    description: "单次调用、成本最低：把文稿压成不看原片也能做判断的决策摘要——一句话结论、讲了什么、对谁有用、原稿没回答什么，全篇硬上限 800 字。它是压缩档，与「观点笔记」的信息不缩水是两种产物，不要混用；要逐字保真的详版请用「观点笔记」。",
+    description: "单次调用、成本最低：把文稿压成不看原片也能做判断的决策摘要——一句话结论、讲了什么、对谁有用、原稿没回答什么，全篇硬上限 800 字。它是压缩档，与「观点提炼」的信息不缩水是两种产物，不要混用；要逐字保真的详版请用「观点提炼」。",
   },
   {
     id: "builtin.tech",
@@ -1577,7 +1683,6 @@ export const BUILTIN_PROMPT_BLOCKS: PromptBlock[] = [
     prompt: PROMPT_TECH,
     builtin: true,
     series: "技术点拆解",
-    version: "v1",
     description: "把技术教程还原为可直接实操的结构化技术笔记。",
   },
   {
@@ -1586,42 +1691,38 @@ export const BUILTIN_PROMPT_BLOCKS: PromptBlock[] = [
     prompt: PROMPT_KNOWLEDGE,
     builtin: true,
     series: "科普笔记",
-    version: "v1",
     recommended: true,
     description: "以「技术点拆解」的“结构化还原”思路为基底，面向知识/科普/泛知识视频：还原核心问题、知识框架、关键事实、讲解脉络与常见误区。",
   },
   {
     id: "builtin.trace",
-    name: "信息溯源（基础）",
+    name: "基础",
     prompt: PROMPT_TRACE,
     builtin: true,
     series: "信息溯源",
-    version: "v1",
     description: "提取事实与观点，并为每条信息标注原文来源。",
   },
   {
     id: "builtin.trace.v2",
-    name: "信息溯源（逐条对照）",
+    name: "逐条对照",
     prompt: PROMPT_TRACE,
     builtin: true,
     series: "信息溯源",
-    version: "v2",
     description: "多步核对版：通读抽取 → 回文核对 → 结构化成稿，输出可直接以卡片/原文定位展示的证据清单 JSON。约 3 次调用且每步携带原文。",
     recipe: RECIPE_TRACE_V2,
-    /** 联网核查需要检索密钥，但该模版没有密钥也照样能出结构化报告。 */
+    /** 联网核查需要检索密钥，但该模板没有密钥也照样能出结构化报告。 */
     externalCheck: "optional",
   },
   {
     id: "builtin.trace.v3",
-    name: "信息溯源（上网查证）",
+    name: "上网查证",
     prompt: PROMPT_TRACE,
     builtin: true,
     series: "信息溯源",
-    version: "v3",
     recommended: true,
     description: "联网核查版：抽取时就为每条可核查信息写好检索词，跑完自动联网核对，按来源权威度给出「外部可印证 / 仅非权威来源 / 有反证 / 未找到出处」。需要先在设置页「联网检索」配置检索渠道。",
     recipe: RECIPE_TRACE_V3,
-    /** 价值全在联网核查上：没配检索密钥时不提供该模版。 */
+    /** 价值全在联网核查上：没配检索密钥时不提供该模板。 */
     externalCheck: "required",
   },
   {
@@ -1630,7 +1731,6 @@ export const BUILTIN_PROMPT_BLOCKS: PromptBlock[] = [
     prompt: PROMPT_CASCADE,
     builtin: true,
     series: "概念的来龙去脉",
-    version: "v1",
     description: "面向术语祛魅/概念链科普视频：还原「痛点→方案→新痛点」因果链，输出 CASCADE 结构化摘要；非目标类型自动降级或提示。",
   },
   {
@@ -1639,7 +1739,6 @@ export const BUILTIN_PROMPT_BLOCKS: PromptBlock[] = [
     prompt: PROMPT_HISTORY,
     builtin: true,
     series: "历史脉络梳理",
-    version: "v1",
     recommended: true,
     description: "面向历史人物/事件解读类文稿：用轻量笔记区分事实与作者观点，理解当时背景，提炼可迁移的看历史角度。",
   },
@@ -1649,7 +1748,6 @@ export const BUILTIN_PROMPT_BLOCKS: PromptBlock[] = [
     prompt: PROMPT_ACTION,
     builtin: true,
     series: "行动项清单",
-    version: "v1",
     recommended: true,
     description: "从会议/访谈/课程/评测类内容里抽出结论与决定、待办、待确认事项与时间点；字段只写原文真的有的，建议与已决定分开。",
   },
@@ -1659,28 +1757,25 @@ export const BUILTIN_PROMPT_BLOCKS: PromptBlock[] = [
     prompt: PROMPT_TRANSLATE,
     builtin: true,
     series: "外语内容转中文",
-    version: "v1",
     recommended: true,
     description: "把英文等外语视频的转写稿整理成中文结构化笔记：信息不缩水、专名与数字保原样、附术语对照表。",
   },
   {
     id: "builtin.gameguide",
-    name: "阴阳师攻略（基础）",
+    name: "基础",
     requiresNode: "process.gameguide",
     prompt: PROMPT_GAME_GUIDE,
     builtin: true,
     series: "阴阳师攻略",
-    version: "v1",
     description: "把阴阳师攻略类视频文稿/转写稿提炼为含核心建议、分模块要点、可执行清单、术语与版本时效的结构化 Markdown 攻略笔记。单次调用，成本较低。",
   },
   {
     id: "builtin.gameguide.v2",
-    name: "阴阳师攻略（逐段核对）",
+    name: "逐段核对",
     requiresNode: "process.gameguide",
     prompt: PROMPT_GAME_GUIDE,
     builtin: true,
     series: "阴阳师攻略",
-    version: "v2",
     recommended: true,
     description: "多步核对版：攻略要素拆解 → 起草 → 回文核对 → 修正成稿。约 4 次调用且每步携带原文，专名/数值/优先级更稳，适合长攻略与新手开荒/配队类高价值内容。",
     recipe: RECIPE_GAME_GUIDE_V2,
@@ -1692,13 +1787,12 @@ export const BUILTIN_PROMPT_BLOCKS: PromptBlock[] = [
     prompt: PROMPT_DRILL,
     builtin: true,
     series: "知识巩固",
-    version: "v1",
     recommended: true,
     description: "多步核对版：抽点 → 出题与延伸 → 审题。产出练习集 JSON（可考察知识点 + 检验题 + 「再想一步」延伸问题），在运行结果页直接答题；引文必须逐字命中的原文，未命中的条目自动丢弃并在摘要里报数。配置了设置页「联网检索」的检索渠道时，出题前还会按知识点上网找同类练习题作为参考（题目本身仍只认原文依据），没配置就完全依据原文出题。",
     recipe: RECIPE_DRILL,
     /**
      * 联网检索是**增强**不是前提：没有检索密钥时照样按原文出好题（检索那一步自动跳过）。
-     * 所以这里不声明 `externalCheck`（那是「没密钥就别用的模版」的标记），
+     * 所以这里不声明 `externalCheck`（那是「没密钥就别用的模板」的标记），
      * 检索能力本身由配方步骤的 `search` 声明（见 RECIPE_DRILL 的 author 步）。
      */
   },
@@ -1726,8 +1820,7 @@ export function aiPromptBlocks(custom: PromptBlock[] = [], searchReady: boolean)
 /**
  * 已过审核、可以先放出去选的提示词（白名单）。
  *
- * 现在只有 5 个提示词经过确认；其余内置提示词（含早期的「观点笔记（旧版）」「观点笔记（逐段核对）」、
- * 「观点速读（决策摘要）」，以及技术点拆解 / 科普笔记 / 信息溯源 / 阴阳师攻略等整系列）
+ * 现在只有 5 个提示词经过确认；其余内置提示词（含「详尽版」的上一代、「观点速读」，，以及技术点拆解 / 科普笔记 / 信息溯源 / 阴阳师攻略等整系列）
  * 都要等重构审核完成后再逐个放开。
  *
  * **为什么用白名单而不是给其余提示词标 `hidden`**：白名单的默认是「不放行」，所以以后新增提示词不会漏网；
@@ -1739,10 +1832,10 @@ export function aiPromptBlocks(custom: PromptBlock[] = [], searchReady: boolean)
  * 设置页的提示词库不受影响：那里是管理面（看提示词、改名、管版本），审核本身就得在那儿做。
  */
 const REVIEWED_BLOCK_IDS = new Set<string>([
-  "builtin.insight", // 观点笔记（详尽版）
-  "builtin.insight.v4", // 观点笔记（成文版）
-  "builtin.insight.v5", // 观点笔记（连贯版）
-  "builtin.insight.v6", // 观点笔记（速览与速查）
+  "builtin.insight", // 观点提炼 · 详尽版（v2，当前代）
+  "builtin.insight.v4", // 观点提炼 · 成文版
+  "builtin.insight.v5", // 观点提炼 · 连贯版
+  "builtin.insight.v6", // 观点提炼 · 速览版
   "builtin.qa", // 问答笔记
 ]);
 
@@ -1750,8 +1843,8 @@ const REVIEWED_BLOCK_IDS = new Set<string>([
  * 过滤掉「当前用不了」的提示词，三件事：
  * 1. 承载它的节点被「展示范围」收起了（`requiresNode`）；
  * 2. 还没过审核的内置提示词（见 `REVIEWED_BLOCK_IDS`）——自定义提示词是用户自己写的，不受这条约束；
- * 3. 把联网核查当核心价值的模版（`externalCheck: "required"`）在没配检索密钥时不出现——
- *    它的价值全在核查上，摆在下拉里只会让人以为能用。`optional` 的模版不受影响：
+ * 3. 把联网核查当核心价值的模板（`externalCheck: "required"`）在没配检索密钥时不出现——
+ *    它的价值全在核查上，摆在下拉里只会让人以为能用。`optional` 的模板不受影响：
  *    它们没有密钥也能产出结构化报告，只是少了外部核查。
  */
 export function availablePromptBlocks(
@@ -1764,4 +1857,111 @@ export function availablePromptBlocks(
     .filter((block) => !block.builtin || REVIEWED_BLOCK_IDS.has(block.id));
   if (searchReady) return visible;
   return visible.filter((block) => block.externalCheck !== "required");
+}
+
+/* ------------------------------------------------------------------ 系列 / 成员 / 版本 */
+
+/** 组内没有 `series` 时用的兜底类目（自定义提示词与早期内置）。 */
+export const PROMPT_SERIES_FALLBACK = "其他内置";
+export const PROMPT_SERIES_CUSTOM = "自定义";
+
+/** 一条提示词属于哪个系列：显式 `series` 优先，没写就看它是内置还是用户自建。 */
+export function blockSeriesName(block: PromptBlock): string {
+  return block.series || (block.builtin ? PROMPT_SERIES_FALLBACK : PROMPT_SERIES_CUSTOM);
+}
+
+/**
+ * 平面语境下的完整标题：「系列 · 成员」。
+ *
+ * 只在系列与成员名不同时加前缀——单成员系列的 `name` 就是完整名字（`series` 与它相同），
+ * 再加前缀会变成「观点速读 · 观点速读」。
+ *
+ * 用在那些**看不到分组标题**的地方：模板分支卡片标题、对比浮层的两侧标签、复制提示。
+ * 设置页与两个下拉里都靠分组标题承担系列，那里只写 `name`。
+ */
+export function variantTitle(block: PromptBlock): string {
+  return block.series && block.series !== block.name ? `${block.series} · ${block.name}` : block.name;
+}
+
+/** 版本号比较：`v2` > `v1`。没有版本号按 v1 算，非 `vN` 形式退回字符串比较。 */
+export function compareVersion(a: string | undefined, b: string | undefined): number {
+  const num = (v: string | undefined) => {
+    const m = /^v(\d+)$/.exec(v ?? "");
+    return m ? Number(m[1]) : v ? NaN : 1;
+  };
+  const na = num(a);
+  const nb = num(b);
+  if (Number.isNaN(na) || Number.isNaN(nb)) return (a ?? "").localeCompare(b ?? "");
+  return na - nb;
+}
+
+/**
+ * 同一个成员（＝同 (`series`, `name`)）的历代版本里，当前生效的那一条。
+ *
+ * 判定顺序：该成员自己标了 `recommended` 就用它；否则取版本号最大的；再没有就取第一个。
+ * 「详尽版」有 v1/v2 且都不带推荐（系列的推荐位归成文版），靠这条取到 v2。
+ */
+export function currentPromptBlock(versions: PromptBlock[]): PromptBlock | undefined {
+  const recommended = versions.find((block) => block.recommended);
+  if (recommended) return recommended;
+  return [...versions].sort((a, b) => compareVersion(b.version, a.version))[0];
+}
+
+/** 一个系列：`members` 是它下面的各个成员，每个成员只带自己的「当前版本」。 */
+export interface PromptSeriesGroup {
+  series: string;
+  /** 成员的当前版本。一个成员只在列表里出现一次，它的历代版本见 `promptBlockVersions`。 */
+  members: PromptBlock[];
+}
+
+/** 某个成员的历代版本（按版本号从新到旧）。 */
+export function promptBlockVersions(blocks: PromptBlock[], block: PromptBlock): PromptBlock[] {
+  const key = blockSeriesName(block);
+  return blocks
+    .filter((item) => item.name === block.name && blockSeriesName(item) === key)
+    .sort((a, b) => compareVersion(b.version, a.version));
+}
+
+/**
+ * 把一份提示词列表按系列分组，每个成员只留「当前版本」。
+ *
+ * 两条刻意的规则：
+ * 1. **只在系列里有两个以上成员时才值得分组**——单成员系列（行动项清单、科普笔记这类）直接平铺，
+ *    分组标题只有一行名字，纯占地方。单成员在返回里 `members` 长度为 1，由调用方决定怎么摆。
+ * 2. 顺序**沿用传入顺序**，不排序：源码数组里的次序是刻意排的（观点提炼按从重到轻：详尽 → 逐段核对
+ *    → 成文 → 连贯 → 速览），排序会把它打乱。
+ *
+ * 自定义提示词没有 `series`，会各自成为一组（`series` 为「自定义」），保持平铺。
+ */
+export function groupPromptBlocks(blocks: PromptBlock[]): PromptSeriesGroup[] {
+  const groups: PromptSeriesGroup[] = [];
+  const byKey = new Map<string, PromptSeriesGroup>();
+  const seen = new Set<string>();
+
+  for (const block of blocks) {
+    const series = blockSeriesName(block);
+    const memberKey = `${series}\u0000${block.name}`;
+    let group = byKey.get(series);
+    if (!group) {
+      group = { series, members: [] };
+      byKey.set(series, group);
+      groups.push(group);
+    }
+    if (seen.has(memberKey)) continue;
+    seen.add(memberKey);
+    const current = currentPromptBlock(promptBlockVersions(blocks, block));
+    if (current) group.members.push(current);
+  }
+
+  return groups;
+}
+
+/**
+ * 这条提示词产出的是「结构化溯源报告」吗——结果页要靠它把溯源节点从普通笔记里分流出来。
+ *
+ * 之前这处判断是 `block.series === "信息溯源"` 的字面量，散在 `RunDetailView.vue` 里：系列一改名就
+ * 静默失效（既不报错也不掉测试）。收在这里，改名只动这一处，且有测试钉住。
+ */
+export function isTraceBlock(block: PromptBlock): boolean {
+  return blockSeriesName(block) === "信息溯源";
 }

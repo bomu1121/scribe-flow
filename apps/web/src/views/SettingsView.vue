@@ -16,7 +16,7 @@ import { formatBytes } from "@/lib/bytes";
 import ModelSelect from "../components/ModelSelect.vue";
 import PromptBlockDiffDialog from "../components/PromptBlockDiffDialog.vue";
 import type { AiProvider, AsrEngine, DataOverview, NodeType, TagViewMode, ObsidianVaultCheck, PruneItem, PruneOutcome, PruneTarget, PromptBlock, RelatedJobView, RelatedNoteMode, RelatedPlanView, RetagJobView, RetagPlanView, SearchProvider, TagTaxonomy } from "@scribe-flow/shared";
-import { COMMON_EXTRACT_FIELDS, DEFAULT_TAG_VIEW, EXTRACT_FIELD_PRESETS, FILE_NAME_TOKENS, GENERAL_LIMITS, MAX_EXTRACT_FIELDS, NODE_TYPE_LABELS, NODE_TYPE_ORDER, RELATED_SECTION_TITLE, SOURCE_TAXONOMY_GROUP, TAG_VIEW_MODES, TRACE_SOURCE_AUTHORITY_LABELS, UP_TAXONOMY_GROUP, addTagToTaxonomy, backupLocationOf, normalizeTagSegment, renderFileNameTemplate, tagGroupTone, writableTags } from "@scribe-flow/shared";
+import { COMMON_EXTRACT_FIELDS, DEFAULT_TAG_VIEW, EXTRACT_FIELD_PRESETS, FILE_NAME_TOKENS, GENERAL_LIMITS, MAX_EXTRACT_FIELDS, NODE_TYPE_LABELS, NODE_TYPE_ORDER, RELATED_SECTION_TITLE, TAG_VIEW_MODES, TRACE_SOURCE_AUTHORITY_LABELS, UP_TAG_PREFIX, addTagToTaxonomy, backupLocationOf, blockSeriesName, groupPromptBlocks, normalizeTagSegment, promptBlockVersions, renderFileNameTemplate, tagGroupTone, writableTags } from "@scribe-flow/shared";
 import { api } from "@/lib/api";
 import { copyText } from "@/lib/clipboard";
 import { useDelayedBusy } from "@/utils/busy";
@@ -732,9 +732,10 @@ const notePreviewModel = computed(() => {
     }
   }
   // 两个自动标签跟开关走：预览要跟真实写出来的东西一致（引擎那边是同一个判据）。
+  // 都不带一级——来源是裸值，UP 主加 `UP：` 前缀好认。
   const autoTags = [
-    ...(form.obsidianSourceTagEnabled ? [`${SOURCE_TAXONOMY_GROUP}/B站`] : []),
-    ...(form.obsidianUpTagEnabled ? [`${UP_TAXONOMY_GROUP}/某某-UP`] : []),
+    ...(form.obsidianSourceTagEnabled ? ["B站"] : []),
+    ...(form.obsidianUpTagEnabled ? [`${UP_TAG_PREFIX}某某-UP`] : []),
   ];
   props.push({ name: "tags", kind: "tags", values: [...autoTags, ...owned] });
 
@@ -772,46 +773,45 @@ watch(
 );
 
 const seriesFilter = ref("all");
-const versionFilter = ref("all");
+/** 展开了「历史版本」的那个成员（存它当前版本的 id）。 */
+const expandedVersionsId = ref<string | null>(null);
+/** 历史版本列表里展开了全文的那一代。与卡片的「查看全文」分开存：两处共用一个 ref 会分不清看的是哪一代。 */
+const expandedVersionId = ref<string | null>(null);
 
-function blockSeries(block: PromptBlock): string {
-  return block.series || (block.builtin ? "其他内置" : "自定义");
+/**
+ * 系列 → 成员（每个成员只留当前那一代，历史版本收在它自己那条线上）。
+ *
+ * 展示范围里收起的节点，它的提示词要先摘掉再分组——先分组后摘会留下一个空系列（「阴阳师攻略」被收起
+ * 时，系列标题还在、成员一个不剩）。
+ */
+const blockGroups = computed(() =>
+  groupPromptBlocks(promptsStore.allBlocks.filter((block) => !(block.requiresNode && form.hiddenNodes.includes(block.requiresNode)))),
+);
+
+const seriesOptions = computed(() => blockGroups.value.map((group) => group.series));
+
+const visibleGroups = computed(() =>
+  seriesFilter.value === "all" ? blockGroups.value : blockGroups.value.filter((group) => group.series === seriesFilter.value),
+);
+
+/** 这个成员被改过几代（只有一代时界面上不出现「历史版本」）。 */
+function blockVersions(block: PromptBlock): PromptBlock[] {
+  return promptBlockVersions(promptsStore.allBlocks, block);
 }
 
-const seriesOptions = computed(() => {
-  const seen = new Set<string>();
-  for (const block of promptsStore.allBlocks) seen.add(blockSeries(block));
-  return Array.from(seen);
-});
+function toggleVersions(block: PromptBlock) {
+  expandedVersionsId.value = expandedVersionsId.value === block.id ? null : block.id;
+  expandedVersionId.value = null;
+}
 
-const versionOptions = computed(() => {
-  const seen = new Set<string>();
-  for (const block of promptsStore.allBlocks) {
-    if (seriesFilter.value !== "all" && blockSeries(block) !== seriesFilter.value) continue;
-    if (block.version) seen.add(block.version);
-  }
-  return Array.from(seen).sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
-});
+function toggleVersionExpanded(version: PromptBlock) {
+  expandedVersionId.value = expandedVersionId.value === version.id ? null : version.id;
+}
 
-const filteredBlocks = computed(() => {
-  return promptsStore.allBlocks.filter((block) => {
-    // 展示范围里收起的节点，它的提示词也不在这里出现（如阴阳师攻略系列）。
-    if (block.requiresNode && form.hiddenNodes.includes(block.requiresNode)) return false;
-    if (seriesFilter.value !== "all" && blockSeries(block) !== seriesFilter.value) return false;
-    if (versionFilter.value !== "all" && block.version !== versionFilter.value) return false;
-    return true;
-  });
-});
-
-watch(seriesFilter, () => {
-  if (versionFilter.value !== "all" && !versionOptions.value.includes(versionFilter.value)) {
-    versionFilter.value = "all";
-  }
-});
-
+/** 对比浮层按系列分组、比的是系列里的任意两条，所以候选要给整系列（含历史版本）。 */
 function blockVariants(block: PromptBlock): PromptBlock[] {
-  const series = blockSeries(block);
-  return promptsStore.allBlocks.filter((candidate) => blockSeries(candidate) === series);
+  const series = blockSeriesName(block);
+  return promptsStore.allBlocks.filter((candidate) => blockSeriesName(candidate) === series);
 }
 
 function toggleBlockExpanded(block: PromptBlock) {
@@ -1886,11 +1886,11 @@ async function restoreNutstoreBackup(backup: { path: string; name: string }) {
           -->
           <div class="sf-auto-tags">
             <label class="sf-field sf-field-row">
-              <span class="sf-field-label">写来源标签<em class="sf-field-note">来源/B站 这种</em></span>
+              <span class="sf-field-label">写来源标签<em class="sf-field-note">B站 这种裸值</em></span>
               <el-switch v-model="form.obsidianSourceTagEnabled" />
             </label>
             <label class="sf-field sf-field-row">
-              <span class="sf-field-label">写 UP 主标签<em class="sf-field-note">UP主名称/某某 这种</em></span>
+              <span class="sf-field-label">写 UP 主标签<em class="sf-field-note">UP：某某 这种</em></span>
               <el-switch v-model="form.obsidianUpTagEnabled" />
             </label>
             <p class="sf-hint">
@@ -2092,7 +2092,7 @@ async function restoreNutstoreBackup(backup: { path: string; name: string }) {
             一级和二级的名字都可以<strong>点一下改</strong>（键盘 F2）；复制搜索串是组头左边那个 <Copy :size="12" /> 按钮——
             点它会拿到如 <code>tag:#话题/AI泡沫</code> 的串。带把手的标签可以<strong>拖动调顺序</strong>（键盘 Alt+↑/↓）。
             在 Obsidian 里搜这条串、或把它加进「书签」，<strong>就是那个话题的合集</strong>——不用在这个工具里另做什么。
-            搜 <code>tag:#UP主名称/某某UP</code> 就是某个人的合集。
+            搜 <code>tag:#UP：某某UP</code>（自动写的 UP 主标签）就是某个人的合集。
           </p>
           <label class="sf-field sf-field-row">
             <span class="sf-field-label">额外：让同题材的旧笔记互相链接</span>
@@ -2470,7 +2470,7 @@ async function restoreNutstoreBackup(backup: { path: string; name: string }) {
 
       <template v-else-if="active === 'prompts'">
         <h2 class="sf-settings-title">提示词库</h2>
-        <p class="sf-settings-desc">内置提示词只读，可按系列与版本筛选；自定义提示词由 AI 加工节点引用，修改后下一次运行生效。</p>
+        <p class="sf-settings-desc">内置提示词只读，按系列归组；自定义提示词由「AI 加工」节点引用，修改后下一次运行生效。</p>
         <div class="sf-block-toolbar">
           <button type="button" class="sf-btn" @click="openBlockCompare()">对比任意提示词</button>
         </div>
@@ -2482,50 +2482,64 @@ async function restoreNutstoreBackup(backup: { path: string; name: string }) {
               <el-option v-for="series in seriesOptions" :key="series" :label="series" :value="series" />
             </el-select>
           </label>
-          <label class="sf-field sf-block-filter">
-            <span class="sf-field-label">版本</span>
-            <el-select v-model="versionFilter" class="sf-field-control" size="small" :disabled="versionOptions.length === 0">
-              <el-option label="全部版本" value="all" />
-              <el-option v-for="version in versionOptions" :key="version" :label="version" :value="version" />
-            </el-select>
-          </label>
         </div>
         <div class="sf-blocks">
-          <article v-for="block in filteredBlocks" :key="block.id" class="sf-block-card">
-            <header class="sf-block-head">
-              <span class="sf-block-name">{{ block.name }}</span>
-              <span v-if="block.builtin" class="sf-chip sf-chip--info">内置</span>
-              <span v-if="block.version" class="sf-chip sf-chip--warning">{{ block.version }}</span>
-              <span v-if="block.recommended" class="sf-chip sf-chip--success">推荐</span>
-              <span class="sf-block-actions">
-                <button v-if="blockVariants(block).length > 1" type="button" class="sf-text-btn" title="对比同一系列的不同版本" @click="openBlockCompare(block)">对比</button>
-                <button type="button" class="sf-text-btn" @click="toggleBlockExpanded(block)">{{ expandedBlockId === block.id ? "收起" : "查看全文" }}</button>
-                <template v-if="!block.builtin">
-                  <button type="button" class="sf-text-btn" @click="editBlock(block)">编辑</button>
-                  <button type="button" class="sf-text-btn sf-text-btn--danger" aria-label="删除提示词" @click="removeBlock(block)"><Trash2 :size="13" /></button>
-                </template>
-              </span>
-            </header>
-            <p v-if="block.series" class="sf-block-series">{{ block.series }}</p>
-            <p class="sf-block-prompt">{{ block.prompt.slice(0, 120) }}{{ block.prompt.length > 120 ? "…" : "" }}</p>
-            <div v-if="expandedBlockId === block.id" class="sf-block-detail">
-              <p v-if="block.description" class="sf-block-desc">{{ block.description }}</p>
-              <div v-if="block.recipe?.steps?.length" class="sf-block-recipe">
-                <h4 class="sf-block-recipe-title">配方步骤（recipe）</h4>
-                <ol class="sf-block-recipe-list">
-                  <li v-for="(step, index) in block.recipe.steps" :key="step.id" class="sf-block-recipe-item">
-                    <span class="sf-block-recipe-step">{{ index + 1 }}. {{ step.label }}（{{ step.id }}）</span>
-                    <pre class="sf-block-recipe-system">{{ step.system }}</pre>
+          <template v-for="group in visibleGroups" :key="group.series">
+            <!-- 单成员系列不渲染分组标题：标题与卡片名一模一样，只是白占一行 -->
+            <h3 v-if="group.members.length > 1" class="sf-block-series-head">{{ group.series }}</h3>
+            <article v-for="block in group.members" :key="block.id" class="sf-block-card">
+              <header class="sf-block-head">
+                <span class="sf-block-name">{{ block.name }}</span>
+                <span v-if="block.builtin" class="sf-chip sf-chip--info">内置</span>
+                <span v-if="block.recommended" class="sf-chip sf-chip--success">推荐</span>
+                <span class="sf-block-actions">
+                  <button v-if="blockVersions(block).length > 1" type="button" class="sf-text-btn" title="看这个写法改过哪几代" @click="toggleVersions(block)">{{ expandedVersionsId === block.id ? "收起版本" : `历史版本 ${blockVersions(block).length}` }}</button>
+                  <button v-if="blockVariants(block).length > 1" type="button" class="sf-text-btn" title="对比同一系列的不同写法" @click="openBlockCompare(block)">对比</button>
+                  <button type="button" class="sf-text-btn" @click="toggleBlockExpanded(block)">{{ expandedBlockId === block.id ? "收起" : "查看全文" }}</button>
+                  <template v-if="!block.builtin">
+                    <button type="button" class="sf-text-btn" @click="editBlock(block)">编辑</button>
+                    <button type="button" class="sf-text-btn sf-text-btn--danger" aria-label="删除提示词" @click="removeBlock(block)"><Trash2 :size="13" /></button>
+                  </template>
+                </span>
+              </header>
+              <p class="sf-block-prompt">{{ block.prompt.slice(0, 120) }}{{ block.prompt.length > 120 ? "…" : "" }}</p>
+              <div v-if="expandedVersionsId === block.id" class="sf-block-versions">
+                <h4 class="sf-block-versions-title">历史版本</h4>
+                <ul class="sf-block-versions-list">
+                  <li v-for="(version, index) in blockVersions(block)" :key="version.id" class="sf-block-version">
+                    <div class="sf-block-version-head">
+                      <span class="sf-block-version-tag">{{ version.version ?? "初版" }}</span>
+                      <span v-if="index === 0" class="sf-chip sf-chip--success">当前</span>
+                      <!-- 当前那一代不给「查看全文」：标题行那条就是它，两个按钮挨着点同一份内容是纯噪音 -->
+                      <button v-else type="button" class="sf-text-btn sf-block-version-open" @click="toggleVersionExpanded(version)">
+                        {{ expandedVersionId === version.id ? "收起" : "查看全文" }}
+                      </button>
+                    </div>
+                    <!-- 当前那一代不重复描述：它的说明与正文就在上面的卡片里（「查看全文」那一条） -->
+                    <p v-if="index > 0" class="sf-block-version-desc">{{ version.description || "这一代没有写说明。" }}</p>
+                    <pre v-if="expandedVersionId === version.id" class="sf-block-full">{{ version.prompt }}</pre>
                   </li>
-                </ol>
+                </ul>
               </div>
-              <pre class="sf-block-full">{{ block.prompt }}</pre>
-              <div class="sf-block-detail-actions">
-                <button type="button" class="sf-text-btn" @click="copyBlockPrompt(block)">复制提示词</button>
-                <button v-if="block.recipe?.steps?.length" type="button" class="sf-text-btn" @click="copyBlockFull(block)">复制提示词+配方</button>
+              <div v-if="expandedBlockId === block.id" class="sf-block-detail">
+                <p v-if="block.description" class="sf-block-desc">{{ block.description }}</p>
+                <div v-if="block.recipe?.steps?.length" class="sf-block-recipe">
+                  <h4 class="sf-block-recipe-title">配方步骤（recipe）</h4>
+                  <ol class="sf-block-recipe-list">
+                    <li v-for="(step, index) in block.recipe.steps" :key="step.id" class="sf-block-recipe-item">
+                      <span class="sf-block-recipe-step">{{ index + 1 }}. {{ step.label }}（{{ step.id }}）</span>
+                      <pre class="sf-block-recipe-system">{{ step.system }}</pre>
+                    </li>
+                  </ol>
+                </div>
+                <pre class="sf-block-full">{{ block.prompt }}</pre>
+                <div class="sf-block-detail-actions">
+                  <button type="button" class="sf-text-btn" @click="copyBlockPrompt(block)">复制提示词</button>
+                  <button v-if="block.recipe?.steps?.length" type="button" class="sf-text-btn" @click="copyBlockFull(block)">复制提示词+配方</button>
+                </div>
               </div>
-            </div>
-          </article>
+            </article>
+          </template>
         </div>
 
         <div class="sf-block-form">
@@ -3030,10 +3044,76 @@ async function restoreNutstoreBackup(backup: { path: string; name: string }) {
   align-items: center;
 }
 
-.sf-block-series {
-  margin: 6px 0 0;
+/* 系列分组标题：系列名只在这里出现一次，卡片上不再重复。单成员系列根本没有这一行。
+   刻意不带成员数——成员就排在正下方，那个数字是纯噪音。 */
+.sf-block-series-head {
+  margin: 12px 0 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+}
+
+.sf-block-series-head:first-child {
+  margin-top: 0;
+}
+
+/*
+ * 历史版本：一行一代，第一行是当前在用的那代。只在「这个写法被迭代过」时出现，收在卡片里，
+ * 列表上不挂版本号徽章。
+ *
+ * 刻意**不用行式 flex + 居中**（上一版就是这么写的）：描述一换行，版本标签与右侧按钮就被吊在那几行
+ * 文字的中间，两代的正文左边缘还不对齐，看着像三块东西各飘各的。改成「标签行在上、描述在下」两段，
+ * 与配方步骤（`.sf-block-recipe-*`）同一套节奏，换几行都不散。
+ */
+.sf-block-versions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px dashed var(--color-border);
+}
+
+.sf-block-versions-title {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.sf-block-versions-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.sf-block-version-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.sf-block-version-tag {
+  padding: 1px 6px;
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-muted);
+  color: var(--color-text-secondary);
   font-size: 11px;
-  color: var(--color-text-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+
+.sf-block-version-open {
+  margin-left: auto;
+}
+
+.sf-block-version-desc {
+  margin: 4px 0 0;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--color-text-secondary);
 }
 
 .sf-block-prompt {

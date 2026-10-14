@@ -9,6 +9,7 @@ import { parseGraph } from "@scribe-flow/shared";
 import { createDatabase, type AppDatabase } from "../db/client";
 import { projects, runNodeResults, runs } from "../db/schema";
 import { RunEngine } from "./engine";
+import { parseNoteTags } from "./note-markdown";
 import { readRelatedSectionNames } from "./related-notes";
 import { updateSettings } from "./settings";
 import { sleep } from "./sleep";
@@ -333,6 +334,7 @@ describe("Obsidian 笔记：两个自动标签（来源 / UP 主）由元数据�
    * ① 取值来自元数据（来源 = 素材类型，UP 主 = 作者），**不花模型钱**；
    * ② AI 开关关着也照写——它不是"AI 判断出来的东西"；
    * ③ 设置页给默认，节点卡片可逐篇覆盖（与保存目录同一套约定）。
+   * 形状也钉在这里：**都不带一级**（来源是裸值 `文本`，UP 主是 `UP：某某`）。
    */
   const ON = { sourceTagEnabled: true, upTagEnabled: true, autoTagEnabled: false };
 
@@ -344,8 +346,8 @@ describe("Obsidian 笔记：两个自动标签（来源 / UP 主）由元数据�
     expect(run.status).toBe("done");
 
     const saved = await readFile(join(dir, `${TITLE}.md`), "utf8");
-    expect(saved).toContain("来源/文本"); // 图里是 source.text，所以来源是「文本」
-    expect(saved).toContain("UP主名称/某个-UP-主"); // 空格按 Obsidian 规则规范成 -
+    // 图里是 source.text，所以来源是「文本」；UP 主的空格按 Obsidian 规则规范成 -。
+    expect(parseNoteTags(saved).frontmatter).toEqual(["文本", "UP：某个-UP-主"]);
     expect(chatCalls).toBe(0);
   });
 
@@ -356,8 +358,8 @@ describe("Obsidian 笔记：两个自动标签（来源 / UP 主）由元数据�
     expect(run.status).toBe("done");
 
     const saved = await readFile(join(dir, `${TITLE}.md`), "utf8");
-    expect(saved).not.toContain("来源/文本");
-    expect(saved).not.toContain("UP主名称/");
+    // 断言落在 tags 那一块上：裸值 `文本` 跟 `来源: 文本` 那一行字面重合，只查字符串会假通过。
+    expect(parseNoteTags(saved).frontmatter).toEqual([]);
     // 但属性行还在（那是「来源/作者」字段，和标签是两件事）
     expect(saved).toContain("来源: 文本");
     expect(saved).toContain("作者: 某个 UP 主");
@@ -370,8 +372,18 @@ describe("Obsidian 笔记：两个自动标签（来源 / UP 主）由元数据�
     expect(run.status).toBe("done");
 
     const saved = await readFile(join(dir, `${TITLE}.md`), "utf8");
-    expect(saved).toContain("来源/文本");
-    expect(saved).toContain("UP主名称/某个-UP-主");
+    expect(parseNoteTags(saved).frontmatter).toEqual(["文本", "UP：某个-UP-主"]);
+  });
+
+  it("老笔记里的旧写法（`来源/文本`、`UP主名称/某某`）重跑时换成新写法，人写的标签不动", async () => {
+    const legacy = ["---", "标题: 第1期", "tags:", "  - 来源/文本", "  - UP主名称/某个-UP-主", "  - 我自己打的标签", "---", "", "旧正文。", ""].join("\n");
+    const { vault, dir } = await makeVault({ [`${TITLE}.md`]: legacy });
+
+    const run = await runNote(vault, { author: "某个 UP 主", overwrite: true }, "auto-tag-legacy", { ...ON });
+    expect(run.status).toBe("done");
+
+    const saved = await readFile(join(dir, `${TITLE}.md`), "utf8");
+    expect(parseNoteTags(saved).frontmatter).toEqual(["我自己打的标签", "文本", "UP：某个-UP-主"]);
   });
 });
 

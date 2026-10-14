@@ -227,8 +227,9 @@ describe("全库重打标", () => {
 来源: B站
 作者: 某人
 tags:
-  - UP主名称/某人
+  - UP主名称/某UP
   - 来源/B站
+  - UP：某人
 ---
 
 # 老笔记
@@ -248,8 +249,10 @@ tags:
     expect(report.written).toBe(1);
     const tags = parseNoteTags(await readFile(join(vault, "old.md"), "utf8")).frontmatter;
     expect(tags).toContain("领域/AI"); // 话题标签照判
-    expect(tags).toContain("UP主名称/某人"); // 自动标签原样留着
+    expect(tags).toContain("UP主名称/某UP"); // 自动标签原样留着（旧写法、新写法都留）
     expect(tags).toContain("来源/B站");
+    // 新写法必须**逐字**留着：逐段规范化会把全角冒号换成 `-`，一次回补就把标签改坏了。
+    expect(tags).toContain("UP：某人");
   });
 
   it("笔记缺 UP 主 / 来源标签时，回补不会顺手补上（那是入库时按元数据写的事）", async () => {

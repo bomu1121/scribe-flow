@@ -58,6 +58,20 @@ export const recipeStepSchema = z.object({
       asserts: z.array(assertionSchema).optional(),
     })
     .optional(),
+  /**
+   * 追加式步骤：这一步的产物**接在前一步产物后面**，而不是替换它。默认是替换——配方的末步产物
+   * 就是最终产物（`executeRecipeOnInput` 的 `return { text: prev }`）。
+   *
+   * 为什么需要它：有些步骤只是「给已经有的一篇东西补一节」（如速览版补「弦外之音」）。
+   * 若让末步重写整篇，一是输出 token 多花十几倍（实测那一节只 188-313 字，整篇 4,000+ 字），
+   * 二是正文会被模型顺手改掉。追加是机械拼接，正文一个字节都不动——这条保证不依赖模型听话。
+   */
+  append: z
+    .object({
+      /** 插到这个「行首前缀」之前；找不到（或省略）就接到末尾。 */
+      before: z.string().min(1).optional(),
+    })
+    .optional(),
 });
 
 export const recipeSchema = z.object({
@@ -72,6 +86,14 @@ export const recipeSchema = z.object({
       // 检索词取自「上一步产物」，第 1 步没有上一步——声明了也永远取不到词，属于写错而不是运行时才知道的事。
       if (step.search && index === 0) {
         ctx.addIssue({ code: z.ZodIssueCode.custom, message: `配方步骤「${step.id}」是第 1 步，不能声明 search（检索词取自上一步产物）` });
+      }
+      // 追加步只能是末步：中间的追加步会被下一步当成 prev，链上的语义立刻变混，
+      // 而且它的产物不会再出现在最终产物里（末步之后没有步骤再读 prev）——等于白花一次调用。
+      if (step.append && index !== steps.length - 1) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `配方步骤「${step.id}」声明了 append，但它不是最后一步（追加只对末步有意义）`,
+        });
       }
     }
   }),

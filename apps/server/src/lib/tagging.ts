@@ -28,6 +28,7 @@ import {
   addTagToTaxonomy,
   isAutoTag,
   managedTags,
+  normalizeNoteTag,
   normalizeTagPath,
   normalizeTagSegment,
   stableHash,
@@ -138,7 +139,7 @@ function contentFingerprint(features: string, tags: string[]): string {
  */
 function fingerprintOf(fileName: string, content: string): string {
   const { frontmatter, inline } = parseNoteTags(content);
-  const all = [...new Set([...frontmatter, ...inline].map(normalizeTagPath).filter(Boolean))];
+  const all = [...new Set([...frontmatter, ...inline].map(normalizeNoteTag).filter(Boolean))];
   return contentFingerprint(extractFeatures(fileName, content), all);
 }
 
@@ -256,7 +257,7 @@ interface DecideResult {
 /**
  * 逐篇决定处理方式；plan 与 run 共用，保证"预估"与"实际执行"口径一致。
  *
- * **只处理用户维护的话题标签**：`来源/*` 与 `UP主名称/*` 由元数据在生成笔记时写入，
+ * **只处理用户维护的话题标签**：来源与 UP 主这两个自动标签（`B站`、`UP：某某`）由元数据在生成笔记时写入，
  * 不在这里新增、也不在这里清理（要改就让用户去 Obsidian 里自己改）。
  */
 async function decide(
@@ -287,7 +288,7 @@ async function decide(
   for (const file of files) {
     const features = extractFeatures(file.fileName, file.content);
     const { frontmatter, inline } = parseNoteTags(file.content);
-    const currentTags = [...new Set([...frontmatter, ...inline].map(normalizeTagPath).filter(Boolean))];
+    const currentTags = [...new Set([...frontmatter, ...inline].map(normalizeNoteTag).filter(Boolean))];
     const contentHash = contentFingerprint(features, currentTags);
     const stored = fingerprints.get(file.relPath);
     const ownedPrevious = stored?.tags ?? [];
@@ -299,7 +300,7 @@ async function decide(
     }
 
     // 我们管得着的标签 = 词库里现在还留着的（含一级）+ 历史上我们写过的（词库删条目后仍要能清理）。
-    // **自动分组（UP主名称 / 来源）永远不在清理范围内**：老指纹里可能记着它们（那时它们还属于词库），
+    // **两个自动标签（来源 / UP 主）永远不在清理范围内**：老指纹里可能记着它们（那时它们还属于词库），
     // 但产品上它们归元数据管，删了就找不回来了——用户要改自己改。
     const isOurs = (tag: string) =>
       topic.has(tagKey(tag)) || ownedPrevious.some((prev) => tagKey(prev) === tagKey(tag));
@@ -544,10 +545,10 @@ export function rememberNoteTags(
 }
 
 /**
- * 合成写入 front matter 的最终标签：人写的原样保留，自动分组（UP主名称 / 来源）原样保留，
+ * 合成写入 front matter 的最终标签：人写的原样保留，两个自动标签（来源 / UP 主）原样保留，
  * 话题标签由我们重排。`incremental` 为真表示"旧的话题标签仍然有效"（增量模式没重新判它们）。
  *
- * 自动分组在这里**只保留、不推导**：它们归元数据管，回补不碰（`来源/UP主名称` 不新增也不删）。
+ * 自动标签在这里**只保留、不推导**：它们归元数据管，回补不碰——既不新增也不删。
  */
 function mergeTopicTags(note: NoteDecision, accepted: string[] | undefined, taxonomy: TagTaxonomy, incremental: boolean): string[] {
   const topic = new Set(managedTags(taxonomy).map(tagKey));

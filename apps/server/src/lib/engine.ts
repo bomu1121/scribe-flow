@@ -7,8 +7,7 @@ import {
   DERIVED_ITEM_KEY_PREFIX,
   MULTI_PRODUCT_SEPARATOR,
   NODE_TYPE_LABELS,
-  SOURCE_TAXONOMY_GROUP,
-  UP_TAXONOMY_GROUP,
+  UP_TAG_PREFIX,
   addTagToTaxonomy,
   fileSegmentKey,
   isAutoTag,
@@ -58,7 +57,7 @@ import {
 } from "./media-store";
 import { ensureRemoteDirectory, listRemoteDirectory, NUTSTORE_PROPFIND_LIMIT, scanRemoteMarkdown, writeRemoteFile, type NutstoreConfig } from "./nutstore";
 import { parseNoteTags, upsertFrontMatterTags } from "./note-markdown";
-import { appendAllOutput, assertStepOutput, parseJsonLoose, readSearchQueries, renderStepSystem } from "./recipe";
+import { appendAllOutput, appendStepOutput, assertStepOutput, parseJsonLoose, readSearchQueries, renderStepSystem } from "./recipe";
 import {
   findRelatedNoteNames,
   pickFields,
@@ -1850,6 +1849,9 @@ export class RunEngine {
      *   用户只能决定写不写——设置页给默认，节点卡片可逐篇覆盖（与保存目录同一套约定）；
      * · **话题标签**：词库 + AI 判定；
      * · 人写在文件里的标签：原样保留（`humanTags`）。
+     *
+     * 两个自动标签都**不带一级**：来源写裸值（`B站`），UP 主写 `UP：某某`。
+     * 一级（`来源/`、`UP主名称/`）是历史形状，只会出现在老笔记里，重跑时按开关清掉。
      */
     const sourceName = normalizeTagSegment(source);
     const upName = normalizeTagSegment(author);
@@ -1882,11 +1884,12 @@ export class RunEngine {
     const humanTags = existing
       ? parseNoteTags(existing).frontmatter.filter((tag) => !ours.has(tag.toLowerCase()) && !isAutoTag(tag))
       : [];
-    // 自动分组由这里统一写：开关关掉就不写，文件里同组的旧标签也一并不留（那是这个开关管的东西）。
+    // 两个自动标签由这里统一写：开关关掉就不写，文件里我们写过的旧标签也一并不留（那是这个开关管的东西）。
     // 要留着就把它打开，或者改完元数据（来源/作者）再重跑。
+    // 旧写法（`来源/B站`、`UP主名称/某某`）由 `isAutoTag` 认得出来，所以重跑一次就会换成新写法。
     const autoTags = [
-      ...(wantSourceTag && sourceName ? [`${SOURCE_TAXONOMY_GROUP}/${sourceName}`] : []),
-      ...(wantUpTag && upName ? [`${UP_TAXONOMY_GROUP}/${upName}`] : []),
+      ...(wantSourceTag && sourceName ? [sourceName] : []),
+      ...(wantUpTag && upName ? [`${UP_TAG_PREFIX}${upName}`] : []),
     ];
     const tags = [...new Set([...explicitTags, ...humanTags, ...autoTags, ...topicTags])];
 
@@ -2145,7 +2148,8 @@ ${list}
         }
       }
       this.emit(active, { type: "node.step.done", runId: active.id, nodeId: node.id, stepId: step.id, index: flatIndex + 1, total: totalFlat, summary: `${step.label} 完成` });
-      prev = trimmed;
+      // 追加步（RecipeStep.append）接在前一步产物后面，其余步骤替换 prev——末步的 prev 就是最终产物。
+      prev = step.append ? appendStepOutput(prev, trimmed, step.append.before) : trimmed;
       all = appendAllOutput(all, step, trimmed);
     }
     return { text: prev, sources };

@@ -1,7 +1,7 @@
 /**
  * Obsidian 的 callout：以 `> [!summary] 速览` 开头的一整段引用块。
  *
- * 为什么应用里要认它：内置提示词「观点笔记（速览与速查）」把速览与速查写成 callout
+ * 为什么应用里要认它：内置提示词「观点提炼 · 速览版」把速览与速查写成 callout
  * （取舍与出处见 `docs/research/obsidian-note-typography.md`），而 marked 不认识这个语法——
  * 不处理的话，结果页、画布卡片预览、设置页预览里会直接显示字面的 `[!summary] 速览`。
  *

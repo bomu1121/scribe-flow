@@ -67,6 +67,10 @@ Windows 上可以直接双击根目录的 `start-dev.cmd`（内部跑 `scripts/s
 - 开发时用 `http://127.0.0.1:5173` 打开，别用 `localhost:5173`（每次新连接会多等约 200ms）。
   **不要**因此把 Vite 改成监听所有网卡，那会把无认证的服务暴露到局域网。
 - **后端没有应用层认证，CORS 默认放开。** 不要把服务暴露到不可信网络（收口计划见 README 的已知缺口）。
+- **`vue-tsc --noEmit` 不检查模板标签闭合。** 少一个 `</template>` 时 `pnpm typecheck` 与 `pnpm lint` 全绿，
+  只有 Vite 转换会红（报 `Element is missing end tag`），表现是**那个 `.vue` 的整条路由不渲染**
+  ——设置页整页空白、其余页面正常，看不出跟改了什么有关。动过 SFC 模板就跑 `pnpm smoke:ui`：
+  它按页面逐条断言，整页不渲染会一次红十几条，一眼能定位。
 
 ## 必须守住的规矩
 

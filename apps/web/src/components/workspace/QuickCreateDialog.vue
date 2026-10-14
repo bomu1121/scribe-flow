@@ -5,17 +5,19 @@ import { ElButton } from "element-plus/es/components/button/index.mjs";
 import { ElCheckbox } from "element-plus/es/components/checkbox/index.mjs";
 import { ElDialog } from "element-plus/es/components/dialog/index.mjs";
 import { ElInput } from "element-plus/es/components/input/index.mjs";
-import { ElOption, ElSelect } from "element-plus/es/components/select/index.mjs";
+import { ElOption, ElOptionGroup, ElSelect } from "element-plus/es/components/select/index.mjs";
 import { Link2 } from "lucide-vue-next";
 import {
   aiPromptBlocks,
   buildTemplateGraph,
   extractBiliUrl,
   extractShareTitle,
+  groupPromptBlocks,
   pageFromUrl,
   supportsSource,
   visibleTemplates,
   type BiliLinkSource,
+  type PromptBlock,
   type RunMeta,
   type VideoPreview,
   type WorkflowTemplate,
@@ -95,6 +97,16 @@ const videoTemplates = computed<WorkflowTemplate[]>(() =>
 const searchReady = computed(() => Boolean(settingsStore.settings?.search.hasKey));
 /** 与画布节点上的提示词下拉共用一份列表（`aiPromptBlocks`），两处能选到的提示词必须一致。 */
 const promptOptions = computed(() => aiPromptBlocks(promptsStore.customBlocks, searchReady.value));
+/**
+ * 下拉里按系列分组。与画布卡片、设置页共用同一个分组口径（`groupPromptBlocks`）：
+ * 单成员系列不挂分组标题——标题会和选项一模一样，等于同一行写两遍。
+ */
+const promptGroups = computed(() => groupPromptBlocks(promptOptions.value));
+
+/** 选项文案：内置只写成员名（系列由分组标题承担），自己写的标一个「我的」。 */
+function promptOptionLabel(block: PromptBlock): string {
+  return block.builtin ? block.name : `${block.name} · 我的`;
+}
 
 const link = ref("");
 const preview = ref<VideoPreview | null>(null);
@@ -365,7 +377,14 @@ async function startRun(projectId: string, projectName: string) {
         <span class="qc-field-label">AI 加工提示词</span>
         <el-select v-model="promptBlockId" size="default" class="qc-select" :disabled="!promptSelectable">
           <el-option label="不预选（进画布再选）" :value="NO_PROMPT" />
-          <el-option v-for="block in promptOptions" :key="block.id" :label="block.name" :value="block.id" />
+          <template v-for="group in promptGroups" :key="group.series">
+            <el-option-group v-if="group.members.length > 1" :label="group.series">
+              <el-option v-for="block in group.members" :key="block.id" :label="promptOptionLabel(block)" :value="block.id" />
+            </el-option-group>
+            <template v-else>
+              <el-option v-for="block in group.members" :key="block.id" :label="promptOptionLabel(block)" :value="block.id" />
+            </template>
+          </template>
         </el-select>
         <span class="qc-field-hint">{{ promptHint }}</span>
       </label>

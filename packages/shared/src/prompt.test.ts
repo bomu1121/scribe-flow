@@ -1,5 +1,16 @@
 import { describe, expect, it } from "vitest";
-import { BUILTIN_PROMPT_BLOCKS, aiPromptBlocks, availablePromptBlocks } from "./prompt";
+import {
+  BUILTIN_PROMPT_BLOCKS,
+  aiPromptBlocks,
+  availablePromptBlocks,
+  blockSeriesName,
+  compareVersion,
+  currentPromptBlock,
+  groupPromptBlocks,
+  isTraceBlock,
+  promptBlockVersions,
+  variantTitle,
+} from "./prompt";
 
 describe("builtin prompt blocks", () => {
   it("展示名与系列名不夹带内部说法（版本号 / 配方 / 内置 / 代号）", () => {
@@ -14,23 +25,63 @@ describe("builtin prompt blocks", () => {
     expect(new Set(ids).size).toBe(ids.length);
   });
 
-  it("保留各版本观点提炼并标注版本：v4 接管推荐位", () => {
-    const insightBlocks = BUILTIN_PROMPT_BLOCKS.filter((block) => block.series === "观点笔记");
-    expect(insightBlocks.map((block) => block.version).sort()).toEqual(["v1", "v2", "v3", "v4", "v5", "v6"]);
-    expect(insightBlocks.find((block) => block.id === "builtin.insight")?.recommended).toBeUndefined();
-    expect(insightBlocks.find((block) => block.id === "builtin.insight.v4")?.recommended).toBe(true);
+  it("观点提炼系列：5 个成员同挂一个系列名，只有详尽版被迭代过（v1/v2），推荐位归成文版", () => {
+    const insight = BUILTIN_PROMPT_BLOCKS.filter((block) => block.series === "观点提炼");
+    expect(new Set(insight.map((block) => block.name))).toEqual(new Set(["详尽版", "逐段核对", "成文版", "连贯版", "速览版"]));
+    // 「详尽版」有两代（v1 是它的上一代），其余的成员都是第一代、刻意不带 version——
+    // 列表上不再平铺版本号，正是靠「没迭代过就没有版本」这条实现
+    expect(insight.filter((block) => block.name === "详尽版").map((block) => block.version).sort()).toEqual(["v1", "v2"]);
+    expect(insight.filter((block) => block.name !== "详尽版").every((block) => block.version === undefined)).toBe(true);
+    expect(insight.find((block) => block.id === "builtin.insight")?.recommended).toBeUndefined();
+    expect(insight.find((block) => block.id === "builtin.insight.v4")?.recommended).toBe(true);
   });
 
-  it("三个试用提示词都在、都是单次调用、都不抢推荐位", () => {
+  it("三个试用提示词都在、都不抢推荐位", () => {
     for (const id of ["builtin.insight.v5", "builtin.insight.v6", "builtin.qa"]) {
       const block = BUILTIN_PROMPT_BLOCKS.find((item) => item.id === id);
       expect(block, id).toBeDefined();
-      // 挂配方就是 4 次调用，与「先试用对比」的定位不符
-      expect(block?.recipe, id).toBeUndefined();
       // 推荐位仍归成文版，试用提示词不夺位
       expect(block?.recommended, id).toBeUndefined();
     }
     expect(BUILTIN_PROMPT_BLOCKS.find((block) => block.id === "builtin.qa")?.series).toBe("问答笔记");
+  });
+
+  it("连贯版与问答笔记保持单次调用：挂四步配方与「先试用对比」的定位不符", () => {
+    for (const id of ["builtin.insight.v5", "builtin.qa"]) {
+      expect(BUILTIN_PROMPT_BLOCKS.find((b) => b.id === id)?.recipe, id).toBeUndefined();
+    }
+  });
+
+  it("速览版是两步配方，且第二步是追加式（正文逐字不改靠拼接，不靠模型听话）", () => {
+    /*
+     * 这条断言在 2026-10-14 之前是「三个试用块都不许有配方」，理由写的是「挂配方就是 4 次调用」。
+     * 现在 v6 破了这条，只破一半——它的配方是 2 步，且第二步声明 `append`：
+     * 实测让末步**重写整篇**要多花十几倍输出 token（那一节只 188-313 字，整篇 4,000+ 字），
+     * 正文还会被模型顺手改掉。三臂对照的数字见 PROMPT_SULAN / RECIPE_SULAN 的注释。
+     */
+    const v6 = BUILTIN_PROMPT_BLOCKS.find((b) => b.id === "builtin.insight.v6");
+    expect(v6?.recipe?.steps.map((step) => step.id)).toEqual(["sulan", "xianyin"]);
+    const last = v6?.recipe?.steps.at(-1);
+    expect(last?.append?.before).toBe("> [!example]-");
+    // 后面若接上第三步，追加的语义就说不通了（引擎的 prev 会被下一步读走）。
+    expect(v6?.recipe?.steps.filter((step) => step.append)).toHaveLength(1);
+    // 这一节的产出必须说出「找什么」，否则会退化成把正文换个说法——成文版那栏就是这么坏掉的。
+    expect(last?.system).toContain("情绪色彩");
+    expect(last?.system).toContain("未明说的潜台词");
+    expect(last?.system).toContain("矛盾心态");
+    // 两道断言门：写成 `## ` 标题（会被读成正文的下一节）、或把整篇笔记又抄一遍。
+    expect(last?.expects?.asserts).toEqual([
+      { op: "contains", value: "> [!quote] 弦外之音" },
+      { op: "lengthLte", value: 1500 },
+    ]);
+    // 这一节必须是标注框、不是二级标题：跟正文小节同级同形时，读者会把它读成正文的顺序续篇
+    // （用户拿真实产物反馈过）。速览与速查都有框，只有它没有的那一版最容易被误读。
+    expect(last?.system).toContain("写成标注框，不要写成 `## ` 标题");
+    expect(last?.system).toContain("> [!quote] 弦外之音");
+    // 框内要连贯行文：这一节夹在散文正文与速查清单之间，夹一个列表两头都不像。
+    expect(last?.system).toContain("不要用列表或分点");
+    // 第一步就是原来那次单次调用，一字不改。
+    expect(v6?.recipe?.steps[0]?.system).toBe(v6?.prompt);
   });
 
   it("问答笔记必须要求把问题写成二级标题：平铺的「问：」进不了结果页目录", () => {
@@ -53,7 +104,6 @@ describe("builtin prompt blocks", () => {
   it("观点提炼 v4 为排版核对配方：4 步、finalize 带禁 ### 硬门、prompt 字段是新版式", () => {
     const v4 = BUILTIN_PROMPT_BLOCKS.find((block) => block.id === "builtin.insight.v4");
     expect(v4).toBeDefined();
-    expect(v4?.version).toBe("v4");
     expect(v4?.recommended).toBe(true);
     expect(v4?.recipe?.steps.map((step) => step.id)).toEqual(["scan", "draft", "audit", "finalize"]);
     expect(v4?.recipe?.steps.every((step) => step.system.length > 0)).toBe(true);
@@ -64,7 +114,7 @@ describe("builtin prompt blocks", () => {
     expect(v4?.prompt).not.toContain("## 总体概要"); // prompt 字段须为 v4 新版式，而非 v2 旧文本
   });
 
-  it("观点笔记配方的拆解步限了引用条数：否则几十条引用里错一条就整节点作废", () => {
+  it("观点提炼配方的拆解步限了引用条数：否则几十条引用里错一条就整节点作废", () => {
     // 实测：不限时它在 2,939 字的稿子上摘了 77-79 条，每条都要过逐字门，一条不过就废掉整次运行。
     for (const id of ["builtin.insight.v3", "builtin.insight.v4"]) {
       const scan = BUILTIN_PROMPT_BLOCKS.find((block) => block.id === id)?.recipe?.steps.find((step) => step.id === "scan");
@@ -72,7 +122,7 @@ describe("builtin prompt blocks", () => {
     }
   });
 
-  it("速览与速查的速查段不用表格：窄阅读区里表格只能挤成一团或炸成几十行", () => {
+  it("速览版的速查段不用表格：窄阅读区里表格只能挤成一团或炸成几十行", () => {
     // 真实产物反馈：一格里最多 164 字、5 处用分号串了多条。结果页正文区约 700px，
     // Markdown 表格又没有换行单元格——复合内容没有中间态，所以这一段改成条目清单。
     const p = BUILTIN_PROMPT_BLOCKS.find((b) => b.id === "builtin.insight.v6")?.prompt ?? "";
@@ -80,7 +130,7 @@ describe("builtin prompt blocks", () => {
     expect(p).toContain("一条一行、一事只说一遍");
   });
 
-  it("速览与速查写成 Obsidian callout：速览不折叠、速查折叠并分组，正文小节升到二级", () => {
+  it("速览版写成 Obsidian callout：速览不折叠、速查折叠并分组，正文小节升到二级", () => {
     // 依据与实测（平铺 28 条 1093px → 折叠 125px）见 docs/research/obsidian-note-typography.md。
     // 两个容易静默出错的地方也都钉住：类型名要写全（不认识/写不全的类型要么回落 note 要么显示英文标题）、
     // 折叠标记 `-` 不能省（省了默认展开，几十条会把页面铺满）。
@@ -97,10 +147,9 @@ describe("builtin prompt blocks", () => {
     const brief = BUILTIN_PROMPT_BLOCKS.find((block) => block.id === "builtin.brief");
     expect(brief).toBeDefined();
     expect(brief?.series).toBe("观点速读");
-    expect(brief?.version).toBe("v1");
     // 压缩档的价值就是便宜，所以刻意不挂配方（挂了就是 4 次调用）
     expect(brief?.recipe).toBeUndefined();
-    // 与「观点笔记」是两种产物，不设推荐位，用不用由人选
+    // 与「观点提炼」是两种产物，不设推荐位，用不用由人选
     expect(brief?.recommended).toBeUndefined();
     expect(BUILTIN_PROMPT_BLOCKS.find((block) => block.id === "builtin.insight.v4")?.recommended).toBe(true);
   });
@@ -118,7 +167,7 @@ describe("builtin prompt blocks", () => {
     expect(prompt).not.toContain("信息不缩水");
   });
 
-  it("忽略清单槽接进了观点笔记全系列（单次提示词 + v3/v4 配方的拆解与起草步）", () => {
+  it("忽略清单槽接进了观点提炼全系列（单次提示词 + v3/v4 配方的拆解与起草步）", () => {
     const full = "片尾求关注、求点赞、求收藏、转发、投币、三连与下期预告";
     const brief = "不要为它们建 block，也不要在 quotes 里摘它们";
     const byId = (id: string) => BUILTIN_PROMPT_BLOCKS.find((block) => block.id === id);
@@ -138,7 +187,6 @@ describe("builtin prompt blocks", () => {
     const knowledge = BUILTIN_PROMPT_BLOCKS.find((block) => block.id === "builtin.knowledge");
     expect(knowledge).toBeDefined();
     expect(knowledge?.series).toBe("科普笔记");
-    expect(knowledge?.version).toBe("v1");
     expect(knowledge?.prompt).toContain("核心知识框架");
   });
 
@@ -159,7 +207,6 @@ describe("builtin prompt blocks", () => {
     const history = BUILTIN_PROMPT_BLOCKS.find((block) => block.id === "builtin.history");
     expect(history).toBeDefined();
     expect(history?.series).toBe("历史脉络梳理");
-    expect(history?.version).toBe("v1");
     expect(history?.recommended).toBe(true);
   });
 
@@ -171,18 +218,16 @@ describe("builtin prompt blocks", () => {
     expect(history?.prompt).toContain("存疑/可能有争议");
   });
 
-  it("信息溯源系列：v1/v2 保留，v3 为推荐的联网核查版", () => {
+  it("信息溯源系列：基础 / 逐条对照 / 上网查证三档，上网查证为推荐的联网核查版", () => {
     const v1 = BUILTIN_PROMPT_BLOCKS.find((block) => block.id === "builtin.trace");
     const v2 = BUILTIN_PROMPT_BLOCKS.find((block) => block.id === "builtin.trace.v2");
     const v3 = BUILTIN_PROMPT_BLOCKS.find((block) => block.id === "builtin.trace.v3");
-    expect(v1?.version).toBe("v1");
     expect(v1?.recipe).toBeUndefined();
     expect(v2).toBeDefined();
     expect(v2?.recipe?.steps.map((step) => step.id)).toEqual(["scan", "audit", "finalize"]);
     expect(v2?.recipe?.steps.every((step) => step.system.length > 0)).toBe(true);
     // 推荐位交给 v3；v2 仍可用，只是不再推荐
     expect(v2?.recommended).toBeUndefined();
-    expect(v3?.version).toBe("v3");
     expect(v3?.recommended).toBe(true);
     expect(v3?.externalCheck).toBe("required");
     expect(v3?.recipe?.steps.map((step) => step.id)).toEqual(["scan", "audit", "finalize"]);
@@ -204,14 +249,12 @@ describe("builtin prompt blocks", () => {
     expect(v3?.recipe?.steps[2]?.system).toContain("verify 必须逐条保留");
   });
 
-  it("新增阴阳师攻略加工系列：单次版与核对版并存，核对版为推荐配方", () => {
+  it("阴阳师攻略系列：基础与逐段核对并存，逐段核对为推荐配方", () => {
     const ids = BUILTIN_PROMPT_BLOCKS.map((block) => block.id);
     expect(ids).toContain("builtin.gameguide");
     expect(ids).toContain("builtin.gameguide.v2");
     const v1 = BUILTIN_PROMPT_BLOCKS.find((block) => block.id === "builtin.gameguide");
     const v2 = BUILTIN_PROMPT_BLOCKS.find((block) => block.id === "builtin.gameguide.v2");
-    expect(v1?.version).toBe("v1");
-    expect(v2?.version).toBe("v2");
     expect(v2?.recommended).toBe(true);
     expect(v2?.recipe).toBeDefined();
     expect(v2?.recipe?.steps.map((step) => step.id)).toEqual(["scan", "draft", "audit", "finalize"]);
@@ -308,5 +351,79 @@ describe("aiPromptBlocks（画布节点与快捷新建共用的「AI 加工」�
 
   it("没配检索密钥时不列出需要联网核查的提示词", () => {
     expect(aiPromptBlocks([], false).every((block) => block.externalCheck !== "required")).toBe(true);
+  });
+});
+
+describe("系列 / 成员 / 版本（两级身份 + 一个迭代号）", () => {
+  it("同一个 (系列, 成员) 里版本号不重复：重复会让「当前版本」取到哪一条变成看数组顺序", () => {
+    const seen = new Map<string, string[]>();
+    for (const block of BUILTIN_PROMPT_BLOCKS) {
+      const key = `${blockSeriesName(block)}|${block.name}`;
+      seen.set(key, [...(seen.get(key) ?? []), block.version ?? "v1"]);
+    }
+    for (const [key, versions] of seen) expect(new Set(versions).size, key).toBe(versions.length);
+  });
+
+  it("一个系列里至多一个推荐位：推荐是「这个系列该先用哪个」的单一答案", () => {
+    const counts = new Map<string, number>();
+    for (const block of BUILTIN_PROMPT_BLOCKS) {
+      if (!block.recommended) continue;
+      const series = blockSeriesName(block);
+      counts.set(series, (counts.get(series) ?? 0) + 1);
+    }
+    for (const [series, count] of counts) expect(count, series).toBe(1);
+  });
+
+  it("variantTitle：只有系列与成员名不同才加前缀（单成员系列不该出现「观点速读 · 观点速读」）", () => {
+    const byId = (id: string) => BUILTIN_PROMPT_BLOCKS.find((block) => block.id === id)!;
+    expect(variantTitle(byId("builtin.insight.v4"))).toBe("观点提炼 · 成文版");
+    expect(variantTitle(byId("builtin.action"))).toBe("行动项清单");
+    expect(variantTitle({ id: "c", name: "会议纪要提炼", prompt: "x", builtin: false })).toBe("会议纪要提炼");
+  });
+
+  it("compareVersion：v10 大于 v9（不能按字符串比，否则 v10 排在 v9 前面）", () => {
+    expect(compareVersion("v10", "v9")).toBeGreaterThan(0);
+    expect(compareVersion(undefined, "v1")).toBe(0);
+    expect(compareVersion("v2", "v1")).toBeGreaterThan(0);
+  });
+
+  it("currentPromptBlock：有推荐用推荐，没有取版本号最大的", () => {
+    const v1 = { id: "a1", name: "A", prompt: "x", builtin: true, version: "v1" };
+    const v2 = { id: "a2", name: "A", prompt: "x", builtin: true, version: "v2" };
+    const v10 = { id: "a10", name: "A", prompt: "x", builtin: true, version: "v10" };
+    expect(currentPromptBlock([v1, v2, v10])?.id).toBe("a10");
+    expect(currentPromptBlock([{ ...v1, recommended: true }, v2, v10])?.id).toBe("a1");
+  });
+
+  it("groupPromptBlocks：成员折叠到当前版本、单成员与自定义各自成组、顺序沿用传入顺序", () => {
+    const groups = groupPromptBlocks([...BUILTIN_PROMPT_BLOCKS, { id: "custom.1", name: "我的块", prompt: "x", builtin: false }]);
+    // 6 条观点提炼的块折成 5 个成员：详尽版的 v1 收进它自己那条版本线
+    const insight = groups.find((group) => group.series === "观点提炼")!;
+    expect(insight.members.map((block) => block.name)).toEqual(["详尽版", "逐段核对", "成文版", "连贯版", "速览版"]);
+    // 详尽版没有推荐位，当前代靠「版本号最大」取到不带 version 后缀的那条（v2）
+    expect(insight.members[0]?.id).toBe("builtin.insight");
+    // 单成员系列照样成组，只有一个成员——由调用方决定要不要渲染分组标题
+    expect(groups.find((group) => group.series === "行动项清单")?.members.map((block) => block.id)).toEqual(["builtin.action"]);
+    // 自定义提示词没写 series，归到「自定义」一组
+    expect(groups.find((group) => group.series === "自定义")?.members.map((block) => block.id)).toEqual(["custom.1"]);
+    // 分组顺序 = 第一次出现的顺序，不排序
+    expect(groups[0]?.series).toBe("观点提炼");
+  });
+
+  it("promptBlockVersions：只看同一个 (系列, 成员)，按版本从新到旧", () => {
+    const current = BUILTIN_PROMPT_BLOCKS.find((block) => block.id === "builtin.insight")!;
+    expect(promptBlockVersions(BUILTIN_PROMPT_BLOCKS, current).map((block) => block.id)).toEqual(["builtin.insight", "builtin.insight.v1"]);
+    // 别的成员只有一代
+    const other = BUILTIN_PROMPT_BLOCKS.find((block) => block.id === "builtin.insight.v4")!;
+    expect(promptBlockVersions(BUILTIN_PROMPT_BLOCKS, other).map((block) => block.id)).toEqual(["builtin.insight.v4"]);
+  });
+
+  it("isTraceBlock：只认「信息溯源」系列（结果页靠它把溯源报告从普通笔记里分流）", () => {
+    const byId = (id: string) => BUILTIN_PROMPT_BLOCKS.find((block) => block.id === id)!;
+    expect(isTraceBlock(byId("builtin.trace"))).toBe(true);
+    expect(isTraceBlock(byId("builtin.trace.v3"))).toBe(true);
+    expect(isTraceBlock(byId("builtin.insight"))).toBe(false);
+    // 自定义提示词没有 series：名字碰巧叫「信息溯源」也不能误判
+    expect(isTraceBlock({ id: "c", name: "信息溯源", prompt: "x", builtin: false })).toBe(false);
   });
 });

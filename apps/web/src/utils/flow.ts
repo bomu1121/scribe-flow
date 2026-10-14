@@ -90,9 +90,9 @@ export interface ScribeNodeData {
   autoTag?: boolean;
   /** 这一篇抽取哪些属性；留空或全清＝跟随设置页的默认。 */
   extractFields?: string[];
-  /** 这一篇要不要写来源标签（`来源/B站`）。三态，同上。 */
+  /** 这一篇要不要写来源标签（裸值 `B站`）。三态，同上。 */
   sourceTag?: boolean;
-  /** 这一篇要不要写 UP 主标签（`UP主名称/某某`）。三态，同上。 */
+  /** 这一篇要不要写 UP 主标签（`UP：某某`）。三态，同上。 */
   upTag?: boolean;
   retry?: { maxRetries?: number; backoffMs?: number };
   /** 素材挑选：来源节点 id → 选中的素材段标识（未配置即全选）。 */

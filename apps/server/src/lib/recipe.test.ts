@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { BUILTIN_PROMPT_BLOCKS, type RecipeStep } from "@scribe-flow/shared";
-import { assertStepOutput, collectFieldStrings, parseJsonLoose, readSearchQueries, renderStepSystem } from "./recipe";
+import { BUILTIN_PROMPT_BLOCKS, parseRecipe, type RecipeStep } from "@scribe-flow/shared";
+import { appendStepOutput, assertStepOutput, collectFieldStrings, parseJsonLoose, readSearchQueries, renderStepSystem } from "./recipe";
 
 describe("renderStepSystem", () => {
   const ctx = { input: "原文全文", prev: "上一步产物", all: "全部产物" };
@@ -219,7 +219,7 @@ describe("assertStepOutput", () => {
   it("citationsInOriginal 宽容规则：转写重复了一个字时，引用按正常写法仍算命中（实测回归）", () => {
     // 真实事故：转写把作者的话记成「美国文化里面对对抗的一种想象」（多一个「对」，读起来仍通顺，
     // 所以校对节点照原样留下了）；模型引用时按正常中文写成「文化里面对抗」，逐字比对判未命中、
-    // 重问一次仍栽在同一条，整个节点作废。旁证：两个互不相干的提示词（成文版 / 速览与速查）
+    // 重问一次仍栽在同一条，整个节点作废。旁证：两个互不相干的提示词（成文版 / 速览版）
     // 都独立地少写了那个「对」——说明是转写重复了一个字，不是模型抄错。
     const realCtx = {
       input:
@@ -314,4 +314,68 @@ describe("内置配方的引用回查门是活的", () => {
       expect(() => assertStepOutput(step!, JSON.stringify(item.product), ctx)).toThrow(/未在原文找到|只找到 0 条引用/);
     });
   }
+});
+
+describe("appendStepOutput（追加式步骤的拼接）", () => {
+  it("没给 before：接到末尾，中间隔一个空行", () => {
+    expect(appendStepOutput("# 笔记\n\n正文", "## 弦外之音\n\n他其实在讽谁。")).toBe(
+      "# 笔记\n\n正文\n\n## 弦外之音\n\n他其实在讽谁。",
+    );
+  });
+
+  it("给了 before：插到那一行之前——内容排在附录之前才读得顺", () => {
+    const prev = "# 笔记\n\n正文\n\n> [!example]- 速查\n> **数字**\n> - 一";
+    expect(appendStepOutput(prev, "## 弦外之音\n\n潜台词。", "> [!example]-")).toBe(
+      "# 笔记\n\n正文\n\n## 弦外之音\n\n潜台词。\n\n> [!example]- 速查\n> **数字**\n> - 一",
+    );
+  });
+
+  it("before 没命中时降级为追加到末尾，不抛错", () => {
+    // 速查框没写出来的产物本来就该照常出，不该因为插不进位置让整份作废。
+    expect(appendStepOutput("# 笔记\n\n正文", "## 弦外之音\n\n潜台词。", "> [!example]-")).toBe(
+      "# 笔记\n\n正文\n\n## 弦外之音\n\n潜台词。",
+    );
+  });
+
+  it("按行首前缀匹配，不误伤正文里提到的同一串字符", () => {
+    // 正文里拿这一串当例子讲（前面还有字），不该把新一节插到那句话前面。
+    const prev = "# 笔记\n\n他教我怎么写 `> [!example]-` 这种框。\n\n> [!example]- 速查\n> - 一";
+    const out = appendStepOutput(prev, "## 弦外之音", "> [!example]-");
+    expect(out.indexOf("## 弦外之音")).toBeGreaterThan(out.indexOf("教我怎么写"));
+    expect(out.indexOf("## 弦外之音")).toBeLessThan(out.indexOf("> [!example]- 速查"));
+  });
+
+  it("空 prev：这一步的产物就是全部，不补多余空行", () => {
+    expect(appendStepOutput("", "## 弦外之音\n\n潜台词。")).toBe("## 弦外之音\n\n潜台词。");
+  });
+
+  it("前一段的尾随空行先收掉，同一位置反复追加不会越积越多空行", () => {
+    expect(appendStepOutput("# 笔记\n\n正文\n\n\n", "## 弦外之音\n\n甲。")).toBe("# 笔记\n\n正文\n\n## 弦外之音\n\n甲。");
+  });
+});
+
+describe("配方 schema：追加步只能是末步", () => {
+  it("末步声明 append 可以通过", () => {
+    expect(() =>
+      parseRecipe({
+        schema: 1,
+        steps: [
+          { id: "a", label: "甲", system: "x" },
+          { id: "b", label: "乙", system: "y", append: { before: "> [!example]-" } },
+        ],
+      }),
+    ).not.toThrow();
+  });
+
+  it("非末步声明 append 直接判错：它的产物会被下一步读到 prev 里", () => {
+    expect(() =>
+      parseRecipe({
+        schema: 1,
+        steps: [
+          { id: "a", label: "甲", system: "x", append: {} },
+          { id: "b", label: "乙", system: "y" },
+        ],
+      }),
+    ).toThrow(/追加只对末步有意义/);
+  });
 });

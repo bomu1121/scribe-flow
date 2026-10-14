@@ -9,7 +9,7 @@ import {
   type WorkflowTemplate,
 } from "./templates";
 import { parseGraph, safeParseGraph } from "./schema";
-import { aiPromptBlocks } from "./prompt";
+import { aiPromptBlocks, variantTitle } from "./prompt";
 import { NODE_CARD_WIDTH, NODE_PORTS, type GraphNode, type WorkflowGraph } from "./graph";
 import { canConnectSpecs } from "./port";
 
@@ -251,7 +251,8 @@ describe("buildTemplateGraph", () => {
     // 分支内容跟着白名单走：审核放开或新增一个提示词，这里自动多一条（模板里没有写死的 id 清单）。
     expect(branches.map((node) => (node.data as { promptBlockId?: string }).promptBlockId)).toEqual(open.map((block) => block.id));
     // 名字也要跟上：分支卡片默认叫「AI 加工」，几张卡长得一样，只能靠名字认。
-    expect(branches.map((node) => node.data.label)).toEqual(open.map((block) => block.name));
+    // 用完整标题（「观点提炼 · 成文版」）——画布上四张卡全是「观点提炼」系列的成员，只写「成文版」认不出系列。
+    expect(branches.map((node) => node.data.label)).toEqual(open.map((block) => variantTitle(block)));
     // 纵向各自一行，别叠在一起
     expect(new Set(branches.map((node) => node.position.y)).size).toBe(branches.length);
 

@@ -3,9 +3,12 @@ import {
   AUTO_TAG_GROUPS,
   SOURCE_TAXONOMY_GROUP,
   UP_TAXONOMY_GROUP,
+  UP_TAG_PREFIX,
   addTagToTaxonomy,
   isAutoTag,
+  isUpTag,
   managedTags,
+  normalizeNoteTag,
   normalizeTagSegment,
   sanitizeTaxonomy,
   taxonomyHash,
@@ -65,6 +68,21 @@ describe("词库派生", () => {
     expect(isAutoTag(`${UP_TAXONOMY_GROUP}/某某UP`)).toBe(true);
     expect(isAutoTag(`${SOURCE_TAXONOMY_GROUP}/B站`)).toBe(true);
     expect(isAutoTag("领域/AI")).toBe(false);
+  });
+
+  it("新形状的 UP 主标签（`UP：某某`）也算自动标签；来源那支是裸值（`B站`），认不出来", () => {
+    expect(isUpTag(`${UP_TAG_PREFIX}某某UP`)).toBe(true);
+    expect(isAutoTag(`${UP_TAG_PREFIX}某某UP`)).toBe(true);
+    // 裸来源值与人自己写的标签在文件里长得一样，故意不当成自动标签——宁可留一个，也不误删人的标签。
+    expect(isAutoTag("B站")).toBe(false);
+  });
+
+  it("normalizeNoteTag 放行 UP 主标签，其余照旧逐段规范", () => {
+    // 全角冒号不是"字母数字"，逐段规范化会把它换成 `-`；一次全库回补就把 `UP：某某` 改坏了。
+    expect(normalizeNoteTag(`${UP_TAG_PREFIX}某某UP`)).toBe(`${UP_TAG_PREFIX}某某UP`);
+    expect(normalizeNoteTag(` ${UP_TAG_PREFIX}某某UP `)).toBe(`${UP_TAG_PREFIX}某某UP`);
+    expect(normalizeNoteTag(`${UP_TAXONOMY_GROUP}/某个 UP 主`)).toBe(`${UP_TAXONOMY_GROUP}/某个-UP-主`);
+    expect(normalizeNoteTag("话题/平台 抽成")).toBe("话题/平台-抽成");
   });
 
   it("taxonomyHash 与键序、大小写无关，与内容有关", () => {

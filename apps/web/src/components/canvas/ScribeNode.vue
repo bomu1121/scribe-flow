@@ -12,7 +12,7 @@ import { CircleAlert } from "lucide-vue-next";
 import { toast } from "@/lib/toast";
 import { Handle, Position, useVueFlow, type NodeProps } from "@vue-flow/core";
 import { ContextMenuContent, ContextMenuItem, ContextMenuPortal, ContextMenuRoot, ContextMenuSeparator, ContextMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuPortal, DropdownMenuRoot, DropdownMenuSeparator, DropdownMenuTrigger, PopoverContent, PopoverPortal, PopoverRoot, PopoverTrigger } from "reka-ui";
-import { aiPromptBlocks, COMMON_EXTRACT_FIELDS, extractBiliUrl, MAX_EXTRACT_FIELDS, NODE_PORTS, NODE_TYPE_LABELS, SEARCH_PROVIDER_LABELS, type NodePick, type NodeType, type UploadedFile, type VideoPreview } from "@scribe-flow/shared";
+import { aiPromptBlocks, COMMON_EXTRACT_FIELDS, extractBiliUrl, groupPromptBlocks, MAX_EXTRACT_FIELDS, NODE_PORTS, NODE_TYPE_LABELS, SEARCH_PROVIDER_LABELS, type NodePick, type NodeType, type UploadedFile, type VideoPreview } from "@scribe-flow/shared";
 import ModelSelect from "../ModelSelect.vue";
 import NodeFieldLabel from "./NodeFieldLabel.vue";
 import IfCard from "./node-cards/IfCard.vue";
@@ -797,18 +797,24 @@ const gameGuideModeOptions = [
 const searchReady = computed(() => Boolean(settingsStore.settings?.search.hasKey));
 
 /**
- * 提示词下拉的选项文案：只写名字，自己写的提示词标一个「我的」。
- * 版本号、配方、内置、推荐这些说法都留在设置页的提示词库里（那里才是管版本的地方），卡片上不出现。
+ * 提示词下拉的选项：**按系列分组**，组里只写成员名（详尽版 / 成文版 / 速览版）。
  *
+ * 分组口径与设置页共用 `groupPromptBlocks`：只在系列有 ≥2 个成员时才给分组标题——单成员系列
+ * （问答笔记、行动项清单这类）挂个与选项同名的标题只是白占一行。收起时触发器上会补出组名
+ * （见 ModelSelect 的 `selectedLabel`），所以只看卡片也知道选的是「观点提炼 · 成文版」。
+ *
+ * 版本号、配方、内置、推荐这些说法都留在设置页的提示词库里（那里才是管版本的地方），卡片上不出现。
  * 可选提示词本身与快捷新建共用一份（`aiPromptBlocks`）：同一个提示词在两处必须都选得到，
  * 否则会出现画布上选得到、建工程时选不到的情况。
  */
 const promptOptions = computed(() =>
-  aiPromptBlocks(promptsStore.customBlocks, searchReady.value).map((block) => {
-    const parts = [block.name];
-    if (!block.builtin) parts.push("我的");
-    return { label: parts.join(" · "), value: block.id };
-  }),
+  groupPromptBlocks(aiPromptBlocks(promptsStore.customBlocks, searchReady.value)).flatMap((group) =>
+    group.members.map((block) => ({
+      label: block.builtin ? block.name : `${block.name} · 我的`,
+      value: block.id,
+      group: group.members.length > 1 ? group.series : undefined,
+    })),
+  ),
 );
 
 /**
@@ -1582,7 +1588,7 @@ const themeOptions = [
                   取值在生成笔记时已经知道（来源 = 素材类型，UP 主 = 作者），所以这里只决定写不写。
                 -->
                 <label class="sf-node-field">
-                  <NodeFieldLabel label="写来源标签" hint="形如「来源/B站」，取值跟笔记的「来源」属性同源" />
+                  <NodeFieldLabel label="写来源标签" hint="形如「B站」这种裸值，跟笔记的「来源」属性同源" />
                   <ModelSelect
                     :model-value="sourceTagMode"
                     :options="tagSwitchOptions"
@@ -1591,7 +1597,7 @@ const themeOptions = [
                   />
                 </label>
                 <label class="sf-node-field">
-                  <NodeFieldLabel label="写 UP 主标签" hint="形如「UP主名称/某某」，取值跟笔记的「作者」同源" />
+                  <NodeFieldLabel label="写 UP 主标签" hint="形如「UP：某某」，取值跟笔记的「作者」同源" />
                   <ModelSelect
                     :model-value="upTagMode"
                     :options="tagSwitchOptions"
