@@ -54,6 +54,16 @@ export type TraceExternalStatus =
 /** 来源权威度分级：权威机构/学术/官方一档，百科与文档一档，自媒体与聚合站一档。 */
 export type TraceSourceAuthority = "authoritative" | "reference" | "self-media" | "unknown";
 
+/** 核查结论的证据力度：逐字引文，还是只有检索摘要。 */
+export type TraceExternalEvidence = "verbatim" | "snippet";
+
+/** 一条通过逐字校验的外部引文：摘自该来源网页正文的原句。 */
+export interface TraceExternalQuote {
+  /** 逐字摘自网页正文的片段（多段用 `…` 连接，每段都独立命中过正文）。 */
+  text: string;
+  note?: string;
+}
+
 /** 外部事实核查命中的参考来源。 */
 export interface TraceExternalSource {
   title?: string;
@@ -66,6 +76,23 @@ export interface TraceExternalSource {
   publisher?: string;
   /** 该来源的权威度分级；由服务端按域名判定。 */
   authority?: TraceSourceAuthority;
+  /**
+   * 本轮是否真的抓到了这一页的正文。
+   *
+   * `false` 不等于「这条来源是假的」，也不等于「抓取失败」：它包含三种情况——
+   * ① 抓了但失败（此时 `fetchError` 有值）；② 本轮没去抓（每条主张只抓重排后最靠前的几条，且有一轮总预算）；
+   * ③ 检索接口没返回链接。报告要如实区分它们：三种情况的含义与处置完全不同。
+   */
+  fetched?: boolean;
+  /** **抓了但失败**的原因（HTTP 状态、超时、抽不出正文等）；没抓或抓成功时为空。 */
+  fetchError?: string;
+  /** 抓到的正文长度（字符）；未抓到时为空。 */
+  contentChars?: number;
+  /**
+   * 逐字摘自该来源网页正文的片段；**由服务端校验后才写入**。
+   * 模型给的引文只要有一处无法在正文里逐字命中就会被丢弃——这是「不捏造」的机械保证。
+   */
+  quotes?: TraceExternalQuote[];
 }
 
 export interface TraceExternalCheck {
@@ -76,6 +103,15 @@ export interface TraceExternalCheck {
   queries?: string[];
   /** 本次核查拿到的来源里，各权威度档位的数量。 */
   authorityCounts?: Partial<Record<TraceSourceAuthority, number>>;
+  /**
+   * 本次结论建立在什么之上：
+   * - `verbatim`：至少有一条来源抓到了正文、且有逐字命中正文的引文；
+   * - `snippet`：只有检索摘要（没抓到正文，或抓到的正文里没能撞出可用引文）。
+   *
+   * 单独记这个字段，是因为「有权威来源」和「能看到来源里怎么写的」是两件事，
+   * 只有前者时不该让报告读起来像后者。
+   */
+  evidence?: TraceExternalEvidence;
   /** 核查结论：外部来源是否支持/反对/无法确认视频里的说法。 */
   summary?: string;
   sources?: TraceExternalSource[];
@@ -190,6 +226,7 @@ function parseAttribution(value: unknown): TraceAttribution | undefined {
 
 const EXTERNAL_STATUSES: TraceExternalStatus[] = ["not_applicable", "unchecked", "verified", "weak_source", "contradicted", "not_found", "ambiguous"];
 const SOURCE_AUTHORITIES: TraceSourceAuthority[] = ["authoritative", "reference", "self-media", "unknown"];
+const EXTERNAL_EVIDENCES: TraceExternalEvidence[] = ["verbatim", "snippet"];
 
 function parseAuthorityCounts(value: unknown): Partial<Record<TraceSourceAuthority, number>> | undefined {
   if (!isRecord(value)) return undefined;
@@ -201,25 +238,43 @@ function parseAuthorityCounts(value: unknown): Partial<Record<TraceSourceAuthori
   return Object.keys(counts).length > 0 ? counts : undefined;
 }
 
+/** 引文列表：只接受带 `text` 的条目（服务端校验通过的才会写进来，这里仍按宽松容错解析）。 */
+function parseQuotes(value: unknown): TraceExternalQuote[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const quotes: TraceExternalQuote[] = [];
+  for (const quote of value) {
+    if (!isRecord(quote)) continue;
+    const text = asString(quote.text);
+    if (!text) continue;
+    quotes.push({ text, note: asString(quote.note) });
+  }
+  return quotes.length > 0 ? quotes : undefined;
+}
+
+function parseExternalSource(source: unknown): TraceExternalSource | null {
+  if (!isRecord(source)) return null;
+  const authority = asString(source.authority) as TraceSourceAuthority | undefined;
+  const contentChars = typeof source.contentChars === "number" && Number.isFinite(source.contentChars) ? source.contentChars : undefined;
+  return {
+    title: asString(source.title),
+    url: asString(source.url),
+    snippet: asString(source.snippet),
+    publisher: asString(source.publisher),
+    authority: authority && SOURCE_AUTHORITIES.includes(authority) ? authority : undefined,
+    fetched: typeof source.fetched === "boolean" ? source.fetched : undefined,
+    fetchError: asString(source.fetchError),
+    contentChars,
+    quotes: parseQuotes(source.quotes),
+  };
+}
+
 function parseExternalCheck(value: unknown): TraceExternalCheck | undefined {
   if (!isRecord(value)) return undefined;
   const status = asString(value.status) as TraceExternalStatus | undefined;
   if (!status || !EXTERNAL_STATUSES.includes(status)) return undefined;
+  const evidence = asString(value.evidence) as TraceExternalEvidence | undefined;
   const sources = Array.isArray(value.sources)
-    ? value.sources
-        .map((source) => {
-          if (!isRecord(source)) return null;
-          const authority = asString(source.authority) as TraceSourceAuthority | undefined;
-          const parsed: TraceExternalSource = {
-            title: asString(source.title),
-            url: asString(source.url),
-            snippet: asString(source.snippet),
-            publisher: asString(source.publisher),
-            authority: authority && SOURCE_AUTHORITIES.includes(authority) ? authority : undefined,
-          };
-          return parsed;
-        })
-        .filter((source): source is TraceExternalSource => source !== null)
+    ? value.sources.map(parseExternalSource).filter((source): source is TraceExternalSource => source !== null)
     : [];
   const queries = Array.isArray(value.queries)
     ? value.queries.map((item) => asString(item)).filter((item): item is string => Boolean(item))
@@ -229,6 +284,7 @@ function parseExternalCheck(value: unknown): TraceExternalCheck | undefined {
     query: asString(value.query) ?? queries[0],
     queries: queries.length > 0 ? queries : undefined,
     authorityCounts: parseAuthorityCounts(value.authorityCounts),
+    evidence: evidence && EXTERNAL_EVIDENCES.includes(evidence) ? evidence : undefined,
     summary: asString(value.summary),
     sources,
     note: asString(value.note),
@@ -368,6 +424,13 @@ export const TRACE_SOURCE_AUTHORITY_LABELS: Record<TraceSourceAuthority, string>
   unknown: "未判定",
 };
 
+export const TRACE_EVIDENCE_LABELS: Record<TraceExternalEvidence, string> = {
+  verbatim: "有原文引证",
+  // 不能说成「仅检索摘要」：抓到了正文却没引用句（比如结论是「来源与说法无关」）也落在这里，
+  // 那时「摘要」这个词是错的。它表达的只有一件事：这条结论没有逐字引文撑着。
+  snippet: "无原文引证",
+};
+
 function formatEvidenceLine(evidence: TraceEvidence): string {
   const sourceName = evidence.source?.name?.trim();
   const locator = (evidence.locator ?? evidence.source?.locator)?.trim();
@@ -402,6 +465,9 @@ function appendExternalOverview(report: TraceReport, lines: string[]): void {
   lines.push(`- 进入核查的条目 ${checked.length} 条：${tally}`);
   const authoritative = checked.filter((item) => (item.external.sources ?? []).some((source) => source.authority === "authoritative")).length;
   lines.push(`- 其中 ${authoritative} 条拿到了权威来源（政府/学术/官方机构/官方媒体）`);
+  // 「有权威来源」与「能看到来源里原文怎么写的」是两件事，分开报数。
+  const verbatim = checked.filter((item) => (item.external.sources ?? []).some((source) => (source.quotes ?? []).length > 0)).length;
+  lines.push(`- 其中 ${verbatim} 条附有来源页面的原文引证（其余只依据检索摘要，未能取到正文）`);
 
   const flagged = checked.filter((item) => FLAGGED_EXTERNAL_STATUSES.includes(item.external.status));
   if (flagged.length > 0) {
@@ -437,18 +503,30 @@ export function traceReportToMarkdown(report: TraceReport): string {
       if (item.external) {
         lines.push("");
         const statusLabel = TRACE_EXTERNAL_STATUS_LABELS[item.external.status] ?? item.external.status;
+        const evidence = item.external.evidence ? `（${TRACE_EVIDENCE_LABELS[item.external.evidence]}）` : "";
         const queries = (item.external.queries ?? (item.external.query ? [item.external.query] : []))
           .map((query) => query.trim())
           .filter(Boolean);
         const query = queries.length > 0 ? `；检索词：${queries.join(" / ")}` : "";
         const summary = item.external.summary?.trim() ? `；结论：${item.external.summary.trim()}` : "";
-        lines.push(`- **外部核查：${statusLabel}**${summary}`);
+        lines.push(`- **外部核查：${statusLabel}**${evidence}${summary}`);
         for (const source of item.external.sources ?? []) {
           const title = source.title?.trim() ?? source.url?.trim() ?? "";
           const url = source.url?.trim() ? ` <${source.url.trim()}>` : "（本次检索未返回链接）";
           const authority = source.authority ? `[${TRACE_SOURCE_AUTHORITY_LABELS[source.authority]}] ` : "";
           const publisher = source.publisher?.trim() ? `${source.publisher.trim()} · ` : "";
           if (title || url) lines.push(`  - ${authority}${publisher}${title}${url}`);
+          // 只有抓到正文的来源才可能有引文。三种「没抓到」要分开写，否则读者会以为站点抓不动。
+          if (source.fetched === false) {
+            lines.push(
+              source.fetchError
+                ? `    - 抓取失败（${source.fetchError}），本条依据检索摘要`
+                : "    - 本轮未抓取该来源的正文（每条主张只抓重排后最靠前的几条），本条依据检索摘要",
+            );
+          }
+          for (const quote of source.quotes ?? []) {
+            lines.push(`    - 原文：“${quote.text.trim()}”${quote.note?.trim() ? ` —— ${quote.note.trim()}` : ""}`);
+          }
         }
         if (item.external.note?.trim()) lines.push(`  - 说明：${item.external.note.trim()}`);
         if (query) lines.push(`  - ${query.replace(/^；/, "")}`);

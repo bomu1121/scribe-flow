@@ -7,7 +7,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { and, eq } from "drizzle-orm";
 import { parseGraph } from "@scribe-flow/shared";
 import { createDatabase, type AppDatabase } from "../db/client";
-import { projects, runNodeResults, runs } from "../db/schema";
+import { projects, runNodeInputs, runNodeResults, runs } from "../db/schema";
 import { RunEngine } from "./engine";
 import { parseNoteTags } from "./note-markdown";
 import { readRelatedSectionNames } from "./related-notes";
@@ -484,5 +484,228 @@ describe("Obsidian 笔记：每个输入一篇（splitByInput，默认开）", (
     const bodies = [await readFile(join(dir, "同名.md"), "utf8"), await readFile(join(dir, "同名 (2).md"), "utf8")].join("\n");
     expect(bodies).toContain("甲的正文。");
     expect(bodies).toContain("乙的正文。");
+  });
+});
+
+/**
+ * 「发布日期」＝素材自己的发布时间（B 站稿件的 pubdate），和「创建日期」（这篇笔记什么时候写的）
+ * 是两条时间轴。这一层必须端到端验：它跨了「工程图字段 → 图校验 → 引擎读来源卡 → 拼 front matter」
+ * 四段，任何一段丢字段都不会报错，只会让笔记里少一行——而用户正是拿这一行研究素材时效性的。
+ */
+describe("Obsidian 笔记：发布日期取自 B 站稿件（不是笔记创建日期）", () => {
+  /** 2026-08-14 00:30 北京时间（UTC 侧还是 08-13）：用来钉住「按北京时间算」这件事。 */
+  const PUB = 1786638600;
+  const OTHER_PUB = 1786725000; // 2026-08-15 00:30 北京时间
+
+  /**
+   * 跑一次「B 站卡片 →（上次跑过的转写）→ Obsidian 笔记」。
+   *
+   * B 站节点不真跑：它会真的下载音频（联网 + ffmpeg）。做法与 engine.picknode.test.ts 一致——
+   * 种一次「上次跑过」的记录，再从笔记节点单独重跑，上游产物由引擎从库里还原。
+   * 发布日期只取决于工程图里的来源卡片，所以这样测到的就是真实路径。
+   */
+  async function runNoteFromBili(
+    vaultPath: string,
+    biliData: Record<string, unknown>,
+    seed: { text: string; itemKey: string }[],
+    noteData: Record<string, unknown>,
+    tag: string,
+  ): Promise<NoteRunResult> {
+    const dataDir = await tempDir(`scribe-bili-note-${tag}-`);
+    const db = createDatabase(dataDir);
+    updateSettings(db, { obsidian: { vaultPath, autoLinkEnabled: false, extractFields: [] } });
+
+    const graph = parseGraph({
+      schemaVersion: 1,
+      nodes: [
+        { id: "n_src", type: "source.bili", position: { x: 0, y: 0 }, data: { label: "B站", ...biliData } },
+        { id: "n_tr", type: "process.transcribe", position: { x: 320, y: 0 }, data: { label: "转写" } },
+        { id: "n_note", type: "process.obsidian", position: { x: 640, y: 0 }, data: { label: "Obsidian 笔记", ...noteData } },
+      ],
+      edges: [
+        { id: "e1", source: "n_src", target: "n_tr", sourceHandle: "audio", targetHandle: "audio" },
+        { id: "e2", source: "n_tr", target: "n_note", sourceHandle: "transcript", targetHandle: "in" },
+      ],
+      viewport: { x: 0, y: 0, zoom: 1 },
+    });
+    // 前置断言：发布日期若被图校验吃掉，下面每条断言都会静默退化成「没有这一行」，看着是绿的实际什么都没验。
+    const src = graph.nodes.find((node) => node.id === "n_src")?.data as Record<string, unknown>;
+    if (biliData.pubdate !== undefined) expect(src.pubdate, "parseGraph 丢掉了来源卡片的 pubdate").toEqual(biliData.pubdate);
+    if (biliData.items !== undefined) expect(src.items, "parseGraph 丢掉了 items 上的 pubdate").toEqual(biliData.items);
+
+    const projectId = `prj_${tag}`;
+    const runId = `run_${tag}`;
+    const seededRun = `run_${tag}_seed`;
+    const now = Date.now();
+    db.insert(projects)
+      .values({ id: projectId, name: tag, description: "", graphJson: JSON.stringify(graph), schemaVersion: 1, createdAt: now, updatedAt: now })
+      .run();
+
+    // 「上次跑过」的那一次：转写按素材各产出一份，段标识与来源卡片上的 bvid 一一对应
+    // （真实运行时由引擎写成这样，这里照抄形状）。
+    db.insert(runs).values({ id: seededRun, projectId, status: "success", scope: "all", createdAt: now, finishedAt: now + 1, graphJson: JSON.stringify(graph) }).run();
+    seed.forEach((item, position) => {
+      db.insert(runNodeInputs)
+        .values({
+          id: `in_${tag}_${position}`,
+          runId: seededRun,
+          targetNodeId: "n_tr",
+          sourceNodeId: "n_src",
+          kind: "text",
+          text: item.text,
+          resultText: item.text,
+          size: item.text.length,
+          position,
+          itemKey: item.itemKey,
+          excluded: false,
+          createdAt: now,
+        })
+        .run();
+    });
+    db.insert(runNodeResults)
+      .values({
+        id: `res_${tag}_seed`,
+        runId: seededRun,
+        nodeId: "n_tr",
+        nodeType: "process.transcribe",
+        status: "done",
+        outputKind: "text",
+        outputText: seed.map((item) => item.text).join("\n\n"),
+        updatedAt: now,
+      })
+      .run();
+
+    db.insert(runs).values({ id: runId, projectId, status: "running", scope: "fromNode", nodeId: "n_note", createdAt: now + 2, graphJson: JSON.stringify(graph) }).run();
+    new RunEngine(db, dataDir).start(runId, projectId, graph, "fromNode", "n_note");
+
+    await waitUntilFinished(db, runId, tag);
+    const row = db.select().from(runNodeResults).where(and(eq(runNodeResults.runId, runId), eq(runNodeResults.nodeId, "n_note"))).get();
+    return { status: row?.status, summary: row?.summary };
+  }
+
+  it("单链接卡片：笔记里写出「发布日期」，且它与「创建日期」不是同一天", async () => {
+    const { vault, dir } = await makeVault();
+
+    const run = await runNoteFromBili(
+      vault,
+      { url: "https://www.bilibili.com/video/BV1xx411c7mD", bvid: "BV1xx411c7mD", title: TITLE, uploader: "某个 UP 主", pubdate: PUB },
+      [{ text: BODY, itemKey: "bvid:BV1xx411c7mD:1" }],
+      {},
+      "pub-single",
+    );
+    expect(run.status).toBe("done");
+
+    const saved = await readFile(join(dir, `${TITLE}.md`), "utf8");
+    // 北京时间口径：UTC 日期会是 08-13，B 站页面上是 08-14。
+    expect(saved).toContain("发布日期: 2026-08-14");
+    // 两条时间轴都在，且互不冒充。
+    expect(saved).toContain(`创建日期: ${new Date().toISOString().slice(0, 10)}`);
+  });
+
+  it("合集卡片：每一集的笔记写各自那一集的日期（不是第一集的）", async () => {
+    const { vault, dir } = await makeVault();
+    const items = [
+      { bvid: "BV1xx411c7mD", cid: 1, page: 1, part: "第一期", title: "第一期", pubdate: PUB },
+      { bvid: "BV1yy411c7mE", cid: 2, page: 1, part: "第二期", title: "第二期", pubdate: OTHER_PUB },
+    ];
+
+    const run = await runNoteFromBili(
+      vault,
+      // 卡片级字段是第一项（与界面写出来的一致）；下面是各集自己的日期。
+      { url: "https://www.bilibili.com/video/BV1xx411c7mD", bvid: "BV1xx411c7mD", title: "第一期", uploader: "某个 UP 主", pubdate: PUB, items },
+      [
+        { text: "# 第一期\n\n甲集正文。", itemKey: "bvid:BV1xx411c7mD:1" },
+        { text: "# 第二期\n\n乙集正文。", itemKey: "bvid:BV1yy411c7mE:1" },
+      ],
+      {},
+      "pub-season",
+    );
+    expect(run.status).toBe("done");
+
+    expect(await noteFiles(dir)).toEqual(["第一期.md", "第二期.md"].sort());
+    const first = await readFile(join(dir, "第一期.md"), "utf8");
+    const second = await readFile(join(dir, "第二期.md"), "utf8");
+    expect(first).toContain("发布日期: 2026-08-14");
+    expect(second).toContain("发布日期: 2026-08-15");
+    // 逐篇对拍：写错集是静默的，必须两边都断言（只看一篇的话「都写第一集」也会绿）。
+    expect(first).not.toContain("2026-08-15");
+    expect(second).not.toContain("2026-08-14");
+  });
+
+  it("卡片上没有日期时整行不写（不写一个假日期，也不写空值）", async () => {
+    const { vault, dir } = await makeVault();
+
+    // 老工程卡片就是这样：链接解析发生在加这个字段之前，卡片上只有 url/bvid。
+    const run = await runNoteFromBili(
+      vault,
+      { url: "https://www.bilibili.com/video/BV1xx411c7mD", bvid: "BV1xx411c7mD", title: TITLE },
+      [{ text: BODY, itemKey: "bvid:BV1xx411c7mD:1" }],
+      {},
+      "pub-missing",
+    );
+    expect(run.status).toBe("done");
+
+    const saved = await readFile(join(dir, `${TITLE}.md`), "utf8");
+    expect(saved).not.toContain("发布日期");
+    // 其余字段照旧：缺这一行不影响别的。
+    expect(saved).toContain("来源: B站");
+    expect(saved).toContain("原始链接: https://www.bilibili.com/video/BV1xx411c7mD");
+  });
+
+  it("文本来源不会凭空多出一行发布日期", async () => {
+    const { vault, dir } = await makeVault();
+    const run = await runNote(vault, {}, "pub-text-source");
+    expect(run.status).toBe("done");
+    expect(await readFile(join(dir, `${TITLE}.md`), "utf8")).not.toContain("发布日期");
+  });
+
+  it("合集卡片上只有第一集的日期（今天之前合并的老卡）：后面几集宁可不写，也不冒充第一集", async () => {
+    const { vault, dir } = await makeVault();
+    // 加这个字段之前合并的合集卡就是这个形状：卡片级 pubdate 属于第一集，items 里一项都没有日期。
+    const items = [
+      { bvid: "BV1xx411c7mD", cid: 1, page: 1, part: "第一期", title: "第一期" },
+      { bvid: "BV1yy411c7mE", cid: 2, page: 1, part: "第二期", title: "第二期" },
+    ];
+
+    const run = await runNoteFromBili(
+      vault,
+      { url: "https://www.bilibili.com/video/BV1xx411c7mD", bvid: "BV1xx411c7mD", title: "第一期", uploader: "某个 UP 主", pubdate: PUB, items },
+      [
+        { text: "# 第一期\n\n甲集正文。", itemKey: "bvid:BV1xx411c7mD:1" },
+        { text: "# 第二期\n\n乙集正文。", itemKey: "bvid:BV1yy411c7mE:1" },
+      ],
+      {},
+      "pub-season-legacy",
+    );
+    expect(run.status).toBe("done");
+
+    // 与卡片同 BV 的那一篇能用卡片级日期兜底（它本来就是这条视频的日期）。
+    expect(await readFile(join(dir, "第一期.md"), "utf8")).toContain("发布日期: 2026-08-14");
+    // 另一篇不同 BV：卡片级日期是第一集的，不能拿来用——写成别的日子比空着更糟（用户拿它研究时效性）。
+    expect(await readFile(join(dir, "第二期.md"), "utf8")).not.toContain("发布日期");
+  });
+
+  it("多P合并的老卡（每一项都是同一条视频）：卡片级日期可以兜底", async () => {
+    const { vault, dir } = await makeVault();
+    const items = [
+      { bvid: "BV1xx411c7mD", cid: 1, page: 1, part: "上集", title: TITLE },
+      { bvid: "BV1xx411c7mD", cid: 2, page: 2, part: "下集", title: TITLE },
+    ];
+
+    const run = await runNoteFromBili(
+      vault,
+      { url: "https://www.bilibili.com/video/BV1xx411c7mD", bvid: "BV1xx411c7mD", title: TITLE, uploader: "某个 UP 主", pubdate: PUB, items },
+      [
+        { text: "# 上集\n\n上半篇。", itemKey: "bvid:BV1xx411c7mD:1" },
+        { text: "# 下集\n\n下半篇。", itemKey: "bvid:BV1xx411c7mD:2" },
+      ],
+      {},
+      "pub-pages-legacy",
+    );
+    expect(run.status).toBe("done");
+
+    // 分P 合并：两个 BV 相同，卡片级日期就是这条视频的日期，两篇都该写上（退回「不写」是丢了手里就有的真值）。
+    expect(await readFile(join(dir, "上集.md"), "utf8")).toContain("发布日期: 2026-08-14");
+    expect(await readFile(join(dir, "下集.md"), "utf8")).toContain("发布日期: 2026-08-14");
   });
 });

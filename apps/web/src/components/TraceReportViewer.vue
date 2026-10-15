@@ -2,7 +2,7 @@
 import { computed, ref } from "vue";
 import { Search } from "lucide-vue-next";
 import type { TraceCategory, TraceConfidence, TraceEvidence, TraceExternalCheck, TraceItem, TraceReport } from "@scribe-flow/shared";
-import { FLAGGED_EXTERNAL_STATUSES, TRACE_CATEGORY_LABELS, TRACE_CONFIDENCE_LABELS, TRACE_EXTERNAL_STATUS_LABELS, TRACE_SOURCE_AUTHORITY_LABELS } from "@scribe-flow/shared";
+import { FLAGGED_EXTERNAL_STATUSES, TRACE_CATEGORY_LABELS, TRACE_CONFIDENCE_LABELS, TRACE_EVIDENCE_LABELS, TRACE_EXTERNAL_STATUS_LABELS, TRACE_SOURCE_AUTHORITY_LABELS } from "@scribe-flow/shared";
 
 interface TraceSource {
   key: string;
@@ -48,10 +48,14 @@ const externalStats = computed(() => {
   const authoritative = checked.filter((entry) =>
     (entry.item.external?.sources ?? []).some((source) => source.authority === "authoritative"),
   );
+  // 附原文引证的条数：这是「来源里到底怎么写的」能看得见的那些
+  const verbatim = checked.filter((entry) =>
+    (entry.item.external?.sources ?? []).some((source) => (source.quotes ?? []).length > 0),
+  );
   const flagged = checked.filter((entry) =>
     entry.item.external ? FLAGGED_EXTERNAL_STATUSES.includes(entry.item.external.status) : false,
   );
-  return { checked: checked.length, authoritative: authoritative.length, flagged: flagged.length };
+  return { checked: checked.length, authoritative: authoritative.length, verbatim: verbatim.length, flagged: flagged.length };
 });
 
 const categoryCounts = computed(() => {
@@ -201,6 +205,7 @@ function resetFilters(): void {
         <div v-if="externalStats.checked > 0" class="trv-stats trv-stats--external">
           <span class="trv-stat"><b class="tnum">{{ externalStats.checked }}</b> 条进入联网核查</span>
           <span v-if="externalStats.authoritative > 0" class="trv-stat"><b class="tnum">{{ externalStats.authoritative }}</b> 条有权威来源</span>
+          <span v-if="externalStats.verbatim > 0" class="trv-stat"><b class="tnum">{{ externalStats.verbatim }}</b> 条附来源原文引证</span>
           <span v-if="externalStats.flagged > 0" class="trv-stat trv-stat--flagged"><b class="tnum">{{ externalStats.flagged }}</b> 条需要留意</span>
           <span v-else class="trv-stat">未发现需要留意的条目</span>
         </div>
@@ -282,6 +287,14 @@ function resetFilters(): void {
         <div v-if="entry.item.external" class="trv-external">
           <div class="trv-external-head">
             <span class="trv-external-status">{{ TRACE_EXTERNAL_STATUS_LABELS[entry.item.external.status] }}</span>
+            <!-- 「有权威来源」与「能看到来源里原文怎么写的」是两件事：后者由这个徽章单独说明 -->
+            <span
+              v-if="entry.item.external.evidence"
+              class="trv-external-evidence"
+              :class="`trv-external-evidence--${entry.item.external.evidence}`"
+            >
+              {{ TRACE_EVIDENCE_LABELS[entry.item.external.evidence] }}
+            </span>
             <span v-if="externalQueries(entry.item.external).length > 0" class="trv-external-query tnum">
               检索：{{ externalQueries(entry.item.external).join(" / ") }}
             </span>
@@ -302,7 +315,18 @@ function resetFilters(): void {
               <a v-if="source.url" :href="source.url" target="_blank" rel="noreferrer">{{ source.title || source.url }}</a>
               <span v-else>{{ source.title || "（本次检索未返回链接）" }}</span>
               <span v-if="!source.url" class="trv-external-nolink">无链接</span>
-              <span v-if="source.snippet" class="trv-external-snippet">{{ source.snippet }}</span>
+              <!-- 三种「没抓到」含义不同：抓失败（有原因）/ 本轮没抓 / 无链接，别混成一个说法 -->
+              <span v-if="source.fetched === false && source.fetchError" class="trv-external-nofetch" :title="source.fetchError">
+                抓取失败
+              </span>
+              <span v-else-if="source.fetched === false && source.url" class="trv-external-nofetch" title="每条主张只抓重排后最靠前的几条来源">
+                本轮未抓取正文
+              </span>
+              <!-- 引文是这一步最该被看见的东西：它是服务端在抓到的正文里逐字校验过的原句 -->
+              <blockquote v-for="(quote, quoteIndex) in source.quotes ?? []" :key="`q${quoteIndex}`" class="trv-external-quote">
+                {{ quote.text }}
+              </blockquote>
+              <span v-if="source.snippet && (source.quotes ?? []).length === 0" class="trv-external-snippet">{{ source.snippet }}</span>
             </li>
           </ul>
           <p v-if="entry.item.external.note" class="trv-external-note">{{ entry.item.external.note }}</p>
@@ -829,6 +853,39 @@ function resetFilters(): void {
   border-radius: 3px;
   color: var(--color-text-tertiary);
   font-size: 10px;
+}
+
+/* 证据力度：与状态徽章并列，说明这条结论有没有逐字引文撑着 */
+.trv-external-evidence {
+  margin-left: 6px;
+  padding: 0 4px;
+  border: 1px solid var(--color-border);
+  border-radius: 3px;
+  color: var(--color-text-tertiary);
+  font-size: 10px;
+}
+
+.trv-external-evidence--verbatim {
+  color: var(--color-text-secondary);
+}
+
+.trv-external-nofetch {
+  margin-left: 5px;
+  padding: 0 4px;
+  border: 1px solid var(--color-border);
+  border-radius: 3px;
+  color: var(--color-text-tertiary);
+  font-size: 10px;
+}
+
+/* 逐字引文：摘自来源页面正文、并经服务端逐字校验的原句 */
+.trv-external-quote {
+  margin: 4px 0 0;
+  padding: 2px 0 2px 8px;
+  border-left: 2px solid var(--color-border);
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  line-height: 1.7;
 }
 
 .trv-external-summary {

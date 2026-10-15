@@ -1,0 +1,18 @@
+{
+  "name": "trace-source-finding-experiments",
+  "private": true,
+  "type": "module",
+  "description": "溯源联网查找资料调研的本机实测脚本。run*.mjs 各自独立，node run.mjs 直接跑。",
+  "scripts": {
+    "run1": "node run.mjs",
+    "run2": "node run2.mjs",
+    "run3": "node run3.mjs",
+    "run4": "node run4.mjs"
+  },
+  "dependencies": {
+    "@mozilla/readability": "0.6.0",
+    "jsdom": "26.1.0",
+    "turndown": "7.2.4",
+    "turndown-plugin-gfm": "1.0.2"
+  }
+}

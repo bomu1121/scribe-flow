@@ -15,6 +15,7 @@ import {
   maybeDrillToMarkdown,
   normalizeTagSegment,
   originSourceNodeId,
+  parseBiliSegmentKey,
   passesPick,
   renderFileNameTemplate,
   sanitizeExtractFields,
@@ -43,7 +44,7 @@ import {
 import type { AppDatabase } from "../db/client";
 import { biliCookies, projects, runMedia, runNodeInputs, runNodeLogs, runNodeResults, runs } from "../db/schema";
 import { chatCompletion, transcribeAudio, type AiConfig } from "./ai";
-import { fetchBiliVideoDetail } from "./bilibili";
+import { fetchBiliVideoDetail, formatPublishDate } from "./bilibili";
 import { buildDrill, buildDrillParams } from "./drill";
 import { nodeIdsForScope } from "./graph-scope";
 import { countMindMapNodes, mindMapToMarkdown, parseMindMapJson } from "./mindmap";
@@ -252,6 +253,22 @@ function appendSkippedNote(summary: string | undefined, kept: number, skipped: n
   const total = kept + skipped;
   const note = `已按挑选执行：处理 ${kept}/${total} 段（跳过 ${skipped} 段）`;
   return summary ? `${summary} · ${note}` : note;
+}
+
+/**
+ * 段标识指向多选卡片里的哪一项（`bvid:<bvid>:<page>` → 那一项）。
+ *
+ * 找不到就返回 undefined，调用方退回第一项——这样「没有段标识（合并成一篇）」
+ * 与「标识不属于这张卡」两种情况的处置一致，不会因为一个对不上的键就让字段整段消失。
+ */
+function matchBiliItem<T extends { bvid?: string; page?: number; cid?: number }>(items: T[], itemKey: string | undefined): T | undefined {
+  const segment = parseBiliSegmentKey(itemKey);
+  if (!segment) return undefined;
+  return items.find(
+    (item) =>
+      String(item.bvid ?? "").trim() === segment.bvid &&
+      (segment.page === undefined || Number(item.page ?? 1) === segment.page),
+  );
 }
 
 /**
@@ -753,7 +770,18 @@ export class RunEngine {
   }
 
   /** 单节点/局部运行：不在本次运行内的上游节点，从当前工程的最近一次成功结果取输入（支持多输出节点）。 */
-  private async previousOutputs(nodeId: string, projectId: string, graph?: WorkflowGraph): Promise<NodeOutput[]> {
+  /**
+   * 上游不在运行范围内时，取它在本工程历次运行里最近一次的成功产物。
+   *
+   * `info` 是可选出参：把「这份产物来自什么时候」带出去，供调用方在运行日志里如实写一句——
+   * 它的存在意义只有这个，不想为一行日志改动下面五个 return 的签名。
+   */
+  private async previousOutputs(
+    nodeId: string,
+    projectId: string,
+    graph?: WorkflowGraph,
+    info?: { updatedAt?: number },
+  ): Promise<NodeOutput[]> {
     const runIds = this.db
       .select({ id: runs.id })
       .from(runs)
@@ -769,6 +797,7 @@ export class RunEngine {
       .limit(1)
       .get();
     if (!row || !row.outputKind) return [];
+    if (info) info.updatedAt = row.updatedAt;
     if (
       row.nodeType === "process.transcribe" ||
       row.nodeType === "process.refine" ||
@@ -819,8 +848,17 @@ export class RunEngine {
     return [{ kind: row.outputKind, text: row.outputText ?? undefined, path: row.outputPath ?? undefined, size: row.outputSize ?? undefined }];
   }
 
-  /** 沿上游链路找来源节点，用于 Obsidian 输出节点自动带出来源/作者/链接/标题。 */
-  private upstreamSourceMeta(active: ActiveRun, nodeId: string): { source?: string; author?: string; url?: string; title?: string } {
+  /**
+   * 沿上游链路找来源节点，用于 Obsidian 输出节点自动带出来源/作者/链接/标题/发布日期。
+   *
+   * `itemKey` 是这一篇文稿来自哪一段素材（`bvid:<bvid>:<page>`）。带上它，合集卡片里
+   * 每一集就能各取各的发布日期；不带（合并成一篇时）就按第一项取，与作者/链接一直以来的口径一致。
+   */
+  private upstreamSourceMeta(
+    active: ActiveRun,
+    nodeId: string,
+    itemKey?: string,
+  ): { source?: string; author?: string; url?: string; title?: string; pubDate?: string } {
     const queue = [nodeId];
     const seen = new Set<string>();
     while (queue.length > 0) {
@@ -834,15 +872,24 @@ export class RunEngine {
         const data = source.data as Record<string, unknown>;
         if (source.type === "source.bili") {
           const items = Array.isArray(data.items)
-            ? (data.items as { bvid?: string; uploader?: string; title?: string }[])
+            ? (data.items as { bvid?: string; uploader?: string; title?: string; page?: number; pubdate?: number }[])
             : [];
-          const first = items[0];
+          // 段标识能指到具体哪一项时，发布日期按那一项取（合集的各集日期不同，取第一项会写错）。
+          const first = matchBiliItem(items, itemKey) ?? items[0];
           const bvid = String(first?.bvid ?? "").trim() || String(data.url ?? "").match(/BV[0-9A-Za-z]+/)?.[0] || "";
+          /*
+           * 卡片上那个日期是谁的？它属于卡片自己的 bvid（就是链接里那条视频），所以只有当要找的
+           * 这一项与卡片同 BV 时才轮得到它兜底：多P 合并的每一项都是同一条视频（成立），
+           * 合集里各集是不同的 BV（不成立——那样会把第一集的日期写到后面几集上）。
+           * 拿不准就 `undefined`，笔记整行不写，也不写一个错的。
+           */
+          const sameVideo = !bvid || String(data.bvid ?? "").trim() === bvid || String(data.url ?? "").includes(bvid);
           return {
             source: "B站",
             author: String(data.uploader ?? first?.uploader ?? "").trim() || undefined,
             url: String(data.url ?? "").trim() || (bvid ? `https://www.bilibili.com/video/${bvid}` : undefined),
             title: String(data.title ?? first?.title ?? "").trim() || undefined,
+            pubDate: formatPublishDate(Number(first?.pubdate ?? (sameVideo ? data.pubdate : undefined))) || undefined,
           };
         }
         if (source.type === "source.file") {
@@ -941,6 +988,8 @@ export class RunEngine {
 
   private async resolveInputs(active: ActiveRun, node: GraphNode): Promise<ResolvedInputs> {
     const items: ResolvedInput[] = [];
+    /** 本次沿用历史产物的上游节点（逐条列在运行日志里，供「换了素材却只重跑下游」时定位）。 */
+    const reusedUpstream: string[] = [];
     for (const edge of active.graph.edges) {
       if (edge.target !== node.id) continue;
       const source = active.graph.nodes.find((n) => n.id === edge.source);
@@ -950,9 +999,18 @@ export class RunEngine {
         const branch = active.branches.get(source.id);
         if (branch && branch !== (edge.sourceHandle || "true")) continue;
       }
-      const outputs = active.nodeIds.has(source.id)
-        ? (active.outputs.get(source.id) ?? [])
-        : await this.previousOutputs(source.id, active.projectId, active.graph);
+      // 上游不在本次运行范围内时，沿用它在**本工程历次运行里最近一次**的成功产物。
+      // 记下它来自哪一次：换了素材却只重跑下游，会拿旧素材的稿子当输入，而来源卡的元信息已经是新的
+      // （实测：把来源卡换成另一个视频后只重跑溯源节点，溯源节点收到的是上一个视频的校对稿，
+      // 报告会把那段内容归到新视频头上——这正是溯源最不能出的错）。这里如实写进运行日志。
+      const reuseInfo: { updatedAt?: number } = {};
+      const reused = active.nodeIds.has(source.id) ? null : await this.previousOutputs(source.id, active.projectId, active.graph, reuseInfo);
+      const outputs = reused ?? (active.outputs.get(source.id) ?? []);
+      if (reused && outputs.length > 0) {
+        const label = String(source.data.label ?? "").trim() || NODE_TYPE_LABELS[source.type];
+        const when = reuseInfo.updatedAt ? new Date(reuseInfo.updatedAt).toLocaleString("zh-CN", { hour12: false }) : "更早的一次";
+        reusedUpstream.push(`「${label}」（${when} 那次运行）`);
+      }
       const sourceMeta = this.describeInputSource(active, source.id);
       for (const output of outputs) {
         const position = items.length;
@@ -970,6 +1028,16 @@ export class RunEngine {
           itemKey,
         });
       }
+    }
+
+    if (reusedUpstream.length > 0) {
+      await this.log(
+        active,
+        node.id,
+        "info",
+        `上游 ${reusedUpstream.join("、")} 不在本次运行范围内，已沿用它们上一次的产物；` +
+          "若刚更换过素材，请先运行上游节点再重跑本节点，否则本节点算的是旧素材。",
+      );
     }
 
     // 素材挑选：未选中的素材不进入本节点，其下游因拿不到数据而一并跳过。
@@ -1443,9 +1511,22 @@ export class RunEngine {
                     aiConfig,
                     searchConfig,
                     signal,
-                    {},
-                    (done, total, phase) => {
-                      void this.progress(active, node.id, 96, `${phase === "search" ? "联网核查" : "核查判断"} ${done}/${total}`);
+                    {
+                      onProgress: (done, total, phase) => {
+                        const label = phase === "search" ? "联网核查" : phase === "fetch" ? "抓取来源正文" : "核查判断";
+                        void this.progress(active, node.id, 96, `${label} ${done}/${total}`);
+                      },
+                      // 逐页记进运行日志：抓取是这一步最慢、最可能出事的环节，而汇总是最后才写的。
+                      // 进程若在这中间没了（实测发生过），只有逐页日志能回答「卡在哪一页、为什么」。
+                      onFetchPage: async (info) => {
+                        const detail = info.ok
+                          ? `成功 · ${info.via} · ${info.chars} 字`
+                          : `失败：${info.error ?? "未说明原因"}`;
+                        const cache = info.cached ? "（复用本轮已抓）" : "";
+                        // await 而不是 void：写日志失败要按普通错误走，别变成未处理的 promise 拒绝
+                        // （Node 默认会因此结束进程，那正是「运行跑到一半服务没了」的形态）。
+                        await this.log(active, node.id, "info", `抓正文 ${info.host}${cache} ${detail} · ${info.ms}ms`, undefined, inputRef);
+                      },
                     },
                   );
                   await this.log(active, node.id, "info", "已执行外部联网核查", undefined, inputRef);
@@ -1732,7 +1813,8 @@ export class RunEngine {
         const pending = split
           ? textItems.map((item) => ({
               text: (item.output.text ?? "").trim(),
-              meta: this.upstreamSourceMeta(active, item.sourceNodeId),
+              // 段标识一并带下去：这一篇讲的是哪一集，发布日期就得按那一集取。
+              meta: this.upstreamSourceMeta(active, item.sourceNodeId, item.itemKey),
               itemKey: item.itemKey,
             }))
           : [{ text: inputs.text.trim(), meta: this.upstreamSourceMeta(active, node.id), itemKey: undefined as string | undefined }];
@@ -1805,7 +1887,7 @@ export class RunEngine {
       text: string;
       title: string;
       fileName: string;
-      meta: { source?: string; author?: string; url?: string; title?: string };
+      meta: { source?: string; author?: string; url?: string; title?: string; pubDate?: string };
     },
     target: {
       folder: string;
@@ -1821,6 +1903,7 @@ export class RunEngine {
     const source = String(data.source ?? "").trim() || meta.source || "";
     const author = String(data.author ?? "").trim() || meta.author || "";
     const url = String(data.url ?? "").trim() || meta.url || "";
+    const pubDate = meta.pubDate ?? "";
     const created = new Date().toISOString().slice(0, 10);
     const noteType = source === "文本" ? "学习笔记" : source === "B站" || source === "本地文件" ? "视频笔记" : "笔记";
     const explicitTags = String(data.tags ?? "")
@@ -1900,6 +1983,12 @@ export class RunEngine {
       source ? `来源: ${source}` : undefined,
       author ? `作者: ${author}` : undefined,
       url ? `原始链接: ${url}` : undefined,
+      /*
+       * 「发布日期」＝素材自己的发布日期（B 站稿件的 pubdate），不是这篇笔记的创建日期。
+       * 只有 B 站来源带得出这个值（来源元信息里没有就整行不写），格式与「创建日期」一致。
+       * 它与「创建日期」是两个不同的时间轴：前者研究素材的时效性，后者是笔记什么时候写的。
+       */
+      pubDate ? `发布日期: ${pubDate}` : undefined,
       `创建日期: ${created}`,
       // 抽取出来的属性一律写成列表：字段名是用户配的，不该再为"某个字段是单值"写特例。
       ...extractFields.flatMap((field) =>

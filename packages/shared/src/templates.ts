@@ -253,6 +253,8 @@ export interface BiliLinkSource {
   cover?: string;
   uploader?: string;
   duration?: number;
+  /** 稿件发布时间（unix 秒）：笔记的「发布日期」属性取自卡片上这个值。 */
+  pubdate?: number;
 }
 
 export interface BuildTemplateOptions {
@@ -334,6 +336,8 @@ export function buildTemplateGraph(templateId: string, options: BuildTemplateOpt
       if (bili.cover) data.cover = bili.cover;
       if (bili.uploader) data.uploader = bili.uploader;
       if (bili.duration !== undefined) data.duration = bili.duration;
+      // 发布时间要一起写：笔记的「发布日期」只认卡片上的这个值（缺了整行不写）。
+      if (bili.pubdate !== undefined) data.pubdate = bili.pubdate;
     }
   } else if (source === "file") {
     push("src", "source.file", 0, {});

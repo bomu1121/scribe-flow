@@ -178,6 +178,23 @@ const SELF_MEDIA_PUBLISHERS = [
 /** 每个主机/站点最多保留几条，避免同一站点的多条结果挤掉其它来源。 */
 const MAX_PER_HOST = 2;
 
+/**
+ * 清掉 URL 里的 userinfo（`https://user:pass@host/path`）。
+ *
+ * 检索结果是第三方数据，实测出现过 `https://epp@irs.gov/...` 这种带用户名的链接。
+ * 两个理由必须清：① 展示时它看着像打错了；② 更糟的是 `https://www.irs.gov@evil.com/x`
+ * 会以「www.irs.gov」开头展示，而真实主机是 evil.com——这能骗过看链接的人
+ * （权威度判定本身不受影响，它看的是 hostname）。
+ */
+export function sanitizeSourceUrl(raw?: string): string | undefined {
+  const parsed = parseSourceUrl(raw);
+  if (!parsed) return raw?.trim() || undefined;
+  if (!parsed.username && !parsed.password) return parsed.toString();
+  parsed.username = "";
+  parsed.password = "";
+  return parsed.toString();
+}
+
 /** 解析 URL；非法或非 http(s) 的返回 null。 */
 export function parseSourceUrl(url?: string): URL | null {
   if (!url?.trim()) return null;

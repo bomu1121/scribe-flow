@@ -55,8 +55,11 @@ export function filesApi(uploadsDir: string, maxUploadMb: number) {
           return;
         }
         sawFile = true;
-        const extension = extname(info.filename).toLowerCase();
-        if (!ALLOWED_EXTENSIONS.has(extension)) {
+        // busboy 允许「按文件处理但没有 filename」的分片（@types/busboy 1.5.5 起在类型里写明）。
+        // 没有文件名就没有扩展名可判，只能按不支持的格式拒掉——原样往下走会在 extname(undefined) 上抛异常。
+        const rawName = info.filename;
+        const extension = rawName ? extname(rawName).toLowerCase() : "";
+        if (!rawName || !ALLOWED_EXTENSIONS.has(extension)) {
           invalid = { error: "仅支持常见音视频格式（mp4/m4a/mkv/flv/mov/wav/mp3/aac/webm/m4v）" };
           stream.resume();
           return;
@@ -71,7 +74,7 @@ export function filesApi(uploadsDir: string, maxUploadMb: number) {
         // 目录被删掉（或换个入口装配 app）时，用户看到的是 500 加一条含绝对路径的错误。
         partPath = join(uploadsDir, `.part-${fileId}`);
         finalName = `${fileId}${extension}`;
-        fileName = info.filename;
+        fileName = rawName;
         stream.on("limit", () => {
           truncated = true;
         });

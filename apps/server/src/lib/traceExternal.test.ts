@@ -3,6 +3,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { AiConfig } from "./ai";
 import type { SearchConfig } from "./settings";
 import { collectSources, enrichTraceReportWithExternalChecks, formatReferenceText, lookupReferenceSources, searchWeb, sliceAtCharBoundary, zhipuSearch } from "./traceExternal";
+import type { PageFetcher } from "./webContent";
 
 interface CapturedRequest {
   path: string;
@@ -23,12 +24,21 @@ let tavilyMode: TavilyMode = "ok";
 let aiSystems: string[] = [];
 /** 桩 AI 在比对步回报的状态，用来覆盖各档结论。 */
 let compareStatus = "verified";
+/** 桩 AI 在比对步回报的引文（null 表示这次不写引文）。 */
+let compareQuote: string | null = null;
 /** 桩检索收到的请求次数（含重试）。 */
 let searchCalls = 0;
 /** 第一次检索请求直接掐断连接，用来验证「网络抖动重试一次」。 */
 let resetFirstSearch = false;
 /** 检索词里含这个标记的请求一律报 500，用来验证「单条失败不影响其它条目」。 */
 let failQueryIncludes: string | null = null;
+/** 抓正文的桩：核查管线里真连网既慢又不确定，测试一律走这里。 */
+let pageText = "某论文提出了一个结论，并给出了实验数据。该结论在后续研究中被反复验证。";
+let pageFails = false;
+const fetchStub: PageFetcher = async (url) =>
+  pageFails
+    ? { url, ok: false, text: "", via: "none", error: "桩：抓取失败" }
+    : { url, ok: true, text: pageText, via: "readability", title: "桩页面标题" };
 
 const LONG_CONTENT = "长".repeat(600);
 const EMOJI_CONTENT = "😀".repeat(400);
@@ -67,7 +77,14 @@ beforeAll(async () => {
               id,
               status: compareStatus,
               summary: "外部资料支持该说法。",
-              sources: [{ title: "来源标题", url: AUTHORITATIVE_URL, snippet: "来源摘要" }],
+              sources: [
+                {
+                  title: "来源标题",
+                  url: AUTHORITATIVE_URL,
+                  snippet: "来源摘要",
+                  ...(compareQuote === null ? {} : { quote: compareQuote }),
+                },
+              ],
             })),
           });
         }
@@ -230,9 +247,12 @@ describe("智谱联网检索", () => {
     zhipuMode = "ok";
   });
 
-  it("429 单独识别为限流，便于区分「配错了」与「调太快了」", async () => {
+  it("429 照实报状态与上游原文，不替上游解释成「限流」", async () => {
+    // 实测 429 既可能是调太快，也可能是「余额不足」（智谱 code 1113 就是 429 + 余额不足）；
+    // 一律写成「被限流，请降低调用频率」会把排查方向带偏，所以这里只转述、不解释。
     zhipuMode = "rate-limited";
-    await expect(zhipuSearch(zhipuConfig, "人工智能", zhipuEndpoint())).rejects.toThrow(/被限流/);
+    await expect(zhipuSearch(zhipuConfig, "人工智能", zhipuEndpoint())).rejects.toThrow(/HTTP 429/);
+    await expect(zhipuSearch(zhipuConfig, "人工智能", zhipuEndpoint())).rejects.toThrow(/请求过于频繁/);
     zhipuMode = "ok";
   });
 
@@ -313,7 +333,7 @@ describe("外部核查管线", () => {
       pipelineAiConfig(),
       { provider: "zhipu", apiKey: "zhipu-key", maxResults: 5 },
       undefined,
-      { zhipu: zhipuEndpoint() },
+      { endpoints: { zhipu: zhipuEndpoint() }, fetchPage: fetchStub },
     );
     const prompts = aiSystems.join("\n---\n");
     expect(prompts).toContain("不可信的外部数据");
@@ -341,7 +361,7 @@ describe("外部核查管线", () => {
       pipelineAiConfig(),
       { provider: "zhipu", apiKey: "zhipu-key", maxResults: 5 },
       undefined,
-      { zhipu: zhipuEndpoint() },
+      { endpoints: { zhipu: zhipuEndpoint() }, fetchPage: fetchStub },
     );
     const parsed = JSON.parse(out) as {
       items: { external?: { status: string; query?: string; summary?: string; sources?: unknown[] } }[];
@@ -376,7 +396,7 @@ describe("外部核查管线", () => {
       pipelineAiConfig(),
       { provider: "zhipu", apiKey: "zhipu-key", maxResults },
       undefined,
-      { zhipu: zhipuEndpoint() },
+      { endpoints: { zhipu: zhipuEndpoint() }, fetchPage: fetchStub },
     );
   }
 
@@ -652,5 +672,213 @@ describe("参考资料检索（共用检索能力）", () => {
 
   it("一条来源都没有时 formatReferenceText 返回空串，不留空标题块", () => {
     expect(formatReferenceText([], ["词一"])).toBe("");
+  });
+});
+
+/**
+ * 逐字引文是「不捏造」的机械保证：模型写的引文要么在**实际抓到的正文**里逐字命中，
+ * 要么不许出现在报告里。这一组用例守住的就是这条——它比提示词里的任何措辞都硬。
+ */
+describe("外部引文逐字校验", () => {
+  // 桩服务的地址要等 beforeAll 跑完才存在，所以这里必须是工厂而不是常量。
+  const aiConfig = (): AiConfig => ({ provider: "deepseek", baseUrl: `${base}/v1`, model: "stub", apiKey: "unused" });
+
+  function report(): string {
+    return JSON.stringify({
+      schema: 1,
+      items: [
+        {
+          id: "item-1",
+          category: "fact",
+          claim: "某论文提出了一个结论",
+          confidence: "likely",
+          attribution: { kind: "external", name: "某论文" },
+          verify: { needed: true, queries: ["某论文 核心主张"] },
+          evidence: [{ quote: "原文引用" }],
+        },
+      ],
+    });
+  }
+
+  function run() {
+    return enrichTraceReportWithExternalChecks(report(), "原文", aiConfig(), zhipuConfig, undefined, {
+      endpoints: { zhipu: zhipuEndpoint() },
+      fetchPage: fetchStub,
+    });
+  }
+
+  interface Out {
+    items: {
+      external?: {
+        evidence?: string;
+        note?: string;
+        status?: string;
+        sources?: { url?: string; fetched?: boolean; contentChars?: number; quotes?: { text: string }[] }[];
+      };
+    }[];
+  }
+
+  it("引文在抓到的正文里逐字命中时，写进 sources[].quotes 并标为「有原文引证」", async () => {
+    zhipuMode = "ok";
+    pageFails = false;
+    pageText = "某论文提出了一个结论，并给出了实验数据。该结论在后续研究中被反复验证。";
+    compareQuote = "某论文提出了一个结论，并给出了实验数据。";
+    const parsed = JSON.parse(await run()) as Out;
+    const external = parsed.items[0]?.external;
+    expect(external?.evidence).toBe("verbatim");
+    const source = external?.sources?.[0];
+    expect(source?.quotes?.map((quote) => quote.text)).toEqual(["某论文提出了一个结论，并给出了实验数据。"]);
+    expect(source?.fetched).toBe(true);
+    expect(source?.contentChars).toBeGreaterThan(0);
+    expect(external?.note).toBeUndefined();
+    compareQuote = null;
+  });
+
+  it("编造的引文（正文里根本没有）一律丢弃，并降级为「仅检索摘要」", async () => {
+    zhipuMode = "ok";
+    pageFails = false;
+    pageText = "某论文提出了一个结论，并给出了实验数据。";
+    compareQuote = "该论文的作者因此获得了诺贝尔奖，这是正文里根本没有的一句话。";
+    const parsed = JSON.parse(await run()) as Out;
+    const external = parsed.items[0]?.external;
+    expect(external?.sources?.[0]?.quotes).toBeUndefined();
+    expect(external?.evidence).toBe("snippet");
+    expect(external?.note).toContain("已丢弃");
+    compareQuote = null;
+  });
+
+  it("改写过的引文（意思对但字面不同）同样丢弃——只认逐字", async () => {
+    zhipuMode = "ok";
+    pageFails = false;
+    pageText = "某论文提出了一个结论，并给出了实验数据。";
+    compareQuote = "该论文提出了一项结论，也给出了数据。";
+    const parsed = JSON.parse(await run()) as Out;
+    expect(parsed.items[0]?.external?.sources?.[0]?.quotes).toBeUndefined();
+    expect(parsed.items[0]?.external?.evidence).toBe("snippet");
+    compareQuote = null;
+  });
+
+  it("中间省略用 `…` 分段写的引文，每段都命中才算通过", async () => {
+    zhipuMode = "ok";
+    pageFails = false;
+    pageText = "第一段说了背景与动机。中间还有很多细节。最后一段给出了结论和数据。";
+    compareQuote = "第一段说了背景与动机。…最后一段给出了结论和数据。";
+    const parsed = JSON.parse(await run()) as Out;
+    expect(parsed.items[0]?.external?.sources?.[0]?.quotes?.[0]?.text).toBe("第一段说了背景与动机。 … 最后一段给出了结论和数据。");
+    expect(parsed.items[0]?.external?.evidence).toBe("verbatim");
+    compareQuote = null;
+  });
+
+  it("没抓到正文时 fetched:false，引文一律不写入（看不到原文就不能引）", async () => {
+    zhipuMode = "ok";
+    pageFails = true;
+    compareQuote = "某论文提出了一个结论，并给出了实验数据。";
+    const parsed = JSON.parse(await run()) as Out;
+    const source = parsed.items[0]?.external?.sources?.[0];
+    expect(source?.fetched).toBe(false);
+    expect(source?.quotes).toBeUndefined();
+    expect(source?.contentChars).toBeUndefined();
+    expect(parsed.items[0]?.external?.evidence).toBe("snippet");
+    pageFails = false;
+    compareQuote = null;
+  });
+
+  it("抓取预算为 0 时仍然出结论，只是没有正文（不假装抓过）", async () => {
+    zhipuMode = "ok";
+    pageFails = false;
+    compareQuote = "某论文提出了一个结论，并给出了实验数据。";
+    const out = await enrichTraceReportWithExternalChecks(report(), "原文", aiConfig(), zhipuConfig, undefined, {
+      endpoints: { zhipu: zhipuEndpoint() },
+      fetchPage: fetchStub,
+      fetchBudget: 0,
+    });
+    const parsed = JSON.parse(out) as Out;
+    expect(parsed.items[0]?.external?.status).toBe("verified");
+    expect(parsed.items[0]?.external?.sources?.[0]?.fetched).toBe(false);
+    expect(parsed.items[0]?.external?.evidence).toBe("snippet");
+    compareQuote = null;
+  });
+
+  it("每条主张最多抓 FETCH_PER_CHECK 条来源的正文，且优先抓重排后最靠前的（权威档在前）", async () => {
+    zhipuMode = "ok";
+    pageFails = false;
+    const calls: string[] = [];
+    const counting: PageFetcher = async (url) => {
+      calls.push(url);
+      return { url, ok: true, text: "某论文提出了一个结论，并给出了实验数据。", via: "readability" };
+    };
+    await enrichTraceReportWithExternalChecks(report(), "原文", aiConfig(), zhipuConfig, undefined, {
+      endpoints: { zhipu: zhipuEndpoint() },
+      fetchPage: counting,
+    });
+    // 上限是 3（实测模型平均每条主张引用 2.7 条来源，抓 2 条等于按构造丢掉一部分引证）
+    expect(calls).toHaveLength(3);
+    expect(calls[0]).toBe(AUTHORITATIVE_URL);
+  });
+
+  it("逐页回调带上主机、成功失败与耗时，且顺序与抓取一致（运行日志靠它定位「卡在哪一页」）", async () => {
+    zhipuMode = "ok";
+    pageFails = false;
+    const logs: { host: string; ok: boolean; cached: boolean; via?: string; chars?: number; error?: string }[] = [];
+    await enrichTraceReportWithExternalChecks(report(), "原文", aiConfig(), zhipuConfig, undefined, {
+      endpoints: { zhipu: zhipuEndpoint() },
+      fetchPage: fetchStub,
+      onFetchPage: (info) => {
+        logs.push({ host: info.host, ok: info.ok, cached: info.cached, via: info.via, chars: info.chars, error: info.error });
+      },
+    });
+    // 候选池重排后抓 FETCH_PER_CHECK 条：第一条是权威来源
+    expect(logs.length).toBeGreaterThan(0);
+    expect(logs.every((entry) => typeof entry.host === "string" && entry.host.length > 0)).toBe(true);
+    expect(logs.every((entry) => entry.cached === false)).toBe(true);
+    const first = logs[0];
+    expect(first.ok).toBe(true);
+    expect(first.via).toBe("readability");
+    expect(first.chars).toBeGreaterThan(0);
+    expect(first.error).toBeUndefined();
+  });
+
+  it("抓取失败时回调带上失败原因（不是只说「没抓到」）", async () => {
+    zhipuMode = "ok";
+    pageFails = true;
+    const logs: { ok: boolean; error?: string }[] = [];
+    await enrichTraceReportWithExternalChecks(report(), "原文", aiConfig(), zhipuConfig, undefined, {
+      endpoints: { zhipu: zhipuEndpoint() },
+      fetchPage: fetchStub,
+      onFetchPage: (info) => {
+        logs.push({ ok: info.ok, error: info.error });
+      },
+    });
+    expect(logs.length).toBeGreaterThan(0);
+    expect(logs.every((entry) => entry.ok === false)).toBe(true);
+    expect(logs[0]?.error).toContain("桩：抓取失败");
+    pageFails = false;
+  });
+
+  it("同一页面被多条主张命中时只抓一次（一轮内按 URL 缓存）", async () => {
+    zhipuMode = "ok";
+    pageFails = false;
+    const calls: string[] = [];
+    const counting: PageFetcher = async (url) => {
+      calls.push(url);
+      return { url, ok: true, text: "某论文提出了一个结论，并给出了实验数据。", via: "readability" };
+    };
+    const twoItems = JSON.stringify({
+      schema: 1,
+      items: [1, 2].map((index) => ({
+        id: `item-${index}`,
+        category: "fact",
+        claim: "某论文提出了一个结论",
+        confidence: "likely",
+        attribution: { kind: "external", name: "某论文" },
+        verify: { needed: true, queries: ["某论文 核心主张"] },
+        evidence: [{ quote: "原文引用" }],
+      })),
+    });
+    await enrichTraceReportWithExternalChecks(twoItems, "原文", aiConfig(), zhipuConfig, undefined, {
+      endpoints: { zhipu: zhipuEndpoint() },
+      fetchPage: counting,
+    });
+    expect(new Set(calls).size).toBe(calls.length);
   });
 });

@@ -1,0 +1,1441 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>合集选集面板 —— 五套做法对照（含「跑完一次就收起」）</title>
+<!--
+  用途：比较「B 站来源节点」里那个合集选集面板的几种做法，供选型。
+  这是**交互原型**，不是生产代码：
+  · 颜色/圆角/间距全部取自 apps/web/src/styles/tokens.css（同一份令牌，此处内联是为了双击打开也能渲染）；
+  · 卡片外壳、链接字段、预览块、现状面板的尺寸照**真机计算样式**重画
+    （脚本 .tmp-shots/probe-picker-geom.mjs 量真机，值见各段注释；真机：卡片 380×588、列表限高 224、行高 31.2）；
+  · 合集数据是**真的**：109 集标题/时长/封面取自 /api/videos/preview（BV1DTWw6UE1y · 合集《美国时政》），
+    封面是 hdslb CDN 的真实 URL，断网时格子会退化成占位块（不影响排版判断）。
+  · 控件外形是手画的，不是 Element Plus 的真实渲染；落地实现必须用 EP 组件。
+  调研来源、取舍与诚实清单见 docs/research/collection-picker-research.md。
+-->
+<style>
+/* ===================== 令牌（内联自 apps/web/src/styles/tokens.css） ===================== */
+:root {
+  --color-bg: #f4f5f6;
+  --color-canvas: #f8f9fa;
+  --color-surface: #ffffff;
+  --color-surface-muted: #f7f8f9;
+  --color-border: #e4e7eb;
+  --color-border-strong: #cdd3da;
+  --color-text: #16181d;
+  --color-text-secondary: #545b66;
+  --color-text-tertiary: #8a929e;
+  --color-brand: #00aeec;
+  --color-brand-soft: #e6f7fe;
+  --color-ink: #16181d;
+  --color-ink-soft: #f0f1f3;
+  --color-ink-soft-glass: rgba(22, 24, 29, 0.06);
+  --color-scrim: rgba(22, 24, 29, 0.72);
+  --color-on-scrim: #ffffff;
+  --color-success: #18a058;
+  --node-radius: 10px;
+  --node-border: var(--color-border);
+  --node-selected-border: var(--color-text);
+  --font-family: "Geist Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+    "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans SC", sans-serif;
+  --radius-xs: 4px;
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 10px;
+  --control-height-sm: 32px;
+  --control-padding-x: 10px;
+  --control-radius-sm: 4px;
+  --control-font-size-sm: 12px;
+  --control-border: var(--color-border);
+  --control-bg: var(--color-surface);
+  --control-placeholder: var(--color-text-tertiary);
+  --shadow-xs: 0 1px 2px rgba(22, 24, 29, 0.04);
+  --shadow-card: 0 1px 2px rgba(22, 24, 29, 0.05), 0 4px 12px rgba(22, 24, 29, 0.04);
+  --shadow-overlay: 0 8px 24px rgba(22, 24, 29, 0.12);
+  --ease-out: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --dur-1: 120ms;
+  --dur-2: 180ms;
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+/* hidden 是多数状态切换的实现手段，而 .actionbar/.linkbtn 这类作者规则会写 display：
+   不加这一条，hidden 会被它们顶掉（本页原型第一版就踩了：V2 浏览态的动作条照样显示）。 */
+[hidden] { display: none !important; }
+
+body {
+  margin: 0;
+  padding: 28px 32px 64px;
+  font-family: var(--font-family);
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--color-text);
+  background: var(--color-canvas);
+}
+
+/* ===================== 页面外壳 ===================== */
+.page-title { margin: 0 0 6px; font-size: 20px; font-weight: 600; }
+.page-sub { margin: 0 0 18px; max-width: 980px; font-size: 13px; line-height: 1.75; color: var(--color-text-secondary); }
+.page-sub code { padding: 1px 4px; border-radius: 4px; background: var(--color-ink-soft); font-size: 12px; }
+.page-sub b { color: var(--color-text); }
+
+.bar {
+  position: sticky; top: 0; z-index: 5;
+  display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
+  margin: 0 0 20px; padding: 10px 12px;
+  border: 1px solid var(--color-border); border-radius: var(--radius-md);
+  background: var(--color-surface);
+}
+.bar-label { margin-right: 2px; font-size: 12px; color: var(--color-text-tertiary); }
+.bar button {
+  height: 28px; padding: 0 12px;
+  border: 1px solid var(--color-border); border-radius: var(--radius-sm);
+  background: var(--color-surface); color: var(--color-text-secondary);
+  font-family: inherit; font-size: 12px; cursor: pointer;
+  transition: background-color var(--dur-1) var(--ease-out), color var(--dur-1) var(--ease-out);
+}
+.bar button:hover { background: var(--color-ink-soft); color: var(--color-text); }
+.bar button.active { border-color: var(--color-text); background: var(--color-text); color: #fff; }
+.bar-sep { width: 1px; height: 18px; margin: 0 4px; background: var(--color-border); }
+
+.demo { margin: 0 0 40px; }
+.demo[hidden] { display: none; }
+.demo h2 { margin: 0 0 4px; font-size: 15px; font-weight: 600; }
+.demo .src { margin: 0 0 12px; max-width: 980px; font-size: 12px; line-height: 1.7; color: var(--color-text-tertiary); }
+.demo .src a { color: var(--color-text-secondary); }
+.demo .src b { color: var(--color-text-secondary); font-weight: 600; }
+.pair { display: flex; align-items: flex-start; gap: 24px; flex-wrap: wrap; }
+/* 定宽 = 卡片宽：不然长标签会把这一列撑宽，两张卡并排时被挤到上下两行 */
+.stack { display: flex; flex-direction: column; gap: 6px; width: 380px; }
+.stack-label { display: block; font-size: 11px; line-height: 1.5; color: var(--color-text-tertiary); }
+.stack-label b { color: var(--color-text-secondary); font-weight: 600; }
+.notes { margin: 14px 0 0; padding: 0; list-style: none; max-width: 980px; font-size: 12px; line-height: 1.75; color: var(--color-text-secondary); }
+.notes li { display: flex; gap: 8px; }
+.notes b { flex: none; width: 44px; font-weight: 600; color: var(--color-text); }
+.notes code { padding: 1px 4px; border-radius: 4px; background: var(--color-ink-soft); font-size: 11px; }
+.meter { margin: 10px 0 0; padding: 7px 10px; max-width: 980px; border-radius: var(--radius-sm); background: var(--color-ink-soft); font-size: 11.5px; line-height: 1.7; color: var(--color-text-secondary); }
+.meter b { color: var(--color-text); font-weight: 600; font-variant-numeric: tabular-nums; }
+.meter.warn { background: #fbecee; }
+
+.zoomed .card { zoom: 1.5; }
+.zoomed .pair { gap: 40px; }
+
+/* ===================== 卡片外壳（照真机计算样式重画） =====================
+   真机取样（设计像素，zoom 0.5963 的真机画布，脚本 probe-picker-geom.mjs）：
+   来源节点 380 宽（.sf-node--source-bili）· padding 10/12/12 · 边框 1.5px · 圆角 10
+   头部 margin -10 -12 8 / padding 8 12 10 / 下边框 1px；标题 13px/500；副标题 11px tertiary
+   body 子项 gap 8；字段 gap 6，标签 12px/500；输入框高 32 / 圆角 4 / 字号 12
+   预览块 flex gap 9 / padding 8 / 边框 1px / 圆角 4；封面 96×54（16:9）圆角 6
+   底部结果条 margin 8 -12 -12 / padding 6 12 / 字号 10.5px / 圆点 6px */
+.card {
+  position: relative;
+  width: 380px;
+  padding: 10px 12px 12px;
+  border: 1.5px solid var(--node-border);
+  border-radius: var(--node-radius);
+  background: var(--color-surface);
+}
+
+.head {
+  display: flex; flex-direction: column; gap: 10px;
+  margin: -10px -12px 8px; padding: 8px 12px 10px;
+  border-bottom: 1px solid var(--color-border);
+}
+.head-top { display: flex; align-items: center; gap: 7px; min-width: 0; }
+.head-icon { display: inline-flex; align-items: center; justify-content: center; flex: none; color: var(--color-text); }
+.head-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; font-weight: 500; }
+.head-play { flex: none; width: 15px; height: 15px; color: var(--color-text-secondary); }
+.head-desc { margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; line-height: 1.4; color: var(--color-text-tertiary); }
+
+.body { display: flex; flex-direction: column; gap: 8px; }
+
+.field { display: flex; flex-direction: column; gap: 6px; }
+.field-label { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; font-weight: 500; line-height: 1.4; color: var(--color-text-secondary); }
+.hint-icon { flex: none; width: 13px; height: 13px; color: var(--color-text-tertiary); }
+.input {
+  display: flex; align-items: center;
+  height: var(--control-height-sm); padding: 0 var(--control-padding-x);
+  border-radius: var(--control-radius-sm); background: var(--control-bg);
+  box-shadow: inset 0 0 0 1px var(--control-border);
+  font-size: var(--control-font-size-sm); color: var(--color-text);
+  white-space: nowrap; overflow: hidden;
+}
+.input > span { overflow: hidden; text-overflow: ellipsis; }
+
+.preview {
+  display: flex; align-items: center; gap: 9px; padding: 8px;
+  border: 1px solid var(--color-border); border-radius: var(--radius-xs);
+  background: var(--color-surface);
+}
+.cover-wrap { position: relative; display: flex; flex: none; }
+.cover { width: 96px; aspect-ratio: 16 / 9; object-fit: cover; border-radius: var(--radius-sm); background: var(--color-ink-soft); display: block; }
+.dur {
+  position: absolute; right: 4px; bottom: 4px;
+  padding: 0 4px; border-radius: var(--radius-xs);
+  background: var(--color-scrim); color: var(--color-on-scrim);
+  font-size: 10px; line-height: 16px; font-variant-numeric: tabular-nums;
+}
+.preview-info { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.preview-title {
+  font-size: 12px; font-weight: 600; line-height: 1.4; color: var(--color-text);
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+.preview-meta { font-size: 11px; color: var(--color-text-secondary); }
+
+.result {
+  display: flex; align-items: center; gap: 6px;
+  margin: 8px -12px -12px; padding: 6px 12px;
+  border-radius: 0 0 calc(var(--node-radius) - 1px) calc(var(--node-radius) - 1px);
+  background: var(--color-surface-muted);
+}
+.result-dot { flex: none; width: 6px; height: 6px; border-radius: 50%; background: var(--color-text-tertiary); }
+.result.is-done .result-dot { background: var(--color-success); }
+.result-meta { flex: 1; min-width: 0; font-size: 10.5px; line-height: 1.4; color: var(--color-text-tertiary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* ===================== 现状的面板（真机 1:1：分隔线 + 头 + 限高列表 + 提示 + 底行） ===================== */
+.picker { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--color-border); }
+.picker-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.picker-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; font-weight: 600; color: var(--color-text); }
+.picker-count { flex: none; font-size: 11px; color: var(--color-text-tertiary); font-variant-numeric: tabular-nums; }
+.picker-list { display: flex; flex-direction: column; gap: 2px; max-height: 224px; margin-top: 8px; padding: 0 2px 2px; overflow-y: auto; }
+.row { display: flex; align-items: center; gap: 9px; padding: 6px; border-radius: var(--radius-sm); font-size: 12px; color: var(--color-text); }
+.row:hover { background: var(--color-ink-soft-glass); }
+.row.is-current { background: var(--color-ink-soft); }
+.row-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.row.is-current .row-name { font-weight: 600; }
+.row-dur { flex: none; font-size: 11px; color: var(--color-text-tertiary); font-variant-numeric: tabular-nums; }
+.picker-hint { margin-top: 8px; font-size: 11px; line-height: 1.45; color: var(--color-text-tertiary); }
+.picker-foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 8px; }
+.btn {
+  flex: none; height: 26px; padding: 0 12px;
+  border: 1px solid var(--color-border-strong); border-radius: var(--radius-sm);
+  background: var(--color-surface); color: var(--color-text);
+  font-family: inherit; font-size: 12px; white-space: nowrap; cursor: pointer;
+  transition: background-color var(--dur-1) var(--ease-out);
+}
+.btn:hover:not(:disabled) { background: var(--color-ink-soft); }
+.btn:disabled { opacity: 0.45; cursor: not-allowed; }
+.btn.is-solid { border-color: var(--color-ink); background: var(--color-ink); color: #fff; }
+.btn.is-solid:hover:not(:disabled) { background: #2b2f38; }
+.linkbtn {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 0; border: none; background: none;
+  color: var(--color-text-tertiary); font-family: inherit; font-size: 11px; line-height: 1.4; cursor: pointer;
+  transition: color var(--dur-1) var(--ease-out);
+}
+.linkbtn:hover { color: var(--color-text-secondary); }
+.linkbtn.is-strong { color: var(--color-text-secondary); font-weight: 500; }
+.linkbtn.is-strong:hover { color: var(--color-text); }
+
+/* 自绘勾选框（真机 .sf-node-picker-check：14×14 / 圆角 4 / 选中墨色底 + 白勾） */
+.check {
+  position: relative; flex: none; width: 14px; height: 14px; margin: 0;
+  appearance: none; border: 1px solid var(--color-border-strong); border-radius: var(--radius-xs);
+  background: var(--color-surface); cursor: pointer;
+  transition: border-color var(--dur-1) var(--ease-out), background-color var(--dur-1) var(--ease-out);
+}
+.check:hover { border-color: var(--color-text-tertiary); }
+.check:checked { background: var(--color-ink); border-color: var(--color-ink); }
+.check:checked::after {
+  content: ""; position: absolute; left: 4px; top: 1px;
+  width: 4px; height: 8px; border: solid var(--color-surface); border-width: 0 1.5px 1.5px 0;
+  transform: rotate(45deg);
+}
+.check:focus-visible { outline: 2px solid var(--color-text); outline-offset: 1px; }
+
+/* ===================== 通用：折叠加摘要行（V1 及后面几套的收起态共用） =====================
+   依据 WinUI 3 Expander：内容区收起时把已选项的摘要写进 Header；Apple HIG：默认隐藏、记住用户的展开选择。 */
+.summary {
+  display: flex; align-items: center; gap: 8px;
+  width: 100%; margin-top: 12px; padding: 7px 8px 7px 10px;
+  border: 1px solid transparent; border-radius: var(--radius-sm);
+  background: var(--color-surface-muted);
+  font-family: inherit; text-align: left; cursor: pointer;
+  transition: background-color var(--dur-1) var(--ease-out), border-color var(--dur-1) var(--ease-out);
+}
+.summary:hover { background: var(--color-ink-soft); }
+/* 只作示意、不承担交互的收起态（点它没有动作，所以不给可点的手感） */
+.summary.is-static { cursor: default; }
+.summary.is-static:hover { background: var(--color-surface-muted); }
+.summary:focus-visible { outline: 2px solid var(--color-text); outline-offset: 1px; }
+.summary-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; font-weight: 600; color: var(--color-text); }
+.summary-meta { flex: none; font-size: 11px; color: var(--color-text-tertiary); font-variant-numeric: tabular-nums; }
+.summary-tail { flex: none; display: inline-flex; align-items: center; gap: 4px; margin-left: auto; font-size: 11px; color: var(--color-text-secondary); }
+.summary-chevron { flex: none; width: 12px; height: 12px; color: var(--color-text-tertiary); transition: transform var(--dur-2) var(--ease-out); }
+.summary[aria-expanded="true"] .summary-chevron { transform: rotate(180deg); }
+
+/* ===================== A. 现状：常驻勾选框 + 点行切换（两种语义并存） ===================== */
+.v0 .bad { color: #d23f4e; }
+
+/* ===================== V1：摘要行 + 原列表 ===================== */
+.v1 .picker { margin-top: 6px; }
+
+/* ===================== V2：单轨两模式 ===================== */
+.modetabs { display: flex; align-items: center; gap: 8px; margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--color-border); }
+.modetabs .picker-title { flex: 0 1 auto; }
+.modetabs .picker-count { flex: 0 0 auto; }
+.modetabs .linkbtn { margin-left: auto; }
+.v2 .picker-list, .v3 .picker-list { margin-top: 8px; }
+/* 浏览态：行右侧留出一个「切换」提示位，hover 才现 */
+.row-go { flex: none; display: inline-flex; align-items: center; gap: 3px; font-size: 10.5px; color: var(--color-text-tertiary); opacity: 0; transition: opacity var(--dur-1) var(--ease-out); }
+.row:hover .row-go { opacity: 1; }
+.row.is-current .row-go { display: none; }
+/* 合并完成后的一行：整块收起（对应「跑完一次就收起来」） */
+.merged-line {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  margin-top: 8px; padding: 7px 8px 7px 10px;
+  border-radius: var(--radius-sm); background: var(--color-surface-muted);
+  font-size: 11.5px; color: var(--color-text-secondary);
+}
+.merged-line b { color: var(--color-text); font-weight: 600; font-variant-numeric: tabular-nums; }
+
+/* 多选态：底部动作条（Android CAB / Material 3：选中后出现动作，动作执行完即退出） */
+.actionbar {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  margin-top: 10px; padding: 7px 8px 7px 10px;
+  border-radius: var(--radius-sm); background: var(--color-ink-soft);
+}
+.actionbar-count { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11.5px; color: var(--color-text-secondary); font-variant-numeric: tabular-nums; }
+.actionbar-count b { color: var(--color-text); font-weight: 600; }
+.actionbar-actions { flex: none; display: flex; align-items: center; gap: 6px; }
+
+/* ===================== V3：V2 + 搜索 / 全选 / 区间 ===================== */
+.searchbar { display: flex; align-items: center; gap: 6px; margin-top: 8px; }
+.search {
+  display: flex; align-items: center; gap: 6px; flex: 1; min-width: 0;
+  height: 28px; padding: 0 8px;
+  border: 1px solid var(--color-border); border-radius: var(--radius-sm);
+  background: var(--color-surface); font-size: 12px; color: var(--color-text);
+}
+.search svg { flex: none; width: 13px; height: 13px; color: var(--color-text-tertiary); }
+.search input { flex: 1; min-width: 0; border: none; outline: none; background: none; font-family: inherit; font-size: 12px; color: var(--color-text); }
+.search input::placeholder { color: var(--color-text-tertiary); }
+.row-no { flex: none; width: 22px; font-size: 11px; color: var(--color-text-tertiary); font-variant-numeric: tabular-nums; }
+.row.is-current .row-no { color: var(--color-text-secondary); }
+.empty { padding: 14px 6px; font-size: 11.5px; color: var(--color-text-tertiary); text-align: center; }
+
+/* ===================== V4：选集浮层（卡片恒定高度，选完关闭） ===================== */
+.v4 .host { position: relative; }
+/* 浮层比卡片高：这一节在下面留出空间，别让浮层压住「来源/收益/代价」那几行 */
+.v4 .pair { padding-bottom: 250px; }
+.sheet {
+  /* top 132 = 卡片内「封面块」下沿：浮层像从「选集」那一行展开，
+     上面仍能看到这张卡是什么（头 + 链接 + 封面），下面溢出卡片 100 余 px。 */
+  position: absolute; left: -2px; right: -2px; top: 132px; z-index: 3;
+  border: 1px solid var(--color-border-strong); border-radius: var(--radius-md);
+  background: var(--color-surface); box-shadow: var(--shadow-overlay);
+  overflow: hidden;
+}
+.sheet-head { display: flex; align-items: center; gap: 8px; padding: 9px 10px; border-bottom: 1px solid var(--color-border); }
+.sheet-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; font-weight: 600; }
+.sheet-body { padding: 8px 10px 0; }
+/* 限高 158px：连头带尾 ≈280px，落在卡片自身高度（296.7px）之内 ——
+   画布里让浮层盖住下面的说明/旁边的节点，比少露两行更糟。 */
+.sheet-list { display: flex; flex-direction: column; gap: 2px; max-height: 158px; margin-top: 6px; padding: 0 2px 2px; overflow-y: auto; }
+.sheet-foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 10px; border-top: 1px solid var(--color-border); background: var(--color-surface-muted); }
+
+/* ===================== V5：海报名片墙（宫格） ===================== */
+/* 依据腾讯视频 .episode-item：54px 方格 + 8px 间距（其 CSS 实测值），当前项浅底 + 变色文字 */
+.tiles { display: grid; grid-template-columns: repeat(6, 1fr); gap: 8px; max-height: 232px; margin-top: 8px; padding: 2px; overflow-y: auto; }
+.tile {
+  position: relative; display: grid; place-items: center;
+  padding: 0; aspect-ratio: 1 / 1; overflow: hidden;
+  border: 1px solid var(--color-border); border-radius: var(--radius-xs);
+  background: var(--color-surface-muted); cursor: pointer;
+  font-family: inherit; font-size: 12px; font-weight: 600; font-variant-numeric: tabular-nums;
+  color: var(--color-text-secondary);
+  transition: border-color var(--dur-1) var(--ease-out), color var(--dur-1) var(--ease-out);
+}
+.tile img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.tile span { position: relative; z-index: 1; }
+.tile.has-cover span { padding: 0 3px; border-radius: 3px; background: var(--color-scrim); color: var(--color-on-scrim); }
+.tile:hover { border-color: var(--color-text-tertiary); }
+.tile.is-current { border-color: var(--color-brand); background: var(--color-brand-soft); color: var(--color-brand); }
+.tile-preview { margin-top: 8px; padding: 6px 8px; border-radius: var(--radius-sm); background: var(--color-ink-soft); font-size: 11.5px; line-height: 1.5; color: var(--color-text-secondary); }
+.tile-preview b { color: var(--color-text); font-weight: 600; }
+.tile-preview .tnum { font-variant-numeric: tabular-nums; }
+
+/* ===================== 对照表 ===================== */
+table.cmp { width: 100%; max-width: 1120px; margin: 40px 0 0; border-collapse: collapse; font-size: 12px; }
+table.cmp caption { margin-bottom: 8px; text-align: left; font-size: 12px; color: var(--color-text-tertiary); }
+table.cmp th, table.cmp td { padding: 8px 10px; border-bottom: 1px solid var(--color-border); text-align: left; vertical-align: top; }
+table.cmp th { font-weight: 600; color: var(--color-text-secondary); }
+table.cmp td.num { font-variant-numeric: tabular-nums; color: var(--color-text); white-space: nowrap; }
+</style>
+</head>
+<body>
+
+<h1 class="page-title">合集选集面板 —— 五套做法对照</h1>
+<p class="page-sub">
+  同一张 B 站来源节点、同一个真实合集（<b>美国时政 · 109 集 · 共 28.9 小时</b>），只换选集面板的做法。
+  颜色与圆角引用 <code>tokens.css</code> 的令牌，卡片外壳与现状面板的尺寸照<b>真机计算样式</b>重画。
+  <strong>这是手写原型，不是 Element Plus 真实渲染</strong>，落地实现必须用 EP 组件 ——
+  来源、取舍、数字与诚实清单见 <code>docs/research/collection-picker-research.md</code>。
+</p>
+
+<div class="bar">
+  <span class="bar-label">看哪几套</span>
+  <button data-filter="all" class="active">全部</button>
+  <button data-filter="A">现状</button>
+  <button data-filter="B">1 折叠加摘要</button>
+  <button data-filter="C">2 单轨两模式（推荐）</button>
+  <button data-filter="D">3 加长列表工具</button>
+  <button data-filter="E">4 选集浮层</button>
+  <button data-filter="F">5 海报名片墙</button>
+  <span class="bar-sep"></span>
+  <button id="zoom">放大 1.5×</button>
+</div>
+
+<!-- ============================ 现状 ============================ -->
+<section class="demo v0" data-variant="A">
+  <h2>现状（基线）：常驻勾选框 + 点行切换，永远展开</h2>
+  <p class="src">
+    本仓当前实现 <code>.sf-node-picker</code>。真机实测（<code>probe-picker-geom.mjs</code>，画布 zoom 0.5963）：
+    卡片 <b>380×588</b>，选集面板 <b>320px</b>（占卡片 54.4%）；列表限高 <b>224px</b>、行高 <b>31.2px</b>、
+    109 行；一屏只看得见 <b>7.18 行</b>（第 7 行只露 79%，像被切掉），看完要滚 <b>16.15 屏</b>。
+    当前视频是合集的<b>第 109 集</b>（最后一集），列表默认停在顶部、不定位当前项 ——
+    所以底部写着「已勾选 1 集」，但屏幕上根本看不见是哪一集。
+  </p>
+  <div class="pair">
+    <div class="stack">
+      <span class="stack-label">真机现状（展开态）</span>
+      <div class="card">
+        <div class="head">
+          <div class="head-top">
+            <span class="head-icon"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="4"/><path d="M10 9l5 3-5 3z"/></svg></span>
+            <span class="head-title">B站链接</span>
+            <svg class="head-play" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M6 4l14 8-14 8z"/></svg>
+          </div>
+          <p class="head-desc">粘贴 B 站视频或合集链接</p>
+        </div>
+        <div class="body">
+          <div class="field">
+            <span class="field-label">链接
+              <svg class="hint-icon" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="6.3" stroke="currentColor" stroke-width="1.3"/><path d="M6.3 6.2c0-1 .8-1.7 1.7-1.7 1 0 1.7.7 1.7 1.6 0 1.3-1.7 1.2-1.7 2.4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/><circle cx="8" cy="11.4" r="0.75" fill="currentColor"/></svg>
+            </span>
+            <div class="input"><span>https://www.bilibili.com/video/BV1DTWw6UE1y</span></div>
+          </div>
+          <div class="preview">
+            <div class="cover-wrap" data-cover="mine">
+              <span class="dur">16:11</span>
+            </div>
+            <div class="preview-info">
+              <span class="preview-title">中美社保对比,有哪些不同?</span>
+              <span class="preview-meta">内部看美国</span>
+            </div>
+          </div>
+          <div class="picker">
+            <div class="picker-head">
+              <span class="picker-title">合集《美国时政》</span>
+              <span class="picker-count">共 109 集</span>
+            </div>
+            <div class="picker-list" data-list="plain-check"></div>
+            <div class="picker-hint">已勾选 1 集 · 再勾 1 集才能合并</div>
+            <div class="picker-foot">
+              <span class="picker-count">勾选 1 集</span>
+              <button class="btn" disabled title="勾选 2 集及以上才能合并">合并为一张卡片</button>
+            </div>
+          </div>
+        </div>
+        <div class="result is-done"><span class="result-dot"></span><span class="result-meta">音轨已就绪</span></div>
+      </div>
+    </div>
+  </div>
+  <ul class="notes">
+    <li><b>来源</b><span>—（本仓当前实现，基线）</span></li>
+    <li><b>问题 1</b><span><b class="bad">两种选择语义并存</b>：点行 = 切换当前来源（单选），勾选框 = 合并（多选）。Material 3 的 Lists 规范原文是 “A list can have only one selection mode at a time … <b>can’t be both at once</b>”，本仓正好是它禁止的组合。</span></li>
+    <li><b>问题 2</b><span><b class="bad">限高与行节律不成整数倍</b>：224 ÷ 31.2 = 7.18 → 第 7 行只露 79%，看着像渲染被截断。</span></li>
+    <li><b>问题 3</b><span><b class="bad">同一件事说三遍</b>：提示行「已勾选 1 集 · 再勾 1 集才能合并」+ 底行「勾选 1 集」+ 禁用按钮的 title。</span></li>
+    <li><b>问题 4</b><span><b class="bad">不定位当前项</b>：当前集在 109/109，面板打开时停在顶部，用 16 屏才能找回自己。<a href="https://github.com/guozhigq/pilipala/blob/main/lib/common/pages_bottom_sheet.dart">Pilipala</a> 与 <a href="https://github.com/aaa1115910/bv">bv</a> 打开面板都会 jumpTo 当前集。</span></li>
+    <li><b>问题 5</b><span><b class="bad">加载抖动</b>：冷加载时节点先长成 212.3px（转圈态），865ms 后跳到 588px（+375.7px / +177%）。</span></li>
+  </ul>
+  <p class="meter" data-meter data-state="expanded">量中…</p>
+</section>
+
+<!-- ============================ V1 ============================ -->
+<section class="demo v1" data-variant="B">
+  <h2>1. 摘要行 + 展开：最小改动（<span style="color:var(--color-success)">改动量最小</span>）</h2>
+  <p class="src">
+    依据：Windows 11 <a href="https://learn.microsoft.com/en-us/windows/apps/design/controls/expander">WinUI 3 Expander</a>
+    ——「<i>By default, the Expander is collapsed</i>」，且官方示例专门演示「<i>populate the Header with a summary of options that are selected in the Content</i>」；
+    Apple HIG <a href="https://developer.apple.com/design/human-interface-guidelines/disclosure-controls">Disclosure controls</a>
+    ——「<i>Use a disclosure control to hide details until they’re relevant</i>」（并见 <a href="https://developer.apple.com/design/human-interface-guidelines/outline-views">Outline views</a> 的「<i>Retain people’s expansion choices</i>」：展开状态要记住）。
+    跑完一次后默认收起成一行摘要，点它展开回原来的列表。
+  </p>
+  <div class="pair">
+    <div class="stack">
+      <span class="stack-label">跑完一次后（<b>默认收起</b>）</span>
+      <div class="card">
+        <div class="head">
+          <div class="head-top">
+            <span class="head-icon"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="4"/><path d="M10 9l5 3-5 3z"/></svg></span>
+            <span class="head-title">B站链接</span>
+            <svg class="head-play" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M6 4l14 8-14 8z"/></svg>
+          </div>
+          <p class="head-desc">粘贴 B 站视频或合集链接</p>
+        </div>
+        <div class="body">
+          <div class="field">
+            <span class="field-label">链接</span>
+            <div class="input"><span>https://www.bilibili.com/video/BV1DTWw6UE1y</span></div>
+          </div>
+          <div class="preview">
+            <div class="cover-wrap" data-cover="mine"><span class="dur">16:11</span></div>
+            <div class="preview-info">
+              <span class="preview-title">中美社保对比,有哪些不同?</span>
+              <span class="preview-meta">内部看美国</span>
+            </div>
+          </div>
+          <button class="summary is-static" type="button" aria-expanded="false" tabindex="-1">
+            <span class="summary-title">合集《美国时政》</span>
+            <span class="summary-meta">109 集</span>
+            <span class="summary-tail">已选 1 集</span>
+            <svg class="summary-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>
+          </button>
+        </div>
+        <div class="result is-done"><span class="result-dot"></span><span class="result-meta">音轨已就绪</span></div>
+      </div>
+    </div>
+    <div class="stack">
+      <span class="stack-label">点摘要行 → 展开（<b>列表原样保留</b>）</span>
+      <div class="card" data-card="v1-open">
+        <div class="head">
+          <div class="head-top">
+            <span class="head-icon"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="4"/><path d="M10 9l5 3-5 3z"/></svg></span>
+            <span class="head-title">B站链接</span>
+            <svg class="head-play" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M6 4l14 8-14 8z"/></svg>
+          </div>
+          <p class="head-desc">粘贴 B 站视频或合集链接</p>
+        </div>
+        <div class="body">
+          <div class="field">
+            <span class="field-label">链接</span>
+            <div class="input"><span>https://www.bilibili.com/video/BV1DTWw6UE1y</span></div>
+          </div>
+          <div class="preview">
+            <div class="cover-wrap" data-cover="mine"><span class="dur">16:11</span></div>
+            <div class="preview-info">
+              <span class="preview-title">中美社保对比,有哪些不同?</span>
+              <span class="preview-meta">内部看美国</span>
+            </div>
+          </div>
+          <div>
+            <button class="summary" type="button" aria-expanded="true" data-toggle="v1-open">
+              <span class="summary-title">合集《美国时政》</span>
+              <span class="summary-meta">109 集</span>
+              <span class="summary-tail">已选 1 集</span>
+              <svg class="summary-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>
+            </button>
+            <div class="picker" data-pane="v1-open">
+              <div class="picker-list" data-list="plain-check"></div>
+              <div class="picker-hint">已勾选 1 集 · 再勾 1 集才能合并</div>
+              <div class="picker-foot">
+                <span class="picker-count">勾选 1 集</span>
+                <button class="btn" disabled title="勾选 2 集及以上才能合并">合并为一张卡片</button>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="result is-done"><span class="result-dot"></span><span class="result-meta">音轨已就绪</span></div>
+      </div>
+    </div>
+  </div>
+  <ul class="notes">
+    <li><b>来源</b><span>WinUI 3 Expander（默认收起 + 折叠头写已选摘要）/ Apple HIG Disclosure controls「默认隐藏详情」+ Outline views「记住展开选择」</span></li>
+    <li><b>代价</b><span>列表里「点行切换 / 勾选合并」两种语义并存的问题<b>原样保留</b>；不定位当前项、限高不成整数倍也没解决。只解决「一直展开很丑」这一条。</span></li>
+    <li><b>我自己定的</b><span>摘要行的字号、间距与「已选 N 集」文案（WinUI 只说「把摘要写进 Header」，没规定排版）。</span></li>
+  </ul>
+  <p class="meter" data-meter data-state="collapsed">量中…</p>
+</section>
+
+<!-- ============================ V2 ============================ -->
+<section class="demo v2" data-variant="C">
+  <h2>2. 单轨两模式：浏览态没有勾选框，选中才出动作条（<span style="color:var(--color-success)">推荐</span>）</h2>
+  <p class="src">
+    依据一：Material 3 <a href="https://m3.material.io/components/lists/specs">Lists 规范</a>「一条列表同一时刻只能有一种选择模式」；
+    依据二：Material 3 <a href="https://m3.material.io/foundations/interaction/selection">Selection</a>「选择是次要任务时，勾选框只在 <i>hover 该项</i> 或 <i>选中任意一项之后</i> 出现」；
+    依据三：Android <a href="https://developer.android.google.cn/develop/ui/views/components/menus">上下文操作栏 CAB</a>——官方原文「<i>you usually invoke the contextual action mode when … The user selects a checkbox or similar UI component within the view</i>」，示例代码里动作执行完即关闭（<code>mode.finish() // Action picked, so close the CAB.</code>）。
+    于是：点行 = 切换当前来源、<b>没有常驻勾选框</b>；点「多选」才进选择模式，合并完成自动退出并收起。
+  </p>
+  <div class="pair">
+    <div class="stack">
+      <span class="stack-label">跑完一次后（<b>默认收起</b>，与 V1 同一行摘要）</span>
+      <div class="card">
+        <div class="head">
+          <div class="head-top">
+            <span class="head-icon"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="4"/><path d="M10 9l5 3-5 3z"/></svg></span>
+            <span class="head-title">B站链接</span>
+            <svg class="head-play" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M6 4l14 8-14 8z"/></svg>
+          </div>
+          <p class="head-desc">粘贴 B 站视频或合集链接</p>
+        </div>
+        <div class="body">
+          <div class="field">
+            <span class="field-label">链接</span>
+            <div class="input"><span>https://www.bilibili.com/video/BV1DTWw6UE1y</span></div>
+          </div>
+          <div class="preview">
+            <div class="cover-wrap" data-cover="mine"><span class="dur">16:11</span></div>
+            <div class="preview-info">
+              <span class="preview-title">中美社保对比,有哪些不同?</span>
+              <span class="preview-meta">内部看美国</span>
+            </div>
+          </div>
+          <button class="summary is-static" type="button" aria-expanded="false" tabindex="-1">
+            <span class="summary-title">合集《美国时政》</span>
+            <span class="summary-meta">109 集</span>
+            <span class="summary-tail">已选 1 集</span>
+            <svg class="summary-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>
+          </button>
+        </div>
+        <div class="result is-done"><span class="result-dot"></span><span class="result-meta">音轨已就绪</span></div>
+      </div>
+    </div>
+    <div class="stack">
+      <span class="stack-label">点开摘要行 → <b>浏览态</b>；点「多选」→ <b>选择模式</b>（点行/勾选试试）</span>
+      <div class="card">
+        <div class="head">
+          <div class="head-top">
+            <span class="head-icon"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="4"/><path d="M10 9l5 3-5 3z"/></svg></span>
+            <span class="head-title">B站链接</span>
+            <svg class="head-play" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M6 4l14 8-14 8z"/></svg>
+          </div>
+          <p class="head-desc">粘贴 B 站视频或合集链接</p>
+        </div>
+        <div class="body">
+          <div class="field">
+            <span class="field-label">链接</span>
+            <div class="input"><span>https://www.bilibili.com/video/BV1DTWw6UE1y</span></div>
+          </div>
+          <div class="preview">
+            <div class="cover-wrap" data-cover="mine"><span class="dur">16:11</span></div>
+            <div class="preview-info">
+              <span class="preview-title">中美社保对比,有哪些不同?</span>
+              <span class="preview-meta">内部看美国</span>
+            </div>
+          </div>
+          <div data-mode="v2">
+            <div class="modetabs">
+              <span class="picker-title">合集《美国时政》</span>
+              <span class="picker-count">109 集</span>
+              <button class="linkbtn is-strong" data-enter="v2">多选…</button>
+            </div>
+            <div class="picker-list" data-list="rows"></div>
+            <div class="actionbar" data-actionbar hidden>
+              <span class="actionbar-count">已选 <b>0</b> 集 · 合集共 109 集</span>
+              <span class="actionbar-actions">
+                <button class="linkbtn" data-cancel="v2">取消</button>
+                <button class="btn is-solid" data-merge="v2" disabled>合并为一张卡片</button>
+              </span>
+            </div>
+          </div>
+        </div>
+        <div class="result is-done"><span class="result-dot"></span><span class="result-meta">音轨已就绪</span></div>
+      </div>
+    </div>
+  </div>
+  <ul class="notes">
+    <li><b>来源</b><span>Material 3 Lists（一条列表只能一种选择模式）/ M3 Selection（次要选择：hover 或选中后才显勾选框）/ Android CAB（勾选框入口 + 动作完成即关闭）</span></li>
+    <li><b>收益</b><span>打开面板就把当前集滚到视野中间（Pilipala、bv 的做法；现状停在顶部，当前集在第 109 位时等于没定位）；一屏里不再有 109 个勾选框抢注意力；「合并」只在多选态出现，底部不必再写三遍提示；<b>合并完成 → 退出多选 + 收起成摘要行</b>，正好对应「跑完一次就收起来」。</span></li>
+    <li><b>代价</b><span>多选从「随手勾」变成「先点一下多选」；<code>aria</code> 语义要么纯 listbox（无勾选框）、要么 grid（有勾选框），不能混 —— 落到代码里是两种写法。</span></li>
+    <li><b>我自己定的</b><span>「多选…」按钮的位置与文案；浏览态行右侧 hover 才现的「切换」提示位。</span></li>
+  </ul>
+  <p class="meter" data-meter data-state="expanded">量中…</p>
+</section>
+
+<!-- ============================ V3 ============================ -->
+<section class="demo v3" data-variant="D">
+  <h2>3. 单轨两模式 + 长列表工具：搜索 / 全选 / 区间</h2>
+  <p class="src">
+    依据一：B 站创作中心「添加单集」对话框（<a href="https://m.bilibili.com/opus/737624392331165747">官方文案</a>：搜索稿件 → 勾选 → 下一步，一次最多 50）；
+    依据二：<a href="https://github.com/the1812/Bilibili-Evolved/blob/master/registry/lib/components/video/download/inputs/EpisodesPicker.vue">Bilibili-Evolved 的下载选集面板</a>
+    ——头部一行「全选 / 全不选 / 反选」+ <code>(已选/总数)</code> 计数、列表限高 400px、<b>shift 点按做区间选择</b>；
+    依据三：<a href="https://ant.design/components/table">Ant Design rowSelection</a> 把「全选当前列表」与「全选全部数据」拆成两个明确入口。
+    （注：观众端工具里，搜索框只有 B 站官方那个对话框有。）
+  </p>
+  <div class="pair">
+    <div class="stack">
+      <span class="stack-label">多选态 + 搜索（试试搜「特朗普」，再 shift 点一行做区间选择）</span>
+      <div class="card">
+        <div class="head">
+          <div class="head-top">
+            <span class="head-icon"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="4"/><path d="M10 9l5 3-5 3z"/></svg></span>
+            <span class="head-title">B站链接</span>
+            <svg class="head-play" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M6 4l14 8-14 8z"/></svg>
+          </div>
+          <p class="head-desc">粘贴 B 站视频或合集链接</p>
+        </div>
+        <div class="body">
+          <div class="field">
+            <span class="field-label">链接</span>
+            <div class="input"><span>https://www.bilibili.com/video/BV1DTWw6UE1y</span></div>
+          </div>
+          <div class="preview">
+            <div class="cover-wrap" data-cover="mine"><span class="dur">16:11</span></div>
+            <div class="preview-info">
+              <span class="preview-title">中美社保对比,有哪些不同?</span>
+              <span class="preview-meta">内部看美国</span>
+            </div>
+          </div>
+          <div data-mode="v3" data-multiselect="true">
+            <div class="modetabs">
+              <span class="picker-title">合集《美国时政》</span>
+              <span class="picker-count">109 集</span>
+              <button class="linkbtn" data-enter="v3" hidden>多选…</button>
+            </div>
+            <div class="searchbar">
+              <div class="search">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>
+                <input type="text" placeholder="在这 109 集里搜标题…" data-search="v3">
+              </div>
+              <button class="linkbtn" data-all="v3">全选</button>
+              <button class="linkbtn" data-invert="v3">反选</button>
+            </div>
+            <div class="picker-list" data-list="numbered"></div>
+            <div class="actionbar">
+              <span class="actionbar-count">已选 <b>0</b> 集 · 显示 109 集</span>
+              <span class="actionbar-actions">
+                <button class="linkbtn" data-cancel="v3">取消</button>
+                <button class="btn is-solid" data-merge="v3" disabled>合并为一张卡片</button>
+              </span>
+            </div>
+          </div>
+        </div>
+        <div class="result is-done"><span class="result-dot"></span><span class="result-meta">音轨已就绪</span></div>
+      </div>
+    </div>
+  </div>
+  <ul class="notes">
+    <li><b>来源</b><span>B 站创作中心「添加单集」（搜索 + 勾选 + 上限 50）/ Bilibili-Evolved EpisodesPicker（全选·全不选·反选 + shift 区间 + 计数）/ Ant Design rowSelection（全选语义拆开）</span></li>
+    <li><b>收益</b><span>109 集从「16 屏硬翻」变成「搜一下 / 全选一下」。搜索命中的条数在下面那行数字里（真数据实算）。</span></li>
+    <li><b>代价</b><span>多了一个搜索框与两个文字按钮，面板头变重；<b>shift 区间选择只能配「浏览态有点行」才成立</b>（V2 浏览态正好满足）。</span></li>
+    <li><b>我自己定的</b><span>搜索框放列表上方、全选/反选放在搜索框右侧（Bilibili-Evolved 把三个图标放在面板头，本仓卡片更窄，横排放不下）。</span></li>
+  </ul>
+  <p class="meter" data-meter data-state="expanded">量中…</p>
+</section>
+
+<!-- ============================ V4 ============================ -->
+<section class="demo v4" data-variant="E">
+  <h2>4. 选集浮层：卡片恒定高度，选完关闭</h2>
+  <p class="src">
+    依据一：腾讯视频的 <code>choose_panel</code>「选集面板/分集海报」形态与 <code>isNeedExpand</code> +「收起 / 查看全部」文案（其前端产物实测）；
+    依据二：第三方 B 站客户端的底部 Sheet —— <a href="https://github.com/guozhigq/pilipala/blob/main/lib/common/pages_bottom_sheet.dart">Pilipala</a> 标题直接写「合集（N）」、打开时 jumpTo 当前集；
+    <a href="https://github.com/aaa1115910/bv">bv</a> 的 ModalBottomSheet「视频选集」按小节分 tab；
+    依据三：GitHub Primer <a href="https://primer.style/product/components/select-panel/">SelectPanel</a>「一个用来快速浏览并选中一项或多项的面板，内置过滤输入框」，且「锚定面板在关闭时生效」。
+  </p>
+  <div class="pair">
+    <div class="stack">
+      <span class="stack-label">跑完一次后（<b>默认收起</b>）：卡片停在 296.7px，浮层关着</span>
+      <div class="card host" data-sheet-host>
+        <div class="head">
+          <div class="head-top">
+            <span class="head-icon"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="4"/><path d="M10 9l5 3-5 3z"/></svg></span>
+            <span class="head-title">B站链接</span>
+            <svg class="head-play" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M6 4l14 8-14 8z"/></svg>
+          </div>
+          <p class="head-desc">粘贴 B 站视频或合集链接</p>
+        </div>
+        <div class="body">
+          <div class="field">
+            <span class="field-label">链接</span>
+            <div class="input"><span>https://www.bilibili.com/video/BV1DTWw6UE1y</span></div>
+          </div>
+          <div class="preview">
+            <div class="cover-wrap" data-cover="mine"><span class="dur">16:11</span></div>
+            <div class="preview-info">
+              <span class="preview-title">中美社保对比,有哪些不同?</span>
+              <span class="preview-meta">内部看美国</span>
+            </div>
+          </div>
+          <button class="summary" type="button" aria-expanded="false" data-open-sheet>
+            <span class="summary-title">合集《美国时政》</span>
+            <span class="summary-meta">109 集</span>
+            <span class="summary-tail">选集</span>
+            <svg class="summary-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>
+          </button>
+        </div>
+        <div class="result is-done"><span class="result-dot"></span><span class="result-meta">音轨已就绪</span></div>
+        <div class="sheet" data-sheet hidden>
+          <div class="sheet-head">
+            <span class="sheet-title">合集《美国时政》· 109 集</span>
+            <button class="linkbtn" data-close-sheet>关闭</button>
+          </div>
+          <div class="sheet-body">
+            <div class="search">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>
+              <input type="text" placeholder="搜标题…" data-search="v4">
+            </div>
+            <div class="sheet-list" data-list="numbered-check"></div>
+          </div>
+          <div class="sheet-foot">
+            <span class="actionbar-count">已选 <b>1</b> 集</span>
+            <span class="actionbar-actions">
+              <button class="linkbtn" data-cancel="v4">取消</button>
+              <button class="btn is-solid" data-merge="v4">合并为一张卡片</button>
+            </span>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="stack">
+      <span class="stack-label">点「选集」→ <b>浮层盖在卡片上</b>（点行切换 / 勾选后合并 / 搜标题）</span>
+      <div class="card host" data-sheet-host>
+        <div class="head">
+          <div class="head-top">
+            <span class="head-icon"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="4"/><path d="M10 9l5 3-5 3z"/></svg></span>
+            <span class="head-title">B站链接</span>
+            <svg class="head-play" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M6 4l14 8-14 8z"/></svg>
+          </div>
+          <p class="head-desc">粘贴 B 站视频或合集链接</p>
+        </div>
+        <div class="body">
+          <div class="field">
+            <span class="field-label">链接</span>
+            <div class="input"><span>https://www.bilibili.com/video/BV1DTWw6UE1y</span></div>
+          </div>
+          <div class="preview">
+            <div class="cover-wrap" data-cover="mine"><span class="dur">16:11</span></div>
+            <div class="preview-info">
+              <span class="preview-title">中美社保对比,有哪些不同?</span>
+              <span class="preview-meta">内部看美国</span>
+            </div>
+          </div>
+          <button class="summary is-static" type="button" aria-expanded="true" tabindex="-1">
+            <span class="summary-title">合集《美国时政》</span>
+            <span class="summary-meta">109 集</span>
+            <span class="summary-tail">选集</span>
+            <svg class="summary-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>
+          </button>
+        </div>
+        <div class="result is-done"><span class="result-dot"></span><span class="result-meta">音轨已就绪</span></div>
+        <div class="sheet" data-sheet>
+          <div class="sheet-head">
+            <span class="sheet-title">合集《美国时政》· 109 集</span>
+            <button class="linkbtn" data-close-sheet>关闭</button>
+          </div>
+          <div class="sheet-body">
+            <div class="search">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>
+              <input type="text" placeholder="搜标题…" data-search="v4">
+            </div>
+            <div class="sheet-list" data-list="numbered-check"></div>
+          </div>
+          <div class="sheet-foot">
+            <span class="actionbar-count">已选 <b>1</b> 集</span>
+            <span class="actionbar-actions">
+              <button class="linkbtn" data-cancel="v4">取消</button>
+              <button class="btn is-solid" data-merge="v4">合并为一张卡片</button>
+            </span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <ul class="notes">
+    <li><b>来源</b><span>腾讯视频 choose_panel（选集浮层）/ Pilipala 与 bv 的底部 Sheet（标题写总数、打开定位当前集）/ Primer SelectPanel（内置过滤、关闭时生效）</span></li>
+    <li><b>收益</b><span><b>卡片高度与集数彻底解耦</b>：不管 9 集还是 300 集，卡片都是同一高度；列表能拿到比卡片更宽的空间（浮层可以比卡片宽）。</span></li>
+    <li><b>代价</b><span>多一层浮层要处理「点外面关掉 / Esc / 画布缩放」（本仓已有 <code>flowMenuStyle</code> 的缩放坑，见 <code>ScribeNode.vue</code> 顶部注释）；「选集」是一次显式动作，比就地展开多一次点击。</span></li>
+    <li><b>我自己定的</b><span>浮层宽度与卡片同宽、且<b>限高在卡片自身高度之内</b>（腾讯的选集浮层是覆盖在播放器上的大面板，卡片场景没有那么大空间；画布里让浮层盖住下面的说明更糟）；底部动作条的措辞。</span></li>
+  </ul>
+  <p class="meter" data-meter data-state="collapsed">量中…</p>
+</section>
+
+<!-- ============================ V5 ============================ -->
+<section class="demo v5" data-variant="F">
+  <h2>5. 海报名片墙：一屏 24 格，专治「有没有值得看的这一集」</h2>
+  <p class="src">
+    依据一：腾讯视频选集面板的实测尺寸 —— <code>.episode-item</code> <b>高 54px + margin 8px</b>（宽 54px 来自组件内联样式的默认值，可被数据覆盖），
+    当前项用「浅底 + 品牌色文字」（<code>background: rgba(0,213,211,.1); color: #00d5d3</code>），并配 <code>isNeedExpand</code> +「收起 / 查看全部」；
+    依据二：B 站自己的右侧合集会列表就有一支<b>带封面的卡片式</b>变体（<code>.base-video-sections-v1</code> 的 <code>.video-episode-card</code>）；
+    依据三：<a href="https://support.apple.com/en-sa/118239">Apple TV</a> 的下载流程把「整季 / 单集」并列成两个入口，而不是让人一集集找。
+    点格子切换当前集，鼠标悬停看标题。
+  </p>
+  <div class="pair">
+    <div class="stack">
+      <span class="stack-label">展开态（6 列 · 一格一集 · 悬停看标题 · 点格切换）</span>
+      <div class="card">
+        <div class="head">
+          <div class="head-top">
+            <span class="head-icon"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="4"/><path d="M10 9l5 3-5 3z"/></svg></span>
+            <span class="head-title">B站链接</span>
+            <svg class="head-play" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M6 4l14 8-14 8z"/></svg>
+          </div>
+          <p class="head-desc">粘贴 B 站视频或合集链接</p>
+        </div>
+        <div class="body">
+          <div class="field">
+            <span class="field-label">链接</span>
+            <div class="input"><span>https://www.bilibili.com/video/BV1DTWw6UE1y</span></div>
+          </div>
+          <div class="preview">
+            <div class="cover-wrap" data-cover="mine"><span class="dur">16:11</span></div>
+            <div class="preview-info">
+              <span class="preview-title">中美社保对比,有哪些不同?</span>
+              <span class="preview-meta">内部看美国</span>
+            </div>
+          </div>
+          <div>
+            <button class="summary" type="button" aria-expanded="true" data-toggle="v5">
+              <span class="summary-title">合集《美国时政》</span>
+              <span class="summary-meta">109 集</span>
+              <span class="summary-tail">收起</span>
+              <svg class="summary-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>
+            </button>
+            <div data-pane="v5">
+              <div class="tiles" data-tiles></div>
+              <div class="tile-preview" data-tile-preview>当前：<b>第 109 集 · 中美社保对比,有哪些不同?</b> · <span class="tnum">16:11</span></div>
+            </div>
+          </div>
+        </div>
+        <div class="result is-done"><span class="result-dot"></span><span class="result-meta">音轨已就绪</span></div>
+      </div>
+    </div>
+  </div>
+  <ul class="notes">
+    <li><b>来源</b><span>腾讯视频 .episode-item（高 54px + margin 8px + 选中态浅底 rgba(0,213,211,.1) + 品牌色文字）/ B 站 .base-video-sections-v1 的带封面卡片列表 / Apple TV「整季 or 单集」</span></li>
+    <li><b>收益</b><span>扫描密度最高：一屏（限高 232px）能看 <b>6 列 × 4 行 = 24 格</b>，是列表（7 行）的 <b>3.4 倍</b>；109 集从 16.15 屏降到约 4.6 屏。</span></li>
+    <li><b>代价</b><span>格子里只有序号，标题要靠悬停或下面那行「当前」提示；<b>靠封面判断内容对 B 站这种强标题场景不一定够</b> —— 腾讯那套是给有分集海报的剧集用的。这一套适合「先扫一遍看哪几集眼熟」，不适合「按标题找一集」。</span></li>
+    <li><b>我自己定的</b><span>格子用封面 + 序号角标（腾讯纯数字宫格没有封面，B 站的卡片式列表有封面但没格子）；下方「当前」提示行。</span></li>
+  </ul>
+  <p class="meter" data-meter data-state="expanded">量中…</p>
+</section>
+
+<table class="cmp">
+  <caption>五套原型自量（本页 DOM 实测，设计像素；卡片宽 380 固定）</caption>
+  <thead><tr><th>方案</th><th>收起态卡片高</th><th>展开态卡片高</th><th>一屏能看见几集</th><th>109 集要滚几屏</th><th>依据</th></tr></thead>
+  <tbody id="cmp-body"></tbody>
+</table>
+
+<script>
+/* 自量基础设施：必须先于各变体的初始化声明 —— setupMode 初次 paint 就会调 measure() */
+const r1 = (n) => Math.round(n * 10) / 10;
+const rows = [];
+
+/* 真实合集数据：[序号, 标题, 秒, 封面]。来源 /api/videos/preview（BV1DTWw6UE1y 的 ugcSeason）。 */
+const EPISODES = [[1,"委内瑞拉大选作弊？为什么美国如此执着于推翻委内瑞拉？",799,"https://i0.hdslb.com/bfs/archive/35fdc8144ffa6ceac011abf050095fab89fda0fc.jpg"],[2,"为何马来西亚申请加入金砖？中国帮助东南亚拒绝华尔街收割",650,"https://i2.hdslb.com/bfs/archive/9abce9a180a335c5fcf6ebaa227545eeb01d1340.jpg"],[3,"以色列总统访美引争议，战争背后的资本黑手与腐败",602,"https://i1.hdslb.com/bfs/archive/b29daceca072b14b18e7c83c25d4eccb3b6d488b.jpg"],[4,"巴黎奥运会宣传片群魔乱舞，文化霸权威胁下一代",321,"https://i2.hdslb.com/bfs/archive/c946ade43991ad5efd8dcc22ea1101b0777f5bcf.jpg"],[5,"特朗普再提欢迎中国电动车，但美国地方阻力重重，投资之路艰难",521,"https://i1.hdslb.com/bfs/archive/651bb3f2a77d90b49b199b979a5ed3cda27f068f.jpg"],[6,"美国工作真的轻松吗？数据调查三分之一的人打两份工维持生计",724,"https://i2.hdslb.com/bfs/archive/1c83ebb205b9eb872a1f21b08692b0cee19b6049.jpg"],[7,"特朗普最新访谈，去美元化会加速吗？",681,"https://i1.hdslb.com/bfs/archive/131a8000d0350843b1e92eb9c98e3cf6bfd63bab.jpg"],[8,"美国高端人才流失严重，中国成全球科研人才流入大国",635,"https://i0.hdslb.com/bfs/archive/0474fa0ef32c8a411a0090ab46b4c152d131fd70.jpg"],[9,"川普遭枪击！西方媒体却误导民众",294,"https://i2.hdslb.com/bfs/archive/891e191955822bad45f52bb9314d0fdd9a2a832d.jpg"],[10,"纽约人民和老鼠的战争，突显美国创新精神。",470,"https://i1.hdslb.com/bfs/archive/9caa35d5c9690399da5966e830205507673768c1.jpg"],[11,"美国人爱国热情下滑：独立日不再只是骄傲与庆典",395,"https://i1.hdslb.com/bfs/archive/af605e933cfcff3326937abcdc729f09a4e03866.jpg"],[12,"买车修车价格飞涨，揭秘美国汽车寡头如何操控市场价格",732,"https://i1.hdslb.com/bfs/archive/c8ab3cdcad62618fc805814341968aaf23b1c0aa.jpg"],[13,"美国老兵管理局150亿美金赤字，全因医药价格太高。为何美国医药价格如此昂贵？",654,"https://i0.hdslb.com/bfs/archive/85e77c33048c3f7240df4b1c170c591b9aacea84.jpg"],[14,"贸易战关税反噬自身，贸易战美国的困境",718,"https://i1.hdslb.com/bfs/archive/6c7a4513e6bee5263abfce0f8d9817199eb94c41.jpg"],[15,"美国兴奋剂丑闻曝光，双重标准展露无遗！",759,"https://i0.hdslb.com/bfs/archive/a75ac3e278613eb68cfa41f793d359d3af83479e.jpg"],[16,"美媒终于承认北溪管线被破坏的真相，北约开始甩锅模式",777,"https://i2.hdslb.com/bfs/archive/6b51918d96bf01c851cefa92a1582406365e2862.jpg"],[17,"为何金砖支付系统必然成功，美国制裁成最大推手",537,"https://i2.hdslb.com/bfs/archive/20202d010f53d719b1a910c8deb317b25e11526e.jpg"],[18,"金砖支付系统冲击全球市场，美国农业首当其冲",713,"https://i0.hdslb.com/bfs/archive/00525656e90785fe163d9183921775c9d9963f4b.jpg"],[19,"特朗普让美元加速衰落",625,"https://i0.hdslb.com/bfs/archive/9c7c76d6a2497b7595e5fae5078998cb9c66a0a0.jpg"],[20,"16亿美元反制中国影响法案，这笔钱会怎么花？",748,"https://i2.hdslb.com/bfs/archive/18b0932e76a7ac960d41607bcc390547f27135e2.jpg"],[21,"美国医疗为什么这么贵？产业化、游说与私有化的背后",933,"https://i0.hdslb.com/bfs/archive/2669ef055b87b7f7a1c9c6f522d67c3bef2a2877.jpg"],[22,"中国经济的真实体量，远超世界第二",1025,"https://i1.hdslb.com/bfs/archive/0b83bc0976940d5c925c400c27d4f2b51b9cf503.jpg"],[23,"美国港口罢工背后，反对科技进步的恶果",855,"https://i0.hdslb.com/bfs/archive/f7d7a8f75d96748fd87480951a99518646ea26a7.jpg"],[24,"美国人花这么多钱为什么还买不到药？药品短缺数量达历史最高",779,"https://i0.hdslb.com/bfs/archive/9f988459bd49ae1597daf3fbc614cd9b1f143020.jpg"],[25,"致川普的一封信（下）美国的外交挑战与对华策略",1089,"https://i1.hdslb.com/bfs/archive/6485880e4fb4974b157a23032b4aa737aba9524f.jpg"],[26,"认识一下新boss，和旧boss一个样",1339,"https://i2.hdslb.com/bfs/archive/252f41cbb0a047a034149bcdea6ad9e224c3fd24.jpg"],[27,"马斯克的效率部，这场改革的赢家与输家",1266,"https://i0.hdslb.com/bfs/archive/c13cd9028df3f2079bd49b0e76cc7de28238ab05.jpg"],[28,"为什么要给加拿大和墨西哥加关税？对中美有和影响？谁来承担？",1027,"https://i0.hdslb.com/bfs/archive/96c8f562b745681270e6603a07583869c192ec11.jpg"],[29,"川普带来的挑战和机遇",747,"https://i2.hdslb.com/bfs/archive/d6f9abb9ddb56388c33dc111d38cd385d66661e2.jpg"],[30,"美国联合健康保险（UHC）的问题",1496,"https://i1.hdslb.com/bfs/archive/7603ead8ce11758fc88687ad36b2e181614b42c2.jpg"],[31,"川普的减政改革，真的能让美国再次伟大吗？",1070,"https://i1.hdslb.com/bfs/archive/c0fbdc59be20e267095c633162ff55190b39b68b.jpg"],[32,"美国政府关门之争，谁才是美国的真王？",1100,"https://i1.hdslb.com/bfs/archive/fd5b3d4600245801e701f8865879bdcdbffaa648.jpg"],[33,"当美国四处挑动战争时，中国推广和平",1241,"https://i2.hdslb.com/bfs/archive/788a3e0bbb7656dc9934d5ca7cf0dccc3ae9c67f.jpg"],[34,"MAGA内斗：美国衰落与种族矛盾的缩影",658,"https://i1.hdslb.com/bfs/archive/1fa8a3b6498457f094f834cfdd7fba0d37dfdfcc.jpg"],[35,"美国经济数据背后的真相：繁荣还是假象？",996,"https://i0.hdslb.com/bfs/archive/68b2022c2e6f2688d9e60e66f47db672542492c8.jpg"],[36,"美国医疗体系，过度私有化造成的死亡螺旋",1113,"https://i1.hdslb.com/bfs/archive/47215111649ae488f438a9a66010d4be59129abc.jpg"],[37,"从高调宣传到无声无息：美国“一带一路”为何彻底失败？",1102,"https://i0.hdslb.com/bfs/archive/62ada396d61bb07ce67cac2493e7b7e0cf294b9c.jpg"],[38,"美国加州山火烧出的残酷真相，资本如何掌控千万人的生命线",992,"https://i1.hdslb.com/bfs/archive/1398c55a2250c6ea81ef7726980232500d22c152.jpg"],[39,"特朗普2.0，削减开支与减税背后的真实代价",936,"https://i1.hdslb.com/bfs/archive/f094e8e1610f3b771df6280e2158860849dd1fb7.jpg"],[40,"洋抖难民背后，数字主权与全球数字基础设施的较量",1076,"https://i1.hdslb.com/bfs/archive/17d258165e77c264760f59eaddca2112d547e6bb.jpg"],[41,"中美股市对比，为什么美股一直涨",1253,"https://i0.hdslb.com/bfs/archive/a8f7e2a6d8244cfc0b81b404b66247b8b7de5fc5.jpg"],[42,"印尼加入金砖：为什么选择中国，而不是西方？",916,"https://i2.hdslb.com/bfs/archive/feb911e8e0770b9b6e2d8b0494e5f4fd50222cfb.jpg"],[43,"特朗普与马斯克的“改革风暴”：隐藏在热点背后的那些事儿",897,"https://i0.hdslb.com/bfs/archive/203559d478e903a3c67a22ec79e0a523dbf80982.jpg"],[44,"清理加沙背后的资本利益链条",909,"https://i0.hdslb.com/bfs/archive/ef1c29b1beea6e738d7b88dbf83bc0ddf700556d.jpg"],[45,"再谈驱逐非法移民，真能让美国增加就业吗？",1135,"https://i1.hdslb.com/bfs/archive/fad966a8db35f99080a1d54148837727f2260d45.jpg"],[46,"盘点马斯克效率部的爆料，全是谎言",1140,"https://i2.hdslb.com/bfs/archive/a7ce9a5ef9694ad85d99be7fbbcf037deff0f4ce.jpg"],[47,"特朗普：币圈儿的“最大骗子”",1195,"https://i2.hdslb.com/bfs/archive/24577d33f82bdfc2dc1a4105ba2fa7cb0a520725.jpg"],[48,"美国比特币化债，就是一个天才到幻想",1151,"https://i0.hdslb.com/bfs/archive/bcef1ab46eb66dab83785334c108deb90f1ed506.jpg"],[49,"4月2日关税核弹将会引爆全球，深度解析中国的挑战与机遇",944,"https://i0.hdslb.com/bfs/archive/cfeecfb8680f54ec88ec087ce73713269147d224.jpg"],[50,"人类历史上最愚蠢的关税政策",1100,"https://i0.hdslb.com/bfs/archive/eb18b066f865a7e3266f280e649906d7d662a4b5.jpg"],[51,"特朗普在下大棋？详解米兰报告和海湖庄园协议",1312,"https://i2.hdslb.com/bfs/archive/91490c608a303ed7cbef9870040affd7373eb39c.jpg"],[52,"这一次绝对不能妥协，米兰最新演讲揭示美国最终目的",1189,"https://i2.hdslb.com/bfs/archive/da2fbe3282ef6afc5d2eca8449557775bda2c039.jpg"],[53,"去美国化，会让中国人日子过的更好",1267,"https://i2.hdslb.com/bfs/archive/0b668e82316204030400d90ca0f207382d02f74b.jpg"],[54,"贸易战，是我们拉动内循环的机遇",1088,"https://i2.hdslb.com/bfs/archive/b84246ede8e9b1ec5cad1efb803aa856afb4cf38.jpg"],[55,"贸易战，不是特朗普想停就能停的",968,"https://i2.hdslb.com/bfs/archive/9fab9756e0a06c68f662f588bc5cd259eba9fc04.jpg"],[56,"美国面对的损失，绝不仅仅是玩具娃娃",1222,"https://i1.hdslb.com/bfs/archive/bbea8e824159d216d768b00afeff5921b4cb8a1f.jpg"],[57,"巴菲特罕见警告美元崩溃！进口许可证能救美国？",1333,"https://i2.hdslb.com/bfs/archive/2f0be6f7a24502c3fb10703f3d555643b5e97505.jpg"],[58,"美乌矿产协议深度解析，魔鬼在细节",1150,"https://i2.hdslb.com/bfs/archive/d34683cd1b3eec10973b7849193667d8a6cbd4e8.jpg"],[59,"攻击哈佛大学，是一场宫廷式的革命",981,"https://i1.hdslb.com/bfs/archive/3baba8a63ec661e75b27f7795121461418406ebc.jpg"],[60,"\"大美丽法案\"劫贫济富，中美贫富差距对比，谁在真正解决问题？",1220,"https://i2.hdslb.com/bfs/archive/023f5b6be1586bd3dbf1025ad7e983eab17c4027.jpg"],[61,"洛杉矶骚乱是美国债务危机引起的，美国离内战还有多远",1008,"https://i2.hdslb.com/bfs/archive/6d343b119f9956553ae4d3e9fcf9990a6d6fa69d.jpg"],[62,"中东生死存亡，伊朗真的那么不堪吗？",813,"https://i2.hdslb.com/bfs/archive/cc2c7f7818af7e7f43af02d744b5e326aa24235c.jpg"],[63,"以伊冲突，对中美影响有多大？",1042,"https://i0.hdslb.com/bfs/archive/84afe406e1976fb6ebe7abcde291b1381573b9fa.jpg"],[64,"马斯克的美国党，天时地利人和",1227,"https://i2.hdslb.com/bfs/archive/9b6deafa8d10241b783c67244af5879b594f3791.jpg"],[65,"宾夕法尼亚计划，美元最后的堡垒",941,"https://i1.hdslb.com/bfs/archive/3fc69d0dc3aca35117ee538389014b0aa8c98adf.jpg"],[66,"稀土谈判仅完成50%！中国不着急达成协议",752,"https://i1.hdslb.com/bfs/archive/7f0d5a4b2e7561b9821dcd582c98c4583086db4b.jpg"],[67,"芯片关税100%：美国芯片制造真能回流吗？",858,"https://i2.hdslb.com/bfs/archive/bff12f1cb1dd7ad24c9fb1bcd3292585d97aa8fc.jpg"],[68,"相同的底层逻辑：美国砍掉教育部和“4+4”事件",813,"https://i1.hdslb.com/bfs/archive/1dac16726988e459a1c2736a1821b4074f793556.jpg"],[69,"特朗普180度大转弯！国家资本主义能救美国吗？",973,"https://i0.hdslb.com/bfs/archive/d00dbee090678badd2d6c187f240f360c912e11e.jpg"],[70,"为何美国社会如此的撕裂？",735,"https://i2.hdslb.com/bfs/archive/182bba3e3b7d837101aa36732a8005c7f09365c0.jpg"],[71,"美国的两种经济：富人繁荣，穷人消失",972,"https://i2.hdslb.com/bfs/archive/de615754d199927fb831a2868d6d97e9a456a54a.jpg"],[72,"纽约选出社会主义市长，白宫已成“恭王府”？",1067,"https://i0.hdslb.com/bfs/archive/2ee9556caad58a9202167c984b891dcd4f773509.jpg"],[73,"50年房贷是福是祸：揭开货币与债务的真相",860,"https://i1.hdslb.com/bfs/archive/2a10e58bfc1299328319e0cf6922c3e49bcf7462.jpg"],[74,"爱泼斯坦邮件揭秘：西方精英圈集体沉沦",942,"https://i0.hdslb.com/bfs/archive/5b3f9ec82991e52c2874d88071ead7ca073648b5.jpg"],[75,"俄乌真能停火？川普的和平计划28条到底是谁起草的",944,"https://i1.hdslb.com/bfs/archive/30f164fd0dcfee26b40cf975e3c02ce0dbb4f85b.jpg"],[76,"白宫旁的枪声，与美国今天的危机",982,"https://i1.hdslb.com/bfs/archive/5d254caa693cb9c1d26e0b0de29f1f28310e3300.jpg"],[77,"MAGA 的幻觉：为何文化战争无法拯救美国？",1015,"https://i2.hdslb.com/bfs/archive/09b07218db4e5d169adab23970e8ea56512b23da.jpg"],[78,"维持霸权的新策略：打造美洲堡垒",1130,"https://i2.hdslb.com/bfs/archive/ea6041af1d330e0f1b80d7b3e724536fcb5d06f3.jpg"],[79,"斩杀线：刻意设计的经济租",920,"https://i1.hdslb.com/bfs/archive/38242bba06a8dc7f9f30f66213760a7ee2c9f6cb.jpg"],[80,"美国梦是如何破灭的？",1032,"https://i2.hdslb.com/bfs/archive/0b9923e75125f010ac4c4c31411d793dbbea754c.jpg"],[81,"打完委内瑞拉，然后呢？",1069,"https://i1.hdslb.com/bfs/archive/f0f9b3dfa49c7bababc5f8957896d2a4ecc39718.jpg"],[82,"重温《帝国主义论》",1061,"https://i2.hdslb.com/bfs/archive/d6d98a1e3cef4726bfd1fe245abbbb01c9cfd372.jpg"],[83,"美国离内战还有多远？",1096,"https://i2.hdslb.com/bfs/archive/d6f72cd2f7daf4f0e9056aec514dbee21f0bf3b7.jpg"],[84,"伊朗如果倒下，接下来会发生什么？",952,"https://i2.hdslb.com/bfs/archive/eda9e9563ebe4dab0d53a77f5704345456d955ff.jpg"],[85,"特朗普的和平委员会，一个彻头彻尾的笑话？",910,"https://i1.hdslb.com/bfs/archive/5b76b123794d1d3dead820cf49e2e655ee2f134e.jpg"],[86,"从伊拉克到伊朗：美国人民再次被出卖",1106,"https://i0.hdslb.com/bfs/archive/97b9482956d3301faf0a274357744129e9d26870.jpg"],[87,"伊朗战争背后的资本逻辑：银行家的战争",1074,"https://i0.hdslb.com/bfs/archive/4ef25173a4c395d3a69597082d10982096a6ede1.jpg"],[88,"伊朗战争与石油美元体系的崩塌",947,"https://i2.hdslb.com/bfs/archive/fb2a100fc82333f462f85a77adedd1a24fc13177.jpg"],[89,"伊朗的非对称战争逻辑",1047,"https://i2.hdslb.com/bfs/archive/1282a80a4fe47809458686347ca71c17090c4aec.jpg"],[90,"美伊战争是金融资本推动的战争",891,"https://i0.hdslb.com/bfs/archive/7e4bc836ba32ba2731651ccdef905c2e1c5f16ad.jpg"],[91,"美伊战争：下一步是派遣地面部队",1082,"https://i2.hdslb.com/bfs/archive/1856837edb907001f09de284841ad2bf93a3bc49.jpg"],[92,"接下来是万物危机....",1075,"https://i0.hdslb.com/bfs/archive/7a13a03d3ed1cacf378d37e299b8d0073188021b.jpg"],[93,"特朗普又又又遇刺，背后撕裂的美国",1009,"https://i2.hdslb.com/bfs/archive/b91abe3ee3b59d4959cc6c41a09c78348dc5345e.jpg"],[94,"AI不是威胁，垄断才是",997,"https://i1.hdslb.com/bfs/archive/400beef2b7ee279c6610a519f68167accee5ed99.jpg"],[95,"AI投资占美国75%的GDP增长！AI绑架美国经济",933,"https://i2.hdslb.com/bfs/archive/74e8ee327567ff1b9c830e6d7e6da41eccd7e08b.jpg"],[96,"私募和AI合体了。。OpenAI，Anthropic和黑石",1018,"https://i1.hdslb.com/bfs/archive/4dc9f2833631b9ca7db862620a3ac53a85b21290.jpg"],[97,"面对AI裁员，中美两种截然不同的态度",1159,"https://i2.hdslb.com/bfs/archive/3267ba2c414b68e78dd3627806f8486764b1d9b6.jpg"],[98,"加速主义：比法西斯主义更糟糕",1123,"https://i0.hdslb.com/bfs/archive/97dfe45c36722f6b5b4b85751278bfc5291422e9.jpg"],[99,"SpaceX上市：下一个东印度公司？",1042,"https://i0.hdslb.com/bfs/archive/5a4f5a7f92409cf2c19331a8ced7de8d71127b7b.jpg"],[100,"十年换七个首相：英国的问题在金融",1092,"https://i2.hdslb.com/bfs/archive/aa0a2796c2cb00d58a78009d2515352d38c8245e.jpg"],[101,"离岸信托避税时代，彻底终结",870,"https://i0.hdslb.com/bfs/archive/fd9bc0ab9536f0ab8b94a237331fdd7b4c8f8b17.jpg"],[102,"AI的副作用，把学生变成末人",1085,"https://i0.hdslb.com/bfs/archive/ae0a6c0ae11f73993eb6c860eb51647bdfd353de.jpg"],[103,"回顾911，CIA做错了什么？",964,"https://i1.hdslb.com/bfs/archive/d95cbfec08eaeb8f6760cb5b0ddeca466633e241.jpg"],[104,"AI又双叒叕来毁灭人类了？",952,"https://i0.hdslb.com/bfs/archive/8b407573a66a97f7c733d1d31e7b23ca540f1e59.jpg"],[105,"美联储加息，能压住利率吗？",917,"https://i2.hdslb.com/bfs/archive/00b0bd7049f7bfbe424eb1bd102f816fd3897a32.jpg"],[106,"改善中美关系，有两个突破口",927,"https://i1.hdslb.com/bfs/archive/fd3a9abf151afe5b2f1c9b71dc6f6d668404a460.jpg"],[107,"中美八项共识：下一步是什么",940,"https://i2.hdslb.com/bfs/archive/2066bf73fb4c448080bf292edc0785abfca045f1.jpg"],[108,"Anthropic上市文件泄露，2万亿估值怎么算？",1173,"https://i2.hdslb.com/bfs/archive/1c1fd8a306137453101a13fc8353262e1258a66b.jpg"],[109,"中美社保对比，有哪些不同？",971,"https://i0.hdslb.com/bfs/archive/b1c4212ff2bffd58a4593b7da4b7d09b2c2da330.jpg"]];
+const CURRENT_INDEX = 109;
+const COLLECTION_TITLE = "美国时政";
+const MINE_COVER = "https://i0.hdslb.com/bfs/archive/b1c4212ff2bffd58a4593b7da4b7d09b2c2da330.jpg";
+
+function fmtDuration(sec) {
+  const s = Math.max(0, Math.round(sec));
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const ss = s % 60;
+  return h > 0
+    ? h + ":" + String(m).padStart(2, "0") + ":" + String(ss).padStart(2, "0")
+    : m + ":" + String(ss).padStart(2, "0");
+}
+
+/* 卡片里的封面：真机用的是同一个 hdslb 地址；断网时退化成灰块，不影响排版判断。 */
+for (const host of document.querySelectorAll('[data-cover="mine"]')) {
+  const img = document.createElement("img");
+  img.className = "cover";
+  img.src = MINE_COVER;
+  img.alt = "";
+  img.referrerPolicy = "no-referrer";
+  img.addEventListener("error", () => img.remove());
+  host.prepend(img);
+}
+
+/* ---------------- 列表渲染：四种行模板 ---------------- */
+function rowEl(ep, kind, opts) {
+  const [index, title, dur, cover] = ep;
+  const row = document.createElement("div");
+  row.className = "row" + (index === CURRENT_INDEX ? " is-current" : "");
+  row.dataset.index = String(index);
+  row.dataset.title = title;
+  const isMulti = kind === "numbered" || kind === "check";
+  if (isMulti) {
+    const cb = document.createElement("input");
+    cb.type = "checkbox";
+    cb.className = "check";
+    cb.checked = Boolean(opts && opts.checked && opts.checked.has(index));
+    cb.setAttribute("aria-label", "勾选以合并：第 " + index + " 集");
+    cb.addEventListener("click", (e) => e.stopPropagation());
+    cb.addEventListener("change", () => row.dispatchEvent(new CustomEvent("rowcheck", { bubbles: true, detail: { index, checked: cb.checked } })));
+    row.append(cb);
+  }
+  if (kind === "numbered") {
+    const no = document.createElement("span");
+    no.className = "row-no";
+    no.textContent = String(index);
+    row.append(no);
+  }
+  const name = document.createElement("span");
+  name.className = "row-name";
+  name.textContent = title;
+  name.title = index === CURRENT_INDEX ? "" : title;
+  row.append(name);
+  const d = document.createElement("span");
+  d.className = "row-dur";
+  d.textContent = fmtDuration(dur);
+  row.append(d);
+  if (kind === "rows") {
+    const go = document.createElement("span");
+    go.className = "row-go";
+    go.textContent = "切换";
+    row.append(go);
+  }
+  return row;
+}
+
+const kindOf = {
+  "plain-check": "check",
+  rows: "rows",
+  numbered: "numbered",
+  "numbered-check": "numbered",
+};
+for (const list of document.querySelectorAll("[data-list]")) {
+  const kind = kindOf[list.dataset.list];
+  for (const ep of EPISODES) list.append(rowEl(ep, kind));
+}
+
+/* ---------------- V0 / V1：勾选计数（与真机同款：至少 2 集才能合并） ---------------- */
+for (const list of document.querySelectorAll('[data-list="plain-check"], [data-list="numbered-check"]')) {
+  const card = list.closest(".card");
+  const footCount = card.querySelector(".picker-foot .picker-count, .sheet-foot .actionbar-count");
+  const mergeBtn = card.querySelector(".picker-foot .btn, .sheet-foot .btn");
+  const hint = card.querySelector(".picker-hint");
+  const initial = new Set([CURRENT_INDEX]);
+  const checked = new Set(initial);
+  list.addEventListener("rowcheck", (e) => {
+    const i = e.detail.index;
+    if (e.detail.checked) checked.add(i);
+    else checked.delete(i);
+    update();
+  });
+  function update() {
+    const n = checked.size;
+    if (footCount) {
+      footCount.innerHTML = card.querySelector(".sheet-foot")
+        ? "已选 <b>" + n + "</b> 集"
+        : "勾选 " + n + " 集";
+    }
+    if (mergeBtn) mergeBtn.disabled = n < 2;
+    if (hint) {
+      hint.textContent = n >= 2 ? "" : n === 0 ? "勾选 2 集及以上才能合并" : "已勾选 1 集 · 再勾 1 集才能合并";
+      hint.hidden = n >= 2;
+    }
+  }
+  update();
+}
+
+/* ---------------- V1 / V5 的展开收起 ---------------- */
+for (const btn of document.querySelectorAll("[data-toggle]")) {
+  const key = btn.dataset.toggle;
+  const pane = document.querySelector('[data-pane="' + key + '"]');
+  btn.addEventListener("click", () => {
+    const open = pane.hidden;
+    pane.hidden = !open;
+    btn.setAttribute("aria-expanded", String(open));
+    const tail = btn.querySelector(".summary-tail");
+    if (tail) tail.textContent = open ? "收起" : "已选 1 集";
+    measure();
+  });
+}
+
+/* ---------------- V2：浏览态 ↔ 选择模式 ---------------- */
+function setupMode(rootSel, opts) {
+  const root = document.querySelector(rootSel);
+  const list = root.querySelector("[data-list]");
+  const actionbar = root.querySelector("[data-actionbar]");
+  const enterBtn = root.querySelector("[data-enter]");
+  const cancelBtn = root.querySelector("[data-cancel]");
+  const mergeBtn = root.querySelector("[data-merge]");
+  const countEl = root.querySelector(".actionbar-count");
+  const tabs = root.querySelector(".modetabs");
+  const summaryBtn = root.closest(".card").querySelector(".summary");
+  let multi = opts.startMulti || false;
+  const checked = new Set([CURRENT_INDEX]);
+
+  function paint() {
+    for (const row of list.querySelectorAll(".row")) {
+      const i = Number(row.dataset.index);
+      let cb = row.querySelector(".check");
+      if (multi && !cb) {
+        const el = document.createElement("input");
+        el.type = "checkbox";
+        el.className = "check";
+        el.setAttribute("aria-label", "勾选以合并：第 " + i + " 集");
+        el.addEventListener("click", (e) => e.stopPropagation());
+        el.addEventListener("change", () => {
+          el.checked ? checked.add(i) : checked.delete(i);
+          paintCount();
+        });
+        row.prepend(el);
+        cb = el;
+      } else if (!multi && cb) {
+        cb.remove();
+      }
+      if (cb) cb.checked = checked.has(i);
+      row.title = multi ? "" : i === CURRENT_INDEX ? "" : row.dataset.title;
+    }
+    if (actionbar) actionbar.hidden = !multi;
+    if (enterBtn) enterBtn.hidden = multi;
+    if (tabs) tabs.classList.toggle("is-multi", multi);
+    paintCount();
+    if (window.__measureReady) measure();
+  }
+  function paintCount() {
+    if (!countEl) return;
+    countEl.innerHTML = "已选 <b>" + checked.size + "</b> 集" + (opts.countSuffix || "");
+    if (mergeBtn) mergeBtn.disabled = checked.size < 2;
+  }
+  list.addEventListener("click", (e) => {
+    const row = e.target.closest(".row");
+    if (!row) return;
+    const i = Number(row.dataset.index);
+    if (multi) {
+      checked.has(i) ? checked.delete(i) : checked.add(i);
+      paint();
+    } else {
+      for (const r of list.querySelectorAll(".row")) r.classList.toggle("is-current", r === row);
+      const meta = summaryBtn ? summaryBtn.querySelector(".summary-meta") : null;
+      if (meta) meta.textContent = "第 " + i + " 集";
+    }
+  });
+  if (enterBtn) enterBtn.addEventListener("click", () => { multi = true; paint(); });
+  if (cancelBtn) cancelBtn.addEventListener("click", () => { multi = false; paint(); });
+  if (mergeBtn) {
+    mergeBtn.addEventListener("click", () => {
+      mergeBtn.textContent = "已合并 " + checked.size + " 集";
+      setTimeout(() => {
+        mergeBtn.textContent = "合并为一张卡片";
+        multi = false;
+        if (actionbar) actionbar.hidden = true;
+        paint();
+        // 合并完成 = 这一次配置结束：整块收起成一行（与「跑完一次就收起来」同一种收法）
+        const n = checked.size;
+        collapseAfterMerge(n);
+      }, 600);
+    });
+  }
+  /** 合并后收起：只留「合集名 + 集数 + 已合并 N 集 + 展开」。 */
+  function collapseAfterMerge(n) {
+    if (!actionbar || actionbar.hidden === false) return;
+    let done = root.querySelector("[data-merged]");
+    const rows = root.querySelector("[data-list]");
+    if (!done) {
+      done = document.createElement("div");
+      done.className = "merged-line";
+      done.setAttribute("data-merged", "");
+      rows.after(done);
+    }
+    done.innerHTML = "<span>已合并 <b>" + n + "</b> 集为一张卡片</span>";
+    const again = document.createElement("button");
+    again.type = "button";
+    again.className = "linkbtn is-strong";
+    again.textContent = "再选一次";
+    again.addEventListener("click", () => {
+      done.remove();
+      rows.hidden = false;
+      multi = true;
+      paint();
+    });
+    done.append(again);
+    rows.hidden = true;
+    if (enterBtn) enterBtn.hidden = true;
+    if (window.__measureReady) measure();
+  }
+  if (multi) paint();
+  return { paint, checked, isMulti: () => multi };
+}
+const v2 = setupMode('[data-mode="v2"]', { startMulti: false, countSuffix: " · 合集共 109 集" });
+const v3 = setupMode('[data-mode="v3"]', { startMulti: true, countSuffix: " · 显示 109 集" });
+
+function locate(list) {
+  const cur = list && list.querySelector(".row.is-current");
+  if (!cur) return;
+  list.scrollTop = (cur.offsetTop - list.offsetTop) - (list.clientHeight - cur.offsetHeight) / 2;
+}
+/* 打开面板就把当前集滚到视野中间 —— Pilipala、bv 都是这么做的；本仓现状是停在顶部。
+   用 scrollTop 手算，不用 scrollIntoView（后者会顺手把整页也滚了）。 */
+for (const list of document.querySelectorAll('[data-mode="v2"] [data-list], [data-mode="v3"] [data-list], [data-sheet] [data-list]')) locate(list);
+
+/* ---------------- V3 / V4：搜索、全选、反选、shift 区间 ---------------- */
+function wireSearch(root, input, list, countEl, suffix) {
+  function apply() {
+    const q = input.value.trim();
+    let hit = 0;
+    for (const row of list.querySelectorAll(".row")) {
+      const ok = !q || row.dataset.title.includes(q);
+      row.hidden = !ok;
+      if (ok) hit += 1;
+    }
+    let empty = list.querySelector(".empty");
+    if (hit === 0) {
+      if (!empty) {
+        empty = document.createElement("div");
+        empty.className = "empty";
+        list.append(empty);
+      }
+      empty.textContent = "这 109 集里没有标题含「" + q + "」的";
+    } else if (empty) {
+      empty.remove();
+    }
+    if (countEl) {
+      const n = countEl.querySelector("b").textContent;
+      countEl.innerHTML = "已选 <b>" + n + "</b> 集 · " + (q ? "命中 " + hit + " 集" : "显示 109 集");
+    }
+    return hit;
+  }
+  input.addEventListener("input", () => { apply(); measure(); });
+  return apply;
+}
+{
+  const root = document.querySelector('[data-mode="v3"]');
+  const list = root.querySelector("[data-list]");
+  const countEl = root.querySelector(".actionbar-count");
+  const apply = wireSearch(root, root.querySelector("[data-search]"), list, countEl, "");
+  root.querySelector("[data-all]").addEventListener("click", () => {
+    for (const row of list.querySelectorAll(".row")) if (!row.hidden) row.querySelector(".check").checked = true;
+    // 同步到 v3 的选中集合
+    for (const row of list.querySelectorAll(".row")) if (!row.hidden) v3.checked.add(Number(row.dataset.index));
+    v3.paint();
+  });
+  root.querySelector("[data-invert]").addEventListener("click", () => {
+    const visible = [...list.querySelectorAll(".row")].filter((r) => !r.hidden).map((r) => Number(r.dataset.index));
+    for (const i of visible) v3.checked.has(i) ? v3.checked.delete(i) : v3.checked.add(i);
+    v3.paint();
+  });
+  // shift 点按做区间选择（Bilibili-Evolved 的 shiftSelect）
+  let anchor = null;
+  list.addEventListener("click", (e) => {
+    const row = e.target.closest(".row");
+    if (!row || !e.shiftKey || !anchor) { anchor = row ? Number(row.dataset.index) : null; return; }
+    const a = Number(row.dataset.index);
+    const lo = Math.min(anchor, a);
+    const hi = Math.max(anchor, a);
+    const visible = [...list.querySelectorAll(".row")].filter((r) => !r.hidden).map((r) => Number(r.dataset.index));
+    const inRange = visible.filter((i) => i >= lo && i <= hi);
+    const allOn = inRange.every((i) => v3.checked.has(i));
+    for (const i of inRange) allOn ? v3.checked.delete(i) : v3.checked.add(i);
+    anchor = a;
+    v3.paint();
+  });
+  window.__v3Search = apply;
+}
+for (const sheet of document.querySelectorAll("[data-sheet]")) {
+  const list = sheet.querySelector("[data-list]");
+  const countEl = sheet.querySelector(".actionbar-count");
+  wireSearch(sheet, sheet.querySelector("[data-search]"), list, countEl, "");
+}
+
+/* ---------------- V4：浮层开合（两张卡：一张关着、一张默认打开） ---------------- */
+for (const host of document.querySelectorAll("[data-sheet-host]")) {
+  const sheet = host.querySelector("[data-sheet]");
+  const openBtn = host.querySelector("[data-open-sheet]");
+  const closeIt = () => {
+    sheet.hidden = true;
+    if (openBtn) openBtn.setAttribute("aria-expanded", "false");
+    if (window.__measureReady) measure();
+  };
+  if (openBtn) {
+    openBtn.addEventListener("click", () => {
+      sheet.hidden = false;
+      openBtn.setAttribute("aria-expanded", "true");
+      locate(sheet.querySelector("[data-list]"));
+      if (window.__measureReady) measure();
+    });
+  }
+  sheet.querySelector("[data-close-sheet]").addEventListener("click", closeIt);
+  sheet.querySelector("[data-cancel]").addEventListener("click", closeIt);
+  sheet.querySelector("[data-merge]").addEventListener("click", () => {
+    closeIt();
+    if (openBtn) openBtn.querySelector(".summary-tail").textContent = "已选 2 集";
+  });
+}
+
+/* ---------------- V5：海报名片墙 ---------------- */
+{
+  const tiles = document.querySelector("[data-tiles]");
+  const note = document.querySelector("[data-tile-preview]");
+  for (const [index, title, dur, cover] of EPISODES) {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "tile" + (index === CURRENT_INDEX ? " is-current" : "");
+    b.dataset.index = String(index);
+    b.title = "第 " + index + " 集 · " + title;
+    const img = document.createElement("img");
+    img.src = cover;
+    img.alt = "";
+    img.loading = "lazy";
+    img.referrerPolicy = "no-referrer";
+    img.addEventListener("error", () => { img.remove(); b.classList.remove("has-cover"); });
+    img.addEventListener("load", () => b.classList.add("has-cover"));
+    const span = document.createElement("span");
+    span.textContent = String(index);
+    b.append(img, span);
+    b.addEventListener("click", () => {
+      for (const t of tiles.querySelectorAll(".tile")) t.classList.toggle("is-current", t === b);
+      note.innerHTML = "当前：<b>第 " + index + " 集 · " + title + "</b> · <span class=\"tnum\">" + fmtDuration(dur) + "</span>";
+    });
+    b.addEventListener("mouseenter", () => {
+      note.innerHTML = "第 " + index + " 集 · " + title + " · <span class=\"tnum\">" + fmtDuration(dur) + "</span>";
+    });
+    b.addEventListener("mouseleave", () => {
+      const cur = tiles.querySelector(".tile.is-current");
+      const i = Number(cur.dataset.index);
+      const ep = EPISODES.find((e) => e[0] === i);
+      note.innerHTML = "当前：<b>第 " + i + " 集 · " + ep[1] + "</b> · <span class=\"tnum\">" + fmtDuration(ep[2]) + "</span>";
+    });
+    tiles.append(b);
+  }
+  const cur = tiles.querySelector(".tile.is-current");
+  if (cur) cur.scrollIntoView({ block: "center" });
+}
+
+/* ---------------- 自量 + 对照表 ---------------- */
+function visibleItems(list) {
+  const row = list.querySelector(".row");
+  if (!row) return null;
+  const rh = row.getBoundingClientRect().height;
+  const gap = parseFloat(getComputedStyle(list).rowGap || "0") || 0;
+  return Math.floor((list.clientHeight + gap) / (rh + gap));
+}
+function measure() {
+  rows.length = 0;
+  const push = (name, o) => rows.push(Object.assign({ name }, o));
+
+  // 现状
+  {
+    const card = document.querySelector(".v0 .card");
+    const list = card.querySelector(".picker-list");
+    const row = list.querySelector(".row");
+    const rowH = row.getBoundingClientRect().height;
+    push("现状（基线）", {
+      collapsed: "—（没有收起态）",
+      expanded: r1(card.getBoundingClientRect().height) + "px",
+      perScreen: visibleItems(list) + " 整行",
+      screens: r1(list.scrollHeight / list.clientHeight) + " 屏",
+      rowH: r1(rowH),
+      limit: list.clientHeight,
+      ratio: r1(list.clientHeight / rowH),
+      source: "本仓现状",
+    });
+  }
+  // V1
+  {
+    const card = document.querySelector(".v1 .stack .card");
+    const openCard = document.querySelector(".v1 [data-card='v1-open']");
+    push("1 折叠加摘要", {
+      collapsed: r1(card.getBoundingClientRect().height) + "px",
+      expanded: r1(openCard.getBoundingClientRect().height) + "px",
+      perScreen: "7 行（同现状）",
+      screens: "16.15 屏（同现状）",
+      source: "WinUI Expander / HIG Disclosure",
+    });
+  }
+  // V2
+  {
+    const collapsed = document.querySelector(".v2 .stack:first-child .card");
+    const open = document.querySelector('[data-mode="v2"]').closest(".card");
+    const list = document.querySelector('[data-mode="v2"] [data-list]');
+    push("2 单轨两模式", {
+      collapsed: r1(collapsed.getBoundingClientRect().height) + "px",
+      expanded: r1(open.getBoundingClientRect().height) + "px",
+      perScreen: visibleItems(list) + " 整行",
+      screens: r1(list.scrollHeight / list.clientHeight) + " 屏",
+      source: "M3 Lists / M3 Selection / Android CAB",
+    });
+  }
+  // V3
+  {
+    const open = document.querySelector('[data-mode="v3"]').closest(".card");
+    const list = document.querySelector('[data-mode="v3"] [data-list]');
+    push("3 加长列表工具", {
+      collapsed: "同上（可复用摘要行）",
+      expanded: r1(open.getBoundingClientRect().height) + "px",
+      perScreen: visibleItems(list) + " 整行",
+      screens: r1(list.scrollHeight / list.clientHeight) + " 屏",
+      source: "B站创作中心 / Bilibili-Evolved / antd",
+    });
+  }
+  // V4（浮层是绝对定位，不影响卡片高度；它自己多高单独量，量完恢复原来的开合状态）
+  let sheetH = 0;
+  {
+    const card = document.querySelector("[data-sheet-host]");
+    const sheet = document.querySelector("[data-sheet]");
+    const list = sheet.querySelector("[data-list]");
+    const wasHidden = sheet.hidden;
+    if (wasHidden) {
+      sheet.hidden = false;
+      sheet.style.visibility = "hidden";
+    }
+    sheetH = sheet.getBoundingClientRect().height;
+    const sheetList = visibleItems(list);
+    const sheetScreens = r1(list.scrollHeight / list.clientHeight);
+    if (wasHidden) {
+      sheet.hidden = true;
+      sheet.style.visibility = "";
+    }
+    push("4 选集浮层", {
+      collapsed: r1(card.getBoundingClientRect().height) + "px",
+      expanded: r1(card.getBoundingClientRect().height) + "px",
+      perScreen: sheetList + " 整行",
+      screens: sheetScreens + " 屏",
+      source: "腾讯 choose_panel / Pilipala·bv Sheet / Primer SelectPanel",
+    });
+  }
+  // V5
+  {
+    const card = document.querySelector(".v5 .card");
+    const tiles = document.querySelector("[data-tiles]");
+    const cols = getComputedStyle(tiles).gridTemplateColumns.split(" ").length;
+    const tileH = tiles.querySelector(".tile").getBoundingClientRect().height;
+    const gap = parseFloat(getComputedStyle(tiles).rowGap) || 0;
+    const rowsInView = Math.floor((tiles.clientHeight + gap) / (tileH + gap));
+    const perScreen = cols * rowsInView;
+    push("5 海报名片墙", {
+      collapsed: "同上（可复用摘要行）",
+      expanded: r1(card.getBoundingClientRect().height) + "px",
+      perScreen: cols + " 列 × " + rowsInView + " 行 = " + perScreen + " 格",
+      density: r1(perScreen / (rows[0].ratio || 7.18)),
+      screens: r1(tiles.scrollHeight / tiles.clientHeight) + " 屏",
+      source: "腾讯 .episode-item / B站卡片式合集列表",
+    });
+  }
+
+  for (const demo of document.querySelectorAll(".demo")) {
+    const meter = demo.querySelector("[data-meter]");
+    if (!meter) continue;
+    const v = demo.dataset.variant;
+    const text = {
+      A: "真机实测：卡片 <b>588px</b> 全展开 · 选集面板 <b>320px</b>（占卡片 <b>54.4%</b>）· 列表限高 <b>224px</b> 行高 <b>31.2px</b> → 一屏 <b>6 整行</b>（第 7 行只露 79%）、看完 <b>16.15 屏</b> · 「已勾选 1 集」的那一集在第 <b>109/109</b> 位，屏幕上找不到 · 冷加载节点高度 212.3px → 588px（<b>+375.7px / +177%</b>）",
+      B: "本页原型自量：卡片 <b>" + rows[1].collapsed + "</b>（收起，−" + r1(588 - parseFloat(rows[1].collapsed)) + "px / −" + Math.round((1 - parseFloat(rows[1].collapsed) / 588) * 100) + "%）→ 展开 <b>" + rows[1].expanded + "</b>",
+      C: "本页原型自量：收起 <b>" + rows[2].collapsed + "</b> · 展开 <b>" + rows[2].expanded + "</b>（浏览态与多选态同高，模式切换不改变卡片高度）",
+      D: "本页原型自量：展开 <b>" + rows[3].expanded + "</b> · 一屏 <b>" + rows[3].perScreen + "</b>；搜索是即时过滤，命中数写在动作条上（试试搜「特朗普」/「关税」/「中国」）",
+      E: "本页原型自量：卡片恒定 <b>" + rows[4].collapsed + "</b>（浮层绝对定位，不改卡片高度）· 浮层自身 <b>" + r1(sheetH) + "px</b>；一屏 <b>" + rows[4].perScreen + "</b>",
+      F: "本页原型自量：展开 <b>" + rows[5].expanded + "</b> · 一屏 <b>" + rows[5].perScreen + "</b> —— 扫描密度是列表（" + rows[0].ratio + " 行）的 <b>" + rows[5].density + "×</b> · 109 集 <b>" + rows[5].screens + "</b>",
+    }[v];
+    if (text) meter.innerHTML = text;
+  }
+
+  document.getElementById("cmp-body").innerHTML = rows
+    .map((r) => "<tr><td>" + r.name + "</td><td class='num'>" + r.collapsed + "</td><td class='num'>" + r.expanded + "</td><td class='num'>" + r.perScreen + "</td><td class='num'>" + r.screens + "</td><td>" + r.source + "</td></tr>")
+    .join("");
+}
+window.__measureReady = true;
+measure();
+window.addEventListener("resize", measure);
+window.__demoMetrics = () => rows.map((r) => Object.assign({}, r));
+
+/* ---------------- 过滤 / 放大 ---------------- */
+for (const btn of document.querySelectorAll(".bar [data-filter]")) {
+  btn.addEventListener("click", () => {
+    const f = btn.dataset.filter;
+    for (const b of document.querySelectorAll(".bar [data-filter]")) b.classList.toggle("active", b === btn);
+    for (const demo of document.querySelectorAll(".demo")) demo.hidden = f !== "all" && demo.dataset.variant !== f;
+    measure();
+  });
+}
+document.getElementById("zoom").addEventListener("click", (e) => {
+  document.body.classList.toggle("zoomed");
+  e.target.textContent = document.body.classList.contains("zoomed") ? "还原 1×" : "放大 1.5×";
+  measure();
+});
+</script>
+</body>
+</html>

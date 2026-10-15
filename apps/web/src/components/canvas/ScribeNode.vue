@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { computed, defineAsyncComponent, h, onBeforeUnmount, onMounted, provide, ref, watch, type Component } from "vue";
+import { computed, defineAsyncComponent, h, nextTick, onBeforeUnmount, onMounted, provide, reactive, ref, watch, type Component } from "vue";
 import { useRouter } from "vue-router";
+import { ElButton } from "element-plus/es/components/button/index.mjs";
 import { ElInput } from "element-plus/es/components/input/index.mjs";
 import { ElMessageBox } from "element-plus/es/components/message-box/index.mjs";
 import { ElOption, ElSelect } from "element-plus/es/components/select/index.mjs";
@@ -8,7 +9,7 @@ import { ElSwitch } from "element-plus/es/components/switch/index.mjs";
 import { ElTooltip } from "element-plus/es/components/tooltip/index.mjs";
 import { ElUpload, type UploadRequestOptions } from "element-plus/es/components/upload/index.mjs";
 import { PhBookOpenText, PhCloud, PhDotsThreeVertical, PhFileArrowDown, PhFileText, PhFunnel, PhGitBranch, PhGitMerge, PhListChecks, PhMagicWand, PhMicrophone, PhPlay, PhShareNetwork, PhSlidersHorizontal, PhSparkle, PhSwap, PhTreeStructure, PhUploadSimple, PhVideo, PhX } from "@phosphor-icons/vue";
-import { CircleAlert } from "lucide-vue-next";
+import { ChevronDown, CircleAlert } from "lucide-vue-next";
 import { toast } from "@/lib/toast";
 import { Handle, Position, useVueFlow, type NodeProps } from "@vue-flow/core";
 import { ContextMenuContent, ContextMenuItem, ContextMenuPortal, ContextMenuRoot, ContextMenuSeparator, ContextMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuPortal, DropdownMenuRoot, DropdownMenuSeparator, DropdownMenuTrigger, PopoverContent, PopoverPortal, PopoverRoot, PopoverTrigger } from "reka-ui";
@@ -26,6 +27,7 @@ import PickFields from "./node-cards/PickFields.vue";
 import { useSegmentPick } from "@/composables/useSegmentPick";
 import { renderMarkdown } from "@/lib/markdown";
 import { cachePreview, readCachedPreview } from "@/utils/bili-preview-cache";
+import { PICKER_COPY, collapsesAfterRun, pickerKey, pickerSummary, readPickerOpen, writePickerOpen, type PickerKind } from "@/utils/bili-picker";
 import { fmtCharCount, fmtDuration } from "@/utils/run-segments";
 import { usePromptsStore } from "@/stores/prompts";
 import { useSettingsStore } from "@/stores/settings";
@@ -81,6 +83,28 @@ const biliItems = computed(() => (Array.isArray(data.value.items) ? data.value.i
 const distinctBvids = computed(() => new Set(biliItems.value.map((item) => item.bvid)).size);
 const isCollection = computed(() => biliItems.value.length > 1);
 
+/**
+ * 选集面板：收起（一行摘要）/ 展开（列表）。勾选位**常驻可见**，悬停不改任何东西。
+ *
+ * 点行 = 把节点切到那一集；勾选框 = 攒「要合并的那几集」（≥ 2 项时底部才出动作条）。
+ * 收紧在这里的还有几条实测过的老毛病：限高与行节律对齐（不切半行）、展开时把当前集滚进视野、
+ * 合并完成与跑完一次都回到收起。措辞见 `utils/bili-picker.ts`；
+ * 调研与这次返工的来龙去脉见 `docs/research/collection-picker-research.md`。
+ */
+const PICKER_KINDS: PickerKind[] = ["pages", "season"];
+/** 展开态的键带 bvid：换视频回到收起态，同一个视频在节点被卸载重挂后保住状态。 */
+function pickerStorageKey(kind: PickerKind) {
+  return pickerKey(String(props.id ?? ""), data.value.bvid, kind);
+}
+const pickerOpen = reactive<Record<PickerKind, boolean>>({
+  pages: readPickerOpen(pickerStorageKey("pages")),
+  season: readPickerOpen(pickerStorageKey("season")),
+});
+function setPickerOpen(kind: PickerKind, open: boolean) {
+  pickerOpen[kind] = open;
+  writePickerOpen(pickerStorageKey(kind), open);
+}
+
 /** 合集/多P列表行的标题：同一视频的多P合并行显示“P序号·分P名”，多视频各自保留主标题。 */
 function collectionRowTitle(item: (typeof biliItems.value)[number]): string {
   if (distinctBvids.value <= 1 && item.part) return `P${item.page} · ${item.part}`;
@@ -132,7 +156,7 @@ function patchChanged(next: Partial<ScribeNodeData>) {
 function applyPreview(url: string, result: VideoPreview) {
   preview.value = result;
   const bvid = result.bvid || url.match(/BV[0-9A-Za-z]+/)?.[0] || "";
-  patchChanged({ bvid, title: result.title, cover: result.cover, uploader: result.uploader, duration: result.duration });
+  patchChanged({ bvid, title: result.title, cover: result.cover, uploader: result.uploader, duration: result.duration, pubdate: result.pubdate });
   if (result.pages.length > 0) {
     const savedPages = (data.value.items ?? []).map((item) => item.page).filter(Boolean);
     const savedPage = Number(data.value.pageInfo?.page ?? 0);
@@ -221,6 +245,7 @@ function switchToPage(page: number) {
     cover: current.cover,
     uploader: current.uploader,
     duration: target.duration,
+    pubdate: current.pubdate,
     pageInfo: { cid: target.cid, page: target.page, part: target.part, duration: target.duration },
   });
   commit();
@@ -241,6 +266,7 @@ function mergePages() {
     cover: current.cover,
     uploader: current.uploader,
     duration: page.duration,
+    pubdate: current.pubdate,
   }));
   const first = items[0];
   editingCollection.value = false;
@@ -252,10 +278,13 @@ function mergePages() {
     cover: current.cover,
     uploader: current.uploader,
     duration: first.duration,
+    pubdate: current.pubdate,
     pageInfo: { cid: first.cid, page: first.page, part: first.part, duration: first.duration },
   });
   commit();
-  toast.success(`已合并 ${items.length} 个分P为一张卡片`);
+  // 合并完成 = 这一次选集结束了：收起面板（Android 上下文操作栏的 `mode.finish()` 同一意图）。
+  setPickerOpen("pages", false);
+  toast.success(PICKER_COPY.pages.merged(items.length));
 }
 
 function toggleSeasonEpisode(bvid: string) {
@@ -290,6 +319,8 @@ function switchToSeasonEpisode(bvid: string) {
     cover: target.cover || current.cover,
     uploader: current.uploader,
     duration: target.duration,
+    // 换成哪一集就是哪一集的日期；这一集没带出来（老接口）时不留上一集的日期。
+    pubdate: target.pubdate,
     pageInfo: { cid: target.cid, page: 1, part: target.part, duration: target.duration },
   });
   commit();
@@ -311,6 +342,8 @@ function mergeSeasonEpisodes() {
     cover: ep.cover || current.cover,
     uploader: current.uploader,
     duration: ep.duration,
+    // 合集各集的发布日期不同：逐集带上，笔记的「发布日期」才能按集写对。
+    pubdate: ep.pubdate,
   }));
   const first = items[0];
   editingCollection.value = false;
@@ -322,15 +355,19 @@ function mergeSeasonEpisodes() {
     cover: current.cover,
     uploader: current.uploader,
     duration: first.duration,
+    pubdate: current.pubdate,
     pageInfo: { cid: first.cid, page: 1, part: first.part, duration: first.duration },
   });
   commit();
-  toast.success(`已合并 ${picked.length} 集为一张卡片`);
+  setPickerOpen("season", false);
+  toast.success(PICKER_COPY.season.merged(picked.length));
 }
 
 /** 多选卡片 → 回到选集界面。「切换」与「合并」都能从多选卡片里重新到达。 */
 function editCollection() {
   editingCollection.value = true;
+  // 用户是专程回来改选集的，面板直接展开（而不是让他再点一次摘要行）。
+  setPickerOpen("season", true);
   schedulePreview(String(data.value.url ?? ""));
 }
 
@@ -338,25 +375,151 @@ function cancelEditCollection() {
   editingCollection.value = false;
 }
 
-const pageMergeReady = computed(() => selectedPages.value.length >= 2);
-const seasonMergeReady = computed(() => seasonSelected.value.length >= 2);
-
-/** 合并按钮不可用时说明原因——「为什么点不动」不该靠猜。 */
-const pageMergeHint = computed(() => {
-  if (pageMergeReady.value) return "";
-  return selectedPages.value.length === 0 ? "勾选 2 个分P及以上才能合并" : "已勾选 1 个分P · 再勾 1 个才能合并";
-});
-
-const seasonMergeHint = computed(() => {
-  if (seasonMergeReady.value) return "";
-  return seasonSelected.value.length === 0 ? "勾选 2 集及以上才能合并" : "已勾选 1 集 · 再勾 1 集才能合并";
-});
-
 /** 改选集时，当前链接是否提供了可调整的列表（分P 或 合集）。 */
 const hasBiliPicker = computed(() => {
   const current = preview.value;
   if (!current) return false;
   return current.pages.length > 1 || (current.ugcSeason?.episodes.length ?? 0) > 0;
+});
+
+// —— 面板交互：一行只挂一种语义（浏览态点行切换 / 多选态点行勾选），不再并存 ——
+
+/** 列表元素按 kind 存一份：展开时要靠它把当前项滚进视野。 */
+const pickerListEls = new Map<PickerKind, HTMLElement>();
+function setPickerListEl(kind: PickerKind, el: unknown) {
+  // v-for 里的函数 ref：元素卸载时 Vue 会以 null 调一次，顺手把引用清掉。
+  if (el instanceof HTMLElement) pickerListEls.set(kind, el);
+  else pickerListEls.delete(kind);
+}
+
+/**
+ * 把当前项滚到列表中间 —— Pilipala / bv 打开选集面板都这么定位当前集，
+ * 而现状是停在顶部：当前集排在第 109 位时，等于「你说勾了这一集，但屏幕上找不到」。
+ * 手算 scrollTop 而不用 scrollIntoView：后者会把外层容器（画布）一起滚走。
+ */
+function locateCurrent(kind: PickerKind) {
+  const list = pickerListEls.get(kind);
+  if (!list) return;
+  const current = list.querySelector<HTMLElement>(".is-current");
+  if (!current) return;
+  const centered = current.offsetTop - list.offsetTop - (list.clientHeight - current.offsetHeight) / 2;
+  // 吸附到行边界：限高正好是 7 整行，落在边界上时上下都不会露出半截行
+  // （不吸附的话，被切掉的那一行会从顶部露出一条勾选框的边，看着像渲染残留）。
+  const rows = list.querySelectorAll<HTMLElement>(".sf-node-picker-row");
+  const step = rows.length > 1 ? rows[1].offsetTop - rows[0].offsetTop : 0;
+  list.scrollTop = step > 0 ? Math.max(0, Math.round(centered / step) * step) : Math.max(0, centered);
+}
+
+function togglePicker(kind: PickerKind) {
+  const open = pickerOpen[kind];
+  setPickerOpen(kind, !open);
+  if (open) return;
+  // 等列表真的渲染出来再定位（收起态里没有列表元素）。
+  void nextTick(() => locateCurrent(kind));
+}
+
+/** 点行主体：把节点换到这一集（单条链接）。攒「要合并的那几集」只归勾选框。 */
+function switchTo(kind: PickerKind, key: string) {
+  if (kind === "pages") switchToPage(Number(key));
+  else switchToSeasonEpisode(key);
+}
+
+function togglePick(kind: PickerKind, key: string) {
+  if (kind === "pages") togglePage(Number(key));
+  else toggleSeasonEpisode(key);
+}
+
+/** 清空勾选（连同默认勾着的当前这一项）：底部动作条在不足 2 项时自己就没了。 */
+function clearPick(kind: PickerKind) {
+  if (kind === "pages") selectedPages.value = [];
+  else seasonSelected.value = [];
+}
+
+function isPicked(kind: PickerKind, key: string) {
+  return kind === "pages" ? selectedPages.value.includes(Number(key)) : seasonSelected.value.includes(key);
+}
+
+function mergePicked(kind: PickerKind) {
+  if (kind === "pages") mergePages();
+  else mergeSeasonEpisodes();
+}
+
+interface PickerRow {
+  key: string;
+  title: string;
+  duration: number;
+  current: boolean;
+  /** 悬停这一行时的提示：只说会发生什么，界面上不复述「点行 = 切换」。 */
+  hint: string;
+}
+
+interface PickerView {
+  kind: PickerKind;
+  copy: (typeof PICKER_COPY)[PickerKind];
+  summary: { title: string; meta: string };
+  rows: PickerRow[];
+  open: boolean;
+  total: number;
+  selected: number;
+  /** 底部动作条（已选 N + 清空 + 合并）只在攒到 2 项以上时出现。 */
+  showActions: boolean;
+}
+
+/**
+ * 两个列表（分P / 合集）规格化成同一种视图，模板只写一遍。
+ * 它们除了「一行是什么」之外完全同构，各写一份模板的结果就是两处措辞慢慢漂移。
+ */
+const pickers = computed<PickerView[]>(() => {
+  const current = preview.value;
+  if (!current) return [];
+  const views: PickerView[] = [];
+
+  if (current.pages.length > 1) {
+    const total = current.pages.length;
+    const selected = selectedPages.value.length;
+    const open = pickerOpen.pages;
+    views.push({
+      kind: "pages",
+      copy: PICKER_COPY.pages,
+      summary: pickerSummary("pages", { total, selected, collapsed: !open }),
+      rows: current.pages.map((page) => ({
+        key: String(page.page),
+        title: `P${page.page} · ${page.part || `第 ${page.page} 集`}`,
+        duration: page.duration,
+        current: page.page === Number(data.value.pageInfo?.page ?? 0),
+        hint: PICKER_COPY.pages.rowHint,
+      })),
+      open,
+      total,
+      selected,
+      showActions: selected >= 2,
+    });
+  }
+
+  const season = current.ugcSeason;
+  if (season && season.episodes.length > 0) {
+    const total = season.episodes.length;
+    const selected = seasonSelected.value.length;
+    const open = pickerOpen.season;
+    views.push({
+      kind: "season",
+      copy: PICKER_COPY.season,
+      summary: pickerSummary("season", { title: season.title, total, selected, collapsed: !open }),
+      rows: season.episodes.map((episode) => ({
+        key: episode.bvid,
+        title: episode.part,
+        duration: episode.duration,
+        current: episode.bvid === String(data.value.bvid ?? ""),
+        hint: PICKER_COPY.season.rowHint,
+      })),
+      open,
+      total,
+      selected,
+      showActions: selected >= 2,
+    });
+  }
+
+  return views;
 });
 
 /**
@@ -417,7 +580,24 @@ watch(
   (bvid) => {
     if (preview.value && bvid && preview.value.bvid === bvid) return;
     resetLocalPreview();
+    // 展开态的键带 bvid：换了视频就重新按新键读一次，否则会沿用上一个视频的展开态。
+    for (const kind of PICKER_KINDS) pickerOpen[kind] = readPickerOpen(pickerStorageKey(kind));
     if (data.value.url && !isCollection.value) schedulePreview(String(data.value.url));
+  },
+);
+
+/**
+ * 这个节点跑完一轮就把选集面板收起来 —— 用户的原话是「单视频执行了一次之后，下面那个列表就该收起来」。
+ *
+ * 只看终态不看过程：running → done 之间会刷新多次状态，没必要每次都算。
+ * 非 immediate 的 watch 在节点重新挂载时不会触发（重挂载拿到的是一个「本来就是 done」的值），
+ * 所以「拖出视野再拖回来」不会把用户刚点开的面板收掉。
+ */
+watch(
+  () => data.value.status,
+  (status) => {
+    if (!collapsesAfterRun(status)) return;
+    for (const kind of PICKER_KINDS) if (pickerOpen[kind]) setPickerOpen(kind, false);
   },
 );
 
@@ -1224,89 +1404,55 @@ const themeOptions = [
                 </div>
               </div>
               <div v-else-if="previewError" class="sf-node-preview sf-node-preview--error">{{ previewError }}</div>
-              <!-- 分P：点行即把节点切到这个分P（当前项墨色底标出）；勾选框 + 「合并为一张卡片」才是多选。 -->
-              <div v-if="preview && preview.pages.length > 1" class="sf-node-picker">
-                <div class="sf-node-picker-head">
-                  <span class="sf-node-picker-title">选择分P</span>
-                  <span class="sf-node-picker-count tnum">共 {{ preview.pages.length }} P</span>
-                </div>
-                <div class="sf-node-picker-list" @wheel="onInnerListWheel">
-                  <div
-                    v-for="page in preview.pages"
-                    :key="page.page"
-                    class="sf-node-picker-row"
-                    :class="{ 'is-current': page.page === data.pageInfo?.page }"
-                    :title="page.page === data.pageInfo?.page ? undefined : `切换到 P${page.page}（单条链接，不合并）`"
-                    @click="switchToPage(page.page)"
-                  >
-                    <input
-                      type="checkbox"
-                      class="sf-node-picker-check"
-                      :checked="selectedPages.includes(page.page)"
-                      :aria-label="`勾选以合并：P${page.page}`"
-                      title="勾选：与其它项合并为一张卡片"
-                      @click.stop
-                      @change="togglePage(page.page)"
-                    />
-                    <span class="sf-node-picker-name" :title="page.page === data.pageInfo?.page ? undefined : `P${page.page} · ${page.part || `第 ${page.page} 集`}`">P{{ page.page }} · {{ page.part || `第 ${page.page} 集` }}</span>
-                    <span class="sf-node-picker-duration tnum">{{ fmtDuration(page.duration) }}</span>
+              <!-- 选集面板：收起 = 一行摘要（默认态，跑完一次也回到这里）；展开后一行只挂一种语义
+                   （点行 = 换到那一集；勾选框 = 攒合并）。两种模式与措辞见 utils/bili-picker.ts。 -->
+              <div v-for="picker in pickers" :key="picker.kind" class="sf-node-picker">
+                <button
+                  type="button"
+                  class="sf-node-picker-head"
+                  :aria-expanded="picker.open"
+                  :title="picker.open ? '收起选集' : '展开选集'"
+                  @click="togglePicker(picker.kind)"
+                >
+                  <span class="sf-node-picker-title">{{ picker.summary.title }}</span>
+                  <span class="sf-node-picker-count tnum">{{ picker.summary.meta }}</span>
+                  <ChevronDown class="sf-node-picker-chevron" :size="13" />
+                </button>
+
+                <template v-if="picker.open">
+                  <div :ref="(el) => setPickerListEl(picker.kind, el)" class="sf-node-picker-list" @wheel="onInnerListWheel">
+                    <div v-for="row in picker.rows" :key="row.key" class="sf-node-picker-row" :class="{ 'is-current': row.current }">
+                      <!-- 勾选位常驻（不玩「悬停才出现」那一套：鼠标划过每行都闪一下勾选框，
+                           而且「哪几项已勾选」会变成要悬停才看得见）。点它 = 攒进待合并的选集。 -->
+                      <input
+                        type="checkbox"
+                        class="sf-node-picker-check"
+                        :checked="isPicked(picker.kind, row.key)"
+                        :aria-label="`勾选以合并：${row.title}`"
+                        @change="togglePick(picker.kind, row.key)"
+                      />
+                      <!-- 行主体只干一件事：把这个节点换成这一集（单条链接）。 -->
+                      <button
+                        type="button"
+                        class="sf-node-picker-main"
+                        :aria-current="row.current ? 'true' : undefined"
+                        :title="row.hint || undefined"
+                        @click="switchTo(picker.kind, row.key)"
+                      >
+                        <span class="sf-node-picker-name">{{ row.title }}</span>
+                      </button>
+                      <span class="sf-node-picker-duration tnum">{{ fmtDuration(row.duration) }}</span>
+                    </div>
                   </div>
-                </div>
-                <div v-if="pageMergeHint" class="sf-node-picker-hint">{{ pageMergeHint }}</div>
-                <div class="sf-node-picker-foot">
-                  <span class="sf-node-picker-count tnum">{{ selectedPages.length > 0 ? `勾选 ${selectedPages.length} 项` : "未勾选" }}</span>
-                  <button
-                    type="button"
-                    class="sf-node-picker-confirm"
-                    :disabled="!pageMergeReady"
-                    :title="pageMergeReady ? '把勾选的多个分P合并成一张卡片' : pageMergeHint"
-                    @click="mergePages"
-                  >
-                    合并为一张卡片
-                  </button>
-                </div>
-              </div>
-              <!-- 合集选集：同样是「点行切单集」+「勾选后合并」两条轨道。 -->
-              <div v-if="preview && preview.ugcSeason && preview.ugcSeason.episodes.length > 0" class="sf-node-picker">
-                <div class="sf-node-picker-head">
-                  <span class="sf-node-picker-title" :title="preview.ugcSeason.title">合集《{{ preview.ugcSeason.title || "未命名合集" }}》</span>
-                  <span class="sf-node-picker-count tnum">共 {{ preview.ugcSeason.episodes.length }} 集</span>
-                </div>
-                <div class="sf-node-picker-list" @wheel="onInnerListWheel">
-                  <div
-                    v-for="ep in preview.ugcSeason.episodes"
-                    :key="ep.bvid"
-                    class="sf-node-picker-row"
-                    :class="{ 'is-current': ep.bvid === data.bvid }"
-                    :title="ep.bvid === data.bvid ? undefined : '切换到这一集（换成它自己的链接，不合并）'"
-                    @click="switchToSeasonEpisode(ep.bvid)"
-                  >
-                    <input
-                      type="checkbox"
-                      class="sf-node-picker-check"
-                      :checked="seasonSelected.includes(ep.bvid)"
-                      :aria-label="`勾选以合并：${ep.part}`"
-                      title="勾选：与其它集合并为一张卡片"
-                      @click.stop
-                      @change="toggleSeasonEpisode(ep.bvid)"
-                    />
-                    <span class="sf-node-picker-name" :title="ep.bvid === data.bvid ? undefined : ep.part">{{ ep.part }}</span>
-                    <span class="sf-node-picker-duration tnum">{{ fmtDuration(ep.duration) }}</span>
+                  <!-- 攒到 2 项以上才出动作条（默认只勾着当前这一集，那时没什么可合并的） -->
+                  <div v-if="picker.showActions" class="sf-node-picker-actions">
+                    <span class="sf-node-picker-picked tnum">{{ picker.copy.selected(picker.selected) }}</span>
+                    <el-button size="small" text @click="clearPick(picker.kind)">清空</el-button>
+                    <el-button size="small" type="primary" class="sf-node-picker-merge" @click="mergePicked(picker.kind)">
+                      {{ picker.copy.merge }}
+                    </el-button>
                   </div>
-                </div>
-                <div v-if="seasonMergeHint" class="sf-node-picker-hint">{{ seasonMergeHint }}</div>
-                <div class="sf-node-picker-foot">
-                  <span class="sf-node-picker-count tnum">{{ seasonSelected.length > 0 ? `勾选 ${seasonSelected.length} 集` : "未勾选" }}</span>
-                  <button
-                    type="button"
-                    class="sf-node-picker-confirm"
-                    :disabled="!seasonMergeReady"
-                    :title="seasonMergeReady ? '把勾选的集数合并成一张卡片' : seasonMergeHint"
-                    @click="mergeSeasonEpisodes"
-                  >
-                    合并为一张卡片
-                  </button>
-                </div>
+                </template>
               </div>
               <div v-if="editingCollection && preview && !previewError && !hasBiliPicker" class="sf-node-picker-hint">
                 这个视频没有分P或合集列表，没有可调整的选集。
@@ -2482,57 +2628,110 @@ const themeOptions = [
   line-height: 1.45;
 }
 
-/* 选择面板（分P / UGC 合集）——与新版卡片语言一致：分隔线分组 + hover 行 + 自绘勾选框 */
+/*
+ * 选集面板（分P / UGC 合集）。
+ *
+ * 布局只有两条对齐线：左边缘（标题、勾选位）与右边缘（集数、时长、箭头、动作）。
+ * 勾选位常驻 14px 占位：浏览态它的勾选框是透明的、悬停该行才现 —— 这样 hover 与进入选择模式
+ * 都不会让标题和时长挪位置（改造前正是「hover 时时长位移 + 冒出一个『切换』」）。
+ */
 .sf-node-picker {
-  margin-top: 12px;
-  padding-top: 10px;
-  border-top: 1px solid var(--color-border);
+  margin-top: 8px;
 }
 
+/* 收起态那一行：标题 + 计数 + 箭头。没有底色盒子、也没有分割线。
+   右内边距 14 = 行内边距 8 + 列表滚动条 6（见 .sf-node-picker-list 的 scrollbar-gutter），
+   这样箭头、时长、动作按钮的右边缘落在同一条竖线上。 */
 .sf-node-picker-head {
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: 8px;
+  width: 100%;
+  padding: 6px 14px 6px 8px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: none;
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color var(--dur-1) var(--ease-out);
+}
+
+.sf-node-picker-head:hover {
+  background: var(--color-ink-soft-glass);
+}
+
+.sf-node-picker-head:focus-visible {
+  outline: 2px solid var(--color-text);
+  outline-offset: 1px;
+}
+
+.sf-node-picker-chevron {
+  flex: none;
+  margin-left: auto;
+  color: var(--color-text-tertiary);
+  transition: transform var(--dur-2) var(--ease-out);
+}
+
+.sf-node-picker-head[aria-expanded="true"] .sf-node-picker-chevron {
+  transform: rotate(180deg);
 }
 
 .sf-node-picker-title {
+  flex: 0 1 auto;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 12px;
+  font-size: 12.5px;
   font-weight: 600;
   color: var(--color-text);
 }
 
 .sf-node-picker-count {
+  flex: none;
   font-size: 11px;
   color: var(--color-text-tertiary);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
 
+/*
+ * 限高 224px = **7 整行 × 32px 行距 + 2px 下内边距**，且行高被钉成整数 30px（不是让 12px 字撑，
+ * 那会撑出 31.6 这种小数）。两者都是为了同一件事：**任何落在行边界上的滚动位置都恰好是 7 整行**。
+ *   · 上一版限高 224 但行高是小数：224 ÷ 31.2 = 7.18，第 7 行只露 79%，像渲染被截断；
+ *   · 中间一版改成 232px 且行高仍是小数：滚到底时浏览器把 scrollTop 夹在最大值（不是行边界），
+ *     顶部反而露出上一行的 10px（勾选框露一条边那条「残影」）。
+ * 行距 32 × 7 = 224，且整段内容的滚动上限 3264 也是 32 的整数倍，所以到底也不会有半截行。
+ *
+ * `scrollbar-gutter: stable` 是给对齐用的：滚动条占 6px 布局宽度，不预留的话
+ * 「有滚动条时的时长」比「没有滚动条时的箭头」少 6px —— 短列表与长列表的右边缘会不一样齐。
+ * （overlay 滚动条的平台不占宽度，那 6px 会体现为整体右移，视觉上仍然是一条线。）
+ */
 .sf-node-picker-list {
   display: flex;
   flex-direction: column;
   gap: 2px;
   max-height: 224px;
-  margin-top: 8px;
-  padding: 0 2px 2px;
+  margin-top: 2px;
+  padding: 0 0 2px;
   overflow-y: auto;
+  scrollbar-gutter: stable;
 }
 
+/*
+ * 行高钉成 30px（= 32 的行距减去 2 的 gap）：行距是整数，滚动位置才能和行边界对齐。
+ * `flex: none` 不能省：列向 flex 容器里给了显式 height 之后，min-height:auto 会从「内容高」
+ * 退化成更小的值，109 行会被压扁到 18px 高（实测 step 从 32 掉到 20）—— 是 flex 子项被压的标准坑。
+ */
 .sf-node-picker-row {
+  flex: none;
   display: flex;
   align-items: center;
-  gap: 9px;
-  padding: 6px;
+  gap: 8px;
+  height: 30px;
+  padding: 0 8px;
   border-radius: var(--radius-sm);
-  font-size: 12px;
-  color: var(--color-text);
-  /* 整行可点＝切到这一项；多选只归勾选框（勾选框自己 stop 掉行点击） */
-  cursor: pointer;
 }
 
 .sf-node-picker-row:hover {
@@ -2542,7 +2741,6 @@ const themeOptions = [
 /* 当前项：与下拉选中项、文档列表同款——墨色底 + 加粗，不用品牌色 */
 .sf-node-picker-row.is-current {
   background: var(--color-ink-soft);
-  cursor: default;
 }
 
 .sf-node-picker-row.is-current .sf-node-picker-name {
@@ -2589,15 +2787,46 @@ const themeOptions = [
   outline-offset: 1px;
 }
 
-.sf-node-picker-name {
+/* 行主体：浏览态点它 = 换到这一集（整行都是热区，但只有这一块有动作） */
+.sf-node-picker-main {
   flex: 1;
+  min-width: 0;
+  display: block;
+  padding: 0;
+  border: none;
+  border-radius: 2px;
+  background: none;
+  font-family: inherit;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--color-text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.sf-node-picker-main:focus-visible {
+  outline: 2px solid var(--color-text);
+  outline-offset: 2px;
+}
+
+/* 当前项点了没有动作（已经在这一条上），别给可点的手感；选择模式里它照样能勾。 */
+.sf-node-picker-row.is-current .sf-node-picker-main {
+  cursor: default;
+}
+
+.sf-node-picker-name {
+  display: block;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
+/* 时长：定宽右对齐，逐行成一条线，任何状态下都不位移 */
 .sf-node-picker-duration {
+  flex: none;
+  min-width: 44px;
+  text-align: right;
   color: var(--color-text-tertiary);
   font-size: 11px;
   font-variant-numeric: tabular-nums;
@@ -2611,44 +2840,49 @@ const themeOptions = [
   color: var(--color-text-tertiary);
 }
 
-.sf-node-picker-foot {
+/* 选择模式的动作条：已选 N + 取消 + 合并（按钮用 Element Plus，与对话框里的主按钮同一套墨色） */
+.sf-node-picker-actions {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  margin-top: 8px;
+  gap: 4px;
+  margin-top: 6px;
+  padding-left: 8px;
+  padding-right: 14px;
 }
 
-.sf-node-picker-foot .sf-node-picker-count {
+.sf-node-picker-picked {
+  flex: 1;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
-}
-
-.sf-node-picker-confirm {
-  flex: none;
-  height: 26px;
-  padding: 0 12px;
-  border: 1px solid var(--color-border-strong);
-  border-radius: var(--radius-sm);
-  background: var(--color-surface);
-  color: var(--color-text);
-  font-family: inherit;
-  font-size: 12px;
   white-space: nowrap;
-  cursor: pointer;
-  transition: background-color var(--dur-1) var(--ease-out), border-color var(--dur-1) var(--ease-out);
+  font-size: 11.5px;
+  color: var(--color-text-secondary);
+  font-variant-numeric: tabular-nums;
 }
 
-.sf-node-picker-confirm:hover:not(:disabled) {
-  background: var(--color-ink-soft);
-  border-color: var(--color-border-strong);
+/* 主操作按钮：与 SourcePickerDialog 的确认键、设置页保存键同一套墨色（不用品牌蓝） */
+.sf-node-picker-merge.el-button--primary {
+  --el-button-bg-color: var(--color-ink);
+  --el-button-border-color: var(--color-ink);
+  --el-button-text-color: var(--color-surface);
+  --el-button-hover-bg-color: var(--color-text);
+  --el-button-hover-border-color: var(--color-text);
+  --el-button-hover-text-color: var(--color-surface);
+  --el-button-active-bg-color: var(--color-ink);
+  --el-button-active-border-color: var(--color-ink);
+  --el-button-active-text-color: var(--color-surface);
+  --el-button-disabled-bg-color: var(--color-border-strong);
+  --el-button-disabled-border-color: var(--color-border-strong);
+  --el-button-disabled-text-color: var(--color-surface);
 }
 
-.sf-node-picker-confirm:disabled {
-  opacity: 0.45;
-  cursor: not-allowed;
+/* 小按钮的高度与原来自绘按钮一致（26px），免得卡片里这一行突然变高 */
+.sf-node-picker-actions :deep(.el-button) {
+  height: 26px;
+  font-size: 12px;
 }
+
 
 .sf-node-upload {
   width: 100%;

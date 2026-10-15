@@ -1,0 +1,188 @@
+{
+  "说明": "溯源模块「联网查找资料」调研的本机实测原始输出。2026-10-15。脚本见本文件同目录的 trace-source-finding-experiments/",
+  "环境": {
+    "平台": "win32",
+    "node": "v22.23.2",
+    "shell": "Git Bash"
+  },
+  "run1_正文抽取链": [
+    {
+      "name": "zhihu-question",
+      "url": "https://www.zhihu.com/question/629933428",
+      "status": 403,
+      "htmlBytes": 650,
+      "charset": "utf-8",
+      "title": "",
+      "textChars": 35,
+      "ms": 638,
+      "sniff": [],
+      "head": "知乎，让每一次点击都充满意义 —— 欢迎来到知乎，发现问题背后的世界。",
+      "err": ""
+    },
+    {
+      "name": "zhihu-article",
+      "url": "https://www.zhihu.com/tardis/zm/art/675509396",
+      "status": 200,
+      "htmlBytes": 166619,
+      "charset": "utf-8",
+      "title": "一文读懂：大模型RAG（检索增强生成）含高级方法",
+      "textChars": 16323,
+      "ms": 500,
+      "sniff": [
+        "正常-文章正文"
+      ],
+      "head": "RAG 检索增强生成（Retrieval Augmented Generation），已经成为当下最火热的LLM应用方案和打开方式了。 理解起来不难，就是通过自有垂域数据库检索相关信息，然后合并成为提示模板，给大模型润色",
+      "err": ""
+    },
+    {
+      "name": "baike-baidu",
+      "url": "https://baike.baidu.com/item/%E4%BA%BA%E5%B7%A5%E6%99%BA%E8%83%BD",
+      "status": 403,
+      "htmlBytes": 2529,
+      "charset": "utf-8",
+      "title": "百度安全验证",
+      "textChars": 0,
+      "ms": 707,
+      "sniff": [
+        "反爬-安全验证"
+      ],
+      "head": "",
+      "err": ""
+    },
+    {
+      "name": "wiki-zh",
+      "url": "https://zh.wikipedia.org/wiki/%E6%A3%80%E7%B4%A2%E5%A2%9E%E5%BC%BA%E7%94%9F%E6%88%90",
+      "status": 0,
+      "htmlBytes": 0,
+      "charset": "",
+      "title": "",
+      "textChars": 0,
+      "ms": 10336,
+      "sniff": [],
+      "head": "",
+      "err": "fetch failed"
+    },
+    {
+      "name": "bilibili-video",
+      "url": "https://www.bilibili.com/video/BV1nyJ66PEPQ",
+      "status": 200,
+      "htmlBytes": 182983,
+      "charset": "utf-8",
+      "title": "泽连斯基有牌打了_哔哩哔哩_bilibili",
+      "textChars": 1042,
+      "ms": 369,
+      "sniff": [
+        "正常-文章正文"
+      ],
+      "head": "本视频提及事件以及信息来源如下： 《俄称若乌大选可在选举日停火，此前俄拒绝了乌克兰总统泽连斯基提出的60天停火设想》来自：钱江晚报，2026-10-12 19:33发布 《泽连斯基与多个欧洲国家领导人通话》来自：新华网，",
+      "err": ""
+    },
+    {
+      "name": "tencent-cloud",
+      "url": "https://cloud.tencent.com/developer/article/2754056",
+      "status": 200,
+      "htmlBytes": 198768,
+      "charset": "utf-8",
+      "title": "大模型长期记忆系统设计：记忆压缩、去重、动态遗忘、时间衰减与冲突处理应用实践24",
+      "textChars": 20000,
+      "ms": 484,
+      "sniff": [
+        "正常-文章正文"
+      ],
+      "head": "## ​一、前言 通用大模型都存在一个明显短板：上下文窗口有限。单次对话结束，超出窗口范围的历史信息就会丢失。想要实现长期对话、持续运行的AI智能体、自动化业务Agent，单纯依靠Prompt上下文远远不够。通常我们把全",
+      "err": ""
+    },
+    {
+      "name": "aliyun-dev",
+      "url": "https://developer.aliyun.com/article/1770352",
+      "status": 200,
+      "htmlBytes": 88416,
+      "charset": "utf-8",
+      "title": "AI 智能体记忆是如何工作的？——记忆栈详解-阿里云开发者社区",
+      "textChars": 9007,
+      "ms": 435,
+      "sniff": [
+        "正常-文章正文"
+      ],
+      "head": "**简介：** AI智能体记忆是为无状态大模型构建的分层系统，实现跨轮次、跨会话、跨用户的“记住”能力。涵盖四层架构（上下文窗口、短期/长期记忆、外部知识）与四大操作（写入、读取、更新、遗忘），解决连续性、个性化、学习与",
+      "err": ""
+    },
+    {
+      "name": "huawei-cloud",
+      "url": "https://bbs.huaweicloud.com/blogs/497335",
+      "status": 200,
+      "htmlBytes": 53354,
+      "charset": "utf-8",
+      "title": "丢得静悄悄，谈一谈 Agent 的记忆是怎么没的-云社区-华为云",
+      "textChars": 7048,
+      "ms": 424,
+      "sniff": [
+        "正常-文章正文"
+      ],
+      "head": "![v9-01.final.jpg](https://fileserver.developer.huaweicloud.com/FileServer/getFile/community/289/905/458/00017",
+      "err": ""
+    },
+    {
+      "name": "wechat-mp",
+      "url": "https://mp.weixin.qq.com/s/tVJ1u9v9oKunQuZExzsViw",
+      "status": 200,
+      "htmlBytes": 3505010,
+      "charset": "utf-8",
+      "title": "“法治护航・财税筑基——环渤海经济圈财税合规法治论坛”日前举办",
+      "textChars": 45,
+      "ms": 1363,
+      "sniff": [
+        "正常-文章正文"
+      ],
+      "head": "## “法治护航・财税筑基——环渤海经济圈财税合规法治论坛”日前举办 天津律协 不喜欢",
+      "err": ""
+    },
+    {
+      "name": "arxiv-abs",
+      "url": "https://arxiv.org/abs/2402.14207",
+      "status": 200,
+      "htmlBytes": 42499,
+      "charset": "utf-8",
+      "title": "Assisting in Writing Wikipedia-like Arti",
+      "textChars": 2429,
+      "ms": 611,
+      "sniff": [
+        "正常-文章正文"
+      ],
+      "head": "[View PDF](https://arxiv.org/pdf/2402.14207) [HTML (experimental)](https://arxiv.org/html/2402.14207v2) > Abst",
+      "err": ""
+    },
+    {
+      "name": "github-repo",
+      "url": "https://github.com/stanford-oval/storm",
+      "status": 200,
+      "htmlBytes": 419654,
+      "charset": "utf-8",
+      "title": "GitHub - stanford-oval/storm: An LLM-pow",
+      "textChars": 21584,
+      "ms": 1819,
+      "sniff": [
+        "正常-文章正文"
+      ],
+      "head": "[![](https://github.com/stanford-oval/storm/raw/main/assets/logo.svg)](https://github.com/stanford-oval/storm/",
+      "err": ""
+    },
+    {
+      "name": "wiki-en",
+      "url": "https://en.wikipedia.org/wiki/Retrieval-augmented_generation",
+      "status": 0,
+      "htmlBytes": 0,
+      "charset": "",
+      "title": "",
+      "textChars": 0,
+      "ms": 10373,
+      "sniff": [],
+      "head": "",
+      "err": "fetch failed"
+    }
+  ],
+  "run1_stdout": "zhihu-question   403  html=    650 charset=utf-8    正文=    35字    638ms \n    title: \n    正文开头: 知乎，让每一次点击都充满意义 —— 欢迎来到知乎，发现问题背后的世界。\nzhihu-article    200  html= 166619 charset=utf-8    正文= 16323字    500ms 正常-文章正文\n    title: 一文读懂：大模型RAG（检索增强生成）含高级方法\n    正文开头: RAG 检索增强生成（Retrieval Augmented Generation），已经成为当下最火热的LLM应用方案和打开方式了。 理解起来不难，就是通过自有垂域数据库检索相关信息，然后合并成为提示模板，给大模型润色\nbaike-baidu      403  html=   2529 charset=utf-8    正文=     0字    707ms 反爬-安全验证\n    title: 百度安全验证\n    正文开头: \nwiki-zh          0    html=      0 charset=         正文=     0字  10336ms  ERR:fetch failed\n    title: \n    正文开头: \nbilibili-video   200  html= 182983 charset=utf-8    正文=  1042字    369ms 正常-文章正文\n    title: 泽连斯基有牌打了_哔哩哔哩_bilibili\n    正文开头: 本视频提及事件以及信息来源如下： 《俄称若乌大选可在选举日停火，此前俄拒绝了乌克兰总统泽连斯基提出的60天停火设想》来自：钱江晚报，2026-10-12 19:33发布 《泽连斯基与多个欧洲国家领导人通话》来自：新华网，\ntencent-cloud    200  html= 198768 charset=utf-8    正文= 20000字    484ms 正常-文章正文\n    title: 大模型长期记忆系统设计：记忆压缩、去重、动态遗忘、时间衰减与冲突处理应用实践24\n    正文开头: ## ​一、前言 通用大模型都存在一个明显短板：上下文窗口有限。单次对话结束，超出窗口范围的历史信息就会丢失。想要实现长期对话、持续运行的AI智能体、自动化业务Agent，单纯依靠Prompt上下文远远不够。通常我们把全\naliyun-dev       200  html=  88416 charset=utf-8    正文=  9007字    435ms 正常-文章正文\n    title: AI 智能体记忆是如何工作的？——记忆栈详解-阿里云开发者社区\n    正文开头: **简介：** AI智能体记忆是为无状态大模型构建的分层系统，实现跨轮次、跨会话、跨用户的“记住”能力。涵盖四层架构（上下文窗口、短期/长期记忆、外部知识）与四大操作（写入、读取、更新、遗忘），解决连续性、个性化、学习与\nhuawei-cloud     200  html=  53354 charset=utf-8    正文=  7048字    424ms 正常-文章正文\n    title: 丢得静悄悄，谈一谈 Agent 的记忆是怎么没的-云社区-华为云\n    正文开头: ![v9-01.final.jpg](https://fileserver.developer.huaweicloud.com/FileServer/getFile/community/289/905/458/00017\nwechat-mp        200  html=3505010 charset=utf-8    正文=    45字   1363ms 正常-文章正文\n    title: “法治护航・财税筑基——环渤海经济圈财税合规法治论坛”日前举办\n    正文开头: ## “法治护航・财税筑基——环渤海经济圈财税合规法治论坛”日前举办 天津律协 不喜欢\narxiv-abs        200  html=  42499 charset=utf-8    正文=  2429字    611ms 正常-文章正文\n    title: Assisting in Writing Wikipedia-like Arti\n    正文开头: [View PDF](https://arxiv.org/pdf/2402.14207) [HTML (experimental)](https://arxiv.org/html/2402.14207v2) > Abst\ngithub-repo      200  html= 419654 charset=utf-8    正文= 21584字   1819ms 正常-文章正文\n    title: GitHub - stanford-oval/storm: An LLM-pow\n    正文开头: [![](https://github.com/stanford-oval/storm/raw/main/assets/logo.svg)](https://github.com/stanford-oval/storm/\nwiki-en          0    html=      0 charset=         正文=     0字  10373ms  ERR:fetch failed\n    title: \n    正文开头: \n\n[汇总] 中文/国内样本 9 条，正文≥500字且 HTTP200 的 5 条\n[汇总] 全部样本 12 条，成功 7 条\n[汇总] 命中反爬标记: baike-baidu\n",
+  "run2_微信多样本与百度头条与B站": "===== A. 微信文章多样本 =====\nhttps://mp.weixin.qq.com/s/tVJ1u9v9oKunQuZExzsViw\n  status=200 html=3504163B  title=\n  readability 正文=45字 | #js_content 文本=717字\n  #js_content 开头: 法治护航财税筑基环渤海经济圈财税合规法治论坛2025由中央财经大学税收与法律研究中心主办，上海中联（北京）律师事务所承办，北京市律师协会财税法律专业委员会、天津市律师协会财税法专业\nhttps://mp.weixin.qq.com/s/LqDnzCq_WMQcBCjSETwvBQ\n  status=200 html=3541326B  title=\n  readability 正文=40字 | #js_content 文本=1037字\n  #js_content 开头: 全市各律师事务所、广大律师同仁：为促进我市律师行业健康有序发展，营造公平竞争的法律服务市场环境，根据《中华人民共和国律师法》及相关行业规范，石家庄市律师协会现就规范律师行业网络推广\nhttps://mp.weixin.qq.com/s/fX-S3fKKDfR3NV4ISAHrZg\n  status=200 html=3505738B  title=\n  readability 正文=25字 | #js_content 文本=781字\n  #js_content 开头: 本期我们介绍如何安装braincog，主要分为在线安装和本地安装两种方式，以及对应的数据集安装模块。这里介绍了详细的安装步骤以及相应的命令指令。按照指令安装后你将可以体验完整的br\n\n===== B. 百度百科：换更完整的请求头 =====\n  [仅 UA] status=403 html=2534B 正文=0字 sniff=安全验证\n  [UA+Referer+Accept] status=403 html=2529B 正文=0字 sniff=安全验证\n\n===== C. B 站：视频页 + 专栏文章 =====\nhttps://www.bilibili.com/video/BV19ZJ66sEYZ\n  status=200 html=174244B title=《明日方舟：终末地》祀EP - 花祀时 & 何处山海万象生_哔哩哔哩_bilib\n  readability=166字  desc节点=142字\n  desc: 蝶入画境，花有四时。 万物枯荣相续，似蝶破茧而生。 《明日方舟：终末地》干员祀专属单曲《花祀时》及《何处山海万象生》MV现已公开。 《花祀时》完整版音源同步上架QQ音乐、网易云音乐、酷狗音乐等平台，欢迎管理员们前往收听。 《何处山海万象生》收录于 丹青渡OST，后续将上架各音乐平\nhttps://www.bilibili.com/video/BV1d4p26SExE\n  status=200 html=177454B title=也是当上外卖大法官了【第二集】_哔哩哔哩_bilibili\n  readability=246字  desc节点=22字\n  desc: 勤于政务！ 第一集：BV1Vtpg65EnA\nhttps://www.bilibili.com/read/cv28000000\n  status=200 html=3326B title=\n  readability=0字  desc节点=0字\n  desc: \n",
+  "run3_B站简介来源线索比例与专栏": "\n===== 全站热门 Top50（样本 50 条）=====\n简介含外链的: 1 条 (2%)\n简介含「来源/参考/文献/据…报道」类字样的: 2 条 (4%)\n简介含 BV 号引用的: 1 条\n至少含一种来源线索的合计: 4 条 (8%)\n简介为空的: 12 条\n  · [人文历史] 泽连斯基有牌打了 | desc=255字 链0 hint=true | \n  · [单机游戏] 《啦嗒铛》1.0正式发售宣传片 | GSE | desc=232字 链1 hint=false | https://linktr.ee/ratatanstores\n  · [日常] 婚礼摄影师记录下婚礼后感人一幕……喧闹落幕，新人相视一笑便红了眼眶 | desc=14字 链0 hint=true | \n\n===== 科技区排行 Top50（样本 50 条）=====\n简介含外链的: 0 条 (0%)\n简介含「来源/参考/文献/据…报道」类字样的: 7 条 (14%)\n简介含 BV 号引用的: 1 条\n至少含一种来源线索的合计: 8 条 (16%)\n简介为空的: 12 条\n  · [人文历史] 震撼世界的72天：巴黎公社为何爆发？又为何失败？【历史调研室71】 | desc=18字 链0 hint=true | \n  · [人文历史] 现场实验：黄河边硬地变淤泥，看起来安全却暗藏凶险，千万要警惕！ | desc=12字 链0 hint=true | \n  · [人文历史] 乱象丛生？日本老龄消防队能有多奇葩？ | desc=119字 链0 hint=true | \n  · [校园学习] 「解三角形」常考题型！基础到进阶！ | desc=116字 链0 hint=true | \n  · [人文历史] 他们，是唐朝最大的遗憾！ | desc=255字 链0 hint=true | \n  · [人文历史] 白莲教为何能打断大清盛世？【近代的前夜】 | desc=255字 链0 hint=true | \n  · [社科·法律·心理] 小米SU7起火如何追责？司机不排除主要责任，产品质量需鉴定 | desc=85字 链0 hint=true | \n科学科普区排行 code=-400 请求错误\n\n===== 找真实专栏 URL =====\n视频页内出现的 cv 号: []\n",
+  "run4_Jina全球站与国内镜像": "\n########## r.jina.ai(全球) ##########\n  zhihu-问题页(本机 403)\n    ERR fetch failed (10586ms)\n  baike-百度百科(本机 403)\n    ERR fetch failed (10540ms)\n  wechat-微信文章(readability 失效)\n    ERR fetch failed (10552ms)\n  bili-视频页(简介线索)\n    ERR fetch failed (10545ms)\n  tencent-腾讯云(readability OK 对照)\n    ERR fetch failed (10542ms)\n\n########## r.jinaai.cn(国内镜像) ##########\n  zhihu-问题页(本机 403)\n    status=200 763ms 正文=8755字 title=RAG是什么？ - 知乎\n    head: 我们人类查询动态信息要借助搜索而无法事先背诵记忆，遇到记不住的生僻字要查字典，在严肃场景发言时要依赖讲稿。 AI大模型也类似，事先训练时用的数据集里缺少最新动态信息、个人或企业私有数据等，有时会一本正\n  baike-百度百科(本机 403)\n    status=200 13367ms 正文=0字 title=百度安全验证\n    head: \n  wechat-微信文章(readability 失效)\n    status=200 4466ms 正文=86字 title=Weixin Official Accounts Platform\n    head: ## 环境异常 当前环境异常，完成验证后即可继续访问。 [去验证](https://mp.weixin.qq.com/s/fX-S3fKKDfR3NV4ISAHrZg)\n  bili-视频页(简介线索)\n    status=200 797ms 正文=17765字 title=泽连斯基有牌打了_哔哩哔哩_bilibili\n    head: [首页](https://www.bilibili.com/) [番剧](https://www.bilibili.com/anime/) [直播](https://live.bilibili.com\n  tencent-腾讯云(readability OK 对照)\n    status=200 769ms 正文=17574字 title=大模型长期记忆系统设计：记忆压缩、去重、动态遗忘、时间衰减与冲突处理应用实践24\n    head: ## ​一、前言 通用大模型都存在一个明显短板：上下文窗口有限。单次对话结束，超出窗口范围的历史信息就会丢失。想要实现长期对话、持续运行的AI 智能体、自动化业务 Agent，单纯依靠Prompt上下\n"
+}

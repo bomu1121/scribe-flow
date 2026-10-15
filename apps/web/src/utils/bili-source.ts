@@ -20,6 +20,7 @@ function sourcePatchFor(video: SourceVideoItem): BiliSourcePatch {
     cover: video.cover,
     uploader: video.uploader,
     duration: video.duration,
+    pubdate: video.pubdate,
   };
   const firstPage = video.pages?.find((p) => p.cid) ?? video.pages?.[0];
   if (firstPage?.cid) {
@@ -42,6 +43,7 @@ function sourceItemFor(video: SourceVideoItem): BiliSourceItem {
     cover: video.cover,
     uploader: video.uploader,
     duration: page?.duration ?? video.duration,
+    pubdate: video.pubdate,
   };
 }
 
@@ -64,6 +66,8 @@ export function multiSourcePatch(items: BiliSourceItem[], label = "B站多选"):
     cover: first.cover,
     uploader: first.uploader,
     duration: first.duration,
+    // 卡片级日期只是兜底（笔记按各集自己的日期写，见 engine 的 upstreamSourceMeta）。
+    pubdate: first.pubdate,
     pageInfo: { cid: first.cid, page: first.page, part: first.part, duration: first.duration ?? 0 },
   };
 }

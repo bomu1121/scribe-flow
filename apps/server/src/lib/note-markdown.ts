@@ -364,7 +364,7 @@ export async function collectTagUsage(
  * 我们自己写进去的固定字段：统计属性名时要排掉，否则「标题 / tags」会被当成候选推荐给用户。
  * 与 `engine.ts` 里拼 front matter 的那几行是同一份名单——那边加字段时这里要跟着加。
  */
-export const NOTE_OWN_FIELDS = ["标题", "类型", "来源", "作者", "原始链接", "创建日期", "tags"];
+export const NOTE_OWN_FIELDS = ["标题", "类型", "来源", "作者", "原始链接", "发布日期", "创建日期", "tags"];
 
 export interface FrontMatterFieldCount {
   name: string;

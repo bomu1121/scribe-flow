@@ -237,6 +237,8 @@ async function confirmSelection() {
     const items = await Promise.all(
       selected.value.map(async (item) => {
         // 收藏夹/合集列表接口不返回 cid，选中后先补齐分 P 信息，避免生成“缺 cid”的卡片。
+        // 顺带把发布日期带回来：列表接口同样不给这个值，而它就挂在这一份解析结果上
+        // （笔记的「发布日期」属性取自卡片，见 engine 的 upstreamSourceMeta）。
         if (item.cid || item.pages?.some((p) => p.cid)) return { ...item };
         const preview = await api.post<VideoPreview>("/api/videos/preview", {
           url: `https://www.bilibili.com/video/${item.bvid}`,
@@ -251,6 +253,7 @@ async function confirmSelection() {
           cover: item.cover || preview.cover,
           uploader: item.uploader || preview.uploader,
           duration: item.duration || preview.duration,
+          pubdate: preview.pubdate,
         };
       }),
     );

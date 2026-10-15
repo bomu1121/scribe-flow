@@ -1,0 +1,174 @@
+[
+  {
+    "name": "zhihu-question",
+    "url": "https://www.zhihu.com/question/629933428",
+    "status": 403,
+    "htmlBytes": 650,
+    "charset": "utf-8",
+    "title": "",
+    "textChars": 35,
+    "ms": 223,
+    "sniff": [],
+    "head": "知乎，让每一次点击都充满意义 —— 欢迎来到知乎，发现问题背后的世界。",
+    "err": ""
+  },
+  {
+    "name": "zhihu-article",
+    "url": "https://www.zhihu.com/tardis/zm/art/675509396",
+    "status": 200,
+    "htmlBytes": 165953,
+    "charset": "utf-8",
+    "title": "一文读懂：大模型RAG（检索增强生成）含高级方法",
+    "textChars": 16323,
+    "ms": 371,
+    "sniff": [
+      "正常-文章正文"
+    ],
+    "head": "RAG 检索增强生成（Retrieval Augmented Generation），已经成为当下最火热的LLM应用方案和打开方式了。 理解起来不难，就是通过自有垂域数据库检索相关信息，然后合并成为提示模板，给大模型润色",
+    "err": ""
+  },
+  {
+    "name": "baike-baidu",
+    "url": "https://baike.baidu.com/item/%E4%BA%BA%E5%B7%A5%E6%99%BA%E8%83%BD",
+    "status": 403,
+    "htmlBytes": 2529,
+    "charset": "utf-8",
+    "title": "百度安全验证",
+    "textChars": 0,
+    "ms": 184,
+    "sniff": [
+      "反爬-安全验证"
+    ],
+    "head": "",
+    "err": ""
+  },
+  {
+    "name": "wiki-zh",
+    "url": "https://zh.wikipedia.org/wiki/%E6%A3%80%E7%B4%A2%E5%A2%9E%E5%BC%BA%E7%94%9F%E6%88%90",
+    "status": 0,
+    "htmlBytes": 0,
+    "charset": "",
+    "title": "",
+    "textChars": 0,
+    "ms": 10370,
+    "sniff": [],
+    "head": "",
+    "err": "fetch failed"
+  },
+  {
+    "name": "bilibili-video",
+    "url": "https://www.bilibili.com/video/BV1nyJ66PEPQ",
+    "status": 200,
+    "htmlBytes": 186467,
+    "charset": "utf-8",
+    "title": "泽连斯基有牌打了_哔哩哔哩_bilibili",
+    "textChars": 1042,
+    "ms": 509,
+    "sniff": [
+      "正常-文章正文"
+    ],
+    "head": "本视频提及事件以及信息来源如下： 《俄称若乌大选可在选举日停火，此前俄拒绝了乌克兰总统泽连斯基提出的60天停火设想》来自：钱江晚报，2026-10-12 19:33发布 《泽连斯基与多个欧洲国家领导人通话》来自：新华网，",
+    "err": ""
+  },
+  {
+    "name": "tencent-cloud",
+    "url": "https://cloud.tencent.com/developer/article/2754056",
+    "status": 200,
+    "htmlBytes": 198768,
+    "charset": "utf-8",
+    "title": "大模型长期记忆系统设计：记忆压缩、去重、动态遗忘、时间衰减与冲突处理应用实践24",
+    "textChars": 20000,
+    "ms": 530,
+    "sniff": [
+      "正常-文章正文"
+    ],
+    "head": "## ​一、前言 通用大模型都存在一个明显短板：上下文窗口有限。单次对话结束，超出窗口范围的历史信息就会丢失。想要实现长期对话、持续运行的AI智能体、自动化业务Agent，单纯依靠Prompt上下文远远不够。通常我们把全",
+    "err": ""
+  },
+  {
+    "name": "aliyun-dev",
+    "url": "https://developer.aliyun.com/article/1770352",
+    "status": 200,
+    "htmlBytes": 88416,
+    "charset": "utf-8",
+    "title": "AI 智能体记忆是如何工作的？——记忆栈详解-阿里云开发者社区",
+    "textChars": 9007,
+    "ms": 387,
+    "sniff": [
+      "正常-文章正文"
+    ],
+    "head": "**简介：** AI智能体记忆是为无状态大模型构建的分层系统，实现跨轮次、跨会话、跨用户的“记住”能力。涵盖四层架构（上下文窗口、短期/长期记忆、外部知识）与四大操作（写入、读取、更新、遗忘），解决连续性、个性化、学习与",
+    "err": ""
+  },
+  {
+    "name": "huawei-cloud",
+    "url": "https://bbs.huaweicloud.com/blogs/497335",
+    "status": 200,
+    "htmlBytes": 53354,
+    "charset": "utf-8",
+    "title": "丢得静悄悄，谈一谈 Agent 的记忆是怎么没的-云社区-华为云",
+    "textChars": 7048,
+    "ms": 436,
+    "sniff": [
+      "正常-文章正文"
+    ],
+    "head": "![v9-01.final.jpg](https://fileserver.developer.huaweicloud.com/FileServer/getFile/community/289/905/458/00017",
+    "err": ""
+  },
+  {
+    "name": "wechat-mp",
+    "url": "https://mp.weixin.qq.com/s/tVJ1u9v9oKunQuZExzsViw",
+    "status": 200,
+    "htmlBytes": 3504163,
+    "charset": "utf-8",
+    "title": "“法治护航・财税筑基——环渤海经济圈财税合规法治论坛”日前举办",
+    "textChars": 45,
+    "ms": 1370,
+    "sniff": [
+      "正常-文章正文"
+    ],
+    "head": "## “法治护航・财税筑基——环渤海经济圈财税合规法治论坛”日前举办 天津律协 不喜欢",
+    "err": ""
+  },
+  {
+    "name": "arxiv-abs",
+    "url": "https://arxiv.org/abs/2402.14207",
+    "status": 200,
+    "htmlBytes": 42499,
+    "charset": "utf-8",
+    "title": "Assisting in Writing Wikipedia-like Arti",
+    "textChars": 2429,
+    "ms": 14190,
+    "sniff": [
+      "正常-文章正文"
+    ],
+    "head": "[View PDF](https://arxiv.org/pdf/2402.14207) [HTML (experimental)](https://arxiv.org/html/2402.14207v2) > Abst",
+    "err": ""
+  },
+  {
+    "name": "github-repo",
+    "url": "https://github.com/stanford-oval/storm",
+    "status": 0,
+    "htmlBytes": 0,
+    "charset": "",
+    "title": "",
+    "textChars": 0,
+    "ms": 19702,
+    "sniff": [],
+    "head": "",
+    "err": "fetch failed"
+  },
+  {
+    "name": "wiki-en",
+    "url": "https://en.wikipedia.org/wiki/Retrieval-augmented_generation",
+    "status": 0,
+    "htmlBytes": 0,
+    "charset": "",
+    "title": "",
+    "textChars": 0,
+    "ms": 10373,
+    "sniff": [],
+    "head": "",
+    "err": "fetch failed"
+  }
+]

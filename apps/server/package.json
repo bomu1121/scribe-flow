@@ -14,17 +14,20 @@
   },
   "dependencies": {
     "@hono/node-server": "^2.1.1",
+    "@mozilla/readability": "^0.6.0",
     "@scribe-flow/shared": "workspace:*",
     "better-sqlite3": "^11.10.0",
     "busboy": "^1.6.0",
     "drizzle-orm": "^0.45.2",
     "hono": "^4.13.5",
+    "jsdom": "^26.1.0",
     "qrcode": "^1.5.4",
     "zod": "^4.4.3"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.13",
     "@types/busboy": "^1.5.4",
+    "@types/jsdom": "^30.0.0",
     "@types/node": "^22.10.0",
     "@types/qrcode": "^1.5.6",
     "tsx": "^4.23.12",

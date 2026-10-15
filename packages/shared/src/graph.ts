@@ -20,6 +20,13 @@ export interface BiliSourceItem {
   cover?: string;
   uploader?: string;
   duration?: number;
+  /**
+   * 稿件发布时间（B 站接口的 `pubdate`，unix 秒）。
+   *
+   * 存在的理由只有一个：笔记的「发布日期」属性。合集卡片的每一集发布日期不同，
+   * 所以它必须跟着 item 走而不是只挂在卡片上（卡片级那个只是第一项的兜底）。
+   */
+  pubdate?: number;
 }
 
 /** B 站来源：手动 URL 或快捷选择后解析出的 pageInfo。 */
@@ -39,6 +46,8 @@ export interface BiliSourceData {
   cover?: string;
   uploader?: string;
   duration?: number;
+  /** 稿件发布时间（unix 秒，同 `BiliSourceItem.pubdate`）；笔记的「发布日期」取自这里。 */
+  pubdate?: number;
   /**
    * 是否保留可播放完整视频（结果页附件，默认关）。
    * 开启后引擎额外下载 DASH 视频流并与音轨合成为浏览器直放 mp4，存入媒体库。

@@ -722,6 +722,9 @@ const notePreviewModel = computed(() => {
     { name: "来源", kind: "text", value: "B站" },
     { name: "作者", kind: "text", value: "某某 UP" },
     { name: "原始链接", kind: "link", value: "https://www.bilibili.com/video/BV1xxxxxxxxx" },
+    // 「发布日期」是素材自己的发布时间（B 站稿件的 pubdate），不是今天——例子里固定一个值，
+    // 免得和下面那行「创建日期」看起来像同一件事。
+    { name: "发布日期", kind: "date", value: "2026-08-14" },
     // 日期与引擎写的一致（`process.obsidian` 分支用的是同一个表达式），免得预览挂着一个过期的日子
     { name: "创建日期", kind: "date", value: new Date().toISOString().slice(0, 10) },
   ];

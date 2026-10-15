@@ -149,6 +149,7 @@ describe("buildTemplateGraph", () => {
         cover: "https://i0.hdslb.com/x.jpg",
         uploader: "某某实验室",
         duration: 300,
+        pubdate: 1786638600,
       },
       promptBlockId: "builtin.insight.v4",
     })!;
@@ -161,6 +162,8 @@ describe("buildTemplateGraph", () => {
       title: "芯片是怎么造出来的",
       uploader: "某某实验室",
       duration: 300,
+      // 发布时间要一起写进来：笔记的「发布日期」只认卡片上这个值
+      pubdate: 1786638600,
       pageInfo: { cid: 99, page: 2, part: "P2", duration: 300 },
     });
 

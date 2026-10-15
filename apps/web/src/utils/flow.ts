@@ -64,6 +64,8 @@ export interface ScribeNodeData {
   cover?: string;
   uploader?: string;
   duration?: number;
+  /** 稿件发布时间（unix 秒）：笔记的「发布日期」属性取自它，缺省＝笔记不写这一行。 */
+  pubdate?: number;
   fileName?: string;
   filePath?: string;
   /** 是否保留可播放视频（keepVideo，结果页附件）。 */

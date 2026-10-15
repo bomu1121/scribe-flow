@@ -210,7 +210,11 @@ B 站返回 `-101`（未登录/失效）会统一映射成 401。Cookie 存 `bil
 
 **AI / ASR**（`lib/ai.ts`）：AI 走 OpenAI 兼容的 `POST {baseUrl}/chat/completions`（`temperature` 0.3，300 秒超时）；
 ASR 支持两种引擎——MiMo 走 `input_audio` data URL（超过 7MB 自动切段），OpenAI 兼容走 `/audio/transcriptions`。
-外部溯源是在 `builtin.trace.v2` 且配置了 Tavily 密钥时才启用的联网核查，失败只记日志、保留内部溯源结果。
+外部核查由提示词自己声明（`PromptBlock.externalCheck`，`builtin.trace.v3` 是 `required`），没配检索密钥就不启用；
+失败只记日志、保留内部溯源结果。核查链路在 `apps/server/src/lib/traceExternal.ts`：
+多检索词合并候选池 → 按域名权威度重排 → 抓取重排后最靠前的来源正文（`lib/webContent.ts`：
+站点选择器 → readability → Jina 镜像兜底）→ 比对模型给出结论与逐字引文 → 服务端把引文与实际抓到的正文做逐字校验，
+命不中的一律丢弃（这是「不捏造」的机械保证，与配方断言 `citationsInOriginal` 同一思路）。
 
 ## 8. 接口面
 

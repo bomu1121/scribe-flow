@@ -87,7 +87,8 @@ describe("availablePromptBlocks 与展示范围", () => {
 
   it("不传展示范围时仍受「已过审核」白名单约束，不再把全部内置提示词交回", () => {
     // 这条原来断言「与从前一致、原样交回」，2026-10-12 起不成立了：
-    // 只放出经过确认的 5 个提示词，其余等重构审核完成后再逐个放开。
+    // 只放出经过确认的提示词，其余等重构审核完成后再逐个放开。
+    // 2026-10-15 起加上「信息溯源 · 联网核查版」（抓正文与引文逐字校验重做后放行）。
     const before = availablePromptBlocks(BUILTIN_PROMPT_BLOCKS, true);
     expect(before.length).toBeLessThan(BUILTIN_PROMPT_BLOCKS.length);
     expect(before.map((block) => block.id)).toEqual([
@@ -96,6 +97,7 @@ describe("availablePromptBlocks 与展示范围", () => {
       "builtin.insight.v5",
       "builtin.insight.v6",
       "builtin.qa",
+      "builtin.trace.v3",
     ]);
   });
 

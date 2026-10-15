@@ -29,6 +29,23 @@ export function segmentKey(originNodeId: string, item: { bvid?: string; page?: n
 }
 
 /**
+ * 段标识 → 它指向的那个素材（`segmentKey` 的逆运算）。
+ *
+ * 下游要按「这一份产物来自哪一条视频」取素材自己的东西时用它（如笔记的发布日期：
+ * 一张合集卡片里每一集的日期都不同，按第一项取会给后面几集全部写错）。
+ * 解析不出（`node:` / `file:` / `pos:` / 空值）或格式不认识时返回 null——调用方退回默认行为，
+ * 不要在这里猜。
+ */
+export function parseBiliSegmentKey(key: string | undefined): { bvid: string; page?: number } | null {
+  const [tag, bvid, tail] = String(key ?? "").split(":");
+  if (tag !== "bvid" || !bvid) return null;
+  // 第三段是分P号（`bvid:BVxxx:3`）或 cid 兜底（`bvid:BVxxx:cid123`）；后者定位不到具体分P，
+  // 只按 bvid 认素材。
+  const page = tail && /^\d+$/.test(tail) ? Number(tail) : 0;
+  return page > 0 ? { bvid, page } : { bvid };
+}
+
+/**
  * 「派生兜底标识」的前缀，形如 `pos:<产出节点 id>:<第几个>`。
  *
  * 产物自己没带段标识时（例如压平后的整篇文档、按入边顺序派生的兜底身份）由引擎补上。
@@ -189,6 +206,21 @@ function sourceCardSegments(node: GraphNode): SegmentOption[] {
  * 调用方据此不展示选择器。
  */
 export function collectSegmentOptions(graph: WorkflowGraph, targetNodeId: string): SegmentOption[] {
+  const options = collectMaterialOptions(graph, targetNodeId);
+  // 只有当上游确实存在「两个及以上可挑素材」时才有挑选余地：
+  // 单张卡承载 8 个素材是有余地的；一张卡一个素材（单链接卡 / 单个文件）则挑与不挑等价。
+  return options.length > 1 ? options : [];
+}
+
+/**
+ * 该节点沿上游能拿到的**全部素材身份**（`SegmentOption.key`）与它们来自哪张卡。
+ *
+ * **不要拿 `collectSegmentOptions` 做身份判断**：它在「上游只有 1 个素材」时故意返回空数组——
+ * 那是「选择器要不要显示」的显示逻辑（一个素材时挑与不挑等价，摆出选择器只是噪音）。
+ * 用它当身份集合，任何单素材工程都会算成空集，于是「素材没变」会被误判成「素材变了」。
+ * 判断「这份产物是不是用另一个素材跑出来的」要用这一份。
+ */
+export function collectMaterialOptions(graph: WorkflowGraph, targetNodeId: string): SegmentOption[] {
   const visited = new Set<string>();
   const cards: SegmentOption[][] = [];
 
@@ -216,10 +248,7 @@ export function collectSegmentOptions(graph: WorkflowGraph, targetNodeId: string
   };
 
   visit(targetNodeId);
-  // 只有当上游确实存在「两个及以上可挑素材」时才有挑选余地：
-  // 单张卡承载 8 个素材是有余地的；一张卡一个素材（单链接卡 / 单个文件）则挑与不挑等价。
-  const options = cards.flat();
-  return options.length > 1 ? options : [];
+  return cards.flat();
 }
 
 /**

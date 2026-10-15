@@ -48,6 +48,125 @@ describe("trace report parser", () => {
     expect(report?.warnings).toHaveLength(1);
   });
 
+  it("保留外部来源的正文与逐字引文（这是「不捏造」的落地形态）", () => {
+    const raw = JSON.stringify({
+      schema: 1,
+      items: [
+        {
+          id: "item-1",
+          category: "data",
+          claim: "美国社保税合计 12.4%。",
+          confidence: "confirmed",
+          evidence: [{ quote: "原文引用" }],
+          external: {
+            status: "verified",
+            evidence: "verbatim",
+            queries: ["IRS social security tax 12.4%"],
+            sources: [
+              {
+                title: "Publication 15 | IRS",
+                url: "https://www.irs.gov/publications/p15",
+                authority: "authoritative",
+                fetched: true,
+                contentChars: 12345,
+                quotes: [{ text: "The rate of social security tax on taxable wages is 6.2% each for the employer and employee." }],
+              },
+              { title: "抓不到正文的来源", url: "https://www.medicare.gov/x", authority: "authoritative", fetched: false },
+            ],
+          },
+        },
+      ],
+    });
+    const source = parseTraceReport(raw)?.items[0]?.external?.sources?.[0];
+    expect(parseTraceReport(raw)?.items[0]?.external?.evidence).toBe("verbatim");
+    expect(source?.fetched).toBe(true);
+    expect(source?.contentChars).toBe(12345);
+    expect(source?.quotes?.[0]?.text).toContain("6.2% each for the employer");
+    const second = parseTraceReport(raw)?.items[0]?.external?.sources?.[1];
+    expect(second?.fetched).toBe(false);
+    expect(second?.quotes).toBeUndefined();
+  });
+
+  it("抓失败的原因被保留（否则「为什么没抓到」查不出来）", () => {
+    const raw = JSON.stringify({
+      schema: 1,
+      items: [
+        {
+          id: "item-1",
+          category: "fact",
+          claim: "某说法。",
+          confidence: "likely",
+          evidence: [{ quote: "原文引用" }],
+          external: {
+            status: "weak_source",
+            sources: [
+              { title: "抓不到", url: "https://www.nhc.gov.cn/x", fetched: false, fetchError: "HTTP 412" },
+              { title: "无链接来源", fetched: false, fetchError: "该来源本次检索未返回链接" },
+            ],
+          },
+        },
+      ],
+    });
+    const sources = parseTraceReport(raw)?.items[0]?.external?.sources;
+    expect(sources?.[0]?.fetchError).toBe("HTTP 412");
+    expect(sources?.[1]?.fetchError).toBe("该来源本次检索未返回链接");
+  });
+
+  it("非法的 evidence 取值被丢弃，不写进模型", () => {
+    const raw = JSON.stringify({
+      schema: 1,
+      items: [
+        {
+          id: "item-1",
+          category: "fact",
+          claim: "某说法。",
+          confidence: "likely",
+          external: { status: "verified", evidence: "看起来很权威" },
+          evidence: [{ quote: "原文引用" }],
+        },
+      ],
+    });
+    expect(parseTraceReport(raw)?.items[0]?.external?.evidence).toBeUndefined();
+  });
+
+  it("Markdown 导出带上引文与「未能取到正文」的标注", () => {
+    const raw = JSON.stringify({
+      schema: 1,
+      items: [
+        {
+          id: "item-1",
+          category: "data",
+          claim: "美国社保税合计 12.4%。",
+          confidence: "confirmed",
+          evidence: [{ quote: "原文引用" }],
+          external: {
+            status: "verified",
+            evidence: "verbatim",
+            sources: [
+              {
+                title: "Publication 15 | IRS",
+                url: "https://www.irs.gov/publications/p15",
+                authority: "authoritative",
+                fetched: true,
+                quotes: [{ text: "The rate of social security tax on taxable wages is 6.2% each for the employer and employee." }],
+              },
+              { title: "抓取失败的来源", url: "https://www.nhc.gov.cn/x", authority: "authoritative", fetched: false, fetchError: "HTTP 412" },
+              { title: "本轮没去抓的来源", url: "https://www.ssa.gov/y", authority: "authoritative", fetched: false },
+            ],
+          },
+        },
+      ],
+    });
+    const report = parseTraceReport(raw);
+    const markdown = traceReportToMarkdown(report!);
+    expect(markdown).toContain("原文：“The rate of social security tax on taxable wages is 6.2% each for the employer and employee.”");
+    // 「抓了但失败」要带原因；「本轮没抓」不能写成抓取失败（那会让人以为站点抓不动）
+    expect(markdown).toContain("抓取失败（HTTP 412），本条依据检索摘要");
+    expect(markdown).toContain("本轮未抓取该来源的正文");
+    // 速览里也把「有原文引证」的条数单列出来（与「有权威来源」分开报）
+    expect(markdown).toContain("条附有来源页面的原文引证");
+  });
+
   it("能剥离 Markdown 围栏与多余文本", () => {
     const raw = "```json\n" + JSON.stringify(SAMPLE) + "\n```";
     expect(parseTraceReport(raw)?.items).toHaveLength(2);

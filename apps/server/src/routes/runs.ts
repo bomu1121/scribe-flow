@@ -18,6 +18,7 @@ import type { AppDatabase } from "../db/client";
 import { projects, runNodeLogs, runNodeResults, runs, type RunRow } from "../db/schema";
 import { nextRunId, type RunEngine } from "../lib/engine";
 import { nodeIdsForScope } from "../lib/graph-scope";
+import { describeStaleMaterials, findStaleMaterials } from "../lib/material-staleness";
 import { defaultRunNameFor } from "../lib/run-name";
 import { resolveArtifactPath } from "../lib/storage";
 import { getAiConfig, getAsrConfig } from "../lib/settings";
@@ -87,6 +88,11 @@ export function createRun(db: AppDatabase, projectId: string, scope: RunScope, n
     const label = emptyBili.data.label ?? NODE_TYPE_LABELS[emptyBili.type];
     throw new Error(`节点「${label}」的 B 站链接为空，请填写链接或删除该节点`);
   }
+
+  // 执行前预检：换了素材却只重跑下游时，上游会沿用旧素材的产物——报告会把旧素材的内容
+  // 归到新素材头上（2026-10-15 实际发生），而这一点从产物上完全看不出来。只能在启动前拦。
+  const stale = findStaleMaterials(db, graph, projectId, scope, nodeId);
+  if (stale.length > 0) throw new Error(describeStaleMaterials(stale));
 
   const id = nextRunId();
   const createdAt = Date.now();

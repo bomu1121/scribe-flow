@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { parseGraph } from "./schema";
-import { collectSegmentOptions, groupSegmentOptions, originSourceNodeId, stalePickKeys } from "./segment";
+import { collectSegmentOptions, groupSegmentOptions, originSourceNodeId, parseBiliSegmentKey, segmentKey, stalePickKeys } from "./segment";
 
 /**
  * 素材挑选的「连接时识别」。
@@ -183,5 +183,24 @@ describe("挑选表查表键：回溯到来源卡", () => {
       ],
     );
     expect(originSourceNodeId(graph, "n_merge", "bvid:BV1x1:1")).toBeUndefined();
+  });
+});
+
+/**
+ * 段标识的**逆运算**：下游拿它认「这一份产物来自哪一条视频」。
+ * 认错的代价是静默写错数据（把第一集的发布日期写进第二集的笔记），不是报错，所以要钉住。
+ */
+describe("parseBiliSegmentKey：段标识 → 它指向的素材", () => {
+  it("与 segmentKey 对拍：写出来的键都能读回来", () => {
+    expect(parseBiliSegmentKey(segmentKey("n_src", { bvid: "BV1xx411c7mD", page: 3 }))).toEqual({ bvid: "BV1xx411c7mD", page: 3 });
+    // 有 cid 没分P号时写成 `cid` 兜底键：只认得出 bvid，认不出具体分P
+    expect(parseBiliSegmentKey(segmentKey("n_src", { bvid: "BV1xx411c7mD", cid: 888 }))).toEqual({ bvid: "BV1xx411c7mD" });
+    expect(parseBiliSegmentKey(segmentKey("n_src", { bvid: "BV1xx411c7mD" }))).toEqual({ bvid: "BV1xx411c7mD" });
+  });
+
+  it("不是 B 站素材的键一律返回 null（文本、本地文件、派生兜底键）", () => {
+    for (const key of [segmentKey("n_t", {}), "file:某文件.mp4", "pos:n_refine:0", "", undefined]) {
+      expect(parseBiliSegmentKey(key)).toBeNull();
+    }
   });
 });

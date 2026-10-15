@@ -45,6 +45,19 @@ function coverHttps(url: string | undefined): string {
   return url.replace(/^http:\/\//i, "https://").replace(/^\/\//, "https://");
 }
 
+/**
+ * 稿件发布时间（unix 秒）→ `YYYY-MM-DD`，按**北京时间**折算；无效值返回空串。
+ *
+ * 不用 `toISOString()` 直接切前 10 位：那是 UTC 日期，北京时间凌晨发布的稿件会整整差一天
+ * （如 2026-08-14 00:30 = 前一天 16:30 UTC），而「发布日期」必须和 B 站页面上显示的那天一致。
+ * 中国没有夏令时，所以固定 +8 小时是精确换算，与运行机器的时区也无关。
+ */
+export function formatPublishDate(pubdate: number): string {
+  if (!Number.isFinite(pubdate) || pubdate <= 0) return "";
+  const date = new Date((pubdate + 8 * 3600) * 1000);
+  return Number.isNaN(date.getTime()) ? "" : date.toISOString().slice(0, 10);
+}
+
 export interface BiliVideoDetail {
   bvid: string;
   cid: number;

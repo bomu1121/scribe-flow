@@ -10,6 +10,8 @@ export interface UgcSeasonEpisode {
   part: string;
   duration: number;
   cover?: string;
+  /** 单集发布时间（unix 秒，取自接口的 `arc.pubdate`）：合并成一张卡片后每集的日期不同。 */
+  pubdate?: number;
 }
 
 /** 视频所属 UGC 合集信息（view 接口的 ugc_season 字段，公开无需登录）。 */

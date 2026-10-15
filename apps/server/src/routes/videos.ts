@@ -98,7 +98,7 @@ async function fetchVideo(bvid: string): Promise<VideoPreview> {
             bvid?: string;
             cid?: number;
             title?: string;
-            arc?: { duration?: number; pic?: string };
+            arc?: { duration?: number; pic?: string; pubdate?: number };
             page?: { part?: string; duration?: number };
           }[];
         }[];
@@ -132,6 +132,8 @@ async function fetchVideo(bvid: string): Promise<VideoPreview> {
           part: ep.title?.trim() || ep.page?.part?.trim() || `第 ${index} 集`,
           duration: Number(ep.arc?.duration ?? ep.page?.duration ?? 0),
           cover: ep.arc?.pic ? normalizeCover(ep.arc.pic) : undefined,
+          // 合集的每一集发布日期各不相同：笔记的「发布日期」要按集取，所以这里必须逐集带出来。
+          pubdate: Number(ep.arc?.pubdate ?? 0) || undefined,
         });
       }
     }

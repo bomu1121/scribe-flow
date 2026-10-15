@@ -192,6 +192,7 @@ class: doc
 来源: B站
 作者: 某某UP
 原始链接: https://www.bilibili.com/video/BV1xxxxxxxxx
+发布日期: 2026-08-14     # 素材自己的发布时间（B 站稿件的 pubdate），与下面的创建日期是两条时间轴
 创建日期: 2026-10-11
 tags:
   - B站                # 自动写：跟上面「来源:」那一行同源（裸值，不带一级）

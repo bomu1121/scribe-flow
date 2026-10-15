@@ -270,7 +270,7 @@ describe("builtin prompt blocks", () => {
 });
 
 describe("availablePromptBlocks", () => {
-  it("只放出已过审核的内置提示词（当前 5 个），其余一律不出现在可选列表里", () => {
+  it("只放出已过审核的内置提示词（当前 6 个），其余一律不出现在可选列表里", () => {
     const ids = availablePromptBlocks(BUILTIN_PROMPT_BLOCKS, true).map((block) => block.id);
     expect([...ids].sort()).toEqual([
       "builtin.insight",
@@ -278,6 +278,7 @@ describe("availablePromptBlocks", () => {
       "builtin.insight.v5",
       "builtin.insight.v6",
       "builtin.qa",
+      "builtin.trace.v3",
     ]);
     // 未过审核的：旧的试点版本、上一代版本、以及整系列模版
     for (const blocked of [
@@ -286,7 +287,8 @@ describe("availablePromptBlocks", () => {
       "builtin.brief",
       "builtin.tech",
       "builtin.knowledge",
-      "builtin.trace.v3",
+      "builtin.trace",
+      "builtin.trace.v2",
       "builtin.gameguide.v2",
       "builtin.drill",
     ]) {
@@ -325,13 +327,14 @@ describe("availablePromptBlocks", () => {
 });
 
 describe("aiPromptBlocks（画布节点与快捷新建共用的「AI 加工」可选提示词）", () => {
-  it("两处下拉是同一份列表：已过审核的 5 个通用提示词，顺序稳定", () => {
+  it("两处下拉是同一份列表：已过审核的 6 个通用提示词，顺序稳定", () => {
     expect(aiPromptBlocks([], true).map((block) => block.id)).toEqual([
       "builtin.insight",
       "builtin.insight.v4",
       "builtin.insight.v5",
       "builtin.insight.v6",
       "builtin.qa",
+      "builtin.trace.v3",
     ]);
   });
 

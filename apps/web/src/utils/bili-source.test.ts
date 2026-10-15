@@ -72,6 +72,18 @@ describe("biliSourceData", () => {
     expect(data.bvid).toBe("BV1xx411c7mD");
     expect(data.pageInfo).toEqual({ cid: 999, page: 1, part: "", duration: 742 });
   });
+
+  it("发布日期跟着视频一起写进卡片：单个进卡片字段，多选逐项各自带着", () => {
+    // 两张卡片的日期必须分开：合集里每一集的发布日期都不同，笔记按段标识取各自那一集。
+    expect(biliSourceData([video({ cid: 999, pubdate: 1786638600 })]).pubdate).toBe(1786638600);
+
+    const multi = biliSourceData(
+      [video({ cid: 1, pubdate: 1786638600 }), video({ bvid: "BV1yy411c7mE", cid: 2, pubdate: 1786725000 })],
+      "B站收藏",
+    );
+    expect(multi.pubdate).toBe(1786638600);
+    expect((multi.items ?? []).map((item) => item.pubdate)).toEqual([1786638600, 1786725000]);
+  });
 });
 
 describe("applyBiliVideos", () => {
@@ -122,5 +134,16 @@ describe("applyBiliVideos", () => {
 
     expect(() => parseGraph(single)).not.toThrow();
     expect(() => parseGraph(multi)).not.toThrow();
+  });
+
+  it("发布日期能过工程图校验：校验不认的字段会被静默吃掉，笔记里就再也不会写这一行", () => {
+    const graph = applyBiliVideos(
+      templateGraph(),
+      [video({ cid: 1, pubdate: 1786638600 }), video({ bvid: "BV1yy411c7mE", cid: 2, pubdate: 1786725000 })],
+      "B站收藏",
+    );
+    const node = biliNodeOf(parseGraph(graph));
+    expect(node?.data.pubdate).toBe(1786638600);
+    expect((node?.data.items ?? []).map((item) => item.pubdate)).toEqual([1786638600, 1786725000]);
   });
 });

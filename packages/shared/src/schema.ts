@@ -24,6 +24,8 @@ const biliSourceItemSchema = z.object({
   cover: z.string().optional(),
   uploader: z.string().optional(),
   duration: z.number().optional(),
+  /** 稿件发布时间（unix 秒）；笔记的「发布日期」属性用它，缺省＝那篇不写这一行。 */
+  pubdate: z.number().optional(),
 });
 
 const retrySchema = z
@@ -52,6 +54,8 @@ const nodeDataByType = {
     cover: z.string().optional(),
     uploader: z.string().optional(),
     duration: z.number().optional(),
+    /** 稿件发布时间（unix 秒）：单链接卡片的笔记「发布日期」取自这里。 */
+    pubdate: z.number().optional(),
     keepVideo: z.boolean().optional(),
     videoQn: z.number().int().min(16).max(127).optional(),
   }),

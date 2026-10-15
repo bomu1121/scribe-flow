@@ -5,7 +5,7 @@ import { ElDropdown, ElDropdownItem, ElDropdownMenu } from "element-plus/es/comp
 import { ElMessageBox } from "element-plus/es/components/message-box/index.mjs";
 import { toast } from "@/lib/toast";
 import { Activity, Check, Copy, Download, History, LayoutPanelTop, ListOrdered, Maximize, MoreHorizontal, Play, Redo2, StopCircle, Undo2 } from "lucide-vue-next";
-import { emptyGraph, type NodeType, type RunDetail, type RunMeta, type RunNodeResult, type RunScope, type RunStatus, type SourceVideoItem, type WorkflowGraph } from "@scribe-flow/shared";
+import { collectMaterialOptions, emptyGraph, type NodeType, type RunDetail, type RunMeta, type RunNodeResult, type RunScope, type RunStatus, type SourceVideoItem, type WorkflowGraph } from "@scribe-flow/shared";
 import FlowCanvas from "@/components/canvas/FlowCanvas.vue";
 import SourcePickerDialog from "@/components/canvas/SourcePickerDialog.vue";
 import BiliAccountButton from "@/components/auth/BiliAccountButton.vue";
@@ -245,8 +245,42 @@ function onBiliPickerConfirm(videos: SourceVideoItem[]) {
 }
 
 function onGraphUpdate(next: WorkflowGraph) {
+  warnIfMaterialChanged(next);
   graph.value = next;
   scheduleSave();
+}
+
+/**
+ * 来源卡换了素材（换视频 / 换了一集 / 改成多选）时提醒：下游已有结果仍是用上一个素材算的。
+ *
+ * 服务端还有一道硬拦（`lib/material-staleness.ts`：换了素材却只重跑下游时直接拒绝启动），
+ * 这条只是把同一件事提前说清楚——等报错才知道，用户已经在画布上白等一轮了。
+ * 判定复用与服务端**同一份**素材身份口径（`collectMaterialOptions`），避免两处各写一份而漂移。
+ * 注意文本卡改的是内容而不是身份（它的标识来自节点 id），所以这里不会为它响。
+ */
+function warnIfMaterialChanged(next: WorkflowGraph) {
+  const before = sourceMaterialSignature(graph.value);
+  const after = sourceMaterialSignature(next);
+  let affected = 0;
+  for (const [nodeId, signature] of after) {
+    if (!signature || signature === before.get(nodeId)) continue;
+    affected = Math.max(affected, runScopeNodeIds(next.nodes, next.edges, "fromNode", nodeId).size - 1);
+  }
+  if (affected === 0) return;
+  toast.info(`已更换素材：下游 ${affected} 个节点仍是上一个素材的结果，需要重跑才会用上新素材`);
+}
+
+/** 每张来源卡的素材身份（与服务端预检同一口径：`collectMaterialOptions`）。 */
+function sourceMaterialSignature(source: WorkflowGraph): Map<string, string> {
+  const map = new Map<string, string>();
+  for (const node of source.nodes) {
+    if (!node.type.startsWith("source.")) continue;
+    const keys = collectMaterialOptions(source, node.id)
+      .map((option) => option.key)
+      .sort();
+    map.set(node.id, keys.join("|"));
+  }
+  return map;
 }
 
 /**

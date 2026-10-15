@@ -26,6 +26,13 @@ export interface SourceVideoItem {
   duration: number;
   pageCount: number;
   pages?: PageRef[];
+  /**
+   * 稿件发布时间（unix 秒）。
+   *
+   * 收藏夹/合集这类列表接口给不出日期，选择器只为「补 cid」的那些项解析过链接
+   * （`SourcePickerDialog` 的 confirmSelection），日期就顺手带回来。
+   */
+  pubdate?: number;
 }
 
 /** 本地文件上传结果。 */

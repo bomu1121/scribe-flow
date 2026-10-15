@@ -130,13 +130,15 @@ describe("collectFrontMatterFieldNames：统计口径与上限", () => {
 
   it("排掉我们自己写进 front matter 的固定字段", async () => {
     const root = await makeVault({
-      "a.md": "---\n标题: 标题不该进候选\ntags:\n  - 话题/AI\n创建日期: 2026-10-13\n人物: 张三\n---\n正文",
+      "a.md": "---\n标题: 标题不该进候选\ntags:\n  - 话题/AI\n发布日期: 2026-08-14\n创建日期: 2026-10-13\n人物: 张三\n---\n正文",
     });
     const { items } = await collectFrontMatterFieldNames(root);
     expect(items).toEqual([{ name: "人物", count: 1 }]);
     /* 名单是 engine 里拼 front matter 的那几行，这里钉住它当前的内容 */
     expect(NOTE_OWN_FIELDS).toContain("标题");
     expect(NOTE_OWN_FIELDS).toContain("tags");
+    // 「发布日期」也是我们写的（B 站稿件的 pubdate），不该被当成用户可选的抽取字段推荐回去
+    expect(NOTE_OWN_FIELDS).toContain("发布日期");
   });
 
   it("到上限就停，并如实说是下限", async () => {

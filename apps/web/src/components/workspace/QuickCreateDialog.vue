@@ -253,6 +253,8 @@ function buildBiliSource(url: string, info: VideoPreview | null): BiliLinkSource
     cover: info.cover,
     uploader: info.uploader,
     duration: part?.duration ?? info.duration,
+    // 建工程时就把发布时间写进卡片：笔记的「发布日期」取自这里，不必等画布上那次重新解析。
+    pubdate: info.pubdate,
   };
 }
 

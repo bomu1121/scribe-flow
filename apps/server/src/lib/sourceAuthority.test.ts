@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { authorityOf, normalizeSourceUrl, rankSources } from "./sourceAuthority";
+import { authorityOf, normalizeSourceUrl, rankSources, sanitizeSourceUrl } from "./sourceAuthority";
 
 describe("来源权威度判定", () => {
   it("命名分档（gov/edu/ac）判为权威，但 .cn 本身不代表权威", () => {
@@ -136,5 +136,31 @@ describe("链接归一化", () => {
   it("忽略协议、www、末尾斜杠与锚点", () => {
     expect(normalizeSourceUrl("https://www.Example.com/a/#x")).toBe("example.com/a");
     expect(normalizeSourceUrl("http://example.com/a")).toBe("example.com/a");
+  });
+});
+
+describe("sanitizeSourceUrl（清掉第三方结果里的 userinfo）", () => {
+  it("去掉用户名/密码，保留其余部分", () => {
+    expect(sanitizeSourceUrl("https://epp@irs.gov/compliance/criminal-investigation/x")).toBe(
+      "https://irs.gov/compliance/criminal-investigation/x",
+    );
+    expect(sanitizeSourceUrl("https://user:pass@example.com/a?b=1")).toBe("https://example.com/a?b=1");
+  });
+
+  it("没有 userinfo 时原样返回（不顺手改写其它部分）", () => {
+    expect(sanitizeSourceUrl("https://www.irs.gov/taxtopics/tc554")).toBe("https://www.irs.gov/taxtopics/tc554");
+  });
+
+  it("伪装前缀被拆穿：`https://www.irs.gov@evil.com/x` 的主机是 evil.com", () => {
+    // 这是它存在的第二个理由：URL 前缀能骗过看链接的人，权威度判定看 hostname 不受影响，
+    // 但展示出来的链接不能还是那副样子。
+    expect(sanitizeSourceUrl("https://www.irs.gov@evil.com/x")).toBe("https://evil.com/x");
+    expect(authorityOf("https://www.irs.gov@evil.com/x")).not.toBe("authoritative");
+  });
+
+  it("非法或非 http(s) 的输入按原样返回，不抛错", () => {
+    expect(sanitizeSourceUrl("不是链接")).toBe("不是链接");
+    expect(sanitizeSourceUrl("ftp://example.com/x")).toBe("ftp://example.com/x");
+    expect(sanitizeSourceUrl("")).toBeUndefined();
   });
 });
