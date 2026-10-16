@@ -1,0 +1,232 @@
+/*
+ * 「Obsidian 排版方案 demo」的预览样式：近似 Obsidian 默认主题（浅色）。
+ *
+ * 这不是 Obsidian 的截图，是近似渲染。真实观感请用 Obsidian 打开 `note-candidates/排版方案demo/` 这个文件夹作为库。
+ *
+ * 标定依据（2026-10-14 从 Obsidian Publish 的 app.css 抽出，只取数值作测量，未收录原文）：
+ *   正文 16px / 行高 1.5 / 段距 1rem / 正文栏宽 700px / 加粗字重 600
+ *   标题 h1 1.618em 700、h2 1.462em 600、h3 1.318em 600、h4 1.188em 600
+ *   引用块：左侧 2px 边框（--interactive-accent）+ 左内边距 24px
+ *   高亮 ==x==：rgba(255, 208, 0, 0.4)
+ *   callout：底色 rgba(类型色, .1)、圆角 4px、内边距 12/12/12/24、标题字色=类型色、图标 1em；
+ *            下表的类型色与图标均取自 app.css 的 `--callout-*` 与 `data-callout` 规则，
+ *            summary/abstract/tldr=青(0,191,188)+剪贴板、example=紫(120,82,238)+列表、
+ *            quote/cite=灰(158,158,158)+引号、默认/note=蓝(8,109,221)+铅笔。
+ *            quote 的图标 Obsidian 用自带 glyph，这里用 Lucide 的 quote 近似（诚实清单里写明）。
+ * 未复刻：mix-blend-mode、属性面板的交互样式、主题字体微调。
+ */
+
+:root {
+  /* 浅色主题的调色板（--color-base-*） */
+  --color-base-00: #ffffff;
+  --color-base-10: #fafafa;
+  --color-base-20: #f6f6f6;
+  --color-base-30: #e0e0e0;
+  --color-base-50: #ababab;
+  --color-base-70: #5c5c5c;
+  --color-base-100: #222222;
+  --background-primary: var(--color-base-00);
+  --background-secondary: var(--color-base-20);
+  --background-modifier-border: var(--color-base-30);
+  --text-normal: var(--color-base-100);
+  --text-muted: var(--color-base-70);
+  --text-faint: var(--color-base-50);
+  --interactive-accent: hsl(258, 88%, 66%);
+  --text-accent: var(--interactive-accent);
+  --font-text: ui-sans-serif, -apple-system, BlinkMacSystemFont, system-ui, Roboto, "Helvetica", "Arial", "Segoe UI", "InterVariable", "Inter", "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", sans-serif;
+  --file-line-width: 700px;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  padding: 32px;
+  background: var(--background-secondary);
+  color: var(--text-normal);
+  font-family: var(--font-text);
+}
+
+/* 一页笔记：Obsidian 阅读视图的正文栏 */
+.markdown-preview-view {
+  width: var(--file-line-width);
+  margin: 0 auto;
+  padding: 32px 40px;
+  background: var(--background-primary);
+  font-size: 16px;
+  line-height: 1.5;
+}
+
+.markdown-preview-view > :first-child { margin-top: 0; }
+
+h1, h2, h3, h4 { line-height: 1.3; margin: 1.6em 0 0.6em; }
+h1 { font-size: 1.618em; font-weight: 700; }
+h2 { font-size: 1.462em; font-weight: 600; }
+h3 { font-size: 1.318em; font-weight: 600; }
+h4 { font-size: 1.188em; font-weight: 600; }
+
+p { margin: 0 0 1rem; }
+strong { font-weight: 600; }
+a { color: var(--text-accent); }
+
+ul, ol { margin: 0 0 1rem; padding-inline-start: 1.7em; }
+li { margin: 0.075em 0; padding-inline-start: 0.2em; }
+li::marker { color: var(--text-faint); }
+li > strong:first-child { font-weight: 600; }
+
+hr {
+  border: none;
+  border-top: 1px solid var(--background-modifier-border);
+  margin: 2rem 0;
+}
+
+blockquote {
+  margin: 1rem 0;
+  padding: 0 0 0 24px;
+  border-inline-start: 2px solid var(--interactive-accent);
+  color: inherit;
+}
+
+mark {
+  background-color: rgba(255, 208, 0, 0.4);
+  color: inherit;
+}
+
+/* 属性面板（frontmatter）：近似阅读视图顶部的属性区 */
+.properties {
+  width: var(--file-line-width);
+  margin: 0 auto;
+  padding: 20px 40px 0;
+  background: var(--background-primary);
+  font-size: 0.875em;
+}
+.properties .prop-row { display: flex; gap: 12px; padding: 3px 0; }
+.properties .prop-name { flex: 0 0 6.5em; color: var(--text-faint); }
+.properties .prop-value { color: var(--text-normal); }
+.properties .prop-chip {
+  display: inline-block;
+  margin-inline-end: 6px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: var(--background-secondary);
+  color: var(--text-muted);
+}
+.properties + .markdown-preview-view { padding-top: 12px; }
+
+/* ------------------------------------------------------------------ callout */
+.callout {
+  --callout-color: 8, 109, 221; /* 默认 note/info 的蓝 */
+  --callout-icon-color: rgb(var(--callout-color));
+  overflow: hidden;
+  margin: 1em 0;
+  padding: 12px 12px 12px 24px;
+  border-radius: 4px;
+  background-color: rgba(var(--callout-color), 0.1);
+}
+
+.callout[data-callout="summary"],
+.callout[data-callout="abstract"],
+.callout[data-callout="tldr"] { --callout-color: 0, 191, 188; }
+
+.callout[data-callout="example"] { --callout-color: 120, 82, 238; }
+
+.callout[data-callout="quote"],
+.callout[data-callout="cite"] { --callout-color: 158, 158, 158; }
+
+.callout-title {
+  display: flex;
+  gap: 4px;
+  align-items: flex-start;
+  color: rgb(var(--callout-color));
+  font-weight: 600;
+  line-height: 1.3;
+}
+
+.callout.is-collapsible .callout-title { cursor: pointer; }
+
+.callout-icon { flex: 0 0 auto; display: flex; align-items: center; }
+.callout-icon svg { width: 1em; height: 1em; color: rgb(var(--callout-color)); }
+
+.callout-title-inner { flex: 1 1 auto; }
+
+.callout-fold { display: flex; align-items: center; padding-inline-end: 8px; }
+.callout-fold svg { width: 1em; height: 1em; color: var(--text-faint); transition: transform 100ms ease-in-out; }
+.callout-fold.is-collapsed svg { transform: rotate(-90deg); }
+
+.callout-content { padding-top: 2px; }
+.callout-content > :first-child { margin-top: 0; }
+.callout-content > :last-child { margin-bottom: 0; }
+
+/* 折起来时，Obsidian 只留标题行 */
+details.callout:not([open]) > .callout-content { display: none; }
+
+/* 页面外壳（demo 页自己的排版）不在这里：它由 tools/render-preview.mjs 的内联 <style> 负责。
+   上一轮这份文件里混进了 `.demo-strip{width:fit-content}` 这类页面级规则，本次清掉了——
+   它会跟着被复用出去，把版心压成 736px（踩过一次，见调研文档诚实清单）。 */
+
+/* ==================================================================
+ * 溯源导出 demo 追加：callout 类型补齐 + 代码行内 + 脚注 + 本 demo 的版式零件
+ *
+ * 色值与类型映射取自 Obsidian Publish 的 app.css（2026-10-16 抽，只取数值作测量）：
+ *   --callout-success: var(--color-green-rgb)   = 8, 185, 78   （light 主题）
+ *   --callout-warning: var(--color-orange-rgb)  = 236, 117, 0
+ *   --callout-question = warning 同色
+ *   --callout-fail / --callout-error / --callout-bug: var(--color-red-rgb) = 233, 49, 71
+ *   --callout-summary: var(--color-cyan-rgb) = 0, 191, 188；--callout-info: 8, 109, 221
+ * 即「外部可印证=绿 / 仅非权威=橙 / 未找到出处与反证=红」这套码对应的是 Obsidian 自己的类型色。
+ * ================================================================== */
+
+.callout[data-callout="success"],
+.callout[data-callout="check"],
+.callout[data-callout="done"] { --callout-color: 8, 185, 78; }
+
+.callout[data-callout="warning"],
+.callout[data-callout="caution"],
+.callout[data-callout="attention"],
+.callout[data-callout="question"],
+.callout[data-callout="help"],
+.callout[data-callout="faq"] { --callout-color: 236, 117, 0; }
+
+.callout[data-callout="failure"],
+.callout[data-callout="fail"],
+.callout[data-callout="missing"],
+.callout[data-callout="danger"],
+.callout[data-callout="error"],
+.callout[data-callout="bug"] { --callout-color: 233, 49, 71; }
+
+.callout[data-callout="info"] { --callout-color: 8, 109, 221; }
+
+/* 折叠态：Obsidian 里折叠的 callout 只留标题那一行 */
+.callout.is-collapsible:not([open]) > .callout-content { display: none; }
+
+/* 行内代码：Obsidian 用等宽字体 + 浅底。本 demo 用它承载「类别 · 可信度 · 核查结论」那一行 */
+.markdown-preview-view code {
+  padding: 0.15em 0.35em;
+  border-radius: 4px;
+  background-color: var(--color-base-20);
+  color: var(--text-muted);
+  font-family: var(--font-monospace, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 0.85em;
+}
+
+/* 脚注：阅读视图里 `[^n]` 渲染成上标链接，定义在文末 */
+.markdown-preview-view sup.footnote-ref a { text-decoration: none; }
+.markdown-preview-view .footnotes {
+  margin-top: 2.2rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--background-modifier-border);
+  color: var(--text-muted);
+  font-size: 0.9em;
+}
+.markdown-preview-view .footnotes ol { padding-inline-start: 1.4rem; }
+.markdown-preview-view .footnotes blockquote {
+  margin: 0.35rem 0 0.6rem;
+  border-inline-start-color: var(--color-base-30);
+  color: var(--text-faint);
+}
+
+/* 条目里的「行首元信息」那一行（`类别 · 可信度 · 核查结论`） */
+.markdown-preview-view p > code:only-child { display: inline-block; }
+
+/* 来源行：紧跟来源标题的原文引文与「本轮未抓正文」标记 */
+.markdown-preview-view .trace-source-line { font-size: 0.92em; }
