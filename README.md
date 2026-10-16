@@ -118,6 +118,7 @@ pnpm check:api:chain # B站 → 校对 → 全部开放提示词分支 → Obsid
 - [结果页 tab 切换：标准依据与实测对照](./docs/research/tab-interaction-research.md)
 - [③ 词库编辑器：现状实测、三个候选方案与外部依据](./docs/research/taxonomy-editor-research.md)
 - [内置链路（模板）调研](./docs/research/template-set-research.md)
+- [同一枚卡、两类产物，怎么让用户看出来](./docs/research/trace-artifact-visibility-research.md)
 - [溯源报告「待核实问题」太挤](./docs/research/trace-uncertain-layout-research.md)
 - [溯源模块「联网查找资料」怎么做](./docs/research/trace-web-source-research.md)
 - [视频模块 P0 真实视频验证记录](./docs/research/video-module-poc.md)

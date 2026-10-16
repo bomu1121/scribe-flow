@@ -1,0 +1,335 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>「这枚 AI 加工卡产出的是另一类笔记」怎么让用户看出来 —— 现状 + 五套做法</title>
+<!--
+  用途：比较「同一枚 AI 加工卡、做法不同 → 产物是另一类东西」这件事在画布上怎么表达，供选型。
+  这是**视觉原型**，不是生产代码：
+  · 颜色/圆角取自 apps/web/src/styles/tokens.css（内联是为了双击打开也能渲染）；
+  · 卡片尺寸照**真机计算样式**重画：卡片 320px 宽（本次实测时画布 zoom 0.4636，量到 148.4px → 还原 320）、
+    标题 13px/深色、描述 11px/三级色、运行按钮 24px；高度真机 167px（与 templates.ts 注释里的量值一致）。
+  · 内容是真的：「信息溯源 · 上网查证」那枚卡的文案、联网核查行、两个按钮都照真机截图。
+  · 控件外形是手画的，不是 Element Plus 的真实渲染；落地实现必须用 EP 组件。
+  调研来源、取舍与推荐见 docs/research/trace-artifact-visibility-research.md。
+-->
+<style>
+:root {
+  --color-bg: #f4f5f6;
+  --color-canvas: #f8f9fa;
+  --color-surface: #ffffff;
+  --color-surface-muted: #f7f8f9;
+  --color-border: #e4e7eb;
+  --color-border-strong: #cdd3da;
+  --color-text: #16181d;
+  --color-text-secondary: #545b66;
+  --color-text-tertiary: #8a929e;
+  --color-brand: #00aeec;
+  --color-brand-soft: #e6f7fe;
+  --color-brand-border: #b8e8fb;
+  --color-success: #18a058;
+  --color-success-soft: #e7f6ee;
+  --color-success-border: #b7e4ca;
+  --color-warning: #d9822b;
+  --color-warning-soft: #fcf0e2;
+  --color-warning-border: #f0d3ae;
+  --color-info-soft: #e6f5fc;
+  --color-info-border: #b8e2f2;
+  --node-radius: 10px;
+}
+* { box-sizing: border-box; }
+body { margin: 0; padding: 26px 30px 70px; background: var(--color-bg); color: var(--color-text); font: 14px/1.65 "Microsoft YaHei", "PingFang SC", -apple-system, sans-serif; }
+h1 { margin: 0 0 6px; font-size: 20px; }
+p.note { margin: 0 0 4px; color: var(--color-text-secondary); font-size: 13px; }
+p.note code { background: var(--color-surface-muted); padding: 1px 5px; border-radius: 3px; }
+
+.tabs { display: flex; flex-wrap: wrap; gap: 6px; margin: 18px 0 8px; }
+.tab { padding: 5px 12px; border: 1px solid var(--color-border); border-radius: 6px; background: var(--color-surface); color: var(--color-text-secondary); font-size: 13px; cursor: pointer; }
+.tab[aria-selected="true"] { border-color: var(--color-text); color: var(--color-text); font-weight: 600; }
+.panel { display: none; }
+.panel[data-active="true"] { display: block; }
+h2 { margin: 24px 0 2px; font-size: 15px; }
+p.why { margin: 0 0 10px; color: var(--color-text-secondary); font-size: 13px; }
+
+/* ===================== 画布与卡片（照真机 320px 卡片重画） ===================== */
+.board { position: relative; height: 430px; background: var(--color-canvas); background-image: radial-gradient(var(--color-border) 1px, transparent 1px); background-size: 18px 18px; border: 1px solid var(--color-border); border-radius: 8px; overflow: hidden; }
+.card { position: absolute; width: 320px; background: var(--color-surface); border: 1px solid var(--color-border-strong); border-radius: var(--node-radius); box-shadow: 0 1px 2px rgba(22, 24, 29, .06); }
+.card-head { display: flex; align-items: flex-start; gap: 8px; padding: 12px 12px 10px; }
+.card-icon { flex: 0 0 auto; width: 16px; height: 16px; margin-top: 1px; color: var(--color-text-secondary); }
+.card-titles { min-width: 0; flex: 1 1 auto; }
+.card-title { font-size: 13px; font-weight: 600; color: var(--color-text); display: flex; align-items: center; gap: 6px; }
+.card-desc { margin-top: 2px; font-size: 11px; color: var(--color-text-tertiary); }
+.card-run { flex: 0 0 auto; width: 24px; height: 24px; border: 1px solid transparent; border-radius: 6px; background: none; color: var(--color-text-tertiary); font-size: 12px; }
+.card-body { border-top: 1px solid var(--color-border); padding: 10px 12px; }
+.field-label { font-size: 11px; color: var(--color-text-secondary); margin-bottom: 6px; }
+.select { display: flex; align-items: center; gap: 8px; height: 30px; padding: 0 10px; border: 1px solid var(--color-border); border-radius: 6px; background: var(--color-surface); font-size: 12.5px; color: var(--color-text); }
+.select .caret { margin-left: auto; color: var(--color-text-tertiary); font-size: 10px; }
+.select .chip-type { margin-left: auto; color: var(--color-text-tertiary); font-size: 11px; }
+.port { position: absolute; width: 8px; height: 8px; border: 1.5px solid var(--color-border-strong); border-radius: 50%; background: var(--color-surface); }
+.port.in { left: -5px; top: 118px; }
+.port.out { right: -5px; top: 118px; }
+.port-label { position: absolute; right: -8px; top: 132px; font-size: 10px; color: var(--color-text-tertiary); white-space: nowrap; }
+.port-label.in { right: auto; left: -8px; }
+
+/* 联网核查行（真机：只有声明了 externalCheck 的提示词才有这一行） */
+.external { margin-top: 10px; padding: 8px 10px; border-radius: 6px; background: var(--color-surface-muted); }
+.external-row { display: flex; align-items: center; gap: 6px; font-size: 11.5px; color: var(--color-text-secondary); }
+.badge-ok { padding: 1px 6px; border: 1px solid var(--color-success-border); border-radius: 4px; background: var(--color-success-soft); color: var(--color-success); font-size: 11px; }
+.external-actions { display: flex; gap: 6px; margin-top: 7px; }
+.mini-btn { height: 24px; padding: 0 9px; border: 1px solid var(--color-border); border-radius: 5px; background: var(--color-surface); color: var(--color-text-secondary); font-size: 11.5px; }
+
+/* ===================== 各变体新增的可见元素 ===================== */
+/* A：描述行改写成「产出：…」 */
+.desc-artifact { color: var(--color-text-secondary); }
+/* B：标题旁产物徽章 */
+.badge-artifact { padding: 0 6px; height: 16px; display: inline-flex; align-items: center; border: 1px solid var(--color-info-border); border-radius: 4px; background: var(--color-info-soft); color: var(--color-text-secondary); font-size: 10px; font-weight: 500; }
+/* D：出口卡（Obsidian）上的产物小结 */
+.artifact-summary { margin-top: 8px; padding: 7px 9px; border: 1px dashed var(--color-border-strong); border-radius: 6px; font-size: 11.5px; color: var(--color-text-secondary); line-height: 1.7; }
+.artifact-summary b { color: var(--color-text); font-weight: 600; }
+/* E：连线上的产物标注 */
+.edge-label { position: absolute; transform: translate(-50%, -50%); padding: 1px 6px; border: 1px solid var(--color-border); border-radius: 4px; background: var(--color-surface); font-size: 10.5px; color: var(--color-text-secondary); }
+
+svg.edges { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+svg.edges path { fill: none; stroke: var(--color-border-strong); stroke-width: 1.2; }
+
+.meter { margin: 10px 0 0; padding: 8px 10px; border-left: 3px solid var(--color-brand); background: var(--color-surface); color: var(--color-text-secondary); font-size: 12.5px; }
+.meter b { color: var(--color-text); }
+
+table.cmp { margin-top: 12px; border-collapse: collapse; width: 100%; font-size: 12.5px; background: var(--color-surface); }
+table.cmp th, table.cmp td { border: 1px solid var(--color-border); padding: 6px 9px; text-align: left; vertical-align: top; }
+table.cmp th { background: var(--color-surface-muted); font-weight: 600; }
+table.cmp td.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+</style>
+</head>
+<body>
+
+<h1>「这枚卡产出的是另一类笔记」怎么让用户看出来</h1>
+<p class="note">同一枚「AI 加工」节点、同一份文稿：一张选了「观点提炼 · 速览版」，另一张选了「信息溯源 · 上网查证」。
+差别不在标题（标题本来就写的是做法名），而在于**产物是两类东西**：一片是普通笔记（`类型: 视频笔记`），
+一片是溯源报告（`类型: 溯源笔记`，会与同源笔记互链）。下面五套做法解决「这件事在画布上看得见吗」。</p>
+<p class="note">卡片照真机计算样式重画：<code>320px</code> 宽、标题 <code>13px</code>、描述 <code>11px</code>、运行按钮 <code>24px</code>，
+「联网核查」那一行只有声明了需要联网的提示词才有（真机截图里就有）。</p>
+
+<div class="tabs" role="tablist">
+  <button class="tab" role="tab" data-tab="now" aria-selected="true">现状（基线）</button>
+  <button class="tab" role="tab" data-tab="a">A 描述行写产出</button>
+  <button class="tab" role="tab" data-tab="b">B 标题旁产物徽章</button>
+  <button class="tab" role="tab" data-tab="c">C 下拉项标产物</button>
+  <button class="tab" role="tab" data-tab="d">D 出口卡预告</button>
+  <button class="tab" role="tab" data-tab="e">E 连线标注</button>
+</div>
+
+<section class="panel" data-panel="now" data-active="true">
+  <h2>现状（基线）：两张卡的说明文字一模一样</h2>
+  <p class="why">两枚卡的描述都是「使用提示词对文稿做 AI 加工」——只有标题里的做法名不同。
+    用户看不出其中一枚的产物**是另一类笔记**（会带 `类型: 溯源笔记`、会与观点笔记互链）。</p>
+  <div class="board" data-board="now"></div>
+  <p class="meter" data-meter>量中…</p>
+</section>
+
+<section class="panel" data-panel="a">
+  <h2>A：把描述行改写成「产出：…」</h2>
+  <p class="why">最省的做法——描述行本来就在那儿，只是现在写的是节点类型（对「AI 加工」来说两枚卡永远同一句）。
+    改成由**做法**声明产物：一眼看出这是报告，不是笔记。代价：描述行只有 11px 一行，长句子会被挤。</p>
+  <div class="board" data-board="a"></div>
+  <p class="meter" data-meter>量中…</p>
+</section>
+
+<section class="panel" data-panel="b">
+  <h2>B：标题旁加产物徽章（dbt 的做法：materialization 用徽章/色条标出来）</h2>
+  <p class="why">产物的**类别**用一个短徽章表达，和做法名并排——扫一眼就知道哪些卡会出报告。
+    依据：dbt 里同一个「model」概念，`table / view / incremental / ephemeral` 决定了它产出什么，
+    而 DAG 视图正是用徽章与左侧色条把它标出来的（VS Code 的 dbt Lineage 扩展把配色列成了表）。</p>
+  <div class="board" data-board="b"></div>
+  <p class="meter" data-meter>量中…</p>
+</section>
+
+<section class="panel" data-panel="c">
+  <h2>C：下拉里就标（在选择的那一刻告知）</h2>
+  <p class="why">用户是在**选提示词**那一刻做的决定，所以那里是告知的最佳位置：下拉项右侧一个短标（`报告` / `笔记`）。
+    代价：下拉是通用组件（Element Plus），加后缀要确认能做到、且不挤坏长名字。</p>
+  <div class="board" data-board="c"></div>
+  <p class="meter" data-meter>量中…</p>
+</section>
+
+<section class="panel" data-panel="d">
+  <h2>D：把话说到用户真正关心的地方——出口卡上预告「会写出哪几篇」</h2>
+  <p class="why">用户关心的是「库里会出现什么、它们是什么关系」，而不是某张节点内部怎么算。
+    所以预告放在 **Obsidian 笔记卡**上：一眼看出这次会落两篇、各是什么、且两篇互链。
+    这一处天然还回答了「保存目录」的问题（两篇会进同一个目录，还是会分头进）。</p>
+  <div class="board" data-board="d"></div>
+  <p class="meter" data-meter>量中…</p>
+</section>
+
+<section class="panel" data-panel="e">
+  <h2>E：在连线上标产物（边上写清这条线送的是什么）</h2>
+  <p class="why">产物是**沿着边**流到下游的，所以标在边上也说得通，而且能顺带看出「哪条线送的是报告」。
+    代价：连线上的标注会随画布缩放变小/变糊，卡多了也容易糊成一片。</p>
+  <div class="board" data-board="e"></div>
+  <p class="meter" data-meter>量中…</p>
+</section>
+
+<h2>自量对照（本页 DOM 实测）</h2>
+<table class="cmp">
+  <thead><tr><th>做法</th><th>溯源卡高</th><th>比现状</th><th>出口卡高</th><th>产物类别在哪可见</th><th>顺便解决的</th><th>代表先例</th></tr></thead>
+  <tbody id="cmp-body"></tbody>
+</table>
+<p class="note">高度只量「信息溯源 · 上网查证」那一枚卡（它是最高的那枚）。宽度不变——所有做法都挤在 320px 里。</p>
+
+<script>
+/* ===================== 卡片渲染（照真机重画） ===================== */
+const ICON = '<svg class="card-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M12 3v4M12 17v4M5.6 5.6l2.8 2.8M15.6 15.6l2.8 2.8M3 12h4M17 12h4M5.6 18.4l2.8-2.8M15.6 8.4l2.8-2.8"/></svg>';
+
+function card({ id, x, y, title, desc, badge, external, inLabel, outLabel, bodyExtra }) {
+  return `<div class="card" data-card="${id}" style="left:${x}px;top:${y}px">
+    <span class="port in"></span><span class="port out"></span>
+    ${inLabel ? `<span class="port-label in">${inLabel}</span>` : ""}
+    ${outLabel ? `<span class="port-label">${outLabel}</span>` : ""}
+    <div class="card-head">
+      ${ICON}
+      <div class="card-titles">
+        <div class="card-title">${title}${badge ? `<span class="badge-artifact">${badge}</span>` : ""}</div>
+        <div class="card-desc${desc.startsWith("产出") ? " desc-artifact" : ""}">${desc}</div>
+      </div>
+      <button class="card-run">▷</button>
+    </div>
+    ${external ? `<div class="card-body">
+      <div class="field-label">提示词</div>
+      <div class="select">✨ ${external.prompt}${external.chip ? `<span class="chip-type">${external.chip}</span>` : ""}<span class="caret">▾</span></div>
+      ${bodyExtra ?? ""}
+      ${external.online ? `<div class="external">
+        <div class="external-row">联网核查 <b>智谱</b> <span class="badge-ok">密钥已配置</span></div>
+        <div class="external-actions"><button class="mini-btn">测试连接</button><button class="mini-btn">去设置</button></div>
+      </div>` : ""}
+    </div>` : ""}
+  </div>`;
+}
+
+const EDGES = (paths) => `<svg class="edges">${paths.map((d) => `<path d="${d}"/>`).join("")}</svg>`;
+
+/** 一张迷你画布：校对 → 两枚 AI 加工 → Obsidian。坐标照真机相对位置排。 */
+function board(variant) {
+  const insightBadge = variant === "b" ? "笔记" : "";
+  const traceBadge = variant === "b" ? "报告" : "";
+  const insightDesc = variant === "a" ? "产出：观点笔记（写入库）" : "使用提示词对文稿做 AI 加工";
+  const traceDesc = variant === "a" ? "产出：溯源报告（会与同源笔记互链）" : "使用提示词对文稿做 AI 加工";
+  const chip = variant === "c";
+
+  const cards = [
+    card({ id: "refine", x: 24, y: 168, title: "AI 校对", desc: "对文稿进行 AI 校对与修正" }),
+    card({
+      id: "insight", x: 380, y: 78, title: "观点提炼 · 速览版", desc: insightDesc, badge: insightBadge,
+      external: { prompt: "观点提炼 · 速览版", chip: chip ? "笔记" : "" },
+      inLabel: "文稿", outLabel: "笔记块",
+    }),
+    card({
+      id: "trace", x: 380, y: 286, title: "信息溯源 · 上网查证", desc: traceDesc, badge: traceBadge,
+      external: { prompt: "上网查证", chip: chip ? "报告" : "", online: true },
+      inLabel: "文稿", outLabel: "笔记块",
+    }),
+    card({
+      id: "ob", x: 736, y: 182, title: "Obsidian 笔记", desc: "将结果写入 Obsidian 笔记库",
+      external: { prompt: "保存目录：跟随设置 · 未分类" },
+      inLabel: "笔记块",
+      bodyExtra: variant === "d"
+        ? `<div class="artifact-summary">本次将写入 <b>2 篇</b>：<br>· 观点笔记（速览版）<br>· <b>溯源报告</b>（类型为溯源笔记，两者互链）</div>`
+        : "",
+    }),
+  ];
+
+  const edges = EDGES([
+    "M 344 212 C 366 212, 358 122, 380 122",
+    "M 344 212 C 366 212, 358 330, 380 330",
+    "M 700 122 C 720 122, 716 226, 736 226",
+    "M 700 330 C 720 330, 716 226, 736 226",
+  ]);
+
+  const edgeLabels = variant === "e"
+    ? `<span class="edge-label" style="left:724px;top:104px">笔记块</span>
+       <span class="edge-label" style="left:724px;top:352px">溯源报告</span>`
+    : "";
+
+  return cards.join("") + edges + edgeLabels;
+}
+
+/* ===================== 切换 ===================== */
+for (const tab of document.querySelectorAll(".tab")) {
+  tab.addEventListener("click", () => {
+    for (const t of document.querySelectorAll(".tab")) t.setAttribute("aria-selected", String(t === tab));
+    for (const p of document.querySelectorAll(".panel")) p.dataset.active = String(p.dataset.panel === tab.dataset.tab);
+    measure();
+  });
+}
+
+/* ===================== 自量 ===================== */
+const rows = [];
+const FINDING = {
+  now: "看不到（两枚卡说明文字相同）",
+  a: "卡片描述行",
+  b: "卡片标题旁徽章",
+  c: "提示词下拉项",
+  d: "出口卡（Obsidian）预告",
+  e: "连线上",
+};
+const PRECEDENT = {
+  now: "—",
+  a: "n8n 的 subtitle：节点副标题写清这一枚在做什么",
+  b: "dbt 的 materialization 徽章（table/view/incremental…）",
+  c: "Zapier / n8n：选择步骤时就写明动作",
+  d: "构建工具的产物清单（如 CI 的 artifact 预览）",
+  e: "ComfyUI 的类型色端口（不过它标的是类型不是文字）",
+};
+const EXTRA = {
+  now: "—",
+  a: "—",
+  b: "可为「结果页识别」与「落盘分派」提供同一个声明，替掉现在的两套识别机制",
+  c: "同上（声明在做法上，三处共用）",
+  d: "顺带回答「两篇进哪个目录」",
+  e: "—",
+};
+
+function measure() {
+  const boards = [...document.querySelectorAll(".board")];
+  // 面板是 display:none，量之前先全部显示，量完还原
+  const panels = [...document.querySelectorAll(".panel")];
+  const restore = panels.map((p) => p.style.display);
+  for (const p of panels) p.style.display = "block";
+  for (const b of boards) {
+    if (!b.dataset.rendered) { b.innerHTML = board(b.dataset.board); b.dataset.rendered = "1"; }
+  }
+  rows.length = 0;
+  for (const b of boards) {
+    const trace = b.querySelector('[data-card="trace"]');
+    const insight = b.querySelector('[data-card="insight"]');
+    rows.push({
+      variant: b.dataset.board,
+      traceH: +trace.getBoundingClientRect().height.toFixed(1),
+      insightH: +insight.getBoundingClientRect().height.toFixed(1),
+      // D 的代价在出口卡上，不在溯源卡上：单独量它，否则那张对照表会把 D 说成"零成本"
+      obsH: +b.querySelector('[data-card="ob"]').getBoundingClientRect().height.toFixed(1),
+    });
+  }
+  const base = rows[0].traceH;
+  document.getElementById("cmp-body").innerHTML = rows
+    .map((r) => {
+      const delta = r.variant === "now" ? "—" : `${r.traceH > base ? "+" : ""}${(r.traceH - base).toFixed(1)}px`;
+      return `<tr><td>${r.variant === "now" ? "现状（基线）" : r.variant.toUpperCase()}</td><td class="num">${r.traceH}px</td><td class="num">${delta}</td><td class="num">${r.obsH}px</td><td>${FINDING[r.variant]}</td><td>${EXTRA[r.variant]}</td><td>${PRECEDENT[r.variant]}</td></tr>`;
+    })
+    .join("");
+  for (const b of boards) {
+    const meter = b.parentElement.querySelector("[data-meter]");
+    const row = rows.find((r) => r.variant === b.dataset.board);
+    if (!meter || !row) continue;
+    const delta = row.variant === "now" ? "基线" : `${row.traceH > base ? "+" : ""}${(row.traceH - base).toFixed(1)}px`;
+    meter.innerHTML = `本页自量：溯源卡 <b>${row.traceH}px</b>（观点卡 ${row.insightH}px、出口卡 ${row.obsH}px）· 比现状 <b>${delta}</b> · 产物类别可见于「${FINDING[row.variant]}」`;
+  }
+  panels.forEach((p, i) => { p.style.display = restore[i]; });
+  window.__measureReady = true;
+}
+window.__demoMetrics = () => rows.map((r) => ({ ...r }));
+measure();
+window.addEventListener("resize", measure);
+</script>
+</body>
+</html>

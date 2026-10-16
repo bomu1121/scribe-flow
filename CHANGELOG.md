@@ -16,6 +16,23 @@
 
 #### 新增
 
+- **「同一枚 AI 加工卡、产物却是另一类笔记」怎么让用户看出来：调研 + 六套做法**（`docs/research/trace-artifact-visibility-research.md`、
+  `trace-artifact-visibility-demos.html`、六张 `trace-artifact-*.png`）：起因是用户看着画布上并排的两张「AI 加工」卡问
+  「两个甚至还都是 AI 加工模块」。**本轮没有改动产品代码**，只交付调研与原型。
+  - **问题定位**：不是标题不清楚（标题写的就是做法名），而是**产物类别没有契约**——一张产普通笔记、
+    一张产溯源报告（`类型: 溯源笔记`、会与同源笔记互链、落盘前要先由 JSON 转 Markdown）。
+    而系统自己也在猜，且是两套猜法：结果页按**系列名**（`isTraceBlock`），落盘按**正文解析**（`parseTraceReport`）。
+    这一处仓库里早记着欠账（`docs/research/node-vs-prompt-block-boundary.md` 的「现在唯一欠的一处」：
+    让做法自己报一句「我做出来的是什么」）。
+  - **调研三条先例**：dbt（同一「model」概念，`materialization` 决定产出什么，DAG 用**徽章 + 色条**标出）、
+    ComfyUI（端口**强类型**，类型不匹配连不上线）、n8n（`subtitle` 用表达式表达「这枚实例在做什么」，
+    官方 ESLint 规范强制）。
+  - **六套做法自量**（真 Chrome 量卡片高度，卡片照真机 320px 重画）：A 描述行写产出、B 标题旁徽章、
+    C 下拉项标产物、E 连线标注**都是零高度成本**；只有 **D 出口卡预告**要付 **+82.7px（+59%）**。
+  - **推荐 B + D**：B 回答「哪一枚会出报告」（扫一眼，零成本，先例最贴），
+    D 回答「库里会出现什么、什么关系、进哪个目录」（出口处，换来的信息最多）。前提是先加「做法声明产物」那个字段，
+    再让画布、结果页、落盘三处读同一个声明——否则前端还是靠猜。
+
 - **溯源报告「待核实问题」排版调研 + 四套可切换原型**（`docs/research/trace-uncertain-layout-research.md`、
   `trace-uncertain-layout-demos.html`、四张 `trace-uncertain-*.png`）：起因是反馈「这也太拥挤了显得」。
   调研先交付、同日按选定方案落地（见下方「变更」）。
