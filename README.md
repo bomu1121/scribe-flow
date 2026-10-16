@@ -113,6 +113,7 @@ pnpm check:api:chain # B站 → 校对 → 全部开放提示词分支 → Obsid
 - [全项目审计（2026-09-27）](./docs/research/project-audit-2026-09-27.md)
 - [R1 桌面研究报告：市场工作流产品功能地图 v1](./docs/research/r1-desktop-research.md)
 - [仓库可读性与过度工程：外部证据与本仓处置建议](./docs/research/repo-legibility-and-over-engineering.md)
+- [卡片上的「联网核查」那块：哪一条信息真的需要常驻](./docs/research/search-status-block-research.md)
 - [多视频结果的分组切换：导航模式调研与改造方案](./docs/research/segment-navigation-research.md)
 - [设置页说明文字的排版：现状实测与四个候选方案](./docs/research/settings-text-typography-research.md)
 - [结果页 tab 切换：标准依据与实测对照](./docs/research/tab-interaction-research.md)

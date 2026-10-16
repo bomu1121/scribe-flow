@@ -1,0 +1,323 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<title>AI 加工卡上的「联网核查」那块该怎么改 —— 现状 + 五套做法</title>
+<style>
+  :root {
+    --surface: #ffffff;
+    --surface-muted: #f7f8f9;
+    --border: #e4e7eb;
+    --border-strong: #cdd3da;
+    --text: #16181d;
+    --text-2: #545b66;
+    --text-3: #8a929e;
+    --success: #18a058;
+    --success-soft: #e7f6ee;
+    --success-border: #b7e4ca;
+    --warning: #d9822b;
+    --warning-soft: #fcf0e2;
+    --warning-border: #f0d3ae;
+    --info: #0b88c4;
+    --info-soft: #e6f5fc;
+    --info-border: #b8e2f2;
+    --radius-sm: 6px;
+    --radius-lg: 10px;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 28px 32px 64px;
+    background: #f2f4f6;
+    color: var(--text);
+    font: 13px/1.6 -apple-system, "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
+  }
+  h1 { margin: 0 0 6px; font-size: 19px; }
+  .lede { margin: 0 0 18px; max-width: 940px; color: var(--text-2); }
+  .lede code { padding: 1px 4px; border-radius: 3px; background: #e8ebee; font-size: 12px; }
+  .lede b { color: var(--text); }
+
+  .bar {
+    position: sticky; top: 0; z-index: 5;
+    display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+    margin: 0 0 20px; padding: 10px 14px;
+    border: 1px solid var(--border); border-radius: 10px; background: rgba(255,255,255,.94);
+    backdrop-filter: blur(6px);
+  }
+  .bar strong { font-size: 12px; color: var(--text-2); font-weight: 600; }
+  .seg { display: inline-flex; padding: 2px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface-muted); }
+  .seg button { padding: 4px 12px; border: 0; border-radius: 6px; background: transparent; color: var(--text-2); font: inherit; font-size: 12px; cursor: pointer; }
+  .seg button.on { background: var(--surface); color: var(--text); box-shadow: 0 1px 2px rgba(22,24,29,.08); font-weight: 600; }
+  .bar .hint { color: var(--text-3); font-size: 12px; }
+
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(392px, 1fr)); gap: 22px; align-items: start; }
+  .demo { padding: 16px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface); }
+  .demo.rec { border-color: var(--info-border); box-shadow: 0 0 0 2px var(--info-soft); }
+  .demo h2 { margin: 0 0 2px; font-size: 14px; }
+  .demo h2 .tag { margin-left: 6px; padding: 1px 6px; border: 1px solid var(--info-border); border-radius: 4px; background: var(--info-soft); color: var(--info); font-size: 10px; font-weight: 600; vertical-align: 1px; }
+  .demo .why { margin: 4px 0 14px; color: var(--text-2); font-size: 12px; }
+  .stage { display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 16px 0 6px; background: repeating-conic-gradient(#f7f8f9 0% 25%, #f2f4f6 0% 50%) 50% / 16px 16px; border-radius: 8px; }
+  .metrics { margin: 12px 0 0; padding-top: 10px; border-top: 1px dashed var(--border); color: var(--text-3); font-size: 11px; line-height: 1.8; }
+  .metrics b { color: var(--text-2); font-weight: 600; }
+  /* 示意元素（浮层 / 高级设置面板）：不进卡片高度，只说明「信息去哪了」 */
+  .illus { width: 320px; padding: 9px 10px; border: 1px dashed var(--border-strong); border-radius: 8px; background: rgba(255,255,255,.7); }
+  .illus .cap { margin: 0 0 6px; color: var(--text-3); font-size: 10px; }
+
+  /* ---------- 卡片本体：尺寸照真机（320 宽 / 头 68.4 / 触发器 32 / 页脚 26.7 / 卡内 10+8） ---------- */
+  .card { width: 320px; padding: 10px 0 8px; border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--surface); box-shadow: 0 1px 3px rgba(22,24,29,.06); }
+  .card-head { padding: 0 12px 8px; border-bottom: 1px solid var(--border); }
+  .card-title-row { display: flex; align-items: center; gap: 7px; height: 22px; }
+  .card-icon { display: inline-flex; color: var(--text); }
+  .card-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; font-weight: 500; }
+  .card-desc { margin: 8px 0 0; color: var(--text-3); font-size: 11px; line-height: 16px; }
+  .badge { flex-shrink: 0; height: 16px; padding: 0 6px; display: inline-flex; align-items: center; border: 1px solid var(--info-border); border-radius: 4px; background: var(--info-soft); color: var(--text-2); font-size: 10px; font-weight: 500; line-height: 1; }
+  .play { flex-shrink: 0; color: var(--text-2); }
+  .card-body { display: flex; flex-direction: column; gap: 8px; padding: 8px 12px; }
+  .label-row { display: flex; align-items: center; gap: 6px; height: 15px; font-size: 12px; color: var(--text-3); }
+  .label-row .grow { flex: 1; }
+  .select { display: flex; align-items: center; gap: 8px; height: 32px; padding: 0 10px; border: 1px solid var(--border-strong); border-radius: 4px; background: var(--surface); font-size: 12px; }
+  .select .val { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .select .caret { color: var(--text-3); }
+  .card-foot { display: flex; align-items: center; gap: 6px; padding: 6px 12px 0; border-top: 1px solid var(--border); color: var(--text-3); font-size: 11px; line-height: 14.7px; }
+  .card-foot .foot-main { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .dot-run { flex-shrink: 0; width: 6px; height: 6px; border-radius: 50%; background: var(--success); }
+  .foot-delta { flex-shrink: 0; color: var(--info); }
+
+  /* ---------- A 现状：整块 ---------- */
+  .block-current { margin-top: 8px; padding: 8px 10px; border-radius: var(--radius-sm); background: var(--surface-muted); }
+  .block-current .head { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+  .block-current .head .lbl { font-size: 12px; color: var(--text-3); }
+  .chip { padding: 1px 6px; border: 1px solid var(--border); border-radius: 3px; background: var(--surface); color: var(--text-2); font-size: 11px; line-height: 16px; }
+  .chip.ok { border-color: var(--success-border); background: var(--success-soft); color: var(--success); }
+  .chip.warn { border-color: var(--warning-border); background: var(--warning-soft); color: var(--warning); }
+  .block-current .note { margin: 6px 0 0; color: var(--text-3); font-size: 11px; line-height: 1.6; }
+  .block-current .actions { display: flex; gap: 6px; margin-top: 8px; }
+  .btn { height: 24px; padding: 0 10px; border: 1px solid var(--border-strong); border-radius: var(--radius-sm); background: var(--surface); color: var(--text); font: inherit; font-size: 11px; white-space: nowrap; cursor: pointer; }
+  .btn:disabled { color: var(--text-3); cursor: not-allowed; }
+
+  /* ---------- B/C/F 的一行文字 ---------- */
+  .line { display: flex; align-items: center; gap: 5px; margin: 0; font-size: 11px; line-height: 17px; color: var(--text-3); }
+  .line .link { color: var(--info); text-decoration: underline; text-underline-offset: 2px; }
+  .line.warn { color: var(--warning); }
+  .line .ico { flex-shrink: 0; display: inline-flex; }
+
+  /* ---------- D 标题行的点 ---------- */
+  .dot { flex-shrink: 0; width: 6px; height: 6px; border-radius: 50%; background: var(--border-strong); }
+  .dot.warn { background: var(--warning); }
+
+  /* ---------- 浮层 / 面板（都在示意框里，不属于卡片） ---------- */
+  .pop { width: 100%; font-size: 11px; }
+  .pop dl { margin: 0 0 8px; display: grid; grid-template-columns: auto 1fr; gap: 2px 10px; }
+  .pop dt { color: var(--text-3); }
+  .pop dd { margin: 0; color: var(--text-2); }
+  .pop .actions { display: flex; gap: 6px; }
+</style>
+</head>
+<body>
+<h1>AI 加工卡上的「联网核查」那块该怎么改</h1>
+<p class="lede">
+  现状：<code>.sf-node-search</code> 一个灰底块，里面 <b>2 个胶囊 + 2 个按钮</b>（未配置时再加一段 52 字说明），
+  而这块里 <b>没有任何可配置项</b>——渠道与密钥都在设置页「联网检索」里，它本质是「状态读数 + 两处跳转」。
+  真机实测（布局 px，无缩放）：溯源卡 <b>251.9px 里 84px（33%）</b>是它，练一练卡 <b>576.1px 里 142.8px（25%）</b>是它；
+  绿色「密钥已配置」是卡上唯一的饱和填充，而它说的是用户改不动的既成事实。
+  下面五套都回答同一个问题：<b>这块信息里，哪一条真的需要常驻在卡片上？</b>
+</p>
+
+<div class="bar">
+  <strong>状态</strong>
+  <div class="seg" id="state-seg">
+    <button data-state="ready" class="on">密钥已配置</button>
+    <button data-state="missing">密钥未配置</button>
+  </div>
+  <span class="hint">切换后每张卡重画，下面的数字跟着变（高度都是布局 px，与真机同一把尺子）。</span>
+</div>
+
+<main class="grid" id="grid"></main>
+
+<script>
+const ICON = {
+  spark: '<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z"/><path d="M18 16l.8 2.2L21 19l-2.2.8L18 22l-.8-2.2L15 19l2.2-.8z"/></svg>',
+  play: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M7 5l12 7-12 7z"/></svg>',
+  warn: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 4l9 16H3z"/><path d="M12 10v4M12 17h.01"/></svg>',
+};
+
+const NOTE_MISSING = "未配置联网检索密钥，本次不会联网核查";
+
+/** 卡片外壳：头部 / 正文 / 页脚三段的尺寸都照真机（含页脚中间那段会截断的真机行为）。 */
+function card(bodyHtml, extraTitle = "") {
+  return `
+  <div class="card">
+    <div class="card-head">
+      <div class="card-title-row">
+        <span class="card-icon">${ICON.spark}</span>
+        <span class="card-title">信息溯源 · 上网查证</span>
+        ${extraTitle}
+        <span class="badge">报告</span>
+        <span class="play">${ICON.play}</span>
+      </div>
+      <p class="card-desc">使用提示词对文稿做 AI 加工</p>
+    </div>
+    <div class="card-body">
+      ${bodyHtml}
+    </div>
+    <div class="card-foot"><span class="dot-run"></span><span class="foot-main">配方 2 步 · 1 输入 · 2 次调用 · 总字数 4478 字</span><span class="foot-delta">较上游 +1635 字</span></div>
+  </div>`;
+}
+
+const warnLine = `<p class="line warn"><span class="ico">${ICON.warn}</span><span>${NOTE_MISSING} · <span class="link">去设置</span></span></p>`;
+
+const VARIANTS = [
+  {
+    key: "a",
+    name: "A 现状（基线）",
+    why: "灰底块 + 2 胶囊 + 2 按钮。绿色「密钥已配置」是卡上唯一的饱和填充，而它是用户改不动的既成事实；两个按钮同权重，且都属于设置页的事。",
+    body: (s) => `
+      <div class="block-current">
+        <div class="head">
+          <span class="lbl">联网核查</span>
+          <span class="chip">智谱</span>
+          <span class="chip ${s === "ready" ? "ok" : "warn"}">${s === "ready" ? "密钥已配置" : "密钥未配置"}</span>
+        </div>
+        ${s === "ready" ? "" : `<p class="note">未配置时不会联网核查（该模版需要检索密钥，已从可选列表里隐去）。用的是设置页「联网检索」里的搜索服务密钥，与「AI 模型」的密钥不是同一个。</p>`}
+        <div class="actions"><button class="btn" ${s === "ready" ? "" : "disabled"}>测试连接</button><button class="btn">去设置</button></div>
+      </div>`,
+  },
+  {
+    key: "b",
+    name: "B 压成一句话",
+    why: "同样的信息，去掉块、胶囊与按钮，只留一行 11px 小字：正常时说清「会联网、走哪个渠道」，未配置时换成警示，唯一的动作「去设置」做成文字链。",
+    body: (s) => (s === "ready" ? `<p class="line">联网核查 · 智谱 · 密钥已配置</p>` : warnLine),
+  },
+  {
+    key: "c",
+    name: "C 只在异常时说",
+    why: "配好了一个字都不出现（「成功」不需要常驻）；只在缺密钥时出一行警示。代价：「会联网」这件事改由提示词名承担——「上网查证」自己说了，但「逐条对照」没说。",
+    body: (s) => (s === "ready" ? "" : warnLine),
+  },
+  {
+    key: "d",
+    name: "D 标题行一个点",
+    why: "信息一条不丢，常态只占标题行里 6px 的一个点：渠道、密钥状态、测试连接、去设置都在悬停浮层里（虚线框是悬停后的样子）。缺密钥时点变橙。零高度、零文字。",
+    illus: (s) => `<div class="illus"><p class="cap">悬停那个点之后（浮层，绝对定位不占高度）：</p>
+      <div class="pop">
+        <dl><dt>联网核查</dt><dd>${s === "ready" ? "已就绪" : "未配置"}</dd><dt>渠道</dt><dd>智谱</dd><dt>密钥</dt><dd>${s === "ready" ? "已配置" : "未配置"}</dd></dl>
+        <div class="actions"><button class="btn" ${s === "ready" ? "" : "disabled"}>测试连接</button><button class="btn">去设置</button></div>
+      </div></div>`,
+    title: (s) => `<span class="dot ${s === "ready" ? "" : "warn"}" title="联网核查"></span>`,
+    body: () => "",
+  },
+  {
+    key: "e",
+    name: "E 搬进高级设置",
+    why: "卡片正文只回答「这次怎么加工」；渠道与密钥属于工作区设置，整块挪进「高级设置」（选中节点后从选中条打开）。正文零占用，也零提示——不知道「高级设置」在哪的人就找不到它。",
+    illus: () => `<div class="illus"><p class="cap">高级设置面板里（选中节点后打开）：</p>
+      <div class="block-current" style="margin-top:0">
+        <div class="head"><span class="lbl">联网核查</span><span class="chip">智谱</span><span class="chip ok">密钥已配置</span></div>
+        <div class="actions"><button class="btn">测试连接</button><button class="btn">去设置</button></div>
+      </div></div>`,
+    body: () => "",
+  },
+  {
+    key: "f",
+    name: "F 推荐：联网标记 + 只在异常时说",
+    why: "常态零占用：只在「提示词」那一行右侧挂一个 11px 灰字「联网」——它是提示词的属性（这枚卡会联网、要花检索额度），不是这个节点的设置；缺密钥时字变橙，下面多一行警示与「去设置」。测试连接只留在设置页。",
+    rec: true,
+    body: (s) => s === "ready" ? "" : warnLine,
+    label: (s) => `<span style="font-size:11px;color:${s === "ready" ? "var(--text-3)" : "var(--warning)"}">联网</span>`,
+  },
+];
+
+const state = { mode: "ready" };
+const grid = document.getElementById("grid");
+
+/** F 要把标记挂进「提示词」那一行，所以正文单独拼。 */
+function bodyFor(v) {
+  const s = state.mode;
+  const labelExtra = v.label ? v.label(s) : "";
+  return `
+    <div class="label-row"><span>提示词</span>${labelExtra ? '<span class="grow"></span>' + labelExtra : ""}</div>
+    <div class="select"><span class="card-icon">${ICON.spark}</span><span class="val">上网查证</span><span class="caret">▾</span></div>
+    ${v.body(s)}`;
+}
+
+function render() {
+  grid.innerHTML = VARIANTS.map((v) => `
+    <section class="demo ${v.rec ? "rec" : ""}" data-variant="${v.key}">
+      <h2>${v.name}${v.rec ? '<span class="tag">推荐</span>' : ""}</h2>
+      <p class="why">${v.why}</p>
+      <div class="stage">
+        ${card(bodyFor(v), v.title ? v.title(state.mode) : "")}
+        ${v.illus ? v.illus(state.mode) : ""}
+      </div>
+      <p class="metrics" data-metrics="${v.key}"></p>
+    </section>`).join("");
+
+  for (const el of grid.querySelectorAll("[data-metrics]")) {
+    el.innerHTML = metricsFor(el.dataset.metrics);
+  }
+}
+
+/** 量：卡片高（示意元素不计）、那块高、有边框或填充的对象数、有色元素数。 */
+function metricsFor(key) {
+  const root = grid.querySelector(`[data-variant="${key}"] .stage`);
+  const cardEl = root?.querySelector(".card");
+  if (!cardEl) return "";
+  const h = (el) => (el ? Math.round(el.getBoundingClientRect().height * 10) / 10 : 0);
+  const block = cardEl.querySelector(".block-current");
+  // 对象只数**卡片里**的：示意框（浮层 / 高级设置面板）不算在卡片身上
+  const objects = cardEl.querySelectorAll(".chip, .btn, .select, .badge").length;
+  const colorful = [...cardEl.querySelectorAll("*")].filter((el) => {
+    const r = el.getBoundingClientRect();
+    if (r.width < 3 || r.height < 3) return false;
+    // svg 内部元素不单独数（图标整体算一个，颜色靠 currentColor 落在 svg 根上）
+    if (el.tagName !== "svg" && el.closest("svg")) return false;
+    const sat = (v) => {
+      const m = String(v).match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/);
+      if (!m) return false;
+      const [R, G, B] = [+m[1], +m[2], +m[3]];
+      return Math.max(R, G, B) - Math.min(R, G, B) > 40;
+    };
+    // 只数「有色填充或有色边框」的对象（纯文字色会因嵌套重复计入，不数）
+    return ["backgroundColor", "borderTopColor"].some((k) => sat(getComputedStyle(el)[k]));
+  });
+  const shell = h(cardEl) - (block ? h(block) + 8 : 0);
+  return `卡片 <b>${h(cardEl)}px</b> · 外壳本身 <b>${shell}px</b> · 那块 <b>${h(block)}px</b> · 有边框或填充的对象 <b>${objects}</b> · 有色元素 <b>${colorful.length}</b>`;
+}
+
+document.getElementById("state-seg").addEventListener("click", (e) => {
+  const btn = e.target.closest("button");
+  if (!btn) return;
+  state.mode = btn.dataset.state;
+  document.querySelectorAll("#state-seg button").forEach((b) => b.classList.toggle("on", b === btn));
+  render();
+});
+
+render();
+
+/** 供无头脚本读的机器可读数字（两态都给）。高度只算卡片，示意元素不计。 */
+window.__demoMetrics = () => {
+  const out = {};
+  const keep = state.mode;
+  for (const mode of ["ready", "missing"]) {
+    state.mode = mode;
+    render();
+    out[mode] = {};
+    for (const v of VARIANTS) {
+      const root = grid.querySelector(`[data-variant="${v.key}"] .stage`);
+      const cardEl = root.querySelector(".card");
+      const block = cardEl.querySelector(".block-current");
+      out[mode][v.key] = {
+        cardH: Math.round(cardEl.getBoundingClientRect().height * 10) / 10,
+        blockH: block ? Math.round(block.getBoundingClientRect().height * 10) / 10 : 0,
+        objects: cardEl.querySelectorAll(".chip, .btn, .select, .badge").length,
+      };
+    }
+  }
+  state.mode = keep;
+  document.querySelectorAll("#state-seg button").forEach((b) => b.classList.toggle("on", b.dataset.state === state.mode));
+  render();
+  return out;
+};
+</script>
+</body>
+</html>
