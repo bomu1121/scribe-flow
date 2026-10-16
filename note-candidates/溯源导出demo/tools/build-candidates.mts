@@ -248,6 +248,108 @@ function buildB(r: TraceReport): string {
   return out.join("\n").replace(/\n{3,}/g, "\n\n");
 }
 
+
+/* ---------------------------------- B 系的三档「收敛」（用户反馈：色彩太鲜艳） */
+
+/**
+ * 同一套分组结构，只把「用多少颜色」参数化：
+ * - B1 只标真问题：只有「未找到出处 / 有反证」用暖色，其余走 info 蓝
+ * - B2 全中性：核查块一律 info（蓝），原文依据 quote（灰），速览保留 summary（青，唯一有色处）
+ * - B3 不用 callout：核查信息改为加粗行 + 缩进 bullet，原文依据改为引用块（零彩色，代价是不能折叠）
+ */
+interface Tone {
+  /** 按核查状态给 callout 类型；返回空串表示这个状态下不上色（走中性类型）。 */
+  warm: (status: string) => string | undefined;
+  /** 核查块与原文依据块的中性类型。 */
+  neutral: string;
+  evidence: string;
+  /** 待核实：合并成一个块（10 个橙框 → 1 个）还是一条一个。 */
+  mergeUncertainties: boolean;
+  /** 待核实块用的 callout 类型（B1 用 question 橙——它是真问题；B2「全中性」里也走 info）。 */
+  uncertainty: string;
+  /** false = 完全不用 callout。 */
+  callouts: boolean;
+}
+
+function buildGrouped(r: TraceReport, tone: Tone): string {
+  const s = stats(r);
+  const out: string[] = [frontMatter().trimEnd(), "", `# ${TITLE}`, ""];
+  if (r.summary?.trim()) out.push(r.summary.trim(), "");
+  out.push(
+    ...callout(
+      "summary",
+      "溯源速览",
+      [
+        `**${s.items.length}** 条主张 · 进入联网核查 **${s.external.length}** 条 · 有权威来源 ${s.authority.length} 条 · 附来源原文引证 ${s.verbatim.length} 条`,
+        "",
+        ...GROUPS.filter((g) => s.byStatus(g.status) > 0).map((g) => `- ${g.title} **${s.byStatus(g.status)}** 条`),
+        `- 未联网核查 **${s.items.length - s.external.length}** 条`,
+        "",
+        "条目**按上面的顺序分组**（问题优先），组内保持原文顺序。",
+      ],
+      false,
+    ),
+  );
+  const writeItems = (items: TraceItem[]) => {
+    for (const item of items) {
+      const index = r.items.indexOf(item) + 1;
+      out.push(`### ${index}. ${item.claim}`, "", `\`${metaLine(item)}\``, "");
+      const side = sideLines(item);
+      const warm = item.external ? tone.warm(item.external.status) : undefined;
+      const checkType = warm ?? tone.neutral;
+      if (item.external && tone.callouts) {
+        out.push(...callout(checkType, externalCalloutTitle(item), externalCalloutBody(item)));
+      } else if (item.external) {
+        // 不用 callout：核查信息变成「加粗标签 + 缩进 bullet」，结构靠缩进而不是容器
+        out.push(`**联网核查 · ${statusOf(item)}${item.external.evidence ? ` · ${TRACE_EVIDENCE_LABELS[item.external.evidence]}` : ""}**`, "", ...externalCalloutBody(item), "");
+      }
+      if (tone.callouts) {
+        out.push(...callout(tone.evidence, "原文依据", evidenceLines(item)));
+      } else {
+        out.push("**原文依据**", "", ...evidenceLines(item), "");
+      }
+      for (const line of [side.attribution, side.basis, side.note, ...side.mentions].filter(Boolean)) out.push(`- ${line}`);
+      out.push("");
+    }
+  };
+  for (const group of GROUPS) {
+    const items = r.items.filter((i) => i.external?.status === group.status);
+    if (items.length === 0) continue;
+    out.push(`## ${group.title}（${items.length} 条）`, "", `_${group.note}_`, "");
+    writeItems(items);
+  }
+  const rest = r.items.filter((i) => !i.external);
+  if (rest.length > 0) {
+    out.push(`## 未联网核查（${rest.length} 条）`, "", "_作者观点、术语定义这类不需要外部出处的内容，或本轮未进入核查的条目。_", "");
+    writeItems(rest);
+  }
+  out.push(...tailSectionsTone(r, tone));
+  return out.join("\n").replace(/\n{3,}/g, "\n\n");
+}
+
+/** 待核实与提醒两节；收敛档下 10 条待核实合并成一个块（原来是 10 个橙框）。 */
+function tailSectionsTone(r: TraceReport, tone: Tone): string[] {
+  const out: string[] = [];
+  const uncertainties = r.uncertainties ?? [];
+  if (uncertainties.length > 0) {
+    out.push(`## 待核实（${uncertainties.length} 条）`, "");
+    const body = uncertainties.flatMap((u) => [`**${u.claim}**`, "", u.reason ?? "原文未明确说明", ""]);
+    if (!tone.callouts) {
+      out.push(...body);
+    } else if (tone.mergeUncertainties) {
+      out.push(...callout(tone.uncertainty, `待核实（${uncertainties.length} 条）`, body));
+    } else {
+      uncertainties.forEach((u, index) => out.push(...callout("question", `待核实 ${index + 1}`, [`**${u.claim}**`, "", u.reason ?? "原文未明确说明"])));
+    }
+  }
+  if ((r.warnings ?? []).length > 0) {
+    out.push(`## 提醒（${r.warnings!.length} 条）`, "");
+    for (const w of r.warnings!) out.push(`- ${w}`);
+    out.push("");
+  }
+  return out;
+}
+
 /* ---------------------------------------------------------- C 语法用满（脚注收来源） */
 
 function buildC(r: TraceReport): string {
@@ -398,6 +500,26 @@ const files: [string, string][] = [
   // A/B/C/E 的构造函数自己开头就写了 front matter；D 是「Markdown 与基线逐字一致、只多一行 cssclasses」
   ["A-主张即标题（详情折叠）.md", buildA(report)],
   ["B-按核查状态分组（问题优先）.md", buildB(report)],
+  // 三档收敛：用户反馈「色彩太鲜艳」——同一套结构，只改用了多少颜色
+  [
+    "B1-只标真问题（未找到出处与有反证才上暖色）.md",
+    buildGrouped(report, {
+      warm: (status) => (status === "not_found" ? "failure" : status === "contradicted" ? "danger" : undefined),
+      neutral: "info",
+      evidence: "quote",
+      mergeUncertainties: true,
+      uncertainty: "question",
+      callouts: true,
+    }),
+  ],
+  [
+    "B2-全中性（核查块一律蓝、速览是唯一有色处）.md",
+    buildGrouped(report, { warm: () => undefined, neutral: "info", evidence: "quote", mergeUncertainties: true, uncertainty: "info", callouts: true }),
+  ],
+  [
+    "B3-不用 callout（零彩色，代价是不能折叠）.md",
+    buildGrouped(report, { warm: () => undefined, neutral: "info", evidence: "quote", mergeUncertainties: true, uncertainty: "info", callouts: false }),
+  ],
   ["C-语法用满（来源用脚注）.md", buildC(report)],
   ["D-只改样式（cssclasses）.md", frontMatter(["cssclasses:", "  - scribeflow-trace"]) + traceReportToMarkdown(report, { fallbackTitle: TITLE })],
   ["E-折叠索引（一条一个块）.md", buildE(report)],

@@ -40,6 +40,10 @@ const FILES = [
   ["baseline", "0-现状基线.md", "0 · 现状基线"],
   ["a", "A-主张即标题（详情折叠）.md", "A · 主张即标题 + 详情折叠"],
   ["b", "B-按核查状态分组（问题优先）.md", "B · 按核查状态分组（问题优先）"],
+  // 三档收敛：用户反馈「色彩太鲜艳」，同一套结构只改用了多少颜色
+  ["b1", "B1-只标真问题（未找到出处与有反证才上暖色）.md", "B1 · 只标真问题（暖色只留给未找到出处与反证）"],
+  ["b2", "B2-全中性（核查块一律蓝、速览是唯一有色处）.md", "B2 · 全中性（核查块一律蓝）"],
+  ["b3", "B3-不用 callout（零彩色，代价是不能折叠）.md", "B3 · 不用 callout（零彩色，不能折叠）"],
   ["c", "C-语法用满（来源用脚注）.md", "C · 语法用满（来源用脚注）"],
   ["d", "D-只改样式（cssclasses）.md", "D · 只改样式（cssclasses + 片段）"],
   ["e", "E-折叠索引（一条一个块）.md", "E · 折叠索引（一条一个块）"],
@@ -251,6 +255,14 @@ const notes = FILES.map(([id, file, label]) => {
     /** 第 11 条那个条目（未找到外部出处，细节最全）；E 的条目是 callout、没有 ### 标题 */
     chunkItem: slice(/^### 11\./, /^### \d+\.|^## /),
     chunkItemE: slice(/^> \[![a-z]+\]- 11 · /, /^> \[![a-z]+\]- 12 · /),
+    /**
+     * 比色彩用的取样段：首屏区 + 前三个条目——必须跨两个分组（未找到出处 2 条 + 仅非权威 1 条），
+     * 否则 B 与 B1 在这段里长得一模一样（第一组在两者里都保留暖色，差别在第二组）。
+     */
+    chunkToneSample: (() => {
+      const starts = lines.map((line, index) => (/^### \d+\./.test(line) ? index : -1)).filter((index) => index >= 0);
+      return starts.length > 3 ? lines.slice(0, starts[3]).join("\n") : lines.join("\n");
+    })(),
     /** 待核实那一节 */
     chunkTail: slice(/^## 待核实/, /^## (?!待核实)/),
     /** 脚注区（只有 C 有） */
@@ -283,8 +295,8 @@ function buildPage() {
   ].join("\n");
   // 整篇那条只截首屏：三份整篇都两万像素上下，出一张两万六千像素高的图没法看，
   // 总高度以量出来的数为准（下面 measured 里那三行）。
-  // 六套都进这一条：整篇高度是「这份笔记有多长」的直接答案，缺一套就少一格
-  const fullStrip = ["baseline", "a", "b", "c", "d", "e"]
+  // 九套都进这一条：整篇高度与色彩负荷都是「这份笔记读起来什么样」的直接答案，缺一套就少一格
+  const fullStrip = ["baseline", "a", "b", "b1", "b2", "b3", "c", "d", "e"]
     .map(
       (id) =>
         `<div class="demo-col" data-shot="trace-export-full-${id}">${panel(`${by[id].label}　（只截首 700px）`, render(by[id].body), true)}</div>`,
@@ -292,6 +304,10 @@ function buildPage() {
     .join("\n");
   const cFoot = panel("C · 文末：37 条来源收成脚注", render(by.c.chunkFoot), true);
   const dTail = panel("D · 同一份 Markdown + 一行 cssclasses，靠片段改观感（条目区）", render(by.d.chunkItem, { extraClass: " scribeflow-trace" }), true);
+  // 色彩那一档：同一段（首屏区 + 前三条），四档只差用了多少颜色
+  const toneStrip = ["b", "b1", "b2", "b3"]
+    .map((id) => panel(`${by[id].label}　（首屏区 + 前三条，跨两个分组；每格最多 1300px）`, render(by[id].chunkToneSample), true))
+    .join("\n");
 
   return `<!doctype html>
 <html lang="zh-CN">
@@ -314,6 +330,7 @@ body { margin: 0; padding: 28px 32px 64px; background: #f2f4f6; }
 .demo-clip { max-height: 420px; overflow: hidden; position: relative; }
 .demo-col .demo-clip { max-height: 700px; }
 .demo-strip--tall .demo-clip { max-height: 700px; }
+.demo-strip--tone .demo-clip { max-height: 1300px; }
 .demo-clip::after { content: ""; position: absolute; inset: auto 0 0 0; height: 56px; background: linear-gradient(transparent, #fff); }
 .disable-clip .demo-clip { max-height: none; overflow: visible; }
 .disable-clip .demo-clip::after { display: none; }
@@ -343,6 +360,11 @@ body { margin: 0; padding: 28px 32px 64px; background: #f2f4f6; }
   <section class="demo-strip" data-shot="trace-export-full">
     <h2 class="demo-strip-title">③ 整篇（折叠态，Obsidian 打开时的默认样子）</h2>
     <div class="demo-grid">${fullStrip}</div>
+  </section>
+
+  <section class="demo-strip demo-strip--tone" data-shot="trace-export-tone">
+    <h2 class="demo-strip-title">⑤ 色彩那一档：同一段内容，四档只差用了多少颜色（B 是现在这版）</h2>
+    <div class="demo-grid">${toneStrip}</div>
   </section>
 
   <section class="demo-strip" data-shot="trace-export-extras">
@@ -483,6 +505,39 @@ try {
   for (const lane of lanes) {
     lines.push(`${lane.label.padEnd(30)} 折叠态 ${String(lane.collapsed).padStart(6)}px · 全展开 ${String(expandedMap[lane.id]).padStart(6)}px`);
   }
+
+  // 色彩负荷：着色容器面积占正文面积的比例（折叠态＝Obsidian 打开时看到的样子），
+  // 以及各类 callout 的个数。「太鲜艳」这个感受要能落到数上，所以单量一列。
+  const tone = await send("Runtime.evaluate", {
+    expression: `(() => {
+      const GRAY = "158, 158, 158";  // --callout-quote，Obsidian 里唯一的中性色
+      return JSON.stringify([...document.querySelectorAll(".demo-col")].map((el) => {
+        const mv = el.querySelector(".markdown-preview-view");
+        const noteArea = 700 * mv.getBoundingClientRect().height;
+        const byType = {};
+        let coloredArea = 0;
+        for (const c of el.querySelectorAll(".callout")) {
+          const r = c.getBoundingClientRect();
+          const type = c.dataset.callout;
+          byType[type] = (byType[type] ?? 0) + 1;
+          if (getComputedStyle(c).getPropertyValue("--callout-color").trim() !== GRAY) coloredArea += r.width * r.height;
+        }
+        const warm = ["success", "warning", "failure", "danger", "question"].reduce((sum, t) => sum + (byType[t] ?? 0), 0);
+        return {
+          label: el.querySelector(".demo-panel-label").textContent,
+          coloredShare: Number(((coloredArea / noteArea) * 100).toFixed(2)),
+          warm,
+          byType,
+        };
+      }));
+    })()`,
+    returnByValue: true,
+  });
+  lines.push("\\n=== 色彩负荷（折叠态：着色容器面积 / 正文面积；暖色 = 绿/橙/红那一类）===");
+  for (const t of JSON.parse(tone.result.value)) {
+    const types = Object.entries(t.byType).map(([k, v]) => `${k}×${v}`).join(" ");
+    lines.push(`${t.label.padEnd(30)} 着色面积 ${String(t.coloredShare).padStart(5)}% · 暖色容器 ${String(t.warm).padStart(2)} 个　[${types}]`);
+  }
   lines.push("\n=== 首屏区（正文开头 → 第一条）===");
   for (const p of JSON.parse(parts.result.value)["trace-export-overview"]) lines.push(`${p.label.padEnd(42)} ${p.h}px`);
   lines.push("\n=== 第 11 条那一段 ===");
@@ -495,6 +550,7 @@ try {
     ["trace-export-overview", 1500, 1.5],
     ["trace-export-item", 2000, 1.3],
     ["trace-export-full", 1800, 1.1],
+    ["trace-export-tone", 1600, 1.4],
     ["trace-export-extras", 1400, 1.5],
   ];
   for (const [id, height, scale] of shots) {
