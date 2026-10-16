@@ -1,0 +1,273 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>溯源报告「待核实问题」怎么排 —— 现状 + 三套做法</title>
+<!--
+  用途：比较溯源报告结果页里「待核实问题」这一块的几种排法，供选型。
+  这是**排版原型**，不是生产代码：
+  · 颜色/圆角取自 apps/web/src/styles/tokens.css（同一份令牌，此处内联是为了双击打开也能渲染）；
+  · 容器宽度 716px 是**真机量到的**：结果页正文栏宽 716px（同一份报告里「条目明细」也是这个宽度）；
+  · 10 条数据**是真的**：取自 run_3c81c376（《中美社保对比，有哪些不同？》的溯源报告）
+    的 uncertainties 字段原文，逐字未改；
+  · 现状那一节照真机计算样式重画（13px / 行高 1.6 / 条内 padding 5px 0 / 两列 gap 10px / claim 最多 45%）；
+  · 控件外形是手画的，不是 Element Plus 的真实渲染；落地实现用 EP 组件（见各方案说明）。
+  结论、实测数字与诚实清单见 docs/research/trace-uncertain-layout.md。
+-->
+<style>
+/* ===================== 令牌（内联自 apps/web/src/styles/tokens.css） ===================== */
+:root {
+  --color-bg: #f4f5f6;
+  --color-surface: #ffffff;
+  --color-surface-muted: #f7f8f9;
+  --color-border: #e4e7eb;
+  --color-border-strong: #cdd3da;
+  --color-text: #16181d;
+  --color-text-secondary: #545b66;
+  --color-text-tertiary: #8a929e;
+  --color-brand: #00aeec;
+  --color-info-soft: #e6f5fc;
+  --color-info-border: #b8e2f2;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  padding: 28px 32px 80px;
+  background: var(--color-bg);
+  color: var(--color-text);
+  font: 14px/1.7 "Microsoft YaHei", "PingFang SC", -apple-system, sans-serif;
+}
+h1 { margin: 0 0 6px; font-size: 20px; }
+h2 { margin: 26px 0 4px; font-size: 15px; }
+p.note { margin: 0 0 4px; color: var(--color-text-secondary); font-size: 13px; }
+p.note code { background: var(--color-surface-muted); padding: 1px 5px; border-radius: 3px; }
+
+/* ===================== 候选切换 ===================== */
+.tabs { display: flex; flex-wrap: wrap; gap: 6px; margin: 18px 0 8px; }
+.tab {
+  padding: 5px 12px; border: 1px solid var(--color-border); border-radius: 6px;
+  background: var(--color-surface); color: var(--color-text-secondary); font-size: 13px; cursor: pointer;
+}
+.tab[aria-selected="true"] { border-color: var(--color-text); color: var(--color-text); font-weight: 600; }
+.panel { display: none; }
+.panel[data-active="true"] { display: block; }
+
+/* 结果页正文栏：真机 716px */
+.frame { width: 716px; max-width: 100%; background: var(--color-surface); border: 1px solid var(--color-border); border-radius: 8px; padding: 16px 18px; }
+.sec-title { margin: 0 0 8px; font-size: 14px; font-weight: 600; color: var(--color-text); }
+
+/* ===================== 现状：手写 flex 两列（照真机计算样式） ===================== */
+.now-list { margin: 0; padding: 0; list-style: none; }
+.now-item { display: flex; gap: 10px; padding: 5px 0; color: var(--color-text-secondary); font-size: 13px; line-height: 1.6; }
+.now-claim { flex: 0 0 auto; max-width: 45%; color: var(--color-text); font-weight: 500; }
+.now-reason { color: var(--color-text-tertiary); }
+
+/* ===================== A：对齐两列 + 网格线（el-descriptions :column="1" border 的形态） ===================== */
+.desc { display: grid; grid-template-columns: 240px 1fr; border: 1px solid var(--color-border); border-radius: 6px; overflow: hidden; font-size: 13px; line-height: 1.6; }
+.desc > .cell { padding: 8px 12px; border-bottom: 1px solid var(--color-border); }
+.desc > .label { background: var(--color-surface-muted); color: var(--color-text); font-weight: 500; border-right: 1px solid var(--color-border); }
+.desc > .value { color: var(--color-text-secondary); }
+.desc > .cell:nth-last-child(-n+2) { border-bottom: none; }
+
+/* ===================== B：单列堆叠 + 条间分隔（问题一行 / 原因一行） ===================== */
+.stack-list { margin: 0; padding: 0; list-style: none; }
+.stack-item { padding: 10px 0; border-top: 1px solid var(--color-border); font-size: 13px; line-height: 1.6; }
+.stack-item:first-child { border-top: none; padding-top: 2px; }
+.stack-claim { display: block; color: var(--color-text); font-weight: 500; }
+.stack-claim::before { content: "?"; display: inline-flex; align-items: center; justify-content: center; width: 16px; height: 16px; margin-right: 7px; border-radius: 50%; background: var(--color-info-soft); border: 1px solid var(--color-info-border); color: var(--color-text-secondary); font-size: 11px; font-weight: 700; vertical-align: 2px; }
+.stack-reason { display: block; margin: 2px 0 0 23px; color: var(--color-text-tertiary); }
+
+/* ===================== C：卡片式（每条一个浅底盒，与报告里「外部核查」那块同一语言） ===================== */
+.card-list { display: grid; gap: 8px; }
+.card { padding: 9px 12px; border: 1px solid var(--color-border); border-radius: 6px; background: var(--color-surface-muted); font-size: 13px; line-height: 1.6; }
+.card-claim { display: block; color: var(--color-text); font-weight: 500; }
+.card-reason { display: block; margin-top: 2px; color: var(--color-text-tertiary); }
+
+/* ===================== 量测与对照表 ===================== */
+.meter { margin: 8px 0 0; padding: 7px 10px; border-left: 3px solid var(--color-brand); background: var(--color-surface); color: var(--color-text-secondary); font-size: 12.5px; }
+.meter b { color: var(--color-text); }
+table.cmp { margin-top: 10px; border-collapse: collapse; width: 100%; font-size: 12.5px; background: var(--color-surface); }
+table.cmp th, table.cmp td { border: 1px solid var(--color-border); padding: 6px 9px; text-align: left; vertical-align: top; }
+table.cmp th { background: var(--color-surface-muted); font-weight: 600; }
+table.cmp td.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+</style>
+</head>
+<body>
+
+<h1>溯源报告「待核实问题」怎么排</h1>
+<p class="note">同一份报告（<code>run_3c81c376</code> ·《中美社保对比，有哪些不同？》）的 10 条待核实问题，逐字取自产物。
+容器宽度 <code>716px</code> 是真机量到的正文栏宽。</p>
+<p class="note">现状：手写 flex 两列，<code>claim</code> 最多占 45%、行间距 <code>10px</code>、无分隔线、两列各按自己换行 —— 十条连成一片。
+下面四套做法都能解决「挤」，差别在**改多少**与**占多高**。</p>
+
+<div class="tabs" role="tablist">
+  <button class="tab" role="tab" data-tab="now" aria-selected="true">现状（基线）</button>
+  <button class="tab" role="tab" data-tab="a">A 对齐两列（EP descriptions）</button>
+  <button class="tab" role="tab" data-tab="b">B 单列堆叠 + 分隔线</button>
+  <button class="tab" role="tab" data-tab="c">C 卡片式</button>
+</div>
+
+<section class="panel" data-panel="now" data-active="true">
+  <h2>现状（基线）：手写 flex 两列，无分隔、无对齐</h2>
+  <div class="frame demo" data-variant="now">
+    <h3 class="sec-title">待核实问题</h3>
+    <ul class="now-list" data-measure-root>
+      <li class="now-item"><span class="now-claim">“两项合起来就是约三千一百三十美元”中的“两项”具体指什么、对应哪个国家与哪类人员。</span><span class="now-reason">转写稿第5段前面缺失，无法确定是比较中国还是美国、体制内还是体制外，也不能确定统计口径。</span></li>
+      <li class="now-item"><span class="now-claim">美国逃税重罪“单项罪最……”的最高刑期。</span><span class="now-reason">原文在“单项罪最……”处截断，无法得出完整刑期。</span></li>
+      <li class="now-item"><span class="now-claim">中国失业率5.2%的统计时点、口径和来源。</span><span class="now-reason">原文只给数字，未说明是城镇调查失业率还是其他口径，也未给月份或年份。</span></li>
+      <li class="now-item"><span class="now-claim">中国通胀率极低的具体数值和来源。</span><span class="now-reason">原文只有定性表述，没有给出CPI涨幅或统计机构。</span></li>
+      <li class="now-item"><span class="now-claim">美国自雇税中 Medicare 部分的具体税率。</span><span class="now-reason">原文只说“也是全额自付”，未给出百分比；与社保部分12.4%容易混淆。</span></li>
+      <li class="now-item"><span class="now-claim">美国普通雇员除 Social Security 6.2%外 Medicare 税率。</span><span class="now-reason">原文说“此外还要单独扣 Medicare”，但未给税率。</span></li>
+      <li class="now-item"><span class="now-claim">马斯克效率部裁减50%公务员说法的具体时间、范围和结果。</span><span class="now-reason">原文只有口语概述，缺少计划名称、日期和人数。</span></li>
+      <li class="now-item"><span class="now-claim">中国以前不需单独缴纳养老保险的具体年代和制度名称。</span><span class="now-reason">原文只说“以前”，未说明改革节点和适用人群。</span></li>
+      <li class="now-item"><span class="now-claim">加拿大、新西兰、澳大利亚养老制度“直接由税收支持”的具体制度名称和覆盖范围。</span><span class="now-reason">原文未列 OAS、Superannuation、Age Pension 等名称，也未给替代率或财政来源比例。</span></li>
+      <li class="now-item"><span class="now-claim">体制内比体制外多拿一倍养老金所指国家和统计口径。</span><span class="now-reason">与3130美元同段，前文缺失，可能指美国也可能指中国，未说明是否含401K/TSP。</span></li>
+    </ul>
+    <p class="meter" data-meter>量中…</p>
+  </div>
+</section>
+
+<section class="panel" data-panel="a">
+  <h2>A：对齐两列 + 网格线（Element Plus <code>el-descriptions :column="1" border</code>）</h2>
+  <p class="note">保留「两列」这个形状，但把标签列定宽、加网格线、把行距还给单元格。这是 EP 里现成的 label/value 列表组件，
+    <b>改动最小且不违反「表格用 EP」的仓库规矩</b>；代价是标签列定宽 240px，长 claim 仍会换行。</p>
+  <div class="frame demo" data-variant="a">
+    <h3 class="sec-title">待核实问题（10）</h3>
+    <div class="desc" data-measure-root>
+      <span class="cell label">“两项合起来就是约三千一百三十美元”中的“两项”具体指什么、对应哪个国家与哪类人员。</span><span class="cell value">转写稿第5段前面缺失，无法确定是比较中国还是美国、体制内还是体制外，也不能确定统计口径。</span>
+      <span class="cell label">美国逃税重罪“单项罪最……”的最高刑期。</span><span class="cell value">原文在“单项罪最……”处截断，无法得出完整刑期。</span>
+      <span class="cell label">中国失业率5.2%的统计时点、口径和来源。</span><span class="cell value">原文只给数字，未说明是城镇调查失业率还是其他口径，也未给月份或年份。</span>
+      <span class="cell label">中国通胀率极低的具体数值和来源。</span><span class="cell value">原文只有定性表述，没有给出CPI涨幅或统计机构。</span>
+      <span class="cell label">美国自雇税中 Medicare 部分的具体税率。</span><span class="cell value">原文只说“也是全额自付”，未给出百分比；与社保部分12.4%容易混淆。</span>
+      <span class="cell label">美国普通雇员除 Social Security 6.2%外 Medicare 税率。</span><span class="cell value">原文说“此外还要单独扣 Medicare”，但未给税率。</span>
+      <span class="cell label">马斯克效率部裁减50%公务员说法的具体时间、范围和结果。</span><span class="cell value">原文只有口语概述，缺少计划名称、日期和人数。</span>
+      <span class="cell label">中国以前不需单独缴纳养老保险的具体年代和制度名称。</span><span class="cell value">原文只说“以前”，未说明改革节点和适用人群。</span>
+      <span class="cell label">加拿大、新西兰、澳大利亚养老制度“直接由税收支持”的具体制度名称和覆盖范围。</span><span class="cell value">原文未列 OAS、Superannuation、Age Pension 等名称，也未给替代率或财政来源比例。</span>
+      <span class="cell label">体制内比体制外多拿一倍养老金所指国家和统计口径。</span><span class="cell value">与3130美元同段，前文缺失，可能指美国也可能指中国，未说明是否含401K/TSP。</span>
+    </div>
+    <p class="meter" data-meter>量中…</p>
+  </div>
+</section>
+
+<section class="panel" data-panel="b">
+  <h2>B：单列堆叠 + 条间分隔线（问题一行、原因一行）</h2>
+  <p class="note">不做两列：每条占两行。**理由是算出来的**——正文栏 716px、13px 字，
+    42 字的 claim 与 54 字的 reason 各自都放得下**一行**；挤成两列反而把两段都逼到换行。
+    所以这一套在同样高度下最易读，且手机上天然不炸。落地用 <code>OrderedList/ul</code> + 一条分隔线即可（不需要 EP 组件）。</p>
+  <div class="frame demo" data-variant="b">
+    <h3 class="sec-title">待核实问题（10）</h3>
+    <ul class="stack-list" data-measure-root>
+      <li class="stack-item"><span class="stack-claim">“两项合起来就是约三千一百三十美元”中的“两项”具体指什么、对应哪个国家与哪类人员。</span><span class="stack-reason">转写稿第5段前面缺失，无法确定是比较中国还是美国、体制内还是体制外，也不能确定统计口径。</span></li>
+      <li class="stack-item"><span class="stack-claim">美国逃税重罪“单项罪最……”的最高刑期。</span><span class="stack-reason">原文在“单项罪最……”处截断，无法得出完整刑期。</span></li>
+      <li class="stack-item"><span class="stack-claim">中国失业率5.2%的统计时点、口径和来源。</span><span class="stack-reason">原文只给数字，未说明是城镇调查失业率还是其他口径，也未给月份或年份。</span></li>
+      <li class="stack-item"><span class="stack-claim">中国通胀率极低的具体数值和来源。</span><span class="stack-reason">原文只有定性表述，没有给出CPI涨幅或统计机构。</span></li>
+      <li class="stack-item"><span class="stack-claim">美国自雇税中 Medicare 部分的具体税率。</span><span class="stack-reason">原文只说“也是全额自付”，未给出百分比；与社保部分12.4%容易混淆。</span></li>
+      <li class="stack-item"><span class="stack-claim">美国普通雇员除 Social Security 6.2%外 Medicare 税率。</span><span class="stack-reason">原文说“此外还要单独扣 Medicare”，但未给税率。</span></li>
+      <li class="stack-item"><span class="stack-claim">马斯克效率部裁减50%公务员说法的具体时间、范围和结果。</span><span class="stack-reason">原文只有口语概述，缺少计划名称、日期和人数。</span></li>
+      <li class="stack-item"><span class="stack-claim">中国以前不需单独缴纳养老保险的具体年代和制度名称。</span><span class="stack-reason">原文只说“以前”，未说明改革节点和适用人群。</span></li>
+      <li class="stack-item"><span class="stack-claim">加拿大、新西兰、澳大利亚养老制度“直接由税收支持”的具体制度名称和覆盖范围。</span><span class="stack-reason">原文未列 OAS、Superannuation、Age Pension 等名称，也未给替代率或财政来源比例。</span></li>
+      <li class="stack-item"><span class="stack-claim">体制内比体制外多拿一倍养老金所指国家和统计口径。</span><span class="stack-reason">与3130美元同段，前文缺失，可能指美国也可能指中国，未说明是否含401K/TSP。</span></li>
+    </ul>
+    <p class="meter" data-meter>量中…</p>
+  </div>
+</section>
+
+<section class="panel" data-panel="c">
+  <h2>C：卡片式（每条一个浅底盒，与报告里「外部核查」那块同一视觉语言）</h2>
+  <p class="note">分隔最强、与报告里已有的「外部核查」区块风格一致；代价是最高、且 10 个盒子容易显得"重"。</p>
+  <div class="frame demo" data-variant="c">
+    <h3 class="sec-title">待核实问题（10）</h3>
+    <div class="card-list" data-measure-root>
+      <div class="card"><span class="card-claim">“两项合起来就是约三千一百三十美元”中的“两项”具体指什么、对应哪个国家与哪类人员。</span><span class="card-reason">转写稿第5段前面缺失，无法确定是比较中国还是美国、体制内还是体制外，也不能确定统计口径。</span></div>
+      <div class="card"><span class="card-claim">美国逃税重罪“单项罪最……”的最高刑期。</span><span class="card-reason">原文在“单项罪最……”处截断，无法得出完整刑期。</span></div>
+      <div class="card"><span class="card-claim">中国失业率5.2%的统计时点、口径和来源。</span><span class="card-reason">原文只给数字，未说明是城镇调查失业率还是其他口径，也未给月份或年份。</span></div>
+      <div class="card"><span class="card-claim">中国通胀率极低的具体数值和来源。</span><span class="card-reason">原文只有定性表述，没有给出CPI涨幅或统计机构。</span></div>
+      <div class="card"><span class="card-claim">美国自雇税中 Medicare 部分的具体税率。</span><span class="card-reason">原文只说“也是全额自付”，未给出百分比；与社保部分12.4%容易混淆。</span></div>
+      <div class="card"><span class="card-claim">美国普通雇员除 Social Security 6.2%外 Medicare 税率。</span><span class="card-reason">原文说“此外还要单独扣 Medicare”，但未给税率。</span></div>
+      <div class="card"><span class="card-claim">马斯克效率部裁减50%公务员说法的具体时间、范围和结果。</span><span class="card-reason">原文只有口语概述，缺少计划名称、日期和人数。</span></div>
+      <div class="card"><span class="card-claim">中国以前不需单独缴纳养老保险的具体年代和制度名称。</span><span class="card-reason">原文只说“以前”，未说明改革节点和适用人群。</span></div>
+      <div class="card"><span class="card-claim">加拿大、新西兰、澳大利亚养老制度“直接由税收支持”的具体制度名称和覆盖范围。</span><span class="card-reason">原文未列 OAS、Superannuation、Age Pension 等名称，也未给替代率或财政来源比例。</span></div>
+      <div class="card"><span class="card-claim">体制内比体制外多拿一倍养老金所指国家和统计口径。</span><span class="card-reason">与3130美元同段，前文缺失，可能指美国也可能指中国，未说明是否含401K/TSP。</span></div>
+    </div>
+    <p class="meter" data-meter>量中…</p>
+  </div>
+</section>
+
+<h2>自量对照（本页 DOM 实测）</h2>
+<table class="cmp">
+  <thead><tr><th>方案</th><th>区块高</th><th>相对现状</th><th>条均高</th><th>claim 换行</th><th>条间分隔</th><th>实现</th></tr></thead>
+  <tbody id="cmp-body"></tbody>
+</table>
+<p class="note">「区块高」是这一节（标题以下、含内边距）的实际高度；第 9 条最长，能反映最坏情况。手机宽度另行说明，见调研文档。</p>
+
+<script>
+/* ---------------- 切换 ---------------- */
+for (const tab of document.querySelectorAll(".tab")) {
+  tab.addEventListener("click", () => {
+    for (const t of document.querySelectorAll(".tab")) t.setAttribute("aria-selected", String(t === tab));
+    for (const p of document.querySelectorAll(".panel")) p.dataset.active = String(p.dataset.panel === tab.dataset.tab);
+    measure();
+  });
+}
+
+/* ---------------- 自量 ---------------- */
+const r1 = (n) => Math.round(n * 10) / 10;
+const rows = [];
+
+function measure() {
+  rows.length = 0;
+  /*
+   * 量之前把所有面板临时显示出来：非激活面板是 display:none，量到的是 0。
+   * 只用内联 style 覆盖，量完还原（dataset 那套切换逻辑不受影响）。
+   */
+  const panels = [...document.querySelectorAll(".panel")];
+  const restore = panels.map((p) => p.style.display);
+  for (const p of panels) p.style.display = "block";
+  const nowRoot = document.querySelector('[data-panel="now"] [data-measure-root]');
+  const nowItems = [...nowRoot.children];
+  const nowClaimLines = nowItems.map((li) => Math.round(li.querySelector(".now-claim").getBoundingClientRect().height / 20.8));
+  const nowReasonLines = nowItems.map((li) => Math.round(li.querySelector(".now-reason").getBoundingClientRect().height / 20.8));
+  const nowH = nowRoot.getBoundingClientRect().height;
+  const nowMaxLines = Math.max(...nowClaimLines.map((n, i) => Math.max(n, nowReasonLines[i])));
+  rows.push({ name: "现状（基线）", h: r1(nowH), per: r1(nowH / nowItems.length), maxLines: nowMaxLines + " 行", sep: "无", impl: "已有", extra: "", cache: { claim: nowClaimLines.join("/"), reason: nowReasonLines.join("/") } });
+
+  const specs = [
+    ["a", "A 对齐两列（EP descriptions）", "EP el-descriptions", "有（网格线）"],
+    ["b", "B 单列堆叠 + 分隔线", "ul + 1px 分隔线", "有（分隔线）"],
+    ["c", "C 卡片式", "EP 卡片或 div + 令牌", "有（盒子）"],
+  ];
+  for (const [variant, name, impl, sep] of specs) {
+    const root = document.querySelector(`[data-panel="${variant}"] [data-measure-root]`);
+    const h = root.getBoundingClientRect().height;
+    const items = variant === "a" ? root.querySelectorAll(".label") : root.children;
+    const maxLines = Math.max(...[...items].map((el) => Math.round(el.getBoundingClientRect().height / 20.8)));
+    rows.push({ name, h: r1(h), per: r1(h / items.length), maxLines: maxLines + " 行", sep, impl, extra: "", cache: null });
+  }
+
+  const base = rows[0].h;
+  document.getElementById("cmp-body").innerHTML = rows
+    .map((r) => {
+      const delta = r.name === rows[0].name ? "—" : `${r.h > base ? "+" : ""}${r1(r.h - base)}px（${r.h >= base ? "+" : ""}${Math.round(((r.h - base) / base) * 100)}%）`;
+      return `<tr><td>${r.name}</td><td class="num">${r.h}px</td><td class="num">${delta}</td><td class="num">${r.per}px</td><td>${r.maxLines}</td><td>${r.sep}</td><td>${r.impl}</td></tr>`;
+    })
+    .join("");
+
+  for (const demo of document.querySelectorAll(".demo")) {
+    const meter = demo.querySelector("[data-meter]");
+    if (!meter) continue;
+    const row = rows.find((r) => r.name.startsWith(demo.dataset.variant === "now" ? "现状" : demo.dataset.variant.toUpperCase()));
+    if (!row) continue;
+    const baseDelta = row.name === rows[0].name ? "" : ` · 比现状 ${row.h > base ? "+" : ""}${r1(row.h - base)}px（${Math.round(((row.h - base) / base) * 100)}%）`;
+    meter.innerHTML = `本页自量：区块 <b>${row.h}px</b>（条均 <b>${row.per}px</b>、最坏 <b>${row.maxLines}</b>）${baseDelta}` +
+      (row.cache ? ` · claim 行数 <b>${row.cache.claim}</b> · reason 行数 <b>${row.cache.reason}</b>` : "");
+  }
+  panels.forEach((p, i) => { p.style.display = restore[i]; });
+  window.__measureReady = true;
+}
+window.__demoMetrics = () => rows.map((r) => ({ name: r.name, h: r.h, per: r.per, maxLines: r.maxLines, sep: r.sep }));
+measure();
+window.addEventListener("resize", measure);
+</script>
+</body>
+</html>
