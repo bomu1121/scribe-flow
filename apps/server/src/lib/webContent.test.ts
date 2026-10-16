@@ -167,7 +167,8 @@ describe("抓取一页正文", () => {
 
   it("普通文章走通用算法，抽出正文并拿到标题", async () => {
     const page = await fetchReadablePage(`${base}/article`, undefined, NO_FALLBACK);
-    expect(page.ok).toBe(true);
+    // 断言带上原因：偶发失败（实测出现过一次、未能复现）时，报错里得有它为什么失败
+    expect(page.ok, page.error ?? "").toBe(true);
     expect(page.via).toBe("readability");
     expect(page.text).toContain("美国社保税率合计为百分之十二点四");
     expect(page.title).toContain("测试文章标题");
@@ -192,13 +193,13 @@ describe("抓取一页正文", () => {
 
   it("HTTP 404 时 ok:false，并写明状态码", async () => {
     const page = await fetchReadablePage(`${base}/missing`, undefined, NO_FALLBACK);
-    expect(page.ok).toBe(false);
+    expect(page.ok, page.title ?? "").toBe(false);
     expect(page.error).toContain("404");
   });
 
   it("非网页内容不当作正文（图片/二进制直接判失败）", async () => {
     const page = await fetchReadablePage(`${base}/image`, undefined, NO_FALLBACK);
-    expect(page.ok).toBe(false);
+    expect(page.ok, page.title ?? "").toBe(false);
     expect(page.error).toContain("非网页内容");
   });
 
@@ -230,7 +231,7 @@ describe("抓取一页正文", () => {
       timeoutMs: 300,
     });
     const elapsed = Date.now() - t0;
-    expect(page.ok).toBe(false);
+    expect(page.ok, page.title ?? "").toBe(false);
     expect(page.error).toMatch(/timeout/i);
     expect(elapsed).toBeLessThan(3000);
     // signal 本身没被触发，说明失败确实来自超时而不是外部取消

@@ -92,7 +92,7 @@ export function createRun(db: AppDatabase, projectId: string, scope: RunScope, n
   // 执行前预检：换了素材却只重跑下游时，上游会沿用旧素材的产物——报告会把旧素材的内容
   // 归到新素材头上（2026-10-15 实际发生），而这一点从产物上完全看不出来。只能在启动前拦。
   const stale = findStaleMaterials(db, graph, projectId, scope, nodeId);
-  if (stale.length > 0) throw new Error(describeStaleMaterials(stale));
+  if (stale.length > 0) throw new Error(describeStaleMaterials(stale, graph));
 
   const id = nextRunId();
   const createdAt = Date.now();

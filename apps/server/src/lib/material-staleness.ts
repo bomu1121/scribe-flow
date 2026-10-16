@@ -138,14 +138,34 @@ export function describeMaterialKey(key: string): string {
   return key;
 }
 
+/**
+ * 该从哪些节点开始重跑。
+ *
+ * 不能只说「运行上游节点」：上游自己也在沿用更上游的产物，逐级重跑会被连着拦几次——
+ * 实测「只跑校对」同样被拦，因为它的上游「转写」消费的还是旧音频。
+ * 真正的起点是**来源卡的直接下游**：它的产物才是按新素材算出来的第一站。
+ */
+function restartLabels(graph: WorkflowGraph, targetNodeId: string): string[] {
+  const cards = new Set(collectMaterialOptions(graph, targetNodeId).map((option) => option.originNodeId));
+  const labels = new Set<string>();
+  for (const edge of graph.edges) {
+    if (!cards.has(edge.source)) continue;
+    const node = graph.nodes.find((candidate) => candidate.id === edge.target);
+    if (node) labels.add(nodeLabel(node));
+  }
+  return [...labels];
+}
+
 /** 把发现写成一句能直接给用户看的拒绝理由。 */
-export function describeStaleMaterials(findings: StaleMaterialFinding[]): string {
+export function describeStaleMaterials(findings: StaleMaterialFinding[], graph: WorkflowGraph): string {
   return findings
     .map((finding) => {
       const keys = finding.missingKeys.map(describeMaterialKey).join("、");
+      const starts = restartLabels(graph, finding.targetNodeId);
+      const action = starts.length > 0 ? `请从「${starts.join("」/「")}」开始跑，或直接跑全流程` : "请先跑上游节点，或直接跑全流程";
       return (
         `「${finding.targetLabel}」要沿用的上游「${finding.upstreamLabel}」的产物，是用 ${keys} 这个素材算的，` +
-        `但它已经不在当前画布上了。先运行上游节点（或跑全流程）让它按现在的素材重算，再重跑本节点。`
+        `但它已经不在当前画布上了。${action}，让它按现在的素材重算。`
       );
     })
     .join("\n");

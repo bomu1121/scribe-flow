@@ -122,7 +122,8 @@ describe("换了素材只重跑下游：运行前预检", () => {
     expect(status).toBe(400);
     expect(body.error).toContain("BV1DTWw6UE1y");
     expect(body.error).toContain("校对");
-    expect(body.error).toContain("先运行上游节点");
+    // 起点必须说清：只说「运行上游节点」的话，只跑「校对」会被再拦一次（它上游的转写也是旧的）
+    expect(body.error).toContain("请从「转写」开始跑");
     // 画布上会有好几个「AI 加工」，只说默认名等于没说：带上它选的提示词才定位得到
     expect(body.error).toContain("信息溯源 · 上网查证");
   });
