@@ -31,7 +31,8 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-// 写 localhost 而不是 127.0.0.1：Vite 绑的是它自己解析出的 localhost，本机上是 ::1。
+// 写 127.0.0.1 而不是 localhost：前端在 vite.config.ts 里显式绑了 IPv4 回环，
+// 走 localhost 要先试 ::1 再回退到 IPv4，每次新建连接白等约 200ms。后端是双栈，两个都通。
 const API_URL = "http://localhost:8787/";
 const UI_PORTS = [5173, 5174, 5175, 5176];
 const UI_READY_TIMEOUT_MS = 120_000;
@@ -54,7 +55,7 @@ const responds = async (url) => {
 
 const isOurUi = async (port) => {
   try {
-    const res = await fetch(`http://localhost:${port}/`, { signal: AbortSignal.timeout(2000) });
+    const res = await fetch(`http://127.0.0.1:${port}/`, { signal: AbortSignal.timeout(2000) });
     if (!res.ok) return false;
     return (await res.text()).includes("ScribeFlow");
   } catch {
@@ -65,7 +66,7 @@ const isOurUi = async (port) => {
 /** 在候选端口里找本项目的界面：端口有人应答不算数，页面得真是 ScribeFlow。 */
 const findRunningUi = async () => {
   for (const port of UI_PORTS) {
-    if (await isOurUi(port)) return `http://localhost:${port}/`;
+    if (await isOurUi(port)) return `http://127.0.0.1:${port}/`;
   }
   return null;
 };
@@ -98,7 +99,8 @@ const startDevServers = (onWebPort) => {
   web.stdout.on("data", (chunk) => {
     process.stdout.write(chunk);
     buffer += stripAnsi(chunk.toString());
-    const found = buffer.match(/local:\s*https?:\/\/localhost:(\d+)/i);
+    // Vite 打印的是它实际绑的那个 host（现在写死 IPv4），两种都认，别只匹配 localhost
+    const found = buffer.match(/local:\s*https?:\/\/(?:localhost|127\.0\.0\.1):(\d+)/i);
     if (found) onWebPort(Number(found[1]));
   });
   web.stderr.on("data", (chunk) => process.stderr.write(chunk));
@@ -174,7 +176,7 @@ const main = async () => {
 
   let uiUrl = null;
   const children = startDevServers((port) => {
-    uiUrl ??= `http://localhost:${port}/`;
+    uiUrl ??= `http://127.0.0.1:${port}/`;
   });
   const stopAll = () => children.forEach((child) => child.kill());
 

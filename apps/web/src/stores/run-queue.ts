@@ -1,9 +1,8 @@
 import { defineStore } from "pinia";
 import { ref, watch } from "vue";
-import type { RunMeta, RunScope } from "@scribe-flow/shared";
-import { ApiError, api } from "@/lib/api";
-import { ElMessageBox } from "element-plus/es/components/message-box/index.mjs";
+import type { RunScope } from "@scribe-flow/shared";
 import { toast } from "@/lib/toast";
+import { startRunRequest } from "@/utils/run-start";
 import { useProjectsStore } from "@/stores/projects";
 import { useRunsStore } from "@/stores/runs";
 import { dropQueueItem, pushQueueItem, runQueueKey, type RunQueueItem } from "@/utils/run-queue";
@@ -102,7 +101,7 @@ export const useRunQueueStore = defineStore("run-queue", () => {
     beginStart(projectId);
     let nextInLine = false;
     try {
-      const run = await startRun(projectId, head);
+      const run = await startRunRequest(projectId, { scope: head.scope, nodeId: head.nodeId });
       if (!run) {
         // 用户在确认框里选了「不跑」：这不是失败，安静出队
         setItems(projectId, dropQueueItem(itemsOf(projectId), head.key));
@@ -129,33 +128,6 @@ export const useRunQueueStore = defineStore("run-queue", () => {
     }
     // 这一步失败出队了，后面还有就接着排（真失败通常连着几条一起失败，各自报自己的原因）。
     if (nextInLine) void drain(projectId);
-  }
-
-  /**
-   * 起一条运行；服务端要求「按旧素材继续」的确认时问一次再重发。
-   *
-   * 为什么要有这一步：换了来源卡的素材却只重跑下游时，上游会沿用旧素材的产物。
-   * 报告会按**文稿真实的来源**写（归因取产出时的图快照），所以这不是跑不了，而是两条路要用户选：
-   * 按当前文稿继续，或先重跑上游让它按新素材重算。返回 `null` 表示用户选了不跑。
-   */
-  async function startRun(projectId: string, head: RunQueueItem): Promise<RunMeta | null> {
-    const body = { scope: head.scope, nodeId: head.nodeId };
-    try {
-      return await api.post<RunMeta>(`/api/projects/${projectId}/runs`, body);
-    } catch (err) {
-      if (!(err instanceof ApiError) || err.detail.needConfirmStaleMaterial !== true) throw err;
-      try {
-        await ElMessageBox.confirm(err.message, "这条运行会用更换前的素材", {
-          confirmButtonText: "按当前文稿继续",
-          cancelButtonText: "先去重跑上游",
-          type: "warning",
-        });
-      } catch {
-        toast.info("已取消。要让报告对上新素材，请从来源卡的下游第一个节点（转写）开始跑。");
-        return null;
-      }
-      return await api.post<RunMeta>(`/api/projects/${projectId}/runs`, { ...body, confirmStaleMaterial: true });
-    }
   }
 
   /**

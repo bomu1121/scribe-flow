@@ -338,7 +338,7 @@ cssclasses:
 2. **应用内端到端**：真 Chrome 里调应用自己的 `renderMarkdown`（marked + DOMPurify 全链路），
    **9/9 通过**——`data-callout` / `data-tone` 过白名单、`-` 出不带 `open` 的 `<details>`、
    `+` 带 `open`、普通引用块不受影响。跑法见 `note-candidates/check-callout-render.mjs`
-   （前置：`pnpm dev:web`；**本机 Vite 只监听 IPv6**，地址要写 `http://[::1]:<port>/`）。
+   （前置：`pnpm dev:web`；地址写 `http://127.0.0.1:<port>/`，端口以启动日志里那一行为准）。
    图：`obsidian-note-typography-app-callout.png`（速览 + 正文开头）、
    `obsidian-note-typography-app-sucha-folded.png`（折叠态，只占一行）、`...-app-sucha-open.png`（展开态）。
 3. **真实产物**：同一份 2,884 字校对稿真跑 6 次（新排版 3 次、旧排版补跑 2 次——上一轮那次算第 1 次），

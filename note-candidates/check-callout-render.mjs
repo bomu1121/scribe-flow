@@ -5,10 +5,10 @@
  * 为什么必须真跑：单元测试跑在 node 环境里，`DOMPurify` 依赖 DOM，那条路径测不到；
  * 而 `details` / `summary` / `open` / `data-*` 能不能过它默认的白名单，只有真跑才知道。
  *
- * 前置：`pnpm dev:web`。**Vite 在本机只监听 IPv6**（`netstat` 里显示为 `[::1]:5173`），
- * 所以地址要写 `http://[::1]:<port>/`，端口以启动日志里那一行为准（5173 被占时它会顺延）。
+ * 前置：`pnpm dev:web`。前端在 `apps/web/vite.config.ts` 里写死绑 `127.0.0.1`，
+ * 所以地址写 `http://127.0.0.1:<port>/`，端口以启动日志里那一行为准（5173 被占时它会顺延）。
  * 用法：
- *   APP_URL="http://[::1]:5176/" node note-candidates/check-callout-render.mjs
+ *   APP_URL="http://127.0.0.1:5176/" node note-candidates/check-callout-render.mjs
  *   ... --shot    顺便用真实产物渲一遍应用内截图（写进 docs/research/）
  *   REUSE=1 ...   连已开着的 Chrome（手动起过调试实例时用）
  */

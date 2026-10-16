@@ -13,6 +13,7 @@ import { api } from "@/lib/api";
 import { subscribeRunEvents } from "@/lib/sse";
 import { runScopeNodeIds, stripRuntimeFields, type NodePreviewOutput } from "@/utils/flow";
 import { queuedToast, queueTitle, runQueueLabel } from "@/utils/run-queue";
+import { startRunRequest } from "@/utils/run-start";
 import { buildNodeSegments, type RunSegment } from "@/utils/run-segments";
 import { backfillFromRun, canBackfillFromStatus, snapshotIsComplete } from "@/utils/run-restore";
 import { useAuthStore } from "@/stores/auth";
@@ -621,8 +622,14 @@ async function startRun(scope: RunScope, nodeId?: string) {
   runQueue.beginStart(projectId.value);
   try {
     running.value = true;
-    const run = await api.post<RunMeta>(`/api/projects/${projectId.value}/runs`, { scope, nodeId });
+    // 与排队那条路共用同一个发起函数：服务端要求确认「按旧素材继续」时，两边行为必须一致。
+    const run = await startRunRequest(projectId.value, { scope, nodeId });
     if (disposed) return;
+    if (!run) {
+      // 用户选了「先去重跑上游」：这不是失败，安静收尾（提示由发起函数给过）
+      running.value = false;
+      return;
+    }
     activeRun.value = run;
     runsStore.upsert(run);
     toast.clear();
