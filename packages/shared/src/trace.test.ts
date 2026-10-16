@@ -101,7 +101,8 @@ describe("trace report parser", () => {
             status: "weak_source",
             sources: [
               { title: "抓不到", url: "https://www.nhc.gov.cn/x", fetched: false, fetchError: "HTTP 412" },
-              { title: "无链接来源", fetched: false, fetchError: "该来源本次检索未返回链接" },
+              // 无链接的来源不写 fetchError：那不算抓取失败（报告另标「本次检索未返回链接」）
+              { title: "无链接来源", fetched: false },
             ],
           },
         },
@@ -109,7 +110,7 @@ describe("trace report parser", () => {
     });
     const sources = parseTraceReport(raw)?.items[0]?.external?.sources;
     expect(sources?.[0]?.fetchError).toBe("HTTP 412");
-    expect(sources?.[1]?.fetchError).toBe("该来源本次检索未返回链接");
+    expect(sources?.[1]?.fetchError).toBeUndefined();
   });
 
   it("非法的 evidence 取值被丢弃，不写进模型", () => {
@@ -202,5 +203,45 @@ describe("trace report parser", () => {
     expect(markdown).toContain("其他位置 / 其他来源的提及");
     expect(markdown).toContain("内部观点");
     expect(markdown).toContain("未联网核查");
+  });
+});
+
+describe("溯源报告的 Markdown 落盘形态（写 Obsidian 用）", () => {
+  const report: TraceReport = {
+    schema: 1,
+    title: "信息溯源报告",
+    items: [],
+    uncertainties: [
+      { claim: "中国失业率5.2%的统计时点、口径和来源。", reason: "原文只给数字，未说明口径。" },
+      { claim: "美国自雇税中 Medicare 部分的具体税率。", reason: "原文只说「也是全额自付」。" },
+    ],
+    warnings: ["时间戳来自转写稿。"],
+  };
+
+  it("待核实每条一张 callout 卡片，claim 加粗在正文首行，卡片之间空一行", () => {
+    const markdown = traceReportToMarkdown(report);
+    expect(markdown).toContain("## 待核实问题（2）");
+    expect(markdown).toContain("> [!question] 待核实 1");
+    expect(markdown).toContain("> [!question] 待核实 2");
+    expect(markdown).toContain("> **中国失业率5.2%的统计时点、口径和来源。**");
+    // 标题带（callout 的第一行）保持短：claim 二十多个字塞进标题会挤成一团，所以它在正文首行
+    expect(markdown).not.toContain("> [!question] 中国失业率");
+    // 卡片之间必须空一行，否则上一条会把下一条吞进去
+    const firstCard = markdown.slice(markdown.indexOf("> [!question] 待核实 1"));
+    const blankLineBeforeSecond = firstCard.slice(0, firstCard.indexOf("> [!question] 待核实 2"));
+    expect(blankLineBeforeSecond.endsWith("\n\n")).toBe(true);
+    // 不再是平铺 bullet
+    expect(markdown).not.toContain("- 中国失业率5.2%的统计时点");
+  });
+
+  it("报告标题是通用值时用 fallbackTitle 兜底（否则十份笔记都叫「信息溯源报告」）", () => {
+    expect(traceReportToMarkdown(report, { fallbackTitle: "《中美社保对比》 · 信息溯源" })).toContain(
+      "# 《中美社保对比》 · 信息溯源",
+    );
+    // 报告自己写了真标题就用它的，不被兜底盖掉
+    const named: TraceReport = { ...report, title: "社保说法溯源清单" };
+    expect(traceReportToMarkdown(named, { fallbackTitle: "《中美社保对比》 · 信息溯源" })).toContain("# 社保说法溯源清单");
+    // 没有兜底值时保持原样
+    expect(traceReportToMarkdown({ ...report, title: undefined })).toContain("# 信息溯源报告");
   });
 });

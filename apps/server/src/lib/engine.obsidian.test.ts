@@ -88,6 +88,8 @@ async function runNote(
   data: Record<string, unknown>,
   tag: string,
   obsidian: Record<string, unknown> = {},
+  /** 源文本。默认是短正文；传溯源报告 JSON 时验的是「落盘前转 Markdown」那条路。 */
+  body = BODY,
 ): Promise<NoteRunResult> {
   const dataDir = await tempDir(`scribe-obsidian-${tag}-`);
   const db = createDatabase(dataDir);
@@ -99,7 +101,7 @@ async function runNote(
   const graph = parseGraph({
     schemaVersion: 1,
     nodes: [
-      { id: "n_src", type: "source.text", position: { x: 0, y: 0 }, data: { label: "文稿", text: BODY } },
+      { id: "n_src", type: "source.text", position: { x: 0, y: 0 }, data: { label: "文稿", text: body } },
       { id: "n_note", type: "process.obsidian", position: { x: 320, y: 0 }, data: { label: "Obsidian 笔记", title: TITLE, ...data } },
     ],
     edges: [{ id: "e1", source: "n_src", target: "n_note", sourceHandle: "transcript", targetHandle: "in" }],
@@ -707,5 +709,78 @@ describe("Obsidian 笔记：发布日期取自 B 站稿件（不是笔记创建�
     // 分P 合并：两个 BV 相同，卡片级日期就是这条视频的日期，两篇都该写上（退回「不写」是丢了手里就有的真值）。
     expect(await readFile(join(dir, "上集.md"), "utf8")).toContain("发布日期: 2026-08-14");
     expect(await readFile(join(dir, "下集.md"), "utf8")).toContain("发布日期: 2026-08-14");
+  });
+});
+
+/**
+ * 溯源报告的落盘形态。
+ *
+ * 溯源节点的产物是**结构化 JSON**（结果页靠它渲染阅读器），直接接到 Obsidian 节点会原样写进笔记库——
+ * 一篇 JSON 文本。所以落盘前要转成 Markdown；同时报告自己的标题常常就是「信息溯源报告」这个通用值，
+ * 十份笔记全叫这个名等于没有名字，得拿素材名兜底。
+ */
+describe("Obsidian 笔记：上游是溯源报告时", () => {
+  const REPORT = JSON.stringify({
+    schema: 1,
+    title: "信息溯源报告",
+    summary: "对人社部数据找人、灵活就业参保等说法逐条溯源。",
+    items: [
+      {
+        id: "item-1",
+        category: "fact",
+        claim: "人社部提出用数据找人去动员参保。",
+        confidence: "confirmed",
+        evidence: [{ quote: "人社部提出用数据找人去动员参保。", source: { name: "《测试视频》", locator: "第1段" } }],
+      },
+    ],
+    uncertainties: [
+      { claim: "中国失业率5.2%的统计时点、口径和来源。", reason: "原文只给数字，未说明口径，也未给月份或年份。" },
+      { claim: "美国自雇税中 Medicare 部分的具体税率。", reason: "原文只说「也是全额自付」，未给出百分比。" },
+    ],
+    warnings: ["时间戳来自转写稿，可能与原视频有偏差。"],
+  });
+
+  it("写进库的是 Markdown（不是原始 JSON），待核实每条一张 callout 卡片", async () => {
+    const { vault, dir } = await makeVault();
+    const { status } = await runNote(vault, {}, "trace-markdown", {}, REPORT);
+    expect(status).toBe("done");
+
+    const files = await noteFiles(dir);
+    expect(files).toHaveLength(1);
+    const body = await readFile(join(dir, files[0]), "utf8");
+
+    // 不再是 JSON：连字段名都不该出现
+    expect(body).not.toContain('"schema"');
+    expect(body).not.toContain('"uncertainties"');
+    // 待核实：每条一张 `> [!question] 待核实 N`，claim 加粗在正文首行
+    expect(body).toContain("> [!question] 待核实 1");
+    expect(body).toContain("> [!question] 待核实 2");
+    expect(body).toContain("> **中国失业率5.2%的统计时点、口径和来源。**");
+    // callout 之间必须空一行，否则上一条会把下一条吞进去（Obsidian 的语法要求）
+    expect(body).toMatch(/> \*\*[^\n]+\*\*[\s\S]*?\n\n> \[!question\] 待核实 2/);
+    // 条目明细那边照常出内容
+    expect(body).toContain("人社部提出用数据找人去动员参保。");
+  });
+
+  it("报告标题是通用值时不再原样沿用——文本来源没有素材标题，此时仍落到通用名（已知边界）", async () => {
+    const { vault, dir } = await makeVault();
+    // 不传 title，让文件名走正文第一个 H1（也就是报告标题）
+    await runNote(vault, { title: undefined }, "trace-title", {}, REPORT);
+    const files = await noteFiles(dir);
+    expect(files).toHaveLength(1);
+    // `source.text` 卡没有素材标题（`upstreamSourceMeta` 对它只回「文本」），所以这里拿不到更好的名字。
+    // B 站/本地文件来源会带上视频名，兜底成「《视频标题》 · 信息溯源」——
+    // 那条分支由 packages/shared/src/trace.test.ts 直接验 `fallbackTitle`（这里造不出 B 站来源）。
+    expect(files[0]).toBe("信息溯源报告.md");
+    const body = await readFile(join(dir, files[0]), "utf8");
+    expect(body).toContain("信息溯源");
+  });
+
+  it("不是溯源报告时原样写入（不能把普通正文当 JSON 解析）", async () => {
+    const { vault, dir } = await makeVault();
+    await runNote(vault, {}, "trace-plain", {}, "这是一篇普通正文，不是 JSON。");
+    const files = await noteFiles(dir);
+    const body = await readFile(join(dir, files[0]), "utf8");
+    expect(body).toContain("这是一篇普通正文，不是 JSON。");
   });
 });

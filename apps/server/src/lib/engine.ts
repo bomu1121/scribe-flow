@@ -20,8 +20,10 @@ import {
   renderFileNameTemplate,
   sanitizeExtractFields,
   sanitizeFileName,
+  parseTraceReport,
   segmentKey,
   tagPathGroup,
+  traceReportToMarkdown,
   managedTags,
   uniqueNoteFileName,
   type AppSettings,
@@ -1867,22 +1869,46 @@ export class RunEngine {
          */
         const textItems = inputs.items.filter((item) => item.output.kind !== "audio" && (item.output.text ?? "").trim());
         const split = data.splitByInput !== false && textItems.length > 1;
+        /** 溯源报告的 JSON 产物要先转成 Markdown：否则整篇 JSON 会被原样写进笔记库。 */
+        let reportConverted = 0;
+        const noteBody = (text: string, fallbackTitle?: string): string => {
+          const report = parseTraceReport(text);
+          if (!report) return text;
+          reportConverted += 1;
+          return traceReportToMarkdown(report, { fallbackTitle });
+        };
         const pending = split
-          ? textItems.map((item) => ({
-              text: (item.output.text ?? "").trim(),
-              // 段标识一并带下去：这一篇讲的是哪一集，发布日期就得按那一集取。
-              meta: this.upstreamSourceMeta(active, item.sourceNodeId, item.itemKey, item.sourceGraph),
-              itemKey: item.itemKey,
-            }))
+          ? textItems.map((item) => {
+              const meta = this.upstreamSourceMeta(active, item.sourceNodeId, item.itemKey, item.sourceGraph);
+              return {
+                text: noteBody((item.output.text ?? "").trim(), meta.title ? `《${meta.title}》 · 信息溯源` : undefined),
+                // 段标识一并带下去：这一篇讲的是哪一集，发布日期就得按那一集取。
+                meta,
+                itemKey: item.itemKey,
+              };
+            })
           : [
-              {
-                text: inputs.text.trim(),
+              (() => {
                 // 压平成一篇时也要按产出时的图取：多份输入混在一起时取第一份的快照，
                 // 与「作者/链接一直按第一项取」的既有口径一致。
-                meta: this.upstreamSourceMeta(active, node.id, undefined, inputs.items[0]?.sourceGraph),
-                itemKey: undefined as string | undefined,
-              },
+                const meta = this.upstreamSourceMeta(active, node.id, undefined, inputs.items[0]?.sourceGraph);
+                return {
+                  text: noteBody(inputs.text.trim(), meta.title ? `《${meta.title}》 · 信息溯源` : undefined),
+                  meta,
+                  itemKey: undefined as string | undefined,
+                };
+              })(),
             ];
+        if (reportConverted > 0) {
+          await this.log(
+            active,
+            node.id,
+            "info",
+            `已把 ${reportConverted} 份溯源报告转成 Markdown 写入笔记（原产物是 JSON，直接落盘会得到一篇 JSON 文本）`,
+            undefined,
+            inputs.items[0] ? { index: inputs.items[0].position, total: textItems.length } : undefined,
+          );
+        }
 
         /*
          * 先定文件名：名字必须在写盘前定死——下面每篇的读旧标签、关联扫描、记指纹三处都按最终名走，

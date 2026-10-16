@@ -481,10 +481,29 @@ function appendExternalOverview(report: TraceReport, lines: string[]): void {
   lines.push("");
 }
 
-/** 把结构化溯源报告转成可读 Markdown，供“复制/下载”与不支持结构化视图的场合使用。 */
-export function traceReportToMarkdown(report: TraceReport): string {
+export interface TraceMarkdownOptions {
+  /**
+   * 报告自己没有给出可用标题时用的标题。
+   *
+   * 用途：写进 Obsidian 时，笔记名默认取正文第一个 H1。而模型产出的 `title` 常常就是
+   * 「信息溯源报告」这个通用值——十份笔记全叫这个名，只能靠 (2)(3) 区分，等于没有名字。
+   * 所以落盘那条路会传素材名进来（如 `《中美社保对比，有哪些不同？》 · 信息溯源`）。
+   */
+  fallbackTitle?: string;
+}
+
+/** 报告标题是否可用：非空、且不是那个通用默认值。 */
+function usableTitle(value: string | undefined): boolean {
+  const title = value?.trim();
+  return Boolean(title) && title !== DEFAULT_TRACE_TITLE;
+}
+
+const DEFAULT_TRACE_TITLE = "信息溯源报告";
+
+/** 把结构化溯源报告转成可读 Markdown，供“复制/下载”、Obsidian 落盘与不支持结构化视图的场合使用。 */
+export function traceReportToMarkdown(report: TraceReport, options: TraceMarkdownOptions = {}): string {
   const lines: string[] = [];
-  const title = report.title?.trim() || "信息溯源报告";
+  const title = (usableTitle(report.title) ? report.title!.trim() : options.fallbackTitle?.trim()) || DEFAULT_TRACE_TITLE;
   lines.push(`# ${title}`);
   lines.push("");
   if (report.summary?.trim()) {
@@ -516,8 +535,11 @@ export function traceReportToMarkdown(report: TraceReport): string {
           const authority = source.authority ? `[${TRACE_SOURCE_AUTHORITY_LABELS[source.authority]}] ` : "";
           const publisher = source.publisher?.trim() ? `${source.publisher.trim()} · ` : "";
           if (title || url) lines.push(`  - ${authority}${publisher}${title}${url}`);
-          // 只有抓到正文的来源才可能有引文。三种「没抓到」要分开写，否则读者会以为站点抓不动。
-          if (source.fetched === false) {
+          /*
+           * 只有抓到正文的来源才可能有引文。三种「没抓到」要分开写，否则读者会以为站点抓不动：
+           * 抓失败 / 本轮没抓 / 检索没给链接。最后一种不在这里写——上面那行已经标了「本次检索未返回链接」。
+           */
+          if (source.fetched === false && source.url) {
             lines.push(
               source.fetchError
                 ? `    - 抓取失败（${source.fetchError}），本条依据检索摘要`
@@ -570,12 +592,21 @@ export function traceReportToMarkdown(report: TraceReport): string {
   }
   const uncertainties = report.uncertainties ?? [];
   if (uncertainties.length > 0) {
-    lines.push(`## 待核实`);
+    lines.push(`## 待核实问题（${uncertainties.length}）`);
     lines.push("");
-    for (const uncertainty of uncertainties) {
-      lines.push(`- ${uncertainty.claim}：${uncertainty.reason}`);
-    }
-    lines.push("");
+    /*
+     * 每条一张 callout 卡片：结果页里这一节是卡片式（每张一个浅底盒），笔记里用 Obsidian 的
+     * callout 才是同一件事——它不是「引用块 + 字面的 [!question]」，而是官方语法里那种带边带色的盒子。
+     * 标题固定写「待核实 N」而不是拿 claim 当标题：claim 常常二三十个字，塞进标题带会挤成一团；
+     * claim 放正文首行加粗，既醒目又不会被截断。
+     * 空行是必须的——callout 之间不空行会被上一条吞掉（见 docs/research/obsidian-note-typography.md）。
+     */
+    uncertainties.forEach((uncertainty, index) => {
+      lines.push(`> [!question] 待核实 ${index + 1}`);
+      lines.push(`> **${uncertainty.claim.trim()}**`);
+      if (uncertainty.reason?.trim()) lines.push(`> ${uncertainty.reason.trim()}`);
+      lines.push("");
+    });
   }
   const warnings = report.warnings ?? [];
   if (warnings.length > 0) {

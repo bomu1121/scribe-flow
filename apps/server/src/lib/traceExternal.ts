@@ -787,7 +787,9 @@ export async function enrichTraceReportWithExternalChecks(
         const { quote: _quote, ...rest } = merged;
         // 抓不到的来源要留下原因：只写 `fetched:false` 的话，「为什么没抓到」永远查不出来，
         // 而「抓取失败」与「站点不可抓」是两回事，排查方向完全不同。
-        const fetchError = page && !page.ok ? clip(page.error, MAX_ERROR_TEXT) : merged.url ? undefined : "该来源本次检索未返回链接";
+        // fetchError 只表示「抓了但失败」。无链接的来源不设它——那不算抓取失败（报告与阅读器另有「无链接」标记），
+        // 混在一起会写出「抓取失败（该来源本次检索未返回链接）」这种自相矛盾的文案。
+        const fetchError = merged.url && page && !page.ok ? clip(page.error, MAX_ERROR_TEXT) : undefined;
         return {
           ...rest,
           fetched: page?.ok === true,

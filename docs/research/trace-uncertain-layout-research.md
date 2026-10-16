@@ -8,7 +8,9 @@ class: research
 > 触发：反馈「如图所示的这个地方的排版有问题吧……这也太拥挤了显得」（附结果页截图，10 条待核实问题挤成一片）。
 > 日期：2026-10-16。
 > 交付物：四套做法的可切换原型 [`trace-uncertain-layout-demos.html`](./trace-uncertain-layout-demos.html)
-> + 逐套截图 `trace-uncertain-{now,a-descriptions,b-stacked,c-cards}.png`。**本轮没有改动产品代码**。
+> + 逐套截图 `trace-uncertain-{now,a-descriptions,b-stacked,c-cards}.png`。
+> **结论：用户选了 C（卡片式），已落地** —— 结果页 `TraceReportViewer.vue` 与 Obsidian 落盘（`traceReportToMarkdown`）
+> 两处都改成了卡片形态。真机复量见本文末「§6 落地后的复量」。
 
 ---
 
@@ -97,3 +99,23 @@ class: research
 | C | 同上 | 每条包一层浅底盒（`--color-surface-muted` + `--color-border`），与 `.trv-external` 同一套令牌 |
 
 三套都只动这一个文件；`packages/shared` 的 `TraceReportToMarkdown`（导出/复制那条路）用的是列表，本来就与 B 一致。
+
+## 6. 落地后的复量（2026-10-16，方案 C）
+
+改完之后用同一套 CDP 探针在**真机**（`run_3c81c376` 的结果页）复量：
+
+| 量 | 改前 | 改后 |
+| --- | --- | --- |
+| 这一节高度 | 459.5px | **708px**（原型预测 707.9px，**差 0.01%**） |
+| 单条高度 | 30.8 / 51.6px（不齐） | **统一 63.6px** |
+| 条间净空 | 10px（且只有 padding） | **8px 间隔 + 浅底 + 1px 边框** |
+| 列宽 | claim 199.6–322.2px / reason 251–412.9px（长文本在窄列） | 不再分列，claim 与 reason 各占一行 |
+| 序号 | 无 | 有（1–10，与笔记里的 `> [!question] 待核实 N` 对齐） |
+
+读到的计算样式：`background rgb(247,248,249)`、`border 1px rgb(228,231,235)`、`radius 6px`、`padding 9px 12px`
+——与原型页用的同一套令牌值。
+
+**Obsidian 一侧**：`traceReportToMarkdown` 把待核实渲染成每条一张 `> [!question] 待核实 N` 卡片（claim 加粗在正文首行、
+卡片间空一行），并新增 `fallbackTitle` 让笔记名用素材名而不是通用的「信息溯源报告」。
+真实产物的样本在 `note-candidates/溯源报告-卡片样式示例.md`，**按仓库惯例请在 Obsidian 里打开它看真机观感**
+（应用内渲染与实际 Obsidian 主题不是同一套视觉，见 `obsidian-note-typography.md` 的处理方式）。

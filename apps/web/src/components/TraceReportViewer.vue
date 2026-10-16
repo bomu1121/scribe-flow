@@ -389,10 +389,19 @@ function resetFilters(): void {
 
     <section v-if="reports.some((report) => (report.uncertainties?.length ?? 0) > 0)" class="trv-uncertain">
       <h3 class="trv-section-title">待核实问题</h3>
+      <!--
+        每条一张卡片：十来个条目挤成一片的根因是「条目之间没有边界」（真机实测：条间净空只有 10px、
+        且没有分隔线或底色），而两列按「谁先占」分配宽度还把更长的原因挤进了更窄的列。取舍与数字见
+        docs/research/trace-uncertain-layout-research.md（方案 C）。
+        序号与笔记里的 `> [!question] 待核实 N` 对齐，两边可以互相指认。
+      -->
       <ul class="trv-uncertain-list">
-        <li v-for="(uncertainty, index) in reports.flatMap((report) => report.uncertainties ?? [])" :key="index" class="trv-uncertain-item">
-          <span class="trv-uncertain-claim">{{ uncertainty.claim }}</span>
-          <span class="trv-uncertain-reason">{{ uncertainty.reason }}</span>
+        <li v-for="(uncertainty, index) in reports.flatMap((report) => report.uncertainties ?? [])" :key="index" class="trv-uncertain-card">
+          <span class="trv-uncertain-index tnum">{{ index + 1 }}</span>
+          <div class="trv-uncertain-body">
+            <span class="trv-uncertain-claim">{{ uncertainty.claim }}</span>
+            <span class="trv-uncertain-reason">{{ uncertainty.reason }}</span>
+          </div>
         </li>
       </ul>
     </section>
@@ -1001,29 +1010,60 @@ function resetFilters(): void {
   list-style: none;
 }
 
-.trv-uncertain-item,
-.trv-warning-item {
+.trv-uncertain-list {
+  display: grid;
+  gap: 8px;
+}
+
+/* 卡片式：与报告里「外部核查」那块同一套令牌（浅底 + 边框 + 圆角），一眼能看出条目边界在哪 */
+.trv-uncertain-card {
   display: flex;
-  gap: 10px;
-  padding: 5px 0;
+  gap: 8px;
+  padding: 9px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  background: var(--color-surface-muted);
   color: var(--color-text-secondary);
   font-size: 13px;
   line-height: 1.6;
 }
 
-.trv-uncertain-claim {
+.trv-uncertain-index {
   flex: 0 0 auto;
-  max-width: 45%;
+  min-width: 16px;
+  height: 16px;
+  margin-top: 1px;
+  border: 1px solid var(--color-border);
+  border-radius: 50%;
+  background: var(--color-surface);
+  color: var(--color-text-tertiary);
+  font-size: 10px;
+  line-height: 14px;
+  text-align: center;
+}
+
+.trv-uncertain-body {
+  display: block;
+  min-width: 0;
+}
+
+.trv-uncertain-claim {
+  display: block;
   color: var(--color-text);
   font-weight: 500;
 }
 
 .trv-uncertain-reason {
+  display: block;
+  margin-top: 2px;
   color: var(--color-text-tertiary);
 }
 
 .trv-warning-item {
+  padding: 5px 0;
   color: var(--color-warning);
+  font-size: 13px;
+  line-height: 1.6;
 }
 
 @media (max-width: 760px) {
