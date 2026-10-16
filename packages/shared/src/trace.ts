@@ -452,13 +452,43 @@ export const TRACE_EVIDENCE_LABELS: Record<TraceExternalEvidence, string> = {
   snippet: "无原文引证",
 };
 
-function formatEvidenceLine(evidence: TraceEvidence): string {
-  const sourceName = evidence.source?.name?.trim();
+/**
+ * 报告的主来源：按 `evidence` 里出现次数最多的那个来源判定。
+ *
+ * 用途是**别再逐条重复视频名与「转写稿第 N 段」**：报告讲的就是这一段转写稿，
+ * 而转写稿不会落进笔记库（它是运行中间产物），笔记的 front matter 里已经有 `原始链接` 与 `作者`。
+ * 非主来源（文件、网页）仍然附出处——那时出处是真信息。
+ */
+function primaryEvidenceKey(report: TraceReport): string {
+  const counts = new Map<string, number>();
+  for (const item of report.items) {
+    for (const evidence of item.evidence) {
+      const key = `${evidence.source?.name ?? ""}|${evidence.source?.url ?? ""}`;
+      counts.set(key, (counts.get(key) ?? 0) + 1);
+    }
+  }
+  let best = "";
+  let max = -1;
+  for (const [key, count] of counts) {
+    if (count > max) {
+      max = count;
+      best = key;
+    }
+  }
+  return best;
+}
+
+/** 引文行：主来源只留原文；非主来源在后面补 `——（来源 · 定位）`。 */
+function formatEvidenceLine(evidence: TraceEvidence, primaryKey: string, flat: boolean): string {
+  const key = `${evidence.source?.name ?? ""}|${evidence.source?.url ?? ""}`;
   const locator = (evidence.locator ?? evidence.source?.locator)?.trim();
-  const sourcePart = [sourceName, locator].filter(Boolean).join(" · ");
-  const location = sourcePart ? `（${sourcePart}）` : "";
-  const note = evidence.note?.trim() ? ` — ${evidence.note.trim()}` : "";
-  return `- ${location}“${evidence.quote.trim()}”${note}`;
+  const isPrimary = key === primaryKey;
+  const ref = isPrimary
+    ? ""
+    : `——（${[evidence.source?.name?.trim(), locator].filter(Boolean).join(" · ") || "出处不详"}）`;
+  const note = evidence.note?.trim() ? `（${evidence.note.trim()}）` : "";
+  const quote = `“${evidence.quote.trim()}”${ref}${note}`;
+  return flat ? quote : `- ${quote}`;
 }
 
 /**
@@ -467,40 +497,43 @@ function formatEvidenceLine(evidence: TraceEvidence): string {
  */
 export const FLAGGED_EXTERNAL_STATUSES: TraceExternalStatus[] = ["contradicted", "weak_source", "not_found"];
 
-/** 核查结论速览：先回答「哪些说法站不住、有没有权威出处」，细节留给下面的条目。 */
-function appendExternalOverview(report: TraceReport, lines: string[]): void {
-  const checked = report.items.filter(
-    (item): item is TraceItem & { external: TraceExternalCheck } => Boolean(item.external) && item.external?.status !== "not_applicable",
-  );
-  if (checked.length === 0) return;
+/**
+ * 核查结论 → callout 类型。
+ *
+ * **只给「真问题」上暖色**（未找到出处 / 有反证），其余走中性蓝：实测一份 27 条的报告里
+ * 有 13 条「需要留意」，按状态铺满暖色会让整页变成一条彩虹（用户反馈「色彩太鲜艳」）。
+ * 类型名写死：Obsidian 里写错类型名不报错，会**静默回落成蓝色 note**。
+ */
+const TRACE_STATUS_CALLOUT: Record<TraceExternalStatus, string> = {
+  contradicted: "danger",
+  // 「存在争议/不明确」也是要留意的一类（来源互相矛盾），但比「有反证」轻一档
+  ambiguous: "warning",
+  not_found: "failure",
+  weak_source: "info",
+  verified: "info",
+  unchecked: "info",
+  not_applicable: "info",
+};
 
-  const counts = new Map<TraceExternalStatus, number>();
-  for (const item of checked) counts.set(item.external.status, (counts.get(item.external.status) ?? 0) + 1);
-  const tally = (Object.keys(TRACE_EXTERNAL_STATUS_LABELS) as TraceExternalStatus[])
-    .filter((status) => counts.has(status))
-    .map((status) => `${TRACE_EXTERNAL_STATUS_LABELS[status]} ${counts.get(status)}`)
-    .join(" · ");
+/** 分组的顺序与标题：**问题优先**，组内保持原文顺序。 */
+const TRACE_GROUP_ORDER: { status: TraceExternalStatus; title: string; hint: string }[] = [
+  { status: "contradicted", title: "外部有反证", hint: "检索到与说法矛盾的权威来源——先看这一组。" },
+  { status: "ambiguous", title: "存在争议或不明确", hint: "检索到的来源互相矛盾、或说不清，需要你自己判断。" },
+  { status: "not_found", title: "未找到外部出处", hint: "网上查不到支持它的来源，只能当「视频里的说法」看。" },
+  { status: "weak_source", title: "仅非权威来源", hint: "网上有说法，但都来自自媒体/未判定站点，不构成权威出处。" },
+  { status: "verified", title: "外部可印证", hint: "拿到了权威来源（政府/学术/官方机构/官方媒体）。" },
+];
 
-  lines.push("## 联网核查速览");
-  lines.push("");
-  lines.push(`- 进入核查的条目 ${checked.length} 条：${tally}`);
-  const authoritative = checked.filter((item) => (item.external.sources ?? []).some((source) => source.authority === "authoritative")).length;
-  lines.push(`- 其中 ${authoritative} 条拿到了权威来源（政府/学术/官方机构/官方媒体）`);
-  // 「有权威来源」与「能看到来源里原文怎么写的」是两件事，分开报数。
-  const verbatim = checked.filter((item) => (item.external.sources ?? []).some((source) => (source.quotes ?? []).length > 0)).length;
-  lines.push(`- 其中 ${verbatim} 条附有来源页面的原文引证（其余只依据检索摘要，未能取到正文）`);
+const TRACE_UNCHECKED_TITLE = "未联网核查";
+const TRACE_UNCHECKED_HINT = "作者观点、术语定义这类不需要外部出处的内容，或本轮未进入核查的条目。";
 
-  const flagged = checked.filter((item) => FLAGGED_EXTERNAL_STATUSES.includes(item.external.status));
-  if (flagged.length > 0) {
-    lines.push("");
-    lines.push("**需要留意的条目**");
-    for (const item of flagged) {
-      const reason = item.external.summary?.trim() || item.external.note?.trim() || "";
-      lines.push(`- ${TRACE_EXTERNAL_STATUS_LABELS[item.external.status]}：${item.claim}${reason ? ` —— ${reason}` : ""}`);
-    }
-  }
-  lines.push("");
+/** 某条主张属于哪一组：没有 external、或状态是「没查/不适用」的都归「未联网核查」。 */
+function groupStatusOf(item: TraceItem): TraceExternalStatus | undefined {
+  const status = item.external?.status;
+  if (!status || status === "unchecked" || status === "not_applicable") return undefined;
+  return status;
 }
+
 
 export interface TraceMarkdownOptions {
   /**
@@ -521,121 +554,190 @@ function usableTitle(value: string | undefined): boolean {
 
 const DEFAULT_TRACE_TITLE = "信息溯源报告";
 
-/** 把结构化溯源报告转成可读 Markdown，供“复制/下载”、Obsidian 落盘与不支持结构化视图的场合使用。 */
+/** 来源行：`[权威] <链接>`，末尾按需带「没抓到正文」的说明。 */
+function sourceMetaLine(source: TraceExternalSource): string {
+  const authority = `[${source.authority ? TRACE_SOURCE_AUTHORITY_LABELS[source.authority] : "未判定"}]`;
+  const link = source.url?.trim() ? `<${source.url.trim()}>` : "（本次检索未返回链接）";
+  /*
+   * 三种「没抓到」要分开写，否则读者会以为站点抓不动；也说明这条结论是**依据检索摘要**得出的，
+   * 不是依据页面正文——这直接影响该不该信它。
+   */
+  const noFetch =
+    source.fetched === false && source.url
+      ? source.fetchError
+        ? "（抓取失败，依据检索摘要）"
+        : "（本轮未抓正文，依据检索摘要）"
+      : "";
+  return `${authority} ${link}${noFetch}`;
+}
+
+/** 联网核查块的正文：结论 → 来源与引文 → 检索词 → 说明。**分段之间空一行**，否则会被并成一段。 */
+function traceExternalBody(item: TraceItem): string[] {
+  const external = item.external;
+  if (!external) return [];
+  const body: string[] = [];
+  if (external.summary?.trim()) body.push(external.summary.trim());
+  for (const source of external.sources ?? []) {
+    body.push("", `**${source.title?.trim() || source.url?.trim() || "来源"}**　${sourceMetaLine(source)}`);
+    for (const quote of source.quotes ?? []) {
+      body.push(`　原文：“${quote.text.trim()}”${quote.note?.trim() ? ` —— ${quote.note.trim()}` : ""}`);
+    }
+  }
+  const queries = (external.queries ?? (external.query ? [external.query] : []))
+    .map((query) => query.trim())
+    .filter(Boolean);
+  if (queries.length > 0) body.push("", `**检索词**：${queries.join(" / ")}`);
+  if (external.note?.trim()) body.push("", `**说明**：${external.note.trim()}`);
+  return body;
+}
+
+/**
+ * 包一个 callout。`fold` 为真时默认折叠（官方语法：类型标识符后加 `-`）。
+ *
+ * 两个硬规则（写在 docs/research/obsidian-note-typography.md 与 trace-export-research.md 里）：
+ * ① 标题必须是中文——不写标题时 Obsidian 用类型名做标题，会显示英文的 Summary / Question；
+ * ② callout 与前后内容之间要空一行，否则会被上一条吞掉。空行在这里表现为 `>` 单独一行。
+ */
+function traceCallout(type: string, title: string, body: string[], fold = true): string[] {
+  return [`> [!${type}]${fold ? "-" : ""} ${title}`, ...body.map((line) => (line ? `> ${line}` : ">")), ""];
+}
+
+/** `判断依据：…` → `**判断依据**：…`。冒号必须留在 `**` 外面（见下）。 */
+function boldLabel(line: string): string {
+  const at = line.indexOf("：");
+  return at < 0 ? line : `**${line.slice(0, at)}**${line.slice(at)}`;
+}
+
+/**
+ * 把结构化溯源报告转成可读 Markdown，供“复制/下载”、Obsidian 落盘与不支持结构化视图的场合使用。
+ *
+ * 形态是「**按核查结论分组 + 详情折叠 + 平铺行**」，取舍都对着实测：
+ *
+ * - **分组（问题优先）**：报告的第一用途是「哪些说法站不住」。旧版把这些放在速览里平铺，
+ *   13 条平均 242 字（该区实测 2462px）——一个用来扫一眼的区成了第二篇长文。现在组标题就是答案，
+ *   组内保持原文顺序。
+ * - **详情折叠**（`> [!x]-`）：长结论、来源、引文默认折起来。单条从 863px 降到 409px，
+ *   点开与旧版同量级；整篇折叠态 22691px → 约 10900px。
+ * - **平铺行**：来源与引文都不用列表标记、不缩进——每套一层容器就吃掉一截行宽
+ *   （callout 内边距约 40px + 列表标记与缩进约 58px，叠起来 700 → 526px，−25%），
+ *   而最长的文本恰好是最深的层。平铺后最窄那层回到 584px。
+ * - **只给真问题上暖色**（未找到出处 / 有反证）：一份 27 条的报告里 13 条「需要留意」，
+ *   按状态铺满暖色会让整页变彩虹（用户反馈「色彩太鲜艳」）。
+ * - **引文只留原文**：主来源（本报告那条视频）的引文不再逐条重复视频名与「转写稿第 N 段」
+ *   ——转写稿是运行中间产物、不会落进笔记库，而 front matter 里已经有链接与作者。
+ *
+ * 评估、先例与六套候选的对照见 docs/research/trace-export-research.md。
+ */
 export function traceReportToMarkdown(report: TraceReport, options: TraceMarkdownOptions = {}): string {
   const lines: string[] = [];
   const title = (usableTitle(report.title) ? report.title!.trim() : options.fallbackTitle?.trim()) || DEFAULT_TRACE_TITLE;
-  lines.push(`# ${title}`);
-  lines.push("");
-  if (report.summary?.trim()) {
-    lines.push(report.summary.trim());
-    lines.push("");
-  }
-  appendExternalOverview(report, lines);
-  if (report.items.length > 0) {
-    lines.push(`## 条目明细（${report.items.length} 条）`);
-    lines.push("");
-    report.items.forEach((item, index) => {
-      const confidence = TRACE_CONFIDENCE_LABELS[item.confidence] ?? item.confidence;
-      const category = TRACE_CATEGORY_LABELS[item.category] ?? item.category;
-      lines.push(`### ${index + 1}. [${category} · ${confidence}] ${item.claim}`);
-      // 核查结论紧挨主张：报告要回答的是「这句话有没有权威出处」，原文定位只是支撑材料。
-      if (item.external) {
-        lines.push("");
-        const statusLabel = TRACE_EXTERNAL_STATUS_LABELS[item.external.status] ?? item.external.status;
-        const evidence = item.external.evidence ? `（${TRACE_EVIDENCE_LABELS[item.external.evidence]}）` : "";
-        const queries = (item.external.queries ?? (item.external.query ? [item.external.query] : []))
-          .map((query) => query.trim())
-          .filter(Boolean);
-        const query = queries.length > 0 ? `；检索词：${queries.join(" / ")}` : "";
-        const summary = item.external.summary?.trim() ? `；结论：${item.external.summary.trim()}` : "";
-        lines.push(`- **外部核查：${statusLabel}**${evidence}${summary}`);
-        for (const source of item.external.sources ?? []) {
-          const title = source.title?.trim() ?? source.url?.trim() ?? "";
-          const url = source.url?.trim() ? ` <${source.url.trim()}>` : "（本次检索未返回链接）";
-          const authority = source.authority ? `[${TRACE_SOURCE_AUTHORITY_LABELS[source.authority]}] ` : "";
-          const publisher = source.publisher?.trim() ? `${source.publisher.trim()} · ` : "";
-          if (title || url) lines.push(`  - ${authority}${publisher}${title}${url}`);
-          /*
-           * 只有抓到正文的来源才可能有引文。三种「没抓到」要分开写，否则读者会以为站点抓不动：
-           * 抓失败 / 本轮没抓 / 检索没给链接。最后一种不在这里写——上面那行已经标了「本次检索未返回链接」。
-           */
-          if (source.fetched === false && source.url) {
-            lines.push(
-              source.fetchError
-                ? `    - 抓取失败（${source.fetchError}），本条依据检索摘要`
-                : "    - 本轮未抓取该来源的正文（每条主张只抓重排后最靠前的几条），本条依据检索摘要",
-            );
-          }
-          for (const quote of source.quotes ?? []) {
-            lines.push(`    - 原文：“${quote.text.trim()}”${quote.note?.trim() ? ` —— ${quote.note.trim()}` : ""}`);
-          }
-        }
-        if (item.external.note?.trim()) lines.push(`  - 说明：${item.external.note.trim()}`);
-        if (query) lines.push(`  - ${query.replace(/^；/, "")}`);
+  const primaryKey = primaryEvidenceKey(report);
+  const indexOf = new Map(report.items.map((item, index) => [item, index + 1]));
+  const groupOf = new Map(report.items.map((item) => [item, groupStatusOf(item)]));
+  const countOf = (status: TraceExternalStatus) => [...groupOf.values()].filter((value) => value === status).length;
+  const checked = report.items.filter((item) => groupOf.get(item) !== undefined);
+  const unchecked = report.items.filter((item) => groupOf.get(item) === undefined);
+  const authoritative = checked.filter((item) => (item.external?.sources ?? []).some((source) => source.authority === "authoritative")).length;
+  const verbatim = checked.filter((item) => (item.external?.sources ?? []).some((source) => (source.quotes ?? []).length > 0)).length;
+
+  lines.push(`# ${title}`, "");
+  if (report.summary?.trim()) lines.push(report.summary.trim(), "");
+
+  /*
+   * 速览用 `[!summary]`：官方把 summary 定为「摘要」的语义槽（abstract 的别名），不是自造盒子。
+   * 它**不罗列**要留意的条目——那些现在是分组标题，细节在各自条目里。
+   */
+  lines.push(
+    ...traceCallout(
+      "summary",
+      "溯源速览",
+      [
+        `**${report.items.length}** 条主张 · 进入联网核查 **${checked.length}** 条 · 有权威来源 ${authoritative} 条 · 附来源原文引证 ${verbatim} 条`,
+        "",
+        ...TRACE_GROUP_ORDER.filter((group) => countOf(group.status) > 0).map((group) => `- ${group.title} **${countOf(group.status)}** 条`),
+        ...(unchecked.length > 0 ? [`- ${TRACE_UNCHECKED_TITLE} **${unchecked.length}** 条`] : []),
+        "",
+        "条目**按上面的顺序分组**（问题优先），组内保持原文顺序。",
+      ],
+      false,
+    ),
+  );
+
+  /** 一组条目的正文：`### 主张` + 一行元信息 + 折叠的核查块 + 折叠的原文依据 + 三类旁注。 */
+  const appendItems = (items: TraceItem[]) => {
+    for (const item of items) {
+      const status = groupOf.get(item);
+      const meta = [TRACE_CATEGORY_LABELS[item.category] ?? item.category, TRACE_CONFIDENCE_LABELS[item.confidence] ?? item.confidence];
+      if (status) meta.push(TRACE_EXTERNAL_STATUS_LABELS[status] ?? status);
+      lines.push(`### ${indexOf.get(item)}. ${item.claim}`, "", `\`${meta.join(" · ")}\``, "");
+      if (item.external && status) {
+        const evidence = item.external.evidence ? ` · ${TRACE_EVIDENCE_LABELS[item.external.evidence]}` : "";
+        const statusLabel = TRACE_EXTERNAL_STATUS_LABELS[status] ?? status;
+        lines.push(...traceCallout(TRACE_STATUS_CALLOUT[status] ?? "info", `联网核查 · ${statusLabel}${evidence}`, traceExternalBody(item)));
       }
+      lines.push(
+        ...traceCallout(
+          "quote",
+          "原文依据",
+          item.evidence.length > 0
+            ? item.evidence.map((evidence) => formatEvidenceLine(evidence, primaryKey, true))
+            : ["_本条无直接原文引用，需结合备注判断。_"],
+        ),
+      );
+      /*
+       * 三类旁注各占一段、行间空一行。**空行不是排版偏好**：Markdown 会把连续多行并成一个段落，
+       * 上一版就因为少了空行 + 冒号写进 `**` 里面（`**判断依据：**…` 的闭合 `**` 前面是全角标点、
+       * 后面紧跟汉字，按 CommonMark 不构成右闭合），星号字面漏进了用户的笔记。
+       */
+      const sides: string[] = [];
       if (item.attribution) {
-        lines.push("");
-        const attribution = item.attribution.kind === "external"
-          ? `外部归因：${item.attribution.name ?? "未指明"}${item.attribution.detail ? `（${item.attribution.detail}）` : ""}`
-          : item.attribution.kind === "self"
-            ? "内部观点：视频作者/讲述者本人提出"
-            : "归属不明：无法判断是作者原创还是转述外部来源";
-        lines.push(`- ${attribution}`);
+        sides.push(
+          item.attribution.kind === "external"
+            ? `外部归因：${item.attribution.name ?? "未指明"}${item.attribution.detail ? `（${item.attribution.detail}）` : ""}`
+            : item.attribution.kind === "self"
+              ? "内部观点：作者/讲述者本人提出"
+              : "归属不明：无法判断是作者原创还是转述外部来源",
+        );
       }
-      if (item.basis?.trim()) {
-        lines.push("");
-        lines.push(`- 判断依据：${item.basis.trim()}`);
+      if (item.basis?.trim()) sides.push(`判断依据：${item.basis.trim()}`);
+      if (item.note?.trim()) sides.push(`备注：${item.note.trim()}`);
+      for (const mention of item.mentions ?? []) {
+        sides.push(`另处提及：${formatEvidenceLine(mention, primaryKey, true)}`);
       }
-      if (item.note?.trim()) {
-        lines.push("");
-        lines.push(`> 备注：${item.note.trim()}`);
-      }
-      if (item.evidence.length > 0) {
-        lines.push("");
-        lines.push("**原文依据**");
-        for (const evidence of item.evidence) {
-          lines.push(formatEvidenceLine(evidence));
-        }
-      } else {
-        lines.push("");
-        lines.push("_本条无直接原文引用，需结合备注判断。_");
-      }
-      if ((item.mentions ?? []).length > 0) {
-        lines.push("");
-        lines.push("**其他位置 / 其他来源的提及**");
-        for (const mention of item.mentions ?? []) {
-          lines.push(formatEvidenceLine(mention));
-        }
-      }
-      lines.push("");
-    });
+      for (const side of sides) lines.push(boldLabel(side), "");
+    }
+  };
+
+  for (const group of TRACE_GROUP_ORDER) {
+    const items = report.items.filter((item) => groupOf.get(item) === group.status);
+    if (items.length === 0) continue;
+    lines.push(`## ${group.title}（${items.length} 条）`, "", `_${group.hint}_`, "");
+    appendItems(items);
   }
+  if (unchecked.length > 0) {
+    lines.push(`## ${TRACE_UNCHECKED_TITLE}（${unchecked.length} 条）`, "", `_${TRACE_UNCHECKED_HINT}_`, "");
+    appendItems(unchecked);
+  }
+
   const uncertainties = report.uncertainties ?? [];
   if (uncertainties.length > 0) {
-    lines.push(`## 待核实问题（${uncertainties.length}）`);
-    lines.push("");
+    lines.push(`## 待核实（${uncertainties.length} 条）`, "");
     /*
-     * 每条一张 callout 卡片：结果页里这一节是卡片式（每张一个浅底盒），笔记里用 Obsidian 的
-     * callout 才是同一件事——它不是「引用块 + 字面的 [!question]」，而是官方语法里那种带边带色的盒子。
-     * 标题固定写「待核实 N」而不是拿 claim 当标题：claim 常常二三十个字，塞进标题带会挤成一团；
-     * claim 放正文首行加粗，既醒目又不会被截断。
-     * 空行是必须的——callout 之间不空行会被上一条吞掉（见 docs/research/obsidian-note-typography.md）。
+     * 合并成一个 callout：旧版一条一个，10 条待核实就是 10 个橙框（用户反馈「色彩太鲜艳」）。
+     * 标题固定写「待核实（N 条）」、claim 加粗放正文首行——claim 常常二三十个字，塞进标题带会挤成一团。
      */
-    uncertainties.forEach((uncertainty, index) => {
-      lines.push(`> [!question] 待核实 ${index + 1}`);
-      lines.push(`> **${uncertainty.claim.trim()}**`);
-      if (uncertainty.reason?.trim()) lines.push(`> ${uncertainty.reason.trim()}`);
-      lines.push("");
-    });
+    lines.push(
+      ...traceCallout(
+        "question",
+        `待核实（${uncertainties.length} 条）`,
+        uncertainties.flatMap((uncertainty) => [`**${uncertainty.claim.trim()}**`, "", uncertainty.reason?.trim() || "原文未明确说明", ""]),
+      ),
+    );
   }
   const warnings = report.warnings ?? [];
   if (warnings.length > 0) {
-    lines.push(`## 提醒`);
-    lines.push("");
-    for (const warning of warnings) {
-      lines.push(`- ${warning}`);
-    }
+    lines.push("## 提醒", "");
+    for (const warning of warnings) lines.push(`- ${warning}`);
     lines.push("");
   }
   return lines.join("\n").trim();

@@ -741,7 +741,7 @@ describe("Obsidian 笔记：上游是溯源报告时", () => {
     warnings: ["时间戳来自转写稿，可能与原视频有偏差。"],
   });
 
-  it("写进库的是 Markdown（不是原始 JSON），待核实每条一张 callout 卡片", async () => {
+  it("写进库的是 Markdown（不是原始 JSON），待核实合并成一张折叠 callout", async () => {
     const { vault, dir } = await makeVault();
     const { status } = await runNote(vault, {}, "trace-markdown", {}, REPORT);
     expect(status).toBe("done");
@@ -753,12 +753,13 @@ describe("Obsidian 笔记：上游是溯源报告时", () => {
     // 不再是 JSON：连字段名都不该出现
     expect(body).not.toContain('"schema"');
     expect(body).not.toContain('"uncertainties"');
-    // 待核实：每条一张 `> [!question] 待核实 N`，claim 加粗在正文首行
-    expect(body).toContain("> [!question] 待核实 1");
-    expect(body).toContain("> [!question] 待核实 2");
+    // 待核实：一个 `> [!question]- 待核实（N 条）`，claim 加粗成段、段间空一行
+    // （旧版一条一个橙框，10 条待核实就是 10 个——用户反馈「色彩太鲜艳」后合并）
+    expect(body).toContain("> [!question]- 待核实（2 条）");
     expect(body).toContain("> **中国失业率5.2%的统计时点、口径和来源。**");
-    // callout 之间必须空一行，否则上一条会把下一条吞进去（Obsidian 的语法要求）
-    expect(body).toMatch(/> \*\*[^\n]+\*\*[\s\S]*?\n\n> \[!question\] 待核实 2/);
+    expect(body).toContain("> **美国自雇税中 Medicare 部分的具体税率。**");
+    // 两条 claim 之间必须空一行，否则会被并成一段（Obsidian / CommonMark 的语法要求）
+    expect(body).toMatch(/> \*\*中国失业率[^\n]*\*\*\n>\n> [^*]/);
     // 条目明细那边照常出内容
     expect(body).toContain("人社部提出用数据找人去动员参保。");
   });

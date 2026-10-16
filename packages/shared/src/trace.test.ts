@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import type { TraceItem } from "./trace";
 import { isTraceReportProduct, parseTraceReport, parseTraceReports, traceReportToMarkdown, type TraceReport } from "./trace";
 
 const SAMPLE: TraceReport = {
@@ -160,12 +161,13 @@ describe("trace report parser", () => {
     });
     const report = parseTraceReport(raw);
     const markdown = traceReportToMarkdown(report!);
-    expect(markdown).toContain("原文：“The rate of social security tax on taxable wages is 6.2% each for the employer and employee.”");
-    // 「抓了但失败」要带原因；「本轮没抓」不能写成抓取失败（那会让人以为站点抓不动）
-    expect(markdown).toContain("抓取失败（HTTP 412），本条依据检索摘要");
-    expect(markdown).toContain("本轮未抓取该来源的正文");
+    expect(markdown).toContain("　原文：“The rate of social security tax on taxable wages is 6.2% each for the employer and employee.”");
+    // 「抓了但失败」与「本轮没抓」要分开写，且都要说明「这条结论依据检索摘要」——
+    // 这直接影响该不该信它（旧版把原因全写出来，新版在行内只留这一句结论性的说明）
+    expect(markdown).toContain("（抓取失败，依据检索摘要）");
+    expect(markdown).toContain("（本轮未抓正文，依据检索摘要）");
     // 速览里也把「有原文引证」的条数单列出来（与「有权威来源」分开报）
-    expect(markdown).toContain("条附有来源页面的原文引证");
+    expect(markdown).toContain("附来源原文引证");
   });
 
   it("能剥离 Markdown 围栏与多余文本", () => {
@@ -199,10 +201,14 @@ describe("trace report parser", () => {
     expect(markdown).toContain("原文可见");
     expect(markdown).toContain("待核实");
     expect(markdown).toContain("判断依据");
-    expect(markdown).toContain("示例文稿");
-    expect(markdown).toContain("其他位置 / 其他来源的提及");
+    // 引文只留原文：主来源（这里是「示例文稿」）不再逐条重复名字与段号（用户反馈）
+    expect(markdown).toContain("“示例原文关键句甲”");
+    expect(markdown).not.toContain("（示例文稿 · 第 1 段）");
+    expect(markdown).toContain("另处提及");
     expect(markdown).toContain("内部观点");
     expect(markdown).toContain("未联网核查");
+    // 按核查结论分组（问题优先）：SAMPLE 里两条分别是 viewpoint(未核查) 与 fact(未核查)
+    expect(markdown).toContain("## 未联网核查（2 条）");
   });
 });
 
@@ -218,18 +224,17 @@ describe("溯源报告的 Markdown 落盘形态（写 Obsidian 用）", () => {
     warnings: ["时间戳来自转写稿。"],
   };
 
-  it("待核实每条一张 callout 卡片，claim 加粗在正文首行，卡片之间空一行", () => {
+  it("待核实合并成一个折叠 callout：claim 加粗成段、段间空一行（旧版一条一个橙框，10 条就是 10 个）", () => {
     const markdown = traceReportToMarkdown(report);
-    expect(markdown).toContain("## 待核实问题（2）");
-    expect(markdown).toContain("> [!question] 待核实 1");
-    expect(markdown).toContain("> [!question] 待核实 2");
+    expect(markdown).toContain("## 待核实（2 条）");
+    expect(markdown).toContain("> [!question]- 待核实（2 条）");
     expect(markdown).toContain("> **中国失业率5.2%的统计时点、口径和来源。**");
+    expect(markdown).toContain("> **美国自雇税中 Medicare 部分的具体税率。**");
     // 标题带（callout 的第一行）保持短：claim 二十多个字塞进标题会挤成一团，所以它在正文首行
     expect(markdown).not.toContain("> [!question] 中国失业率");
-    // 卡片之间必须空一行，否则上一条会把下一条吞进去
-    const firstCard = markdown.slice(markdown.indexOf("> [!question] 待核实 1"));
-    const blankLineBeforeSecond = firstCard.slice(0, firstCard.indexOf("> [!question] 待核实 2"));
-    expect(blankLineBeforeSecond.endsWith("\n\n")).toBe(true);
+    // 两条 claim 之间必须空一行：Markdown 会把连续两行并成一段，claim 就会连在一起
+    const claims = markdown.slice(markdown.indexOf("> **中国失业率"));
+    expect(claims.slice(0, claims.indexOf("> **美国自雇税"))).toContain(">\n");
     // 不再是平铺 bullet
     expect(markdown).not.toContain("- 中国失业率5.2%的统计时点");
   });
@@ -263,5 +268,103 @@ describe("isTraceReportProduct：一份产物算不算溯源报告", () => {
      */
     expect(isTraceReportProduct(`${JSON.stringify(SAMPLE)}\n\n这是一篇普通笔记。`)).toBe(true);
     expect(isTraceReportProduct(`${JSON.stringify(SAMPLE)}\n\n${JSON.stringify(SAMPLE)}`)).toBe(false);
+  });
+});
+
+/**
+ * B4 导出形态的契约（用户从六套候选里选定后落地）。
+ *
+ * 这一组钉的不是「好不好看」，而是几条**会静默失效**的规则：
+ * 组的先后（问题优先）、callout 类型与状态的对应、引文要不要附出处、标签加粗的写法。
+ */
+describe("B4 导出形态（按核查结论分组 + 详情折叠 + 平铺行）", () => {
+  /** 五种状态各一条，外加一条没有 external 的：用来验分组顺序与类型映射。 */
+  const mixed: TraceReport = {
+    schema: 1,
+    title: "混合状态报告",
+    items: ([
+      ["verified", "可印证的"],
+      ["weak_source", "仅非权威的"],
+      ["contradicted", "有反证的"],
+      ["not_found", "没找到出处的"],
+      ["ambiguous", "有争议的"],
+    ] as const).map(([status, label], index): TraceItem => ({
+      id: `item-${index}`,
+      category: "fact" as const,
+      claim: `${label}主张。`,
+      confidence: "confirmed" as const,
+      basis: "原文第 1 段明确说到。",
+      attribution: { kind: "self" as const },
+      evidence: [{ quote: `${label}原文`, source: { type: "bili" as const, name: "某个视频", url: "https://example.com/v" } }],
+      external: { status, summary: `${label}结论。`, sources: [] },
+    })).concat([
+      { id: "item-plain", category: "viewpoint" as const, claim: "没有核查的主张。", confidence: "likely" as const, evidence: [] },
+    ]),
+  };
+
+  it("分组按「问题优先」排，未联网核查垫底", () => {
+    const markdown = traceReportToMarkdown(mixed);
+    const order = ["## 外部有反证（1 条）", "## 存在争议或不明确（1 条）", "## 未找到外部出处（1 条）", "## 仅非权威来源（1 条）", "## 外部可印证（1 条）", "## 未联网核查（1 条）"].map((title) =>
+      markdown.indexOf(title),
+    );
+    expect(order.every((at) => at >= 0)).toBe(true);
+    expect([...order].sort((a, b) => a - b)).toEqual(order);
+  });
+
+  it("只给真问题上暖色：未找到出处=failure、有反证=danger、其余=info", () => {
+    const markdown = traceReportToMarkdown(mixed);
+    expect(markdown).toContain("> [!failure]- 联网核查 · 未找到外部出处");
+    expect(markdown).toContain("> [!danger]- 联网核查 · 外部有矛盾/反证");
+    expect(markdown).toContain("> [!warning]- 联网核查 · 存在争议/不明确");
+    expect(markdown).toContain("> [!info]- 联网核查 · 仅非权威来源");
+    expect(markdown).toContain("> [!info]- 联网核查 · 外部可印证");
+  });
+
+  it("核查块与原文依据都默认折叠；速览不折叠", () => {
+    const markdown = traceReportToMarkdown(mixed);
+    expect(markdown).toContain("> [!summary] 溯源速览");
+    expect(markdown).not.toContain("> [!summary]-");
+    expect(markdown).toContain("> [!quote]- 原文依据");
+  });
+
+  it("平铺：核查块里不用列表标记（每缩进一层就吃掉一截行宽）", () => {
+    const body = traceReportToMarkdown(mixed);
+    const callout = body.slice(body.indexOf("> [!info]- 联网核查 · 仅非权威来源"));
+    const block = callout.slice(0, callout.indexOf("> [!quote]"));
+    expect(block).not.toContain("> - ");
+    expect(block).not.toContain(">   - ");
+  });
+
+  it("引文只留原文：主来源不附出处，非主来源才附", () => {
+    const report: TraceReport = {
+      schema: 1,
+      title: "两个来源",
+      items: [
+        {
+          id: "a",
+          category: "fact",
+          claim: "主要来自视频。",
+          confidence: "confirmed",
+          evidence: [
+            { quote: "第一句", source: { type: "bili", name: "视频甲", url: "https://example.com/a" } },
+            { quote: "第二句", source: { type: "bili", name: "视频甲", url: "https://example.com/a" } },
+            { quote: "来自文件的一句", locator: "第 3 页", source: { type: "file", name: "报告.pdf" } },
+          ],
+        },
+      ],
+    };
+    const markdown = traceReportToMarkdown(report);
+    expect(markdown).toContain("> “第一句”\n");
+    expect(markdown).toContain("> “第二句”\n");
+    expect(markdown).not.toContain("视频甲");
+    // 非主来源仍然标得出处——那时它是真信息
+    expect(markdown).toContain("“来自文件的一句”——（报告.pdf · 第 3 页）");
+  });
+
+  it("字段标签的冒号在 `**` 外面（`**判断依据：**…` 会让星号字面漏进笔记）", () => {
+    const markdown = traceReportToMarkdown(mixed);
+    expect(markdown).toContain("**判断依据**：");
+    expect(markdown).not.toContain("**判断依据：**");
+    expect(markdown).not.toContain("**内部观点：**");
   });
 });
