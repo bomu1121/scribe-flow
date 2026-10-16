@@ -21,7 +21,7 @@ import { nodeIdsForScope } from "../lib/graph-scope";
 import { describeStaleMaterials, findStaleMaterials, StaleMaterialError } from "../lib/material-staleness";
 import { defaultRunNameFor } from "../lib/run-name";
 import { resolveArtifactPath } from "../lib/storage";
-import { getAiConfig, getAsrConfig } from "../lib/settings";
+import { getAiConfig, getAsrConfig, getSettings } from "../lib/settings";
 import { badRequest } from "../lib/bad-request";
 import { listRunMediaViews } from "../lib/media-store";
 
@@ -115,8 +115,25 @@ export function createRun(
   const createdAt = Date.now();
   // 落库时就带上默认名：列表与详情页都靠它认人（用户可随时改名覆盖，见 lib/run-name.ts）。
   const name = defaultRunNameFor(db, projectId, graph, scope, nodeId);
+  // 单价快照：记下**这次运行开始时**设置页上的价，之后改设置不会改写这单账。
+  // 照抄 Langfuse / LibreChat / Dify / Lobe 的共同选择（见 docs/research/api-usage-cost-research.md §4.4）。
+  const priced = getSettings(db);
   db.insert(runs)
-    .values({ id, projectId, status: "running", scope, nodeId: scope === "all" ? undefined : nodeId, createdAt, name, graphJson: JSON.stringify(graph) })
+    .values({
+      id,
+      projectId,
+      status: "running",
+      scope,
+      nodeId: scope === "all" ? undefined : nodeId,
+      createdAt,
+      name,
+      graphJson: JSON.stringify(graph),
+      priceInputPerMillion: priced.ai.inputPricePerMillion,
+      priceOutputPerMillion: priced.ai.outputPricePerMillion,
+      priceCachedInputPerMillion: priced.ai.cachedInputPricePerMillion,
+      priceAudioPerMinute: priced.asr.pricePerMinute,
+      priceCurrency: priced.ai.priceCurrency,
+    })
     .run();
   return { id, graph };
 }
@@ -181,7 +198,7 @@ export function runsApi(db: AppDatabase, engine: RunEngine, dataDir: string) {
     const detail = engine.detail(runId);
     if (!detail.run) return c.json({ error: "运行不存在" }, 404);
     const media = await listRunMediaViews(db, dataDir, runId);
-    return c.json({ ...detail.run, nodeResults: detail.nodes, graph: detail.graph, inputs: detail.inputs, media });
+    return c.json({ ...detail.run, nodeResults: detail.nodes, graph: detail.graph, inputs: detail.inputs, media, usageSummary: detail.usageSummary });
   });
 
   api.get("/:id/events", (c) => {
@@ -214,9 +231,9 @@ export function runsApi(db: AppDatabase, engine: RunEngine, dataDir: string) {
             node.output && (node.output.kind === "text" || node.output.kind === "noteBlock" || node.output.kind === "noteDoc")
               ? (node.output.text ?? "").replace(/\s+/g, " ").trim().slice(0, 120) || undefined
               : undefined;
-          await send({ type: "node.done", runId, nodeId: node.nodeId, summary: node.summary ?? "完成", preview });
+          await send({ type: "node.done", runId, nodeId: node.nodeId, summary: node.summary ?? "完成", preview, usage: node.usage });
         } else if (node.status === "error") {
-          await send({ type: "node.error", runId, nodeId: node.nodeId, error: node.error ?? "失败" });
+          await send({ type: "node.error", runId, nodeId: node.nodeId, error: node.error ?? "失败", usage: node.usage });
         } else if (node.status === "running") {
           // 连接/重连时补发 running 状态，避免前端只收到 run.started 后没有节点动效。
           await send({ type: "node.started", runId, nodeId: node.nodeId });

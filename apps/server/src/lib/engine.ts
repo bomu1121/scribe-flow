@@ -8,8 +8,14 @@ import {
   MULTI_PRODUCT_SEPARATOR,
   NODE_TYPE_LABELS,
   UP_TAG_PREFIX,
+  addApiUsage,
   addTagToTaxonomy,
+  emptyApiUsage,
+  estimateAudioCost,
+  estimateChatCost,
   fileSegmentKey,
+  hasApiUsage,
+  hasTokenPrice,
   isAutoTag,
   isSourceOutputNeeded,
   isTraceReportProduct,
@@ -24,14 +30,17 @@ import {
   sanitizeFileName,
   parseTraceReport,
   segmentKey,
+  sumApiUsages,
   tagPathGroup,
   traceReportToMarkdown,
   managedTags,
   uniqueNoteFileName,
+  type ApiUsage,
   type AppSettings,
   type GraphNode,
   type NodeOutput,
   type NodePick,
+  type PriceCurrency,
   type PromptArtifact,
   type Recipe,
   type RecipeStep,
@@ -42,13 +51,14 @@ import {
   type RunNodeResult,
   type RunScope,
   type RunStatus,
+  type RunUsageSummary,
   type TagTaxonomy,
   type TraceExternalSource,
   type WorkflowGraph,
 } from "@scribe-flow/shared";
 import type { AppDatabase } from "../db/client";
 import { biliCookies, projects, runMedia, runNodeInputs, runNodeLogs, runNodeResults, runs } from "../db/schema";
-import { chatCompletion, transcribeAudio, type AiConfig } from "./ai";
+import { chatCompletion, transcribeAudio, usageFromError, type AiConfig } from "./ai";
 import { fetchBiliVideoDetail, formatPublishDate } from "./bilibili";
 import { buildDrill, buildDrillParams } from "./drill";
 import { nodeIdsForScope } from "./graph-scope";
@@ -190,6 +200,14 @@ interface ActiveRun {
   /** 用户已确认「按旧素材继续」（换了素材但只重跑下游）：日志里要写明，别让它看起来像没发现。 */
   staleMaterialConfirmed: boolean;
   nodeAborts: Map<string, AbortController>;
+  /**
+   * 每个节点累计的外部 API 用量（nodeId → 用量）。
+   *
+   * 放在 ActiveRun 上而不是让 `runNode` 返回，是因为重试要累计：一次失败的重跑里，
+   * 头一次的模型调用**钱已经花了**，不该因为它没产出就把这笔账抹掉。
+   * 辅助方法（属性抽取、联网核查、打标）也都在同一节点下调用，挂在这里它们才不用层层返回。
+   */
+  usage: Map<string, ApiUsage>;
   startedAt: number;
 }
 
@@ -558,6 +576,7 @@ export class RunEngine {
       outputs: new Map(),
       branches: new Map(),
       nodeAborts: new Map(),
+      usage: new Map(),
       startedAt: Date.now(),
     };
     const project = this.db.select().from(projects).where(eq(projects.id, projectId)).get();
@@ -1323,7 +1342,7 @@ export class RunEngine {
         const message = describeError(err);
         const status = active.cancelled ? "cancelled" : "error";
         await this.updateNode(active, nodeId, status, Date.now() - started, undefined, undefined, active.cancelled ? "已取消" : message, 1);
-        this.emit(active, { type: "node.error", runId: active.id, nodeId, error: active.cancelled ? "已取消" : message });
+        this.emit(active, { type: "node.error", runId: active.id, nodeId, error: active.cancelled ? "已取消" : message, usage: this.nodeUsageOf(active, nodeId) });
         return status === "cancelled" ? "done" : "error";
       }
       await this.persistInputs(active, node.id, inputs.items, inputs.excluded);
@@ -1345,12 +1364,17 @@ export class RunEngine {
             summary: summary ?? "完成",
             preview: node.type === "process.mindmap" || node.type === "process.output" || node.type === "process.drill" ? undefined : previewFor(combined),
             delta,
+            usage: this.nodeUsageOf(active, nodeId),
           });
           active.outputs.set(nodeId, result.outputs);
           return "done";
         } catch (err) {
           const message = describeError(err);
           const error = err instanceof Error ? err : new Error(message);
+          // 失败的调用也可能已经花了钱（模型返回 200 但正文为空时，usage 就挂在错误上）。
+          // 记在重试判断之前：重试会再花一次，两次都得算进去。
+          const spent = usageFromError(err);
+          if (spent) this.addNodeUsage(active, nodeId, spent);
           if (attempts <= maxRetries && isRetryableError(error, active.cancelled)) {
             const wait = backoffMs * attempts;
             this.emit(active, { type: "node.retry", runId: active.id, nodeId, attempt: attempts, maxRetries, error: message });
@@ -1362,7 +1386,7 @@ export class RunEngine {
           const status = active.cancelled ? "cancelled" : "error";
           const finalError = active.cancelled ? "已取消" : message;
           await this.updateNode(active, nodeId, status, elapsed, undefined, undefined, finalError, attempts);
-          this.emit(active, { type: "node.error", runId: active.id, nodeId, error: finalError });
+          this.emit(active, { type: "node.error", runId: active.id, nodeId, error: finalError, usage: this.nodeUsageOf(active, nodeId) });
           return status === "cancelled" ? "done" : "error";
         }
       }
@@ -1520,7 +1544,9 @@ export class RunEngine {
           const audioPath = resolve(this.dataDir, item.output.path ?? "");
           await this.progress(active, node.id, Math.round(10 + (i / audioItems.length) * 80), `转写音频 ${i + 1}/${audioItems.length}`);
           await this.log(active, node.id, "info", `音频输入 ${i + 1}：${audioPath}`, undefined, inputRef(item));
-          const text = await transcribeAudio(config, audioPath, signal);
+          const transcribed = await transcribeAudio(config, audioPath, signal);
+          this.addNodeUsage(active, node.id, transcribed.usage);
+          const text = transcribed.text;
           if (!text.trim()) throw new Error(`第 ${i + 1} 个音频转写结果为空`);
           await this.log(active, node.id, "ai-response", text, undefined, inputRef(item));
           const trimmed = text.trim();
@@ -1601,6 +1627,9 @@ export class RunEngine {
                         const label = phase === "search" ? "联网核查" : phase === "fetch" ? "抓取来源正文" : "核查判断";
                         void this.progress(active, node.id, 96, `${label} ${done}/${total}`);
                       },
+                      // 核查会自己调两次模型（规划检索 + 对照判断）并发很多次检索请求，
+                      // 用量按回调汇总到这个节点名下——它属于这个节点花的钱，不是引擎自己的开销。
+                      onUsage: (usage) => this.addNodeUsage(active, node.id, usage),
                       // 逐页记进运行日志：抓取是这一步最慢、最可能出事的环节，而汇总是最后才写的。
                       // 进程若在这中间没了（实测发生过），只有逐页日志能回答「卡在哪一页、为什么」。
                       onFetchPage: async (info) => {
@@ -1666,7 +1695,9 @@ export class RunEngine {
           await this.progress(active, node.id, Math.round(10 + (i / textItems.length) * 80), `处理输入 ${i + 1}/${textItems.length}`);
           await this.log(active, node.id, "input", inputText, undefined, inputRef);
           await this.log(active, node.id, "ai-request", `${model}\n\n${system}`, undefined, inputRef);
-          const result = await chatCompletion({ ...aiConfig, model }, system, inputText, signal);
+          const chat = await chatCompletion({ ...aiConfig, model }, system, inputText, signal);
+          this.addNodeUsage(active, node.id, chat.usage);
+          const result = chat.content;
           if (!result.trim()) throw new Error(`第 ${i + 1} 个输入处理结果为空`);
           const trimmed = result.trim();
           await this.log(active, node.id, "ai-response", trimmed, undefined, inputRef);
@@ -1801,7 +1832,9 @@ export class RunEngine {
         const model = aiConfig.model;
         const system = `你是内容编辑。把下面的文稿切分为章节。只输出 JSON，格式：{"chapters":[{"title":"章节标题","content":"本章内容"}]}。要求：章节数不超过 ${maxChapters}；粒度：${granularityLabel}；保持原文信息完整，不新增观点。`;
         await this.log(active, node.id, "ai-request", `${model}\n\n${system}`);
-        const result = await chatCompletion({ ...aiConfig, model }, system, text, signal);
+        const chapterResult = await chatCompletion({ ...aiConfig, model }, system, text, signal);
+        this.addNodeUsage(active, node.id, chapterResult.usage);
+        const result = chapterResult.content;
         await this.log(active, node.id, "ai-response", result);
         const chapters = parseChaptersJson(result, maxChapters);
         const outputs: NodeOutput[] = chapters.map((c) => ({
@@ -1840,7 +1873,9 @@ export class RunEngine {
 7. 如果原稿较长，优先提炼骨架与关键结论，而不是罗列每一句话。`;
         await this.log(active, node.id, "ai-request", `${model}\n\n${system}`);
         await this.progress(active, node.id, 15, "AI 提炼思维导图结构");
-        const result = await chatCompletion({ ...aiConfig, model }, system, text, signal);
+        const mindmapResult = await chatCompletion({ ...aiConfig, model }, system, text, signal);
+        this.addNodeUsage(active, node.id, mindmapResult.usage);
+        const result = mindmapResult.content;
         await this.log(active, node.id, "ai-response", result);
         const tree = parseMindMapJson(result, { branchSize, maxDepth, theme });
         if (!tree.title && String(data.title ?? "").trim()) tree.title = String(data.title).trim();
@@ -2095,7 +2130,7 @@ export class RunEngine {
     const aiNote = data.autoTag === undefined ? settings.obsidian.autoTagEnabled : data.autoTag === true;
     const nodeFields = sanitizeExtractFields(data.extractFields);
     const extractFields = nodeFields.length > 0 ? nodeFields : settings.obsidian.extractFields;
-    const entities = aiNote && extractFields.length > 0 ? await this.extractEntities(text, extractFields, signal) : {};
+    const entities = aiNote && extractFields.length > 0 ? await this.extractEntities(active, node, text, extractFields, signal) : {};
     const body = text.startsWith("# ") ? text : `# ${title}\n\n${text}`;
 
     /*
@@ -2125,6 +2160,7 @@ export class RunEngine {
           signal,
         });
         topicTags = tagged.topicTags;
+        this.addNodeUsage(active, node.id, tagged.usage);
         if (tagged.error) await this.log(active, node.id, "info", `话题标签判定失败，本次只写 UP 标签：${tagged.error}`);
         if (tagged.learnedTags.length > 0) {
           taxonomy = await this.learnTags(tagged.learnedTags);
@@ -2223,7 +2259,7 @@ export class RunEngine {
    * 字段名完全来自设置（默认是历史笔记那三个，可换成任意词），提示词里不写死任何一类——
    * 早先这里写死了「人物/事件/时期」，是因为当时只有历史笔记；门类放开后那段就成了别的门类的噪音。
    */
-  private async extractEntities(text: string, fields: string[], signal?: AbortSignal): Promise<Record<string, string[]>> {
+  private async extractEntities(active: ActiveRun, node: GraphNode, text: string, fields: string[], signal?: AbortSignal): Promise<Record<string, string[]>> {
     try {
       const aiConfig = getAiConfig(this.db);
       if (!aiConfig.apiKey) return {};
@@ -2234,8 +2270,13 @@ ${list}
 
 只输出 JSON，不要解释，格式：${shape}。某个字段抽不到就给它空数组。`;
       const result = await chatCompletion({ ...aiConfig }, system, text.slice(0, 12000), signal);
-      return parseExtractEntities(result, fields);
-    } catch {
+      // 记在 catch 之前：下面解析失败会走 catch 返回 {}，但这一次调用是真花了的钱。
+      this.addNodeUsage(active, node.id, result.usage);
+      return parseExtractEntities(result.content, fields);
+    } catch (error) {
+      // 属性抽取失败不影响笔记落盘，但花掉的钱还是要记（空正文时 usage 挂在错误上）。
+      const spent = usageFromError(error);
+      if (spent) this.addNodeUsage(active, node.id, spent);
       return {};
     }
   }
@@ -2501,8 +2542,15 @@ ${list}
         await this.log(active, node.id, "ai-request", `[${step.id}] ${step.label}${attempt > 1 ? `（第 ${attempt} 次，带校验失败原因重问）` : ""}\n\n${model}\n\n${system}`, step.id, inputRef);
         let result: string;
         try {
-          result = await chatCompletion({ ...aiConfig, model }, system, user, signal);
+          const stepChat = await chatCompletion({ ...aiConfig, model }, system, user, signal);
+          // 先记账再校验：断言不过会重问一次，而**重问的每一次都各花一次钱**。
+          this.addNodeUsage(active, node.id, stepChat.usage);
+          result = stepChat.content;
         } catch (error) {
+          // 空正文这类失败也花掉了 token（usage 挂在错误上）。这里不记的话，外层重试判断拿到的是
+          // 包了一层的新错误，够不到它——所以必须在包装之前取出来。
+          const spent = usageFromError(error);
+          if (spent) this.addNodeUsage(active, node.id, spent);
           const message = describeError(error);
           this.emit(active, { type: "node.step.error", runId: active.id, nodeId: node.id, stepId: step.id, index: flatIndex + 1, total: totalFlat, error: message });
           throw new Error(`步骤「${step.label}」调用失败：${message}`, { cause: error });
@@ -2575,6 +2623,8 @@ ${list}
     try {
       await this.progress(active, node.id, progress, `联网检索参考资料 ${queries.length} 条`);
       const lookup = await lookupReferenceSources(config, queries, { maxQueries: step.search.maxQueries });
+      // 检索渠道按调用次数计费，和模型 token 记在同一个节点名下。
+      this.addNodeUsage(active, node.id, { calls: lookup.searchCalls });
       if (!lookup.text) {
         await this.log(active, node.id, "info", `步骤「${step.label}」检索没有返回可用来源，本次按不联网执行`, step.id, inputRef);
         return { text: NO_REFERENCE_SOURCES_TEXT, sources: [] };
@@ -2598,6 +2648,7 @@ ${list}
     attempts = 1,
   ) {
     const node = active.graph.nodes.find((n) => n.id === nodeId);
+    const usage = this.nodeUsageOf(active, nodeId);
     const values = {
       runId: active.id,
       nodeId,
@@ -2612,6 +2663,15 @@ ${list}
       outputText: output?.text && output.text.length <= MAX_INLINE_TEXT ? output.text : undefined,
       outputPath: output?.path,
       outputSize: output?.size,
+      usageCalls: usage?.calls ?? 0,
+      promptTokens: usage?.promptTokens ?? 0,
+      completionTokens: usage?.completionTokens ?? 0,
+      cachedTokens: usage?.cachedTokens ?? 0,
+      cacheWriteTokens: usage?.cacheWriteTokens ?? 0,
+      reasoningTokens: usage?.reasoningTokens ?? 0,
+      audioSeconds: usage?.audioSeconds ?? 0,
+      // 可空列：undefined（厂商没报）必须落成 null，落成 0 就变成"厂商报了 0"。
+      billedCost: usage?.billedCost ?? null,
       updatedAt: Date.now(),
     } as const;
     await this.db
@@ -2619,6 +2679,23 @@ ${list}
       .values({ id: `${active.id}:${nodeId}`, ...values })
       .onConflictDoUpdate({ target: runNodeResults.id, set: values })
       .run();
+  }
+
+  /**
+   * 把一次外部调用（或一批）的用量记到这个节点名下。
+   *
+   * **每个真发出去请求的地方都要调它一次，包括失败的**：断言不过、超时、返回空都不是"没花钱"，
+   * 请求已经打到对方接口上了。漏记的表现是"这个节点没产出"看起来像"这个节点零成本"，
+   * 而这两件事在账上完全不是一回事。
+   */
+  private addNodeUsage(active: ActiveRun, nodeId: string, usage: Partial<ApiUsage>): void {
+    active.usage.set(nodeId, addApiUsage(active.usage.get(nodeId) ?? emptyApiUsage(), usage));
+  }
+
+  /** 该节点的累计用量；一次外部调用都没有（纯本地节点）时返回 undefined，界面按"没有这一行"渲染。 */
+  private nodeUsageOf(active: ActiveRun, nodeId: string): ApiUsage | undefined {
+    const usage = active.usage.get(nodeId);
+    return hasApiUsage(usage) ? usage : undefined;
   }
 
   private async finishRun(active: ActiveRun, status: RunStatus, error?: string) {
@@ -2769,7 +2846,7 @@ ${list}
     return inputs;
   }
 
-  detail(runId: string): { run?: RunMeta; nodes: RunNodeResult[]; graph?: WorkflowGraph; inputs?: RunNodeInput[] } {
+  detail(runId: string): { run?: RunMeta; nodes: RunNodeResult[]; graph?: WorkflowGraph; inputs?: RunNodeInput[]; usageSummary?: RunUsageSummary } {
     const row = this.db.select().from(runs).where(eq(runs.id, runId)).get();
     if (!row) return { nodes: [] };
     const project = this.db.select().from(projects).where(eq(projects.id, row.projectId)).get();
@@ -2789,19 +2866,35 @@ ${list}
       error: row.error ?? undefined,
     };
     const rows = this.db.select().from(runNodeResults).where(eq(runNodeResults.runId, runId)).all();
-    const nodes: RunNodeResult[] = rows.map((r) => ({
-      nodeId: r.nodeId,
-      nodeType: r.nodeType,
-      nodeLabel: r.nodeLabel ?? undefined,
-      status: r.status,
-      elapsedMs: r.elapsedMs,
-      attempts: r.attempts,
-      summary: r.summary ?? undefined,
-      error: r.error ?? undefined,
-      output: r.outputKind
-        ? { kind: r.outputKind, text: r.outputText ?? undefined, path: r.outputPath ?? undefined, size: r.outputSize ?? undefined }
-        : undefined,
-    }));
+    const nodes: RunNodeResult[] = rows.map((r) => {
+      const usage: ApiUsage = {
+        calls: r.usageCalls,
+        promptTokens: r.promptTokens,
+        completionTokens: r.completionTokens,
+        cachedTokens: r.cachedTokens,
+        cacheWriteTokens: r.cacheWriteTokens,
+        reasoningTokens: r.reasoningTokens,
+        audioSeconds: r.audioSeconds,
+        // null 是「厂商没报金额」，与「报了 0」不同，所以只在非 null 时带上这个字段。
+        ...(r.billedCost === null ? {} : { billedCost: r.billedCost }),
+      };
+      return {
+        nodeId: r.nodeId,
+        nodeType: r.nodeType,
+        nodeLabel: r.nodeLabel ?? undefined,
+        status: r.status,
+        elapsedMs: r.elapsedMs,
+        attempts: r.attempts,
+        summary: r.summary ?? undefined,
+        error: r.error ?? undefined,
+        output: r.outputKind
+          ? { kind: r.outputKind, text: r.outputText ?? undefined, path: r.outputPath ?? undefined, size: r.outputSize ?? undefined }
+          : undefined,
+        // 全 0 的一律当作「没有用量」：升级前的老运行、纯本地节点都是这个形状，
+        // 给它们挂一个 0 值对象会让结果页多出一列全是「0」的行。
+        usage: hasApiUsage(usage) ? usage : undefined,
+      };
+    });
     const inputRows = this.db.select().from(runNodeInputs).where(eq(runNodeInputs.runId, runId)).orderBy(runNodeInputs.createdAt, runNodeInputs.position).all();
     const storedInputs = inputRows.map((r) => ({
       id: r.id,
@@ -2824,7 +2917,73 @@ ${list}
       if (project) graph = JSON.parse(project.graphJson) as WorkflowGraph;
     }
     const inputs = storedInputs.length > 0 ? storedInputs : this.buildLegacyInputs(runId, row, rows, graph);
-    return { run, nodes, graph, inputs };
+    return {
+      run,
+      nodes,
+      graph,
+      inputs,
+      usageSummary: this.runUsageSummary(nodes, {
+        input: row.priceInputPerMillion,
+        output: row.priceOutputPerMillion,
+        cached: row.priceCachedInputPerMillion,
+        audio: row.priceAudioPerMinute,
+        currency: row.priceCurrency,
+      }),
+    };
+  }
+
+  /**
+   * 把各节点的用量加起来，并按单价折一个估算金额。
+   *
+   * **金额在这里算而不是交给前端**：单价是设置项，只有服务端读得到。
+   *
+   * **优先用这次运行开始时快照的单价**（`runs` 表的 price_* 列）。照抄 Langfuse / LibreChat / Dify / Lobe
+   * 的共同选择：金额是历史事实，不该被之后改设置改写。只有没快照过的运行（升级前的旧记录，
+   * 或用户当时还没填单价）才退回当前单价，并且用 `priceSource` 把这个区别**明确报给界面**——
+   * 同一个界面上，"当时的价"和"今天的价"不能长得一样。
+   */
+  private runUsageSummary(
+    nodes: RunNodeResult[],
+    snapshot: { input: number | null; output: number | null; cached: number | null; audio: number | null; currency: string | null },
+  ): RunUsageSummary | undefined {
+    const usage = sumApiUsages(nodes.map((node) => node.usage).filter((item): item is ApiUsage => Boolean(item)));
+    if (!hasApiUsage(usage)) return undefined;
+    const settings = getSettings(this.db);
+    // 快照里任何一个价非 0 就算"当时有价"；全 0 说明那时用户还没填，按"没快照"处理更贴近当时的样子。
+    const hasSnapshot = [snapshot.input, snapshot.output, snapshot.cached, snapshot.audio].some((value) => (value ?? 0) > 0);
+    const currency: PriceCurrency = (snapshot.currency ?? settings.ai.priceCurrency) === "USD" ? "USD" : "CNY";
+    const prices = hasSnapshot
+      ? {
+          inputPerMillion: snapshot.input ?? 0,
+          outputPerMillion: snapshot.output ?? 0,
+          cachedInputPerMillion: snapshot.cached ?? 0,
+          audioPerMinute: snapshot.audio ?? 0,
+        }
+      : {
+          inputPerMillion: settings.ai.inputPricePerMillion,
+          outputPerMillion: settings.ai.outputPricePerMillion,
+          cachedInputPerMillion: settings.ai.cachedInputPricePerMillion,
+          audioPerMinute: settings.asr.pricePerMinute,
+        };
+
+    const tokenPrice = {
+      inputPerMillion: prices.inputPerMillion,
+      outputPerMillion: prices.outputPerMillion,
+      cachedInputPerMillion: prices.cachedInputPerMillion,
+      currency,
+    };
+    const chatPriced = hasTokenPrice(tokenPrice);
+    const audioPriced = prices.audioPerMinute > 0;
+    const chatCost = chatPriced ? estimateChatCost(usage, tokenPrice) : 0;
+    const audioCost = audioPriced ? estimateAudioCost(usage, prices.audioPerMinute) : 0;
+    return {
+      usage,
+      estimatedCost: chatPriced || audioPriced ? chatCost + audioCost : undefined,
+      audioCost: audioPriced ? audioCost : undefined,
+      currency,
+      prices,
+      priceSource: hasSnapshot ? "run" : "current",
+    };
   }
 
   async deleteRun(runId: string) {

@@ -33,6 +33,9 @@ import {
   MULTI_PRODUCT_SEPARATOR,
   NODE_TYPE_LABELS,
   RUN_NAME_MAX_LENGTH,
+  formatMoney,
+  formatSeconds,
+  formatTokenCount,
   isTraceReportProduct,
   nodeArtifact,
   parseTraceReports,
@@ -1465,6 +1468,106 @@ function asNode(row: unknown): RunNodeResult {
   return row as RunNodeResult;
 }
 
+/**
+ * 节点流水里的用量文案。**只写实测值**（token / 音频秒数 / 调用次数），不在这里折钱——
+ * 金额要连着单价口径一起出现，那是页头汇总那块负责的事，一列窄单元格里写不下那句限定。
+ */
+function nodeUsageText(row: RunNodeResult): string {
+  const usage = row.usage;
+  if (!usage) return "";
+  const parts: string[] = [];
+  const tokens = usage.promptTokens + usage.completionTokens;
+  if (tokens > 0) parts.push(`${formatTokenCount(tokens)} tok`);
+  if (usage.audioSeconds > 0) parts.push(formatSeconds(usage.audioSeconds));
+  if (parts.length === 0 && usage.calls > 0) parts.push(`${usage.calls} 次调用`);
+  return parts.join(" · ");
+}
+
+function nodeUsageDetail(row: RunNodeResult): string {
+  const usage = row.usage;
+  if (!usage) return "";
+  const lines = [`调用 ${usage.calls} 次`];
+  if (usage.promptTokens > 0) lines.push(`输入 ${usage.promptTokens} tokens`);
+  if (usage.cachedTokens > 0) lines.push(`其中命中缓存 ${usage.cachedTokens}`);
+  if (usage.cacheWriteTokens > 0) lines.push(`缓存写入 ${usage.cacheWriteTokens}`);
+  if (usage.completionTokens > 0) lines.push(`输出 ${usage.completionTokens} tokens`);
+  if (usage.reasoningTokens > 0) lines.push(`其中推理 ${usage.reasoningTokens}`);
+  if (usage.audioSeconds > 0) lines.push(`音频 ${formatSeconds(usage.audioSeconds)}`);
+  if (usage.billedCost !== undefined) lines.push(`服务商报的金额 ${usage.billedCost}`);
+  return lines.join("\n");
+}
+
+/**
+ * 页头的运行级用量摘要。拆成三块返回是刻意的：
+ * - `measured` 是**实测**（token、音频秒数、调用次数）；
+ * - `money` 分两种性质——厂商在响应里**直接报的金额**（真值）与按单价折算的**估算**，界面上一眼要能分开；
+ * - `scope` 是**承重的那一个区别**（这份估算用的是运行时的价还是今天的价），常显成短后缀；
+ *   `money.detail` 放完整口径（各项单价、缓存与推理 token 有没有计入），走悬停。
+ *
+ * 为什么口径要拆成这样：把整段口径常显出来实测要占 18.4px 页头高度（`docs/research/api-usage-cost-research.md`
+ * §6 记的就是这一条），而其中**只有 priceSource 那半句是不能藏起来的**——同一个页面上的两个数，
+ * 一个能当历史看、一个是"按今天的价目表看"，用户必须一眼分得出。单价细目藏进悬停没有这个风险。
+ */
+const usageHeadline = computed<{
+  measured: string;
+  money: { text: string; kind: "billed" | "estimate"; detail: string } | null;
+  scope: string;
+} | null>(() => {
+  const summary = run.value?.usageSummary;
+  if (!summary) return null;
+  const { usage, prices, currency } = summary;
+  const measured: string[] = [`${formatTokenCount(usage.promptTokens + usage.completionTokens)} tokens`];
+  if (usage.audioSeconds > 0) measured.push(`音频 ${formatSeconds(usage.audioSeconds)}`);
+  if (usage.calls > 0) measured.push(`${usage.calls} 次调用`);
+
+  const moneyUnit = currency === "USD" ? "美元" : "元";
+  const rates: string[] = [];
+  if (prices.inputPerMillion > 0) rates.push(`输入 ${prices.inputPerMillion}`);
+  if (prices.outputPerMillion > 0) rates.push(`输出 ${prices.outputPerMillion}`);
+  if (prices.cachedInputPerMillion > 0) rates.push(`缓存命中 ${prices.cachedInputPerMillion}`);
+  const rateText: string[] = [];
+  if (rates.length > 0) rateText.push(`${rates.join(" / ")} ${moneyUnit}/百万`);
+  if (summary.audioCost !== undefined) rateText.push(`语音 ${prices.audioPerMinute} ${moneyUnit}/分`);
+  const extra: string[] = [];
+  if (usage.cachedTokens > 0) extra.push(`缓存命中 ${formatTokenCount(usage.cachedTokens)}`);
+  if (usage.reasoningTokens > 0) extra.push(`推理 ${formatTokenCount(usage.reasoningTokens)}`);
+  if (usage.cacheWriteTokens > 0) extra.push(`缓存写入 ${formatTokenCount(usage.cacheWriteTokens)}`);
+  const breakdown = extra.length > 0 ? `${extra.join("、")} tokens 已按各自单价计入。` : "";
+
+  const estimated = summary.estimatedCost;
+  // 单价快照那一段的区别用一句话说全，短后缀说不清的部分留在悬停里。
+  const scopeFull =
+    summary.priceSource === "run"
+      ? "按这次运行开始时设置页的单价折算"
+      : "这次运行没有留下单价快照（升级前的记录，或当时还没填单价），按当前设置页的单价折算";
+
+  // 照 Cline 的判断顺序：厂商报的金额优先（那是对方收的钱），估算退到对照位。
+  const billed = usage.billedCost;
+  if (billed !== undefined) {
+    const contrast = estimated === undefined ? "" : `本地估算 ${formatMoney(estimated, currency)}（仅作对照）。`;
+    return {
+      measured: measured.join(" · "),
+      money: {
+        text: `账单 ${billed.toFixed(2)} · 服务商直接返回`,
+        kind: "billed",
+        detail: `这一笔由服务商在响应里直接报出，不是按单价折算的。${contrast}`,
+      },
+      // 有账单时不需要说单价口径——那个数根本没用到单价。
+      scope: "",
+    };
+  }
+  if (estimated === undefined) return { measured: measured.join(" · "), money: null, scope: "" };
+  return {
+    measured: measured.join(" · "),
+    money: {
+      text: `估算 ${formatMoney(estimated, currency)}`,
+      kind: "estimate",
+      detail: `${scopeFull}：${rateText.join("　")}。${breakdown}`,
+    },
+    scope: summary.priceSource === "run" ? "按运行时单价" : "按当前单价",
+  };
+});
+
 function downloadMarkdown() {
   const text = activeMarkdown.value;
   if (!text) return;
@@ -1592,6 +1695,26 @@ async function commitRename() {
           <p class="rv-sub">
             {{ run ? `${projectName} · 耗时 ${fmt(run.elapsedMs)} · ${new Date(run.createdAt).toLocaleString("zh-CN")} · #${runId.slice(-6)}` : "加载中…" }}
           </p>
+          <!--
+            用量单占一行而不是塞进上面那行：token 是实测、金额是估算，两者要分开读；
+            而且这行只有在真调过外部 API 时才出现（纯本地链路一行都不占）。
+            行高实测 20.8px；完整口径不常显是有意的——它单独一行要占 18.4px（见 CHANGELOG 同日条目）。
+          -->
+          <p v-if="usageHeadline" class="rv-usage">
+            <span class="rv-usage-measured tnum">{{ usageHeadline.measured }}</span>
+            <span v-if="usageHeadline.money" class="rv-usage-money tnum" :class="`is-${usageHeadline.money.kind}`" :title="usageHeadline.money.detail">
+              {{ usageHeadline.money.text }}
+            </span>
+            <!-- 口径的后半截（各项单价、缓存/推理有没有计入）在徽标的悬停里；留下的这半句是
+                 「这份估算用的是哪套价」——同一个页面上"当时的价"和"今天的价"不能长得一样。 -->
+            <span
+              v-if="usageHeadline.scope"
+              class="rv-usage-scope"
+              :title="usageHeadline.money?.detail"
+            >
+              {{ usageHeadline.scope }}
+            </span>
+          </p>
         </div>
       </div>
       <div class="rv-actions">
@@ -1718,6 +1841,14 @@ async function commitRename() {
           </el-table-column>
           <el-table-column label="耗时" width="90">
             <template #default="{ row }"><span class="tnum">{{ fmt(asNode(row).elapsedMs) }}</span></template>
+          </el-table-column>
+          <el-table-column label="用量" width="110">
+            <template #default="{ row }">
+              <span v-if="nodeUsageText(asNode(row))" class="tnum rv-node-usage" :title="nodeUsageDetail(asNode(row))">
+                {{ nodeUsageText(asNode(row)) }}
+              </span>
+              <span v-else class="rv-node-usage-none">—</span>
+            </template>
           </el-table-column>
           <el-table-column label="产物 / 错误" min-width="220">
             <template #default="{ row }">
@@ -2311,7 +2442,13 @@ async function commitRename() {
   align-items: center;
   justify-content: space-between;
   gap: 16px;
-  height: 48px;
+  /*
+   * `min-height` 而不是 `height`：标题块在有用量的运行上是三行（运行名 / 工程与耗时 / 用量），
+   * 一共 68.2px。写死 48px 时 `align-items:center` 会把超出的一半顶到页头上边界之外——实测标题被切掉 10px。
+   * 竖直 padding 只留 2px：留多了会让**没有用量**的运行（两行 42.4px）也从 48px 涨上去，
+   * 那是给所有运行加成本。单行时 48px 仍是那个视觉高度，多行时让它自己长。
+   */
+  min-height: 48px;
   padding: 0 12px;
   border-bottom: 1px solid var(--color-border);
   background: var(--color-surface);
@@ -2704,6 +2841,54 @@ async function commitRename() {
 
 .rv-node-retry {
   color: var(--color-text-secondary);
+}
+
+/* 用量列：只写实测值（token / 音频秒数），悬停看输入输出拆分明细。 */
+.rv-node-usage {
+  color: var(--color-text-secondary);
+  cursor: help;
+}
+
+.rv-node-usage-none {
+  color: var(--color-text-tertiary);
+}
+
+/* 页头的运行级用量：实测一行、金额徽标随行、承重的那半句口径（运行时单价/当前单价）也在同一行。 */
+.rv-usage {
+  margin: 3px 0 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 11.5px;
+  color: var(--color-text-secondary);
+}
+
+/* 金额徽标分两态：账单是厂商给的真值、估算是按单价折的，颜色与文案都不许混。 */
+.rv-usage-money {
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: 10.5px;
+  cursor: help;
+}
+
+.rv-usage-money.is-billed {
+  border: 1px solid var(--color-success-border);
+  background: var(--color-success-soft);
+  color: var(--color-success);
+}
+
+.rv-usage-money.is-estimate {
+  border: 1px solid var(--color-warning-border);
+  background: var(--color-warning-soft);
+  color: var(--color-warning);
+}
+
+/* 「按运行时单价 / 按当前单价」：常显，因为它区分的是两种不同性质的钱；
+   细目（各项单价、缓存与推理有没有计入）不常显——那一段实测要占 18.4px 页头高度。 */
+.rv-usage-scope {
+  color: var(--color-text-tertiary);
+  cursor: help;
 }
 
 .rv-body {

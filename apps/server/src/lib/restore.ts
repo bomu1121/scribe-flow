@@ -40,7 +40,9 @@ export async function prepareRestoreDatabase(sourcePath: string, targetPath: str
       throw new Error("备份文件不是有效的 SQLite 数据库（完整性校验未通过）");
     }
     ensureSchema(sqlite);
-    recoverInterruptedRuns(drizzle(sqlite, { schema }));
+    // 备份是「拍照」出来的：拍的时候还在跑、之后也永远跑不完的那几条运行，在这里收尾。
+    // 措辞与服务重启分开——同一个「已中断」，但原因不同（见 db/client.ts 的收尾日志）。
+    recoverInterruptedRuns(drizzle(sqlite, { schema }), { reason: "从备份恢复" });
   } catch (err) {
     try {
       sqlite.close();

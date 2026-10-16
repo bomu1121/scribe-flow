@@ -207,7 +207,7 @@ describe("练一练联网出题链路", () => {
     // 未配置渠道时引擎直接走 NO_REFERENCE_SOURCES_TEXT，不会调用到这里；这里验证的是「一条来源都没拿到」
     searchQueries = [];
     const empty = await lookupReferenceSources(config, [], { maxQueries: 4, endpoints: { zhipu: `${base}/api/paas/v4/web_search` } });
-    expect(empty).toEqual({ text: "", queries: [], sources: [] });
+    expect(empty).toEqual({ text: "", queries: [], sources: [], searchCalls: 0 });
     expect(searchQueries).toEqual([]);
 
     const modelOutput = JSON.stringify({

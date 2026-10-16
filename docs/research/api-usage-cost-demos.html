@@ -1,0 +1,310 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<title>「每次调 API 花了多少」该怎么展示 —— 六套做法</title>
+<style>
+  :root {
+    --surface: #ffffff;
+    --surface-muted: #f7f8f9;
+    --canvas: #f8f9fa;
+    --border: #e4e7eb;
+    --border-strong: #cdd3da;
+    --text: #16181d;
+    --text-2: #545b66;
+    --text-3: #8a929e;
+    --brand: #00aeec;
+    --brand-soft: #e6f7fe;
+    --brand-border: #b8e8fb;
+    --success: #18a058;
+    --success-soft: #e7f6ee;
+    --success-border: #b7e4ca;
+    --warning: #d9822b;
+    --warning-soft: #fcf0e2;
+    --warning-border: #f0d3ae;
+    --info: #0b88c4;
+    --info-soft: #e6f5fc;
+    --info-border: #b8e2f2;
+    --ink-soft: #f0f1f3;
+    --radius-sm: 6px;
+    --radius-lg: 10px;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 28px 32px 64px;
+    background: #f2f4f6;
+    color: var(--text);
+    font: 13px/1.6 -apple-system, "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
+  }
+  h1 { margin: 0 0 6px; font-size: 19px; }
+  .lede { margin: 0 0 18px; max-width: 980px; color: var(--text-2); }
+  .lede code { padding: 1px 4px; border-radius: 3px; background: #e8ebee; font-size: 12px; }
+  .lede b { color: var(--text); }
+
+  .bar {
+    position: sticky; top: 0; z-index: 5;
+    display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+    margin: 0 0 20px; padding: 10px 14px;
+    border: 1px solid var(--border); border-radius: 10px; background: rgba(255,255,255,.94);
+    backdrop-filter: blur(6px);
+  }
+  .bar strong { font-size: 12px; color: var(--text-2); font-weight: 600; }
+  .seg { display: inline-flex; padding: 2px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface-muted); }
+  .seg button { padding: 4px 12px; border: 0; border-radius: 6px; background: transparent; color: var(--text-2); font: inherit; font-size: 12px; cursor: pointer; }
+  .seg button.on { background: var(--surface); color: var(--text); box-shadow: 0 1px 2px rgba(22,24,29,.08); font-weight: 600; }
+  .bar .hint { color: var(--text-3); font-size: 12px; }
+
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(430px, 1fr)); gap: 22px; align-items: start; }
+  .demo { padding: 16px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface); }
+  .demo.rec { border-color: var(--info-border); box-shadow: 0 0 0 2px var(--info-soft); }
+  .demo h2 { margin: 0 0 2px; font-size: 14px; }
+  .demo h2 .tag { margin-left: 6px; padding: 1px 6px; border: 1px solid var(--info-border); border-radius: 4px; background: var(--info-soft); color: var(--info); font-size: 10px; font-weight: 600; vertical-align: 1px; }
+  .demo .why { margin: 4px 0 14px; color: var(--text-2); font-size: 12px; }
+  .stage { padding: 16px; background: var(--canvas); border-radius: 8px; }
+  .metrics { margin: 12px 0 0; padding-top: 10px; border-top: 1px dashed var(--border); color: var(--text-3); font-size: 11px; line-height: 1.9; }
+  .metrics b { color: var(--text-2); font-weight: 600; }
+
+  /* ---- 真机里的观感 ---- */
+  .card { border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--surface); padding: 14px 16px; }
+  .field { display: flex; flex-direction: column; gap: 5px; }
+  .field + .field { margin-top: 12px; }
+  .field-label { font-size: 12px; color: var(--text-2); }
+  .num { display: inline-flex; align-items: stretch; width: 120px; border: 1px solid var(--border-strong); border-radius: var(--radius-sm); overflow: hidden; background: var(--surface); }
+  .num span { display: grid; place-items: center; width: 28px; background: var(--surface-muted); color: var(--text-2); font-size: 13px; }
+  .num i { font-style: normal; flex: 1; display: grid; place-items: center; font-size: 13px; font-variant-numeric: tabular-nums; }
+  .num-row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  .btn { padding: 5px 11px; border: 1px solid var(--border-strong); border-radius: var(--radius-sm); background: var(--surface); color: var(--text); font: inherit; font-size: 12px; cursor: pointer; }
+  .btn.primary { border-color: var(--brand); background: var(--brand); color: #fff; }
+  .hint { margin: 6px 0 0; font-size: 11.5px; line-height: 1.7; color: var(--text-3); }
+  .hint b { color: var(--text-2); }
+  .divider { margin: 14px 0; border: 0; border-top: 1px solid var(--border); }
+  .kv { display: flex; gap: 10px; align-items: baseline; justify-content: space-between; font-variant-numeric: tabular-nums; }
+  .kv + .kv { margin-top: 6px; }
+  .kv .k { color: var(--text-2); font-size: 12px; }
+  .kv .v { color: var(--text); font-size: 12.5px; }
+  .pill { display: inline-block; padding: 1px 7px; border-radius: 999px; font-size: 10.5px; line-height: 1.5; }
+  .pill.est { border: 1px solid var(--warning-border); background: var(--warning-soft); color: var(--warning); }
+  .pill.billed { border: 1px solid var(--success-border); background: var(--success-soft); color: var(--success); }
+  .pill.src { border: 1px solid var(--border); background: var(--ink-soft); color: var(--text-3); }
+
+  /* 结果页页头 */
+  .rv { border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--surface); padding: 12px 16px; }
+  .rv-title { margin: 0; font-size: 14px; font-weight: 600; }
+  .rv-sub { margin: 3px 0 0; font-size: 11.5px; color: var(--text-2); }
+  .rv-usage { margin: 4px 0 0; display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px; font-size: 11.5px; color: var(--text-2); font-variant-numeric: tabular-nums; }
+  .rv-basis { color: var(--text-3); }
+  .rv-table { width: 100%; border-collapse: collapse; font-size: 12px; font-variant-numeric: tabular-nums; }
+  .rv-table th { text-align: left; font-weight: 600; color: var(--text-2); padding: 6px 8px; border-bottom: 1px solid var(--border); }
+  .rv-table td { padding: 6px 8px; border-bottom: 1px solid var(--border); }
+  .rv-table tr:last-child td { border-bottom: 0; }
+  .rv-table td.num2, .rv-table th.num2 { text-align: right; }
+  .rv-table tr.total td { font-weight: 600; border-top: 1px solid var(--border-strong); }
+</style>
+</head>
+<body>
+
+<h1>「每次调 API 花了多少」该怎么展示</h1>
+<p class="lede">
+  起因：用户问「每次需要调用 API 的地方有没有 TOKEN / 费用统计」，并要求<b>不许编，要调研出已有项目的成熟设计</b>。
+  第一轮只做到「记 token + 手填单价算估算」，查证后发现那条路有两个真问题：<b>缓存命中 token 只认了 DeepSeek 的字段名</b>
+  （其余家一律显示 0，是显示错的数），以及<b>「厂商直接报的金额」被当成估算一起算了</b>。
+  这一页把六套做法摆在一起对比——前三套是设置页上「单价与对账」那一块，后三套是结果页上「这次花了多少」那一行。
+  事实与出处见 <code>api-usage-cost-research.md</code>。
+</p>
+
+<div class="bar">
+  <strong>看哪一组</strong>
+  <div class="seg" id="seg">
+    <button data-set="all" class="on">全部六套</button>
+    <button data-set="setup">设置页（A/B/C）</button>
+    <button data-set="result">结果页（D/E/F）</button>
+  </div>
+  <span class="hint">A 与 D 是本仓库改动前的现状；B + E 是调研后的推荐组合。</span>
+</div>
+
+<p class="lede" style="margin-top:-8px">
+  <b>下面的尺寸都是量出来的</b>：真 Chrome 无头、1440×1200 视口、把每套单独摆成 <b>560px 单列</b>再读
+  <code>getBoundingClientRect().height</code>（布局 px，不受缩放影响）——与同目录的 <code>api-cost-*.png</code> 同一版式。
+  量的口径是 <b>台面</b>（<code>.stage</code>，也就是那个模拟的真机块）而不是整张 demo 卡——卡片高会随下面的说明文字变，台面高只随被演示的 UI 变，所以只有台面是稳定可比的那个数。
+  这是<b>原型</b>的尺寸，不是 app 里的成品；真机绝对值会有出入，可比的是套与套之间的差。
+</p>
+
+<div class="grid" id="grid">
+
+  <!-- ================= 设置页 ================= -->
+  <section class="demo" data-set="setup">
+    <h2>A · 手填两个数<span class="tag">现状</span></h2>
+    <p class="why">最小可用：只让用户填输入/输出单价，留空就不算钱。代价是<b>用户得自己去官网抄价</b>——
+      这正是「价格不可估计」这句话的真实来源。</p>
+    <div class="stage">
+      <div class="card">
+        <div class="field">
+          <span class="field-label">输入单价（元 / 百万 token）</span>
+          <div class="num-row"><span class="num"><span>−</span><i>2</i><span>+</span></span><span class="num"><span>−</span><i>8</i><span>+</span></span></div>
+        </div>
+        <p class="hint">这两个数<strong>只用来把 token 折算成估算金额</strong>，不影响实际扣费。填 0 就是不折算。</p>
+      </div>
+    </div>
+    <p class="metrics">
+      <b>量出来</b> 台面 134.5px · <b>字段数</b> 2 · <b>外部依赖</b> 无 · <b>用户动作</b> 去官网查价 → 手抄两个数
+    </p>
+  </section>
+
+  <section class="demo rec" data-set="setup">
+    <h2>B · 手填 + 一键填参考价<span class="tag">推荐</span></h2>
+    <p class="why">把「抄价」这一步消掉：拉一份公开价目表，按当前模型名匹配出一条，<b>填进输入框让用户自己确认</b>。
+      刻意<b>不</b>用它自动算账——聚合表的价不等于你实际付的价（见下方「为什么不能自动算」）。</p>
+    <div class="stage">
+      <div class="card">
+        <div class="field">
+          <span class="field-label">输入单价（元 / 百万 token）</span>
+          <div class="num-row">
+            <span class="num"><span>−</span><i>2</i><span>+</span></span>
+            <input class="btn" value="从参考价目填入" style="cursor:pointer" readonly>
+          </div>
+        </div>
+        <div class="field">
+          <span class="field-label">输出单价（元 / 百万 token）</span>
+          <div class="num-row"><span class="num"><span>−</span><i>8</i><span>+</span></span></div>
+        </div>
+        <p class="hint" style="color:var(--success)">已按模型名 <code>deepseek-chat</code> 从 LiteLLM 价目表填入。这是<b>第三方维护的参考价</b>（每条带 source 指回官方定价页），请与你的账单核对。</p>
+        <hr class="divider">
+        <div class="field">
+          <span class="field-label">缓存命中输入单价（元 / 百万 token）<span class="pill src">选填</span></span>
+          <div class="num-row"><span class="num"><span>−</span><i>0.2</i><span>+</span></span><span class="hint" style="margin:0">留空＝按输入价算</span></div>
+        </div>
+        <p class="hint">缓存命中的输入 token 各家折扣不同（DeepSeek 0.1×、智谱约 50%、DashScope 隐式 20%），
+          <b>所以不能内置一个倍率</b>——这里留空时按输入价算，是偏高而非偏低。</p>
+      </div>
+    </div>
+    <p class="metrics">
+      <b>量出来</b> 台面 345.1px —— 比 A 高 <b>210.6px（+157%）</b> · <b>字段数</b> 3 ·
+      <b>外部依赖</b> 一份公开价目表（拉取失败＝按钮报错，不填） · <b>用户动作</b> 点一下 → 核对
+    </p>
+  </section>
+
+  <section class="demo" data-set="setup">
+    <h2>C · B + 余额对账</h2>
+    <p class="why">回答「我们的估算到底准不准」：查一次账户余额，与本地累计<b>并排</b>显示。
+      注意粒度——余额是<b>账户级</b>的，它不能分摊到某一次运行，只能用来对账。</p>
+    <div class="stage">
+      <div class="card">
+        <div class="field">
+          <span class="field-label">输入单价（元 / 百万 token）</span>
+          <div class="num-row"><span class="num"><span>−</span><i>2</i><span>+</span></span><input class="btn" value="从参考价目填入" style="cursor:pointer" readonly></div>
+        </div>
+        <hr class="divider">
+        <div class="kv"><span class="k">账户余额</span><span class="v">¥ 110.00 <span class="pill billed">官方接口 · 刚查</span></span></div>
+        <div class="kv"><span class="k">本地累计估算</span><span class="v">¥ 23.85 <span class="pill est">估算</span></span></div>
+        <div class="kv"><span class="k">差额</span><span class="v">— · 需要两次余额快照才能算</span></div>
+        <p class="hint">DeepSeek <code>GET /user/balance</code> · Moonshot <code>/v1/users/me/balance</code> ·
+          OpenRouter <code>/api/v1/credits</code>（要 management key）。<b>智谱官方明确没有余额接口</b>，那一栏会写「该渠道不支持」。</p>
+        <div style="margin-top:10px"><span class="btn primary">核对余额</span></div>
+      </div>
+    </div>
+    <p class="metrics">
+      <b>量出来</b> 台面 319.5px（比 B 矮 25.6px，它省掉了那段「参考价来源」说明） ·
+      <b>字段数</b> 3 + 对账行 · <b>外部依赖</b> 价目表 + 余额接口（仅三家） · <b>额外价值</b> 估算准确度的证据
+    </p>
+  </section>
+
+  <!-- ================= 结果页 ================= -->
+  <section class="demo" data-set="result">
+    <h2>D · 一行 token + 估算<span class="tag">现状</span></h2>
+    <p class="why">改动前的页头：用量与估算挤在同一行，金额跟着单价口径一起写。问题是<b>看不出钱是哪来的</b>——
+      厂商直接报的金额和算出来的估算在这里长得一模一样。</p>
+    <div class="stage">
+      <div class="rv">
+        <h3 class="rv-title">中美社保对比，有哪些不同？</h3>
+        <p class="rv-sub">中美社保对比 · 耗时 103.6s · 2026/10/14 18:33:02 · #c167d7</p>
+        <p class="rv-usage">
+          <span>207.8k tokens · 音频 6分52秒 · 5 次调用 · 估算 0.88 元</span>
+          <span class="rv-basis">按设置页单价折算：输入 2 元/百万、输出 8 元/百万、语音 0.06 元/分</span>
+        </p>
+      </div>
+    </div>
+    <p class="metrics">
+      <b>量出来</b> 台面 150.6px · <b>行数</b> 3 · <b>金额来源</b> 不标 · <b>缓存/推理 token</b> 看不见
+    </p>
+  </section>
+
+  <section class="demo rec" data-set="result">
+    <h2>E · 分来源<span class="tag">推荐</span></h2>
+    <p class="why">抄 <b>Cline</b> 的判断顺序（<i>provider-reported billed cost takes precedence over market cost</i>）
+      与 <b>Langfuse</b> 的来源标记：厂商在响应里给了金额就显示真金额并标明来源，否则才叫「估算」。
+      这两者混在一起，正是上一轮的问题。</p>
+    <div class="stage">
+      <div class="rv">
+        <h3 class="rv-title">中美社保对比，有哪些不同？</h3>
+        <p class="rv-sub">中美社保对比 · 耗时 103.6s · 2026/10/14 18:33:02 · #c167d7</p>
+        <p class="rv-usage">
+          <span>207.8k tokens · 音频 6分52秒 · 5 次调用</span>
+          <span class="pill est">估算 ¥0.88</span>
+          <span class="rv-basis">按 输入 2 / 输出 8 / 缓存命中 0.2 元每百万、语音 0.06 元每分</span>
+        </p>
+        <p class="rv-usage" style="margin-top:2px">
+          <span class="rv-basis">另：缓存命中 36.8k、推理 1.2k tokens 已按各自单价计入</span>
+        </p>
+      </div>
+      <div class="rv" style="margin-top:10px">
+        <h3 class="rv-title">另一条走 OpenRouter 的运行</h3>
+        <p class="rv-sub">同一个工程 · 耗时 98.2s · #a41f02</p>
+        <p class="rv-usage">
+          <span>198.4k tokens · 4 次调用</span>
+          <span class="pill billed">账单 ¥0.95 · 由 OpenRouter 直接返回</span>
+        </p>
+        <p class="rv-usage" style="margin-top:2px">
+          <span class="rv-basis">厂商在响应里报了金额，没走单价折算。<code>usage.cost</code> 口径是 credits，与人民币账单可能不一致。</span>
+        </p>
+      </div>
+    </div>
+    <p class="metrics">
+      <b>量出来</b> 台面 314.6px —— 比 D 高 <b>164.0px（+109%）</b>；台面里放了<b>两张卡</b>（演示「估算」与「厂商报的金额」两种来源），单张约 165px ·
+      <b>行数</b> 4 · <b>金额来源</b> 显式分两种 · <b>主要代价</b> 多一行说明文字
+    </p>
+  </section>
+
+  <section class="demo" data-set="result">
+    <h2>F · 卡片式明细</h2>
+    <p class="why">想看细账时的形态：四行分项 + 单价 + 小计。信息最全，但<b>结果页首屏被它占掉了</b>——
+      首屏原本要留给笔记正文。</p>
+    <div class="stage">
+      <div class="rv">
+        <h3 class="rv-title">本次运行用量</h3>
+        <table class="rv-table" style="margin-top:8px">
+          <thead>
+            <tr><th>项目</th><th class="num2">数量</th><th class="num2">单价</th><th class="num2">小计</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>输入</td><td class="num2">199.3k</td><td class="num2">2 元/百万</td><td class="num2">¥0.40</td></tr>
+            <tr><td>其中缓存命中</td><td class="num2">36.8k</td><td class="num2">0.2 元/百万</td><td class="num2">¥0.01</td></tr>
+            <tr><td>输出</td><td class="num2">8.6k</td><td class="num2">8 元/百万</td><td class="num2">¥0.07</td></tr>
+            <tr><td>其中推理</td><td class="num2">1.2k</td><td class="num2">8 元/百万</td><td class="num2">¥0.01</td></tr>
+            <tr><td>音频转写</td><td class="num2">6分52秒</td><td class="num2">0.06 元/分</td><td class="num2">¥0.41</td></tr>
+            <tr class="total"><td>估算合计</td><td class="num2">5 次调用</td><td class="num2"></td><td class="num2">¥0.88</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+    <p class="metrics">
+      <b>量出来</b> 台面 312.7px —— 比 D 高 <b>162.1px（+108%）</b>；只放一张卡但含 7 行表格 ·
+      <b>行数</b> 7 + 表头 · <b>信息密度</b> 最高 · <b>主要代价</b> 结果页首屏被占用，且四行里三行是噪声
+    </p>
+  </section>
+
+</div>
+
+<script>
+  const seg = document.getElementById('seg');
+  const demos = [...document.querySelectorAll('.demo')];
+  seg.addEventListener('click', (event) => {
+    const button = event.target.closest('button');
+    if (!button) return;
+    [...seg.children].forEach((item) => item.classList.toggle('on', item === button));
+    const set = button.dataset.set;
+    for (const demo of demos) demo.style.display = (set === 'all' || demo.dataset.set === set) ? '' : 'none';
+  });
+</script>
+</body>
+</html>

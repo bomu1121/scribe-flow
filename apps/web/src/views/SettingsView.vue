@@ -9,13 +9,13 @@ import { ElRadioButton, ElRadioGroup } from "element-plus/es/components/radio/in
 import { ElMessageBox } from "element-plus/es/components/message-box/index.mjs";
 import { ElOption, ElOptionGroup, ElSelect } from "element-plus/es/components/select/index.mjs";
 import { ElSwitch } from "element-plus/es/components/switch/index.mjs";
-import { Calendar, CircleAlert, CircleCheck, Cloud, Contrast, Copy, Download, ExternalLink, FolderOpen, Link2, List, ListChecks, Loader2, Mic, MoreHorizontal, Palette, PlugZap, Plus, RefreshCw, RotateCcw, Save, Tag, Trash2, Type, Upload, X } from "lucide-vue-next";
+import { Calendar, CircleAlert, CircleCheck, Cloud, Contrast, Copy, Download, ExternalLink, FolderOpen, Link2, List, ListChecks, Loader2, Mic, MoreHorizontal, Palette, PlugZap, Plus, RefreshCw, RotateCcw, Save, Search, Tag, Trash2, Type, Upload, Wallet, X } from "lucide-vue-next";
 import { toast } from "@/lib/toast";
 import { ensureNotifyPermission } from "@/utils/run-alert";
 import { formatBytes } from "@/lib/bytes";
 import ModelSelect from "../components/ModelSelect.vue";
 import PromptBlockDiffDialog from "../components/PromptBlockDiffDialog.vue";
-import type { AiProvider, AsrEngine, DataOverview, NodeType, TagViewMode, ObsidianVaultCheck, PruneItem, PruneOutcome, PruneTarget, PromptBlock, RelatedJobView, RelatedNoteMode, RelatedPlanView, RetagJobView, RetagPlanView, SearchProvider, TagTaxonomy } from "@scribe-flow/shared";
+import type { AiProvider, AsrEngine, DataOverview, NodeType, PriceCurrency, TagViewMode, ObsidianVaultCheck, PruneItem, PruneOutcome, PruneTarget, PromptBlock, RelatedJobView, RelatedNoteMode, RelatedPlanView, RetagJobView, RetagPlanView, SearchProvider, TagTaxonomy } from "@scribe-flow/shared";
 import { COMMON_EXTRACT_FIELDS, DEFAULT_TAG_VIEW, EXTRACT_FIELD_PRESETS, FILE_NAME_TOKENS, GENERAL_LIMITS, MAX_EXTRACT_FIELDS, NODE_TYPE_LABELS, NODE_TYPE_ORDER, RELATED_SECTION_TITLE, TAG_VIEW_MODES, TRACE_SOURCE_AUTHORITY_LABELS, UP_TAG_PREFIX, addTagToTaxonomy, backupLocationOf, blockSeriesName, groupPromptBlocks, normalizeTagSegment, promptBlockVersions, renderFileNameTemplate, tagGroupTone, writableTags } from "@scribe-flow/shared";
 import { api } from "@/lib/api";
 import { copyText } from "@/lib/clipboard";
@@ -49,10 +49,15 @@ const form = reactive({
   aiBaseUrl: "",
   aiModel: "",
   aiKey: "",
+  aiInputPrice: 0,
+  aiOutputPrice: 0,
+  aiCachedPrice: 0,
+  aiPriceCurrency: "CNY" as PriceCurrency,
   asrEngine: "mimo" as AsrEngine,
   asrBaseUrl: "",
   asrModel: "",
   asrKey: "",
+  asrPricePerMinute: 0,
   searchProvider: "zhipu" as SearchProvider,
   searchKey: "",
   searchMaxResults: 5,
@@ -1029,9 +1034,14 @@ function fillForm() {
   form.aiProvider = store.settings.ai.provider;
   form.aiBaseUrl = store.settings.ai.baseUrl;
   form.aiModel = store.settings.ai.model;
+  form.aiInputPrice = store.settings.ai.inputPricePerMillion;
+  form.aiOutputPrice = store.settings.ai.outputPricePerMillion;
+  form.aiCachedPrice = store.settings.ai.cachedInputPricePerMillion;
+  form.aiPriceCurrency = store.settings.ai.priceCurrency;
   form.asrEngine = store.settings.asr.engine;
   form.asrBaseUrl = store.settings.asr.baseUrl;
   form.asrModel = store.settings.asr.model;
+  form.asrPricePerMinute = store.settings.asr.pricePerMinute;
   form.searchProvider = store.settings.search.provider;
   form.searchMaxResults = store.settings.search.maxResults;
   form.concurrency = store.settings.general.concurrency;
@@ -1116,12 +1126,102 @@ function switchAsr(engine: AsrEngine) {
   }
 }
 
+// ---------- 参考价目：一键把单价填进输入框 ----------
+const priceLookupLoading = ref(false);
+const priceLookupNote = ref("");
+const priceLookupError = ref("");
+
+/** 参考价目里的小数可能到 6 位（per-token × 1e6），输入框显示四位就够，多了只是噪声。 */
+function round4(value: number): number {
+  return Math.round(value * 1e4) / 1e4;
+}
+
+/**
+ * 从参考价目填单价。**只填输入框、不写库**——保存仍由用户点「保存设置」，
+ * 价目表是第三方维护的参考值，得让用户过一眼。
+ *
+ * 币种：那份表是**美元**价（所有机器可读的公开价目表都是美元，逐份查过）。
+ * 用户选的是人民币时**不做汇率换算**——那要我们自己编一个汇率，正是这次调研最要避免的事。
+ * 改成把币种切到美元 + 明说，让用户自己决定。
+ */
+async function lookupPrice() {
+  if (priceLookupLoading.value) return;
+  priceLookupLoading.value = true;
+  priceLookupNote.value = "";
+  priceLookupError.value = "";
+  try {
+    const result = await api.post<{
+      ok: boolean;
+      reference: { matchedKey: string; inputPerMillion: number; outputPerMillion: number; cachedInputPerMillion: number; providerSource?: string };
+    }>("/api/settings/ai/price-lookup", {
+      provider: form.aiProvider,
+      baseUrl: form.aiBaseUrl,
+      model: form.aiModel,
+    });
+    const { matchedKey, inputPerMillion, outputPerMillion, cachedInputPerMillion, providerSource } = result.reference;
+    form.aiInputPrice = round4(inputPerMillion);
+    form.aiOutputPrice = round4(outputPerMillion);
+    form.aiCachedPrice = round4(cachedInputPerMillion);
+    form.aiPriceCurrency = "USD";
+    const source = providerSource ? `，该条自带的官方定价页：${providerSource}` : "";
+    priceLookupNote.value =
+      `已按价目表里的「${matchedKey}」填入（美元价，币种已切到美元）${source}。` +
+      "这是第三方维护的参考值，请与你自己的账单核对后再保存——要按人民币记账就按你的汇率换算一下。";
+  } catch (err) {
+    priceLookupError.value = err instanceof Error ? err.message : "参考价目拉取失败";
+  } finally {
+    priceLookupLoading.value = false;
+  }
+}
+
+// ---------- 余额对账：查一次账户余额，跟本地估算并排看 ----------
+const balanceLoading = ref(false);
+const balanceError = ref("");
+const balanceEntries = ref<{ label: string; amount: string; currency: string }[]>([]);
+const balanceProviderLabel = ref("");
+const balanceAt = ref(0);
+
+async function checkBalance() {
+  if (balanceLoading.value) return;
+  balanceLoading.value = true;
+  balanceError.value = "";
+  try {
+    const result = await api.post<{
+      ok: boolean;
+      balance: { providerLabel: string; entries: { label: string; amount: string; currency: string }[]; fetchedAt: number };
+    }>("/api/settings/ai/balance");
+    balanceEntries.value = result.balance.entries;
+    balanceProviderLabel.value = result.balance.providerLabel;
+    balanceAt.value = result.balance.fetchedAt;
+  } catch (err) {
+    balanceEntries.value = [];
+    balanceError.value = err instanceof Error ? err.message : "余额查询失败";
+  } finally {
+    balanceLoading.value = false;
+  }
+}
+
 async function saveAll() {
   try {
     if (form.aiProvider === "deepseek") await refreshAiModels();
     await store.save({
-      ai: { provider: form.aiProvider, baseUrl: form.aiBaseUrl, model: form.aiModel, apiKey: form.aiKey || undefined },
-      asr: { engine: form.asrEngine, baseUrl: form.asrBaseUrl, model: form.asrModel, apiKey: form.asrKey || undefined },
+      ai: {
+        provider: form.aiProvider,
+        baseUrl: form.aiBaseUrl,
+        model: form.aiModel,
+        apiKey: form.aiKey || undefined,
+        inputPricePerMillion: form.aiInputPrice,
+        outputPricePerMillion: form.aiOutputPrice,
+        cachedInputPricePerMillion: form.aiCachedPrice,
+        priceCurrency: form.aiPriceCurrency,
+      },
+      asr: {
+        engine: form.asrEngine,
+        baseUrl: form.asrBaseUrl,
+        model: form.asrModel,
+        apiKey: form.asrKey || undefined,
+        pricePerMinute: form.asrPricePerMinute,
+      },
       search: { provider: form.searchProvider, apiKey: form.searchKey || undefined, maxResults: form.searchMaxResults },
       general: {
         concurrency: form.concurrency,
@@ -1488,6 +1588,75 @@ async function restoreNutstoreBackup(backup: { path: string; name: string }) {
             </span>
             <el-input v-model="form.aiKey" type="password" show-password class="sf-field-control" :placeholder="store.settings?.ai.hasKey ? '已保存，留空则不修改' : 'sk-…'" />
           </label>
+          <label class="sf-field">
+            <span class="sf-field-label">单价币种</span>
+            <el-select v-model="form.aiPriceCurrency" class="sf-field-control" style="max-width: 160px">
+              <el-option label="人民币（元）" value="CNY" />
+              <el-option label="美元（$）" value="USD" />
+            </el-select>
+          </label>
+          <div class="sf-field">
+            <!-- 单价刻意不给加减按钮（:controls="false"）：这些数是从账单/官网抄来的精确值，不是步进调出来的；而 120px 里塞进两个 28px 的按钮后文本区只剩 36px，「0.028」这种值会被截断。宽度仍走 .sf-field .el-input-number 的 120px 约定。 -->
+            <span class="sf-field-label">模型单价（每百万 token）</span>
+            <div class="sf-price-row">
+              <span class="sf-price-cell">
+                <el-input-number v-model="form.aiInputPrice" :min="0" :max="100000" :controls="false" />
+                <span class="sf-price-cell-label">输入</span>
+              </span>
+              <span class="sf-price-cell">
+                <el-input-number v-model="form.aiOutputPrice" :min="0" :max="100000" :controls="false" />
+                <span class="sf-price-cell-label">输出</span>
+              </span>
+              <button type="button" class="sf-btn" :disabled="priceLookupLoading" @click="lookupPrice">
+                <Loader2 v-if="priceLookupLoading" :size="14" class="sf-spin" />
+                <Search v-else :size="14" /><span>从参考价目填入</span>
+              </button>
+            </div>
+            <p v-if="priceLookupNote" class="sf-hint sf-hint--success">{{ priceLookupNote }}</p>
+            <p v-if="priceLookupError" class="sf-hint sf-hint--warning">{{ priceLookupError }}</p>
+            <p class="sf-hint">
+              这些数<strong>只用来把 token 折算成估算金额</strong>，不影响实际扣费（钱是厂商按你的账号扣的）。
+              填 0 就是不折算，运行结果页只显示 token 数。运行记录会存下<strong>当时的单价</strong>，之后改这里不会改写旧账。
+            </p>
+          </div>
+          <label class="sf-field">
+            <span class="sf-field-label">缓存命中输入单价（每百万 token）</span>
+            <el-input-number v-model="form.aiCachedPrice" :min="0" :max="100000" :controls="false" />
+            <p class="sf-hint">
+              <strong>留 0 就是按输入价算</strong>（即不打折），这样估出来偏高而不是偏低。
+              各家对缓存命中的折扣不一样（DeepSeek 约 0.1×、智谱官方写「通常为标准价格的 50%」、阿里隐式缓存 20%），
+              所以这里不预置倍率——填你自己账单上的那个价才准。
+            </p>
+          </label>
+          <div class="sf-settings-divider">余额对账</div>
+          <div class="sf-field">
+            <p class="sf-hint" style="margin-top: 0">
+              查一次账户余额，跟本地累计的估算并排看，就知道我们估得准不准。
+              余额是<strong>账户级</strong>的粒度，没法分摊到某一次运行——它只能对账，不能当"每次运行的账单"。
+              有余额接口的是 DeepSeek、Moonshot、OpenRouter 三家；OpenAI / Anthropic 的账单接口要 Admin Key，智谱官方没有接口。
+            </p>
+            <div class="sf-settings-actions" style="margin-top: 0">
+              <button type="button" class="sf-btn" :disabled="balanceLoading" @click="checkBalance">
+                <Loader2 v-if="balanceLoading" :size="14" class="sf-spin" />
+                <Wallet v-else :size="14" /><span>查余额对账</span>
+              </button>
+            </div>
+            <div v-if="balanceEntries.length > 0" class="sf-balance-card">
+              <div v-for="entry in balanceEntries" :key="entry.label" class="sf-balance-row">
+                <span class="sf-balance-label">{{ entry.label }}</span>
+                <span class="sf-balance-amount tnum">{{ entry.amount }}<span
+                  v-if="entry.currency && entry.currency !== 'credits'"
+                  class="sf-balance-currency"
+                  >{{ entry.currency }}</span
+                ></span>
+              </div>
+              <p class="sf-hint">
+                来自 {{ balanceProviderLabel }} 的官方余额接口，{{ new Date(balanceAt).toLocaleString("zh-CN") }} 查询。
+                本地累计估算在「数据与工程」那边看——两者对不上时，先核对单价是不是按自己的账单填的。
+              </p>
+            </div>
+            <p v-if="balanceError" class="sf-hint sf-hint--warning">{{ balanceError }}</p>
+          </div>
           <div class="sf-settings-actions">
             <button type="button" class="sf-btn" :disabled="showAiTesting" @click="testAi">
               <Loader2 v-if="showAiTesting" :size="14" class="sf-spin" />
@@ -1527,6 +1696,14 @@ async function restoreNutstoreBackup(backup: { path: string; name: string }) {
               <span v-else class="sf-chip sf-chip--warning">未配置</span>
             </span>
             <el-input v-model="form.asrKey" type="password" show-password class="sf-field-control" :placeholder="store.settings?.asr.hasKey ? '已保存，留空则不修改' : 'API Key'" />
+          </label>
+          <label class="sf-field">
+            <span class="sf-field-label">单价（元 / 分钟）</span>
+            <el-input-number v-model="form.asrPricePerMinute" :min="0" :max="10000" :controls="false" />
+            <p class="sf-hint">
+              语音识别按音频时长计费，所以这里填的是每分钟的价（whisper 之类的官方报价就是按分钟的）。
+              填 0 就是不折算，结果页只显示转写了多长时间的音频。
+            </p>
           </label>
           <div class="sf-settings-actions">
             <button type="button" class="sf-btn" :disabled="showAsrTesting" @click="testAsr">
@@ -2267,6 +2444,7 @@ async function restoreNutstoreBackup(backup: { path: string; name: string }) {
                 <span>未变 <strong>{{ retagJob.report.unchanged }}</strong></span>
                 <span>调用 <strong>{{ retagJob.report.calls }}</strong> 次</span>
                 <span>输入 <strong>{{ retagJob.report.usage.promptTokens }}</strong> tokens</span>
+                <span>输出 <strong>{{ retagJob.report.usage.completionTokens }}</strong> tokens</span>
                 <span>命中缓存 <strong>{{ retagJob.report.usage.cachedTokens }}</strong></span>
                 <span v-if="retagJob.report.failed.length > 0">失败 <strong>{{ retagJob.report.failed.length }}</strong></span>
               </div>
@@ -2854,6 +3032,70 @@ async function restoreNutstoreBackup(backup: { path: string; name: string }) {
 .sf-hint a {
   color: var(--color-text-secondary);
   text-decoration: underline;
+}
+
+/* 参考价目填入成功 / 失败：跟普通提示同尺寸，只换颜色——它是"刚发生的事"的反馈，不该抢标题。 */
+.sf-hint--success { color: var(--color-success); }
+.sf-hint--warning { color: var(--color-warning); }
+
+/* 输入/输出单价与「从参考价目填入」并排：三个数是一组，按钮属于这一组。 */
+.sf-price-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.sf-price-cell {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.sf-price-cell-label {
+  font-size: 11px;
+  color: var(--color-text-tertiary);
+}
+
+/* 余额对账的结果卡：几行数字，不占地方也不做成表格——它最多三行。 */
+.sf-balance-card {
+  margin-top: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-muted);
+}
+
+.sf-balance-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 12.5px;
+}
+
+.sf-balance-row + .sf-balance-row {
+  margin-top: 4px;
+}
+
+.sf-balance-label {
+  color: var(--color-text-secondary);
+}
+
+.sf-balance-amount {
+  color: var(--color-text);
+  font-weight: 600;
+}
+
+/* 币种与金额之间要留空隙：写在模板里的空格会被 Vue 的模板编译收掉，所以间距交给 CSS。 */
+.sf-balance-currency {
+  margin-left: 4px;
+  font-weight: 400;
+  color: var(--color-text-secondary);
+}
+
+.sf-balance-card .sf-hint {
+  margin: 8px 0 0;
 }
 
 .sf-settings-actions {

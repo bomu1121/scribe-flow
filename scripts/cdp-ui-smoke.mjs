@@ -703,9 +703,28 @@ async function run() {
       aiForm.inputs >= 2 && aiForm.selects >= 2,
       `${aiForm.inputs} 输入框 / ${aiForm.selects} 下拉`,
     );
+    // 用量记账：单价只影响结果页那个估算金额，所以必须能读、能看出单位。
+    // 断言标签文字而不是控件数——数值增减器这页到处都是，数个数证明不了这几个字段在。
+    // 三个数（输入/输出/缓存命中）在 `.sf-price-cell-label` 里，不与 `.sf-field-label` 同级。
+    const priceLabels = await evalJs(
+      "[...document.querySelectorAll('.sf-settings-form .sf-field-label, .sf-settings-form .sf-price-cell-label')].map((n) => n.textContent.trim())",
+    );
+    const priceText = (priceLabels ?? []).join(" / ");
+    check(
+      "设置页有单价三件套（输入/输出/缓存命中，单位每百万 token）",
+      ["每百万 token", "输入", "输出", "缓存命中"].every((token) => priceText.includes(token)),
+      priceText,
+    );
+    check(
+      "设置页有单价币种与「从参考价目填入」「查余额对账」两个入口",
+      (await evalJs("!!document.querySelector('.sf-price-row .sf-btn')")) === true &&
+        (await evalJs("[...document.querySelectorAll('.sf-btn')].some((b) => b.textContent.includes('查余额对账'))")) === true,
+    );
     await evalJs("[...document.querySelectorAll('.sf-settings-nav-item')].find((b) => b.textContent.trim() === '语音识别')?.click(); true");
     const asrOk = await waitFor("!!document.querySelector('.sf-settings-form .sf-model-select')", 5000);
     check("设置页 ASR 引擎为下拉控件（ModelSelect）", asrOk);
+    const asrPrice = await evalJs("[...document.querySelectorAll('.sf-settings-form .sf-field-label')].map((n) => n.textContent.trim()).find((t) => t.includes('元 / 分钟'))");
+    check("设置页语音识别组有按分钟的单价字段", Boolean(asrPrice), asrPrice ?? "");
     await evalJs("[...document.querySelectorAll('.sf-settings-nav-item')].find((b) => b.textContent.trim() === '提示词库')?.click(); true");
     const blocksOk = await waitFor("document.querySelectorAll('.sf-block-card').length >= 4", 6000);
     check("提示词库渲染内置提示词（≥4）", blocksOk, `${await evalJs("document.querySelectorAll('.sf-block-card').length")} 个提示词`);

@@ -13,7 +13,7 @@ import { ChevronDown, CircleAlert } from "lucide-vue-next";
 import { toast } from "@/lib/toast";
 import { Handle, Position, useVueFlow, type NodeProps } from "@vue-flow/core";
 import { ContextMenuContent, ContextMenuItem, ContextMenuPortal, ContextMenuRoot, ContextMenuSeparator, ContextMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuPortal, DropdownMenuRoot, DropdownMenuSeparator, DropdownMenuTrigger, PopoverContent, PopoverPortal, PopoverRoot, PopoverTrigger } from "reka-ui";
-import { aiPromptBlocks, blockArtifact, COMMON_EXTRACT_FIELDS, extractBiliUrl, groupPromptBlocks, MAX_EXTRACT_FIELDS, NODE_PORTS, NODE_TYPE_LABELS, PROMPT_ARTIFACT_LABELS, SEARCH_PROVIDER_LABELS, type NodePick, type NodeType, type UploadedFile, type VideoPreview } from "@scribe-flow/shared";
+import { aiPromptBlocks, blockArtifact, COMMON_EXTRACT_FIELDS, extractBiliUrl, formatSeconds, formatTokenCount, groupPromptBlocks, MAX_EXTRACT_FIELDS, NODE_PORTS, NODE_TYPE_LABELS, PROMPT_ARTIFACT_LABELS, SEARCH_PROVIDER_LABELS, type NodePick, type NodeType, type UploadedFile, type VideoPreview } from "@scribe-flow/shared";
 import ModelSelect from "../ModelSelect.vue";
 import NodeFieldLabel from "./NodeFieldLabel.vue";
 import IfCard from "./node-cards/IfCard.vue";
@@ -30,6 +30,7 @@ import { renderMarkdown } from "@/lib/markdown";
 import { cachePreview, readCachedPreview } from "@/utils/bili-preview-cache";
 import { PICKER_COPY, collapsesAfterRun, pickerKey, pickerSummary, readPickerOpen, writePickerOpen, type PickerKind } from "@/utils/bili-picker";
 import { fmtCharCount, fmtDuration } from "@/utils/run-segments";
+import { showsRunLogEntry } from "@/utils/run-log";
 import { usePromptsStore } from "@/stores/prompts";
 import { useSettingsStore } from "@/stores/settings";
 import { api } from "@/lib/api";
@@ -131,6 +132,22 @@ async function uploadFile(options: UploadRequestOptions) {
 const preview = ref<VideoPreview | null>(null);
 const previewLoading = ref(false);
 const previewError = ref("");
+
+/**
+ * 预览卡的标题。
+ *
+ * 分P名只在**稿件真有多个分P**时才配当标题：单P稿件的 `pages[0].part` 是 UP 主投稿后台里
+ * 那个分P名，实测出现过 `主2`、`中欧贸易v5`、`lv_0_20260902044520` 这类草稿名，
+ * 而 B 站自己的播放页对单P稿件根本不显示它——拿它当标题，卡片上就只剩一串内部标记。
+ * 多P时带上 `P序号`（与选集面板的行标题同一写法），否则光看名字不知道是第几P。
+ */
+const biliPreviewTitle = computed(() => {
+  const part = data.value.pageInfo?.part;
+  if (preview.value && preview.value.pages.length > 1 && part) {
+    return `P${data.value.pageInfo?.page ?? 1} · ${part}`;
+  }
+  return preview.value?.title || String(data.value.title ?? "");
+});
 let previewTimer: ReturnType<typeof setTimeout> | null = null;
 /** 链接解析的序号：链接被改过或节点换了视频时，让在飞的那次结果作废。 */
 let previewSeq = 0;
@@ -747,6 +764,35 @@ const typeIcon = computed(() => TYPE_ICONS[nodeType.value]);
 
 const statusClass = computed(() => (props.data.status ? `is-${props.data.status}` : "is-idle"));
 const sizeClass = computed(() => `sf-node--${nodeType.value.replaceAll(".", "-")}`);
+
+/**
+ * 底部状态条上的用量徽标。**只显示实测的 token 与音频秒数，不在这里折钱**——
+ * 卡片上没有位置解释"按什么单价算的"，金额出现在这里会被当成账单读。
+ * 折钱只在结果页做一次，那里能把口径写清楚。
+ */
+const usageBadge = computed(() => {
+  const usage = props.data.usage;
+  if (!usage) return "";
+  const parts: string[] = [];
+  const tokens = usage.promptTokens + usage.completionTokens;
+  if (tokens > 0) parts.push(`${formatTokenCount(tokens)} tok`);
+  if (usage.audioSeconds > 0) parts.push(formatSeconds(usage.audioSeconds));
+  // 只有次数、没有 token 的那种（联网检索、厂商不报用量的识别）：说清"调了几次"也算个交代。
+  if (parts.length === 0 && usage.calls > 0) parts.push(`${usage.calls} 次调用`);
+  return parts.join(" · ");
+});
+
+/** 用量徽标的悬停明细：输入/输出/缓存命中分开写，卡面上放不下这些。 */
+const usageDetail = computed(() => {
+  const usage = props.data.usage;
+  if (!usage) return "";
+  const lines = [`调用 ${usage.calls} 次`];
+  if (usage.promptTokens > 0) lines.push(`输入 ${usage.promptTokens} tokens`);
+  if (usage.completionTokens > 0) lines.push(`输出 ${usage.completionTokens} tokens`);
+  if (usage.cachedTokens > 0) lines.push(`其中命中缓存 ${usage.cachedTokens}`);
+  if (usage.audioSeconds > 0) lines.push(`音频 ${formatSeconds(usage.audioSeconds)}`);
+  return lines.join("\n");
+});
 
 const canViewOutput = computed(() =>
   ["source.text", "process.transcribe", "process.refine", "process.prompt", "process.merge", "process.output", "flow.if", "process.text", "process.chapter", "process.gameguide", "process.mindmap", "process.obsidian"].includes(
@@ -1451,7 +1497,7 @@ const themeOptions = [
                   <span v-if="preview.duration > 0" class="sf-node-cover-duration tnum">{{ fmtDuration(preview.duration) }}</span>
                 </div>
                 <div class="sf-node-preview-info">
-                  <span class="sf-node-preview-title" :title="data.pageInfo?.part || preview.title">{{ data.pageInfo?.part || preview.title }}</span>
+                  <span class="sf-node-preview-title" :title="biliPreviewTitle">{{ biliPreviewTitle }}</span>
                   <span class="sf-node-preview-meta tnum">
                     {{ preview.uploader }}<template v-if="preview.pages.length > 1"> · {{ preview.pages.length }}P</template>
                   </span>
@@ -1845,6 +1891,17 @@ const themeOptions = [
         <div class="sf-node-result nodrag" :class="data.status ? `is-${data.status}` : 'is-idle'">
           <span class="sf-node-result-status" />
           <span class="sf-node-result-meta tnum">{{ data.summary }}</span>
+          <button
+            v-if="showsRunLogEntry(data.status)"
+            type="button"
+            class="sf-node-result-log nodrag"
+            title="查看这次运行的日志：中断/失败的现场（断在哪、沉默了多久、服务日志路径）都在里面"
+            @click.stop="props.data.ctx?.viewLogs?.()"
+            @dblclick.stop
+          >
+            查看日志
+          </button>
+          <span v-if="usageBadge" class="sf-node-result-usage tnum" :title="usageDetail">{{ usageBadge }}</span>
           <PopoverRoot v-if="canPreview && data.delta" v-model:open="previewOpen">
             <PopoverTrigger as-child>
               <span
@@ -2319,6 +2376,34 @@ const themeOptions = [
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* 运行没成功收场（中断/失败/取消）时的日志入口：与「去设置」同一种身份——可点的字。 */
+.sf-node-result-log {
+  flex-shrink: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--color-info);
+  font: inherit;
+  font-size: 10.5px;
+  line-height: 1.4;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+
+/* 用量徽标：跟着摘要条走，摘要截断也不能把它挤掉（它是这一条里最不该被省略的信息）。 */
+.sf-node-result-usage {
+  flex-shrink: 0;
+  padding: 1px 6px;
+  border-radius: 999px;
+  font-size: 10px;
+  line-height: 1.4;
+  color: var(--color-text-tertiary);
+  background: var(--color-ink-soft);
+  border: 1px solid var(--color-border);
+  cursor: help;
 }
 
 .sf-node-result-delta {

@@ -1,6 +1,7 @@
 import type { ViewportTransform } from "@vue-flow/core";
 import { DEFAULT_DRILL_KINDS } from "@scribe-flow/shared";
 import type { AsrEngine, BiliSourceItem, DrillDifficulty, DrillKind, GraphEdge, GraphNode, NodeRunStatus, NodeType, PageRef, ResultDelta, SourceVideoItem, WorkflowGraph } from "@scribe-flow/shared";
+import type { ApiUsage } from "@scribe-flow/shared";
 import type { RunSegment } from "./run-segments";
 
 export const SCRIBE_NODE_TYPE = "scribe";
@@ -33,6 +34,8 @@ export interface NodeContextActions {
   readonly?: boolean;
   /** 打开该节点在最近一次运行中的输出结果页；传入段序号可直达对应分段。 */
   viewOutput: (segmentIndex?: number) => void;
+  /** 打开该节点在最近一次运行里的运行日志（中断/失败时卡片状态条上的入口）。 */
+  viewLogs?: () => void;
   /** 拉取该节点最近一次运行的完整文本（画布悬停预览用）；无匹配运行或无输出时返回 null。 */
   fetchNodeOutput?: () => Promise<NodePreviewOutput | null>;
   /** 卡片内表单更新节点数据。 */
@@ -117,6 +120,11 @@ export interface ScribeNodeData {
   difficulty?: DrillDifficulty;
   withExtensions?: boolean;
   focus?: string;
+  /**
+   * 最近一次运行里这个节点花掉的外部 API 用量（token / 音频秒数）。
+   * 运行态字段，和 status/summary 一样**不持久化进工程图**，只来自运行事件与运行快照。
+   */
+  usage?: ApiUsage;
   /** 运行时注入的右键菜单动作，不会持久化。 */
   ctx?: NodeContextActions;
 }
@@ -172,10 +180,10 @@ export function toFlowEdges(graph: WorkflowGraph): ScribeFlowEdge[] {
 }
 
 /**
- * 剥掉只属于运行态的字段（status / summary / preview / delta）。
+ * 剥掉只属于运行态的字段（status / summary / preview / delta / usage）。
  *
  * 这些字段只存在于内存与运行记录里：写进工程定义后，刷新出来就是「节点卡在 running」
- * 这种假状态。落盘前、把服务端图读进画布前都要剥一次。
+ * 这种假状态，用量还会变成一张早就过期的账。落盘前、把服务端图读进画布前都要剥一次。
  */
 export function stripRuntimeFields(data: Record<string, unknown>): Record<string, unknown> {
   const next: Record<string, unknown> = { ...data };
@@ -183,6 +191,7 @@ export function stripRuntimeFields(data: Record<string, unknown>): Record<string
   delete next.summary;
   delete next.preview;
   delete next.delta;
+  delete next.usage;
   return next;
 }
 

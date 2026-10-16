@@ -173,7 +173,9 @@ describe("全库重打标", () => {
     const first = await runRetag(db, aiConfig(), vault, taxonomy, { allowNewTags: false });
     expect(first.written).toBe(2);
     expect(first.calls).toBe(1); // 两篇一批
-    expect(first.usage.totalTokens).toBe(132);
+    // 用量按厂商响应的 usage 记：token 分输入/输出两笔（总 token 由它们相加，不再单独存一个字段）。
+    expect(first.usage.promptTokens).toBe(120);
+    expect(first.usage.completionTokens).toBe(12);
     expect(parseNoteTags(await readFile(join(vault, "ai.md"), "utf8")).frontmatter).toEqual(["领域/AI"]);
 
     chatCalls = 0;

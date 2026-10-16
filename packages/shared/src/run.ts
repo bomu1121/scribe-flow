@@ -2,6 +2,7 @@ import type { TagViewMode } from "./obsidian";
 import type { AsrEngine, NodeType, WorkflowGraph } from "./graph";
 import type { NutstoreSettings } from "./nutstore";
 import type { RunMediaView } from "./media";
+import type { ApiUsage, PriceCurrency } from "./usage";
 
 /**
  * 运行的整体结局。
@@ -56,6 +57,11 @@ export interface RunNodeResult {
   summary?: string;
   error?: string;
   output?: NodeOutput;
+  /**
+   * 这个节点本次（含重试）花掉的外部 API 用量。纯本地节点没有这一项。
+   * token 是实测、金额要另算（见 `estimateChatCostYuan`），界面别把它当账单。
+   */
+  usage?: ApiUsage;
 }
 
 export type NodeOutputKind = "text" | "noteBlock" | "noteDoc" | "audio";
@@ -107,6 +113,47 @@ export interface RunDetail extends RunMeta {
   inputs?: RunNodeInput[];
   /** 各来源节点保留的可播放视频附件（keepVideo）。 */
   media?: RunMediaView[];
+  /** 本次运行的用量汇总；一次外部调用都没有（纯本地链路）时为 undefined。 */
+  usageSummary?: RunUsageSummary;
+}
+
+/**
+ * 一次运行的用量汇总。
+ *
+ * 分两层是因为它们的可信度不一样：`usage` 是**实测**（厂商响应 + 厂商报的或自己量的音频秒数，
+ * 含厂商直接报的 `billedCost`），`estimatedCost` 是**估算**（用户填的单价 × 实测用量）。
+ * 界面必须把两者区分开显示。
+ */
+export interface RunUsageSummary {
+  usage: ApiUsage;
+  /**
+   * 按单价估算的金额。**只算填了单价的那部分**：模型部分按「AI 模型」的输入/输出/缓存命中单价，
+   * 音频转写部分按「语音识别」的每分钟单价。两处都没填时为 undefined，界面就只显示 token。
+   */
+  estimatedCost?: number;
+  /** 其中音频转写那部分的估算金额；没填语音单价时为 undefined。 */
+  audioCost?: number;
+  /** 估算金额的币种（用户填单价时选的）。 */
+  currency: PriceCurrency;
+  /** 折算用的单价，随汇总一起回给界面——好把「按什么算出来的」原样写出来。 */
+  prices: {
+    /** 元（或美元）/ 百万输入 token。 */
+    inputPerMillion: number;
+    /** 元（或美元）/ 百万输出 token。 */
+    outputPerMillion: number;
+    /** 元（或美元）/ 百万缓存命中输入 token；0 表示按输入价算。 */
+    cachedInputPerMillion: number;
+    /** 元（或美元）/ 分钟。 */
+    audioPerMinute: number;
+  };
+  /**
+   * 这份单价是从哪来的：
+   * - `run` —— 这次运行**开始时**快照下来的单价（改了设置页也不会动它）；
+   * - `current` —— 这次运行没留下快照（升级前的旧运行，或当时还没填单价），退回用**当前**设置页的单价算。
+   *
+   * 界面必须写出来：同一个界面上的两个数，一个能当历史看、一个是"按今天的价目表看"，不能长得一样。
+   */
+  priceSource: "run" | "current";
 }
 
 export type RunNodeLogKind = "input" | "ai-request" | "ai-response" | "info" | "error";
@@ -142,8 +189,8 @@ export type RunEvent =
   | { type: "node.progress"; runId: string; nodeId: string; progress: number; message: string }
   | { type: "node.retry"; runId: string; nodeId: string; attempt: number; maxRetries: number; error: string }
   | { type: "node.skipped"; runId: string; nodeId: string; reason: string }
-  | { type: "node.done"; runId: string; nodeId: string; summary: string; preview?: string; delta?: ResultDelta }
-  | { type: "node.error"; runId: string; nodeId: string; error: string }
+  | { type: "node.done"; runId: string; nodeId: string; summary: string; preview?: string; delta?: ResultDelta; usage?: ApiUsage }
+  | { type: "node.error"; runId: string; nodeId: string; error: string; usage?: ApiUsage }
   | { type: "node.step.done"; runId: string; nodeId: string; stepId: string; index: number; total: number; summary?: string }
   | { type: "node.step.error"; runId: string; nodeId: string; stepId: string; index: number; total: number; error: string }
   | { type: "run.done"; runId: string; status: RunStatus };
@@ -156,6 +203,20 @@ export interface AiSettings {
   baseUrl: string;
   model: string;
   hasKey: boolean;
+  /**
+   * 模型单价，**单位是「每百万 token」**——各家官网的报价页都是这个口径，用户是拿着那个页面来填的
+   * （LibreChat / Lobe Chat / Dify / Cline 也都是每百万）。
+   *
+   * **0 表示没填**，界面只显示 token 不折算金额。不内置价目表的原因见
+   * `docs/research/api-usage-cost-research.md` §5.3：聚合表的价不等于用户实际付的价（OpenRouter 是转售价、
+   * DeepSeek 分峰谷、智谱与 Moonshot 分缓存 TTL 档），显示一个错的钱比不显示钱更糟。
+   */
+  inputPricePerMillion: number;
+  outputPricePerMillion: number;
+  /** 缓存命中输入 token 的单价；**0 表示按输入价算**（不打折，偏高而非偏低）。 */
+  cachedInputPricePerMillion: number;
+  /** 单价的币种，只影响金额的显示与口径说明。 */
+  priceCurrency: PriceCurrency;
 }
 
 export interface AsrSettings {
@@ -163,6 +224,8 @@ export interface AsrSettings {
   baseUrl: string;
   model: string;
   hasKey: boolean;
+  /** 语音识别单价（元 / 分钟）；0 表示没填，界面只显示音频秒数不折算金额。 */
+  pricePerMinute: number;
 }
 
 /** 外部溯源检索渠道：智谱 BigModel 联网搜索、Tavily Search API。 */
@@ -287,12 +350,21 @@ export interface UpdateSettingsRequest {
     model?: string;
     /** 只写密钥；留空表示不修改。 */
     apiKey?: string;
+    /** 每百万 token 的价；0 表示清空（＝不折算金额）。 */
+    inputPricePerMillion?: number;
+    outputPricePerMillion?: number;
+    /** 缓存命中输入 token 的每百万价；0 表示清空（＝按输入价算）。 */
+    cachedInputPricePerMillion?: number;
+    /** 单价币种。 */
+    priceCurrency?: PriceCurrency;
   };
   asr?: {
     engine?: AsrEngine;
     baseUrl?: string;
     model?: string;
     apiKey?: string;
+    /** 元 / 分钟；0 表示清空。 */
+    pricePerMinute?: number;
   };
   search?: {
     provider?: SearchProvider;

@@ -79,6 +79,22 @@ const RETIRED_TAG_DEFAULTS: Record<string, string[]> = {
   状态: ["未整理", "已整理"],
 };
 
+/**
+ * 单价读取（元 / 百万 token、元 / 分钟）。
+ *
+ * **0 是合法值**（＝没填单价，界面只显示 token 不折算金额），所以不能写 `Number(x) || fallback`。
+ * 负数与解析不出来的输入一律当 0：宁可少显示一个数，也不要显示一个负的钱。
+ */
+function readPrice(db: AppDatabase, key: string): number {
+  const parsed = Number(raw(db, key, ""));
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
+}
+
+/** 单价入库。非有限值或负数一律落成 0（＝清空）。 */
+function writePrice(db: AppDatabase, key: string, value: number) {
+  set(db, key, String(Number.isFinite(value) && value > 0 ? value : 0));
+}
+
 function raw(db: AppDatabase, key: string, fallback: string): string {
   const row = db.select().from(appSettings).where(eq(appSettings.key, key)).get();
   return row?.value ?? fallback;
@@ -187,12 +203,17 @@ export function getSettings(db: AppDatabase): AppSettings {
       baseUrl: raw(db, "ai.baseUrl", AI_DEFAULTS["ai.baseUrl"]) ?? "",
       model: raw(db, "ai.model", AI_DEFAULTS["ai.model"]) ?? "",
       hasKey: Boolean(raw(db, "ai.apiKey", "")),
+      inputPricePerMillion: readPrice(db, "ai.inputPricePerMillion"),
+      outputPricePerMillion: readPrice(db, "ai.outputPricePerMillion"),
+      cachedInputPricePerMillion: readPrice(db, "ai.cachedInputPricePerMillion"),
+      priceCurrency: raw(db, "ai.priceCurrency", "CNY") === "USD" ? "USD" : "CNY",
     },
     asr: {
       engine: (raw(db, "asr.engine", ASR_DEFAULTS["asr.engine"]) ?? "mimo") as AsrSettings["engine"],
       baseUrl: raw(db, "asr.baseUrl", ASR_DEFAULTS["asr.baseUrl"]) ?? "",
       model: raw(db, "asr.model", ASR_DEFAULTS["asr.model"]) ?? "",
       hasKey: Boolean(raw(db, "asr.apiKey", "")),
+      pricePerMinute: readPrice(db, "asr.pricePerMinute"),
     },
     search: {
       provider: searchProviderOf(db),
@@ -326,12 +347,18 @@ export function updateSettings(db: AppDatabase, patch: UpdateSettingsRequest) {
     if (patch.ai.baseUrl) set(db, "ai.baseUrl", patch.ai.baseUrl.trim().replace(/\/+$/, ""));
     if (patch.ai.model) set(db, "ai.model", patch.ai.model.trim());
     if (patch.ai.apiKey) set(db, "ai.apiKey", patch.ai.apiKey.trim());
+    // 判 undefined 不判真值：0 是「清空单价」这个合法动作，用真值判断会让它永远清不掉。
+    if (patch.ai.inputPricePerMillion !== undefined) writePrice(db, "ai.inputPricePerMillion", patch.ai.inputPricePerMillion);
+    if (patch.ai.outputPricePerMillion !== undefined) writePrice(db, "ai.outputPricePerMillion", patch.ai.outputPricePerMillion);
+    if (patch.ai.cachedInputPricePerMillion !== undefined) writePrice(db, "ai.cachedInputPricePerMillion", patch.ai.cachedInputPricePerMillion);
+    if (patch.ai.priceCurrency !== undefined) set(db, "ai.priceCurrency", patch.ai.priceCurrency === "USD" ? "USD" : "CNY");
   }
   if (patch.asr) {
     if (patch.asr.engine) set(db, "asr.engine", patch.asr.engine);
     if (patch.asr.baseUrl) set(db, "asr.baseUrl", patch.asr.baseUrl.trim().replace(/\/+$/, ""));
     if (patch.asr.model) set(db, "asr.model", patch.asr.model.trim());
     if (patch.asr.apiKey) set(db, "asr.apiKey", patch.asr.apiKey.trim());
+    if (patch.asr.pricePerMinute !== undefined) writePrice(db, "asr.pricePerMinute", patch.asr.pricePerMinute);
   }
   if (patch.search) {
     if (patch.search.provider && (SEARCH_PROVIDERS as string[]).includes(patch.search.provider)) {

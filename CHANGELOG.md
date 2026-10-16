@@ -151,6 +151,106 @@
     [`docs/research/search-status-block-research.md`](./docs/research/search-status-block-research.md) §4 的对表。
   - **顺带对上一次账**：五份输入那张出口卡上，预告写「本次将写入 5 篇」，同一张卡的摘要写「已保存 5 篇」。
 
+- **外部 API 用量记账：每次调模型 / 转写都记 token，结果页与节点卡上看得到，金额按设置页填的单价估算**
+  （`packages/shared/src/usage.ts` 新增；`lib/ai.ts`、`lib/engine.ts`、`db/schema.ts`、`db/client.ts`、
+  `routes/runs.ts`、`lib/settings.ts`、`lib/compareReport.ts`、`lib/traceExternal.ts`、`lib/tagging.ts`；
+  前端 `ScribeNode.vue`、`FlowCanvas.vue`、`RunDetailView.vue`、`SettingsView.vue`、`CompareView.vue`、`utils/flow.ts`）。
+  起因是「每个需要调 API 的地方有没有 token / 费用统计」——查下来只有全库重打标那一处记了 token，
+  而且只在内存里、刷新即失；**画布上跑的每一次模型调用都是不记账的**。
+  - **实测与估算分清**：`promptTokens` / `completionTokens` / `cachedTokens` 取自厂商响应的 `usage` 字段，
+    `audioSeconds` 由我们自己从 WAV 头量出来（`wavDataSeconds`），这四个是**实测**；
+    金额一律是**估算**，只在设置页填了单价之后才出现，出现时连单价口径一起写出来
+    （「估算 0.88 元　按设置页单价折算：输入 2 元/百万、输出 8 元/百万、语音 0.06 元/分」）。
+  - **不内置价目表**：这个工具允许自定义 baseUrl 与任意模型名，内置价格很容易过期，而**显示一个错的钱比不显示钱更糟**。
+    设置页「AI 模型」加输入/输出单价、「语音识别」加每分钟单价，填 0 = 不折算（界面只显示 token）。
+  - **覆盖到每一个调用点**：`chatCompletion` 改成**唯一入口、必带用量**（删掉了不返回 usage 的那个版本，
+    留着迟早有人图省事用错）。AI 加工/校对/章节/导图/攻略/练一练、配方每一步、属性抽取、话题标签、
+    联网核查的规划与对照、联网检索的请求次数、语音识别——都在内。`AsrSettings` 那条路上
+    whisper 的 `json` 响应本就不带 usage，所以那支只记调用次数与音频秒数，**不按字数瞎估**。
+  - **用量挂在 ctx 上按节点累计**（`ActiveRun.usage`），所以**重试的每一次都各记一笔**：
+    第一次跑失败时钱已经花了，不该因为它没产出就把这笔账抹掉。
+  - **顺带补上一个真的会漏账的洞**：模型返回 200 但正文为空时，`chatCompletion` 原来直接抛错、
+    把已经拿到的 usage 一起丢掉了。现在把 usage 挂在错误上，引擎在失败分支里取回来记上
+    （`usageFromError`），配方步骤那条包装过错误的路径也单独接了一次。
+  - **落库**：`run_node_results` 加 5 列（`usage_calls` / `prompt_tokens` / `completion_tokens` /
+    `cached_tokens` / `audio_seconds`），旧的运行记录补成全 0 并在界面上按「没有用量」渲染——
+    全 0 不等于没花钱，只等于当时没记，所以不给它挂一个「0 tokens」的行骗人。
+  - **验证**：① 单测 `ai.test.ts` 用一个**真造出来的 WAV**（8kHz、16bit、3 秒）核对
+    `wavDataSeconds` 量出的秒数，并对非 WAV 文件断言返回 0 而不是瞎猜；② 端到端
+    `engine.usage.test.ts` 用能心算的数字（输入 1,000,000 × 2 元/百万 + 输出 250,000 × 8 元/百万 = 4 元）
+    断言从 mock 响应一路走到落库与汇总；③ 真浏览器里给一条旧运行填上用量截图核对，
+    页面显示「207.8k tokens · 音频 6分52秒 · 5 次调用 · 估算 0.88 元」，
+    与手算的 `199250×2/1e6 + 8600×8/1e6 + 412/60×0.06 = 0.8793` 一致。
+    `pnpm test` 834 项（shared 233 + server 474 + web 127）全绿，`pnpm smoke:ui` 74/74（新增 2 条单价字段的断言）。
+
+- **同一件事的续：调研「服务商与实际项目能做到什么程度」，并按调研结论重做一版**
+  （`docs/research/api-usage-cost-research.md` + 六套做法原型 `api-usage-cost-demos.html` 与 `api-cost-{a..f}.png`；
+  实现动 `packages/shared/src/usage.ts`、`apps/server/src/lib/{ai,price-lookup,balance,engine,settings}.ts`、
+  `db/{schema,client}.ts`、`routes/{settings,runs}.ts`、`apps/web/src/views/{SettingsView,RunDetailView}.vue`）。
+  起因是用户读了上一条之后追问「如果价格是不可估计，那就至少能拿到 token？还是说具体情况都要根据具体的服务商来？
+  ……是否有办法尝试去做？进行细致调研，不仅是服务商，这些现成的项目也是如此」，
+  并要求**不许凭空捏造、要调研出已有项目的成熟设计**。
+  - **调研做法**：三个并行的调研 agent 分别查服务商侧（逐家核对 usage 字段与余额/账单接口，下载了 OpenAI 官方
+    OpenAPI spec、LiteLLM 与 models.dev 的价目表实测条目数与字段）、CLI/工具类项目（LiteLLM、ccusage、aider、
+    Helicone、Cline、Roo Code）、平台类项目（Langfuse、Open WebUI、LibreChat、Lobe Chat、Dify、n8n）。
+    每条结论都带出处 URL 与可信度分级，抓不到的一律写「没查到」而不是推断补全。
+  - **先认两处错——都是上一条里我自己写的**：
+    ① **缓存命中 token 只认了 `prompt_cache_hit_tokens`**（DeepSeek 的写法），而 OpenAI / 智谱 / 火山 / 阿里 /
+    OpenRouter 放在 `prompt_tokens_details.cached_tokens`、Moonshot 放在顶层 `cached_tokens`。
+    结果是**除 DeepSeek 外每家都显示 0**——那不是"显示不出来"，是"显示了错的数"，正是 AGENTS.md 点名的反面案例。
+    ② **whisper 的注释下得太满**：我说「`/audio/transcriptions` 在 `json` 下不返回 usage」，而官方 spec 里
+    `json` 与 `verbose_json` **都**声明了 usage，后者还多一个 `duration`。那是我只对着自己写的 mock（只回 `{text}`）
+    测出来的结论。现在改成先请求 `verbose_json`、不成功再退回 `json`，拿到哪个格式就读哪个的 usage；
+    **具体哪个模型会填这个字段我没有逐模型验证过**，所以不影响转写本身。
+  - **顺带修掉一个算错的公式**：`estimateChatCost` 里没有把 `cacheWriteTokens` 从 `billableInput` 里扣掉。
+    缓存命中与写入都是 `prompt_tokens` 的**明细**（OpenAI 系口径），不扣就是同一批 token 算两遍。
+    照抄 LiteLLM 的 `regular_prompt_tokens = max(prompt_tokens - cached_tokens - cache_creation_tokens, 0)`。
+    另外把「推理 token 按输出价算」这条注释改准：它**已经含在** `completionTokens` 里，再加一遍就是算两遍。
+  - **按调研结论改的六条**（每条都能指到具体先例，见研究文档 §5）：
+    **①** 用量解析改成多形状归一，缓存命中/缓存写入/推理/音频秒数/厂商报的金额都认；
+    **②** 音频秒数优先用厂商报的（MiMo 的 `usage.seconds`、`verbose_json` 的 `duration`），量 WAV 只作兜底；
+    **③** 单价多了「缓存命中」一档与币种选择（单位仍是每百万 token，与各家官网报价页一致）；
+    **④** **单价落库快照**（`runs` 加 5 列，`createRun` 时写入）——照抄 Langfuse / LibreChat / Dify / Lobe
+    四家的共同选择：金额是历史事实，不该被之后改设置改写。没快照的旧运行退回当前价，并用 `priceSource`
+    把这个区别报给界面；
+    **⑤** **区分「厂商报的金额」与「按单价算的金额」**——照 Cline 的判断顺序
+    （provider-reported billed cost takes precedence over market cost）：有 `usage.cost` 时显示绿色「账单」徽标
+    并写明"服务商直接返回"，否则才是橙色「估算」，两者可以同时在场做对照；
+    **⑥** 设置页加**「从参考价目填入」与「余额对账」**两个网络功能。
+  - **「从参考价目填入」是什么**：拉一份公开价目表（LiteLLM 的 `model_prices_and_context_window.json`，
+    实测 2.87MB / 4180 条，每条自带 `source` 指回官方定价页），按模型名匹配一条填进输入框，**由用户确认后保存**。
+    匹配顺序抄 ccusage：原样 → 剥 provider 前缀 → 剥日期后缀 → 分隔符归一，**刻意不做模糊 contains**
+    （ccusage 为此专门维护 `exact_only` 白名单，我们这点用量不值得引那套复杂度，宁可查不到）。
+    **不用它自动算账**：聚合表的价不等于用户付的价——OpenRouter 是转售价（它的 `deepseek/deepseek-chat`
+    报 $0.257/百万，而 DeepSeek 官方同期是 off-peak $0.15 / peak $0.3）、DeepSeek 分峰谷、智谱与 Moonshot 分
+    缓存 TTL 档。**价目表也是美元价，所以填入时把币种切到美元并明说、不做汇率换算**（那要我们自己编一个汇率）。
+  - **「余额对账」是什么**：查一次账户余额，跟本地累计估算并排看，回答"我们估得准不准"。
+    只有三家有：DeepSeek `/user/balance`、Moonshot `/v1/users/me/balance`、OpenRouter `/api/v1/credits`
+    （要 management key）。**余额是账户级粒度，分摊不到某一次运行**——界面文案写明了这一点。
+    其余家如实说不支持（OpenAI / Anthropic 只有要 Admin Key 的组织级账单接口，智谱官方没有接口）。
+  - **实测**：① 真浏览器点「从参考价目填入」→ 匹配到表里的 `deepseek-flash`，填入
+    **输入 0.3 / 输出 1.2 / 缓存命中 0.006 美元每百万**，并带回官方定价页链接；与 DeepSeek 官网的峰时价
+    （$0.3 / $1.2 / $0.006）逐项对得上。
+    ② 真浏览器点「查余额对账」→ 拿到 **DeepSeek 真实余额 ¥360.68**（两次查询之间从 360.98 掉到 360.85 又到 360.68，
+    是真的在扣）。
+    ③ 给一条旧运行填上「快照价 $0.3/$1.2/$0.006 + 用量」后截图核对：页头显示
+    「416.6k tokens · 音频 6分52秒 · 5 次调用　估算 $0.08」，与手算的
+    `(250000−180000−20000)×0.3/1e6 + 180000×0.006/1e6 + 20000×0.3/1e6 + 8600×1.2/1e6 + 158000×0.3/1e6 = 0.0798` 一致；
+    同时把设置页的价改成人民币 9/9/9，**该运行仍按快照的美元价显示**——快照语义在真机上生效。
+  - **验证**：`pnpm test` 843 项（shared 238 + server 495 + web 127）全绿，其中新增
+    `engine.usage.test.ts` 的 7 条（含"三种缓存字段写法都认得出"与"改了设置页的价旧账不动"）、
+    `price-lookup.test.ts` 9 条、`balance.test.ts` 8 条；`pnpm smoke:ui` **75/75**；
+    六套 demo 的台面高度真机量过（A 134.5 / B 345.1 / C 319.5 / D 150.6 / E 314.6 / F 312.7 布局 px）。
+  - **同一轮里量页头时抓到并修掉一个自己上一轮留下的真缺陷**：结果页页头写死 `height: 48px`，
+    而标题块在有用量的运行上已经长到 88.6px —— `align-items:center` 把超出的部分顶到页头上边界之外，
+    **实测标题被切掉约 10px、用量行压在标签栏上**。上一轮那两张截图都是这种感觉"顶到边了"的样子，
+    我当时当成是裁剪没细看，这次量 `scrollHeight/clientHeight` 才露出来。改成 `min-height` 后：
+    **没有用量的运行仍是 48px（零回归）**，有用的长到 69.2px。
+  - **同一轮按调研文档 §6 的落地说明压缩了页头的口径**：原先那条完整口径常显，实测占 **18.4px**
+    页头高度。现在只常显承重的那半句（「按运行时单价 / 按当前单价」——同一个页面上"当时的价"和
+    "今天的价"不能长得一样），单价细目与缓存/推理的计入说明收进金额徽标的悬停。
+    标题块 88.6px → 68.2px。
+
 #### 变更
 
 - **溯源报告的 Obsidian 导出改版：按核查结论分组 + 详情折叠 + 平铺行**（`packages/shared/src/trace.ts` 的
@@ -268,6 +368,48 @@
     `http://127.0.0.1:5173/`——**实测旧正则对现在这行匹配不上**（会退化成逐个探候选端口），
     已改成两种 host 都认；它自己的 UI 地址也从 `localhost` 换成 `127.0.0.1`，省掉上面那次回退。
   - **验证**：`pnpm smoke:ui` 72/72 通过（该脚本默认走 `localhost:5173`，顺带覆盖了回退路径）。
+
+- **B站链接卡片不再把「分P名」当视频标题——单P稿件显示稿件标题**（`ScribeNode.vue` 的预览卡标题）。
+  - **现象**：工程《法国学生，太想上学了》里，`BV1EoJy6rEP6` 的卡片标题显示成 **`主2`**，封面/UP 主/时长都对。
+  - **不是解析错了**：卡片里存着的 `title` 是对的（`法国学生，太想上学了`），错的是显示规则——原来是
+    `data.pageInfo?.part || preview.title`，而**单P稿件的 `part` 就是 UP 主投稿后台里那个分P名**。
+    三个口径都查了（`x/web-interface/view` 的 bvid 与 aid 两种入参、`x/player/pagelist`、播放页 HTML 里的
+    `__INITIAL_STATE__`）：`pages[0].part` 一律是 `主2`，同一批响应里 `title` 与 `og:title` 都是原标题。
+    B 站自己的播放页对单P稿件根本不显示 `part`（选集列表只在多P时出现），所以我们显示的是**内部标记**。
+  - **不是个例**：扫本地库 23 个 `source.bili` 节点，`part ≠ title` 的 3 个都是这类草稿名——
+    `主2`、`中欧贸易v5`、`lv_0_20260902044520`。
+  - **现在**：多P时才用分P名，并带 `P序号`（`P3 · 第三章`，与选集面板行标题、多选卡片行标题同一写法）；
+    单P显示稿件标题。
+
+- **服务重启导致的中断：卡片上一步跳到日志、日志里有「中断现场」、进程死因落盘**（`lib/serviceLog.ts` 新增、
+  `db/client.ts` 的收尾、`index.ts` 接入；前端 `ScribeNode.vue` / `FlowCanvas.vue` / `ProjectEditorView.vue` /
+  `utils/run-log.ts`）。起因是用户第二次撞上「服务重启，运行已中断」（`prj_c63f8e91` 的 `run_eb9b5bc0`，
+  断在溯源节点「核查判断 30/34 96%」）后要求：以后这个中断必须看得到日志，而且要从卡片直接跳过去。
+  - **这次为什么重启，查实了**（上次取证卡住的那一环）：`packages/shared/src/index.ts` 的最后修改时间是
+    **13:56:19.907**，服务子进程在 **13:56:21** 被替换——相差约 1.1 秒。`node --watch` 只监视服务进程
+    自己导入的模块图，改 `apps/server` 或 `packages/shared` 的源码会重启子进程，**正在跑的运行会被掐断**。
+    上次（10-12 那次）按修改时间没扫到被改动的文件；这次窗口里正好有一串源码保存（13:56–14:02 连改 8 个文件，
+    都在模块图里），证据闭合。
+  - **实测 `node --watch` 重启不发信号**：探针进程注册 SIGTERM/SIGINT/SIGHUP 与 `exit`/`beforeExit` 后
+    被 watch 重启，**一个都没触发**（Windows + node 22，子进程被直接替换）。所以进程内钩子记不下这种重启——
+    改用**墓碑文件**：正常退出删掉 `data/logs/service.running`，新进程启动时若看见它还在，写一条
+    「上次服务未正常退出（pid…，启动于…）」。真机验证：当天我编辑服务端代码触发的 4 次 watch 重启，
+    后 3 次启动各记下一条，pid 与启动时间全部对上。
+  - **收尾时往运行日志写一条「中断现场」**（`run_node_logs`，error 级）：中断时间、断在哪个节点、
+    当时进度、该节点最后一条日志写于何时（中间沉默了多久）、已完成节点数、以及服务日志文件路径。
+    此前中断后日志的最后一条就是抓取/请求那一步，之后一片空白——「断在哪、沉默了多久」只能靠外部证据反推。
+  - **画布卡片状态条上的「查看日志」**：`cancelled` / `error` 的节点多一个文字链，点击**就地**打开
+    运行日志查看器并定位到该节点（不跳页）。判据只看节点状态（`utils/run-log.ts` 的 `showsRunLogEntry`）：
+    取消与中断在数据上同为 `cancelled`，在这里区分只会让中断漏掉入口；`done` 不给（有结果看结果）。
+  - **崩溃与「被人停的」也落盘**：`uncaughtException` 写全栈再按原语义退出（只注册这一个——实测未处理的
+    promise 拒绝会**原样**带栈走到它；再注册 `unhandledRejection` 反而会覆盖 Node 默认的崩溃行为，
+    把会崩的缺陷变成静默继续）；SIGINT/SIGTERM/SIGBREAK 各记一行，与「被替换/崩溃」区分开。
+  - **对新代码上线之后的重启生效**：`run_eb9b5bc0` 本身没有「中断现场」条目（它的收尾发生在这机制之前），
+    那一次的服务死因就是上面第一条的文件时间证据；服务日志从当天 16:24 起有记录。
+  - 验证：server 增 9 条用例（收尾日志 4 条：现场字段 / 最后日志时间 / 无节点结果不写 / 备份恢复措辞；
+    serviceLog 5 条：墓碑三态与覆盖）；隔离实例端到端（造一条 `running` 运行 → 强杀 → 重启 →
+    库里出现中断现场、服务日志出现「上次未正常退出」）；真机 Chrome 7/7（入口只在被掐断的卡上、只有 1 个、
+    点击打开查看器、定位到该节点、90 条日志）；`smoke:ui` 75/75。
 
 ### 2026-10-15
 

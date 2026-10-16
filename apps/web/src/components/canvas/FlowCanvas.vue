@@ -43,6 +43,7 @@ const emit = defineEmits<{
   "history-change": [state: { canUndo: boolean; canRedo: boolean }];
   "run-request": [request: { scope: "all" | "fromNode" | "node"; nodeId?: string }];
   "view-output": [nodeId: string, segmentIndex?: number];
+  "view-logs": [nodeId: string];
 }>();
 
 const nodesRef = ref<ScribeFlowNode[]>([]);
@@ -122,6 +123,7 @@ function ctxFor(nodeId: string) {
       return props.running;
     },
     viewOutput: (segmentIndex?: number) => emit("view-output", nodeId, segmentIndex),
+    viewLogs: () => emit("view-logs", nodeId),
     fetchNodeOutput: () => {
       if (!props.fetchNodeOutput) return Promise.resolve(null);
       return props.fetchNodeOutput(nodeId);
@@ -717,7 +719,7 @@ function applyRunEvent(event: import("@scribe-flow/shared").RunEvent) {
     const resetIds = runScopeNodeIds(nodesRef.value, edgesRef.value, event.run.scope, event.run.nodeId);
     for (const node of nodesRef.value) {
       if (resetIds.has(node.id)) {
-        queueRunPatch(node.id, { status: "idle", summary: undefined, preview: undefined, delta: undefined });
+        queueRunPatch(node.id, { status: "idle", summary: undefined, preview: undefined, delta: undefined, usage: undefined });
       }
     }
     return;
@@ -739,6 +741,7 @@ function applyRunEvent(event: import("@scribe-flow/shared").RunEvent) {
     patch.status = "done";
     patch.summary = event.summary;
     patch.delta = event.delta;
+    patch.usage = event.usage;
     if (target && target.data.nodeType !== "process.output" && target.data.nodeType !== "process.mindmap") {
       patch.preview = event.preview;
     } else {
@@ -748,6 +751,8 @@ function applyRunEvent(event: import("@scribe-flow/shared").RunEvent) {
     patch.status = "error";
     patch.summary = event.error;
     patch.delta = undefined;
+    // 失败的节点也要记用量：钱可能已经花了（断言不过、返回空、超时都会走到这里）。
+    patch.usage = event.usage;
   }
   queueRunPatch(event.nodeId, patch);
 }
@@ -803,6 +808,7 @@ function applyRunSnapshot(nodeResults: RunNodeResult[]) {
     if (result.summary) patch.summary = result.summary;
     if (result.error) patch.summary = result.error;
     patch.delta = status === "done" ? snapshotDelta(result, byId) : undefined;
+    patch.usage = result.usage;
     if (result.nodeType === "process.mindmap" || result.nodeType === "process.output") {
       patch.preview = undefined;
     } else if (result.output?.text && (result.output.kind === "text" || result.output.kind === "noteBlock" || result.output.kind === "noteDoc")) {

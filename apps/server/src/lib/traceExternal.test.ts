@@ -631,7 +631,7 @@ describe("参考资料检索（共用检索能力）", () => {
   it("没有检索词时直接返回空结果，不打请求", async () => {
     const before = searchCalls;
     const lookup = await lookupReferenceSources(zhipuConfig, ["  ", ""], { endpoints: { zhipu: zhipuEndpoint() } });
-    expect(lookup).toEqual({ text: "", queries: [], sources: [] });
+    expect(lookup).toEqual({ text: "", queries: [], sources: [], searchCalls: 0 });
     expect(searchCalls).toBe(before);
   });
 

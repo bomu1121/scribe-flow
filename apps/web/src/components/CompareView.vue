@@ -9,6 +9,8 @@ import {
   DIFF_MAX_LINES,
   compareAnalysisToMarkdown,
   compareTexts,
+  formatTokenCount,
+  type ApiUsage,
   type CompareAnalysis,
   type TextMetrics,
 } from "@scribe-flow/shared";
@@ -45,7 +47,13 @@ const report = computed(() => {
 /** 判读结果按「两侧 key」记忆：切回来看过的组合不用重跑（服务端还有一层内容指纹缓存）。 */
 interface AnalysisEntry {
   analysis: CompareAnalysis;
-  meta: { model: string; createdAt: number; truncated: { left: boolean; right: boolean; maxChars: number } };
+  meta: {
+    model: string;
+    createdAt: number;
+    truncated: { left: boolean; right: boolean; maxChars: number };
+    /** 判读用掉的 token；升级前落库的缓存行里没有这一项。 */
+    usage?: ApiUsage;
+  };
   cached: boolean;
 }
 const analyses = ref(new Map<string, AnalysisEntry>());
@@ -84,6 +92,20 @@ const analysisTruncated = computed(() => {
   const sides = [meta.truncated.left ? left.value?.label : "", meta.truncated.right ? right.value?.label : ""].filter(Boolean);
   if (sides.length === 0) return "";
   return `${sides.join("、")}超过 ${meta.truncated.maxChars.toLocaleString("zh-CN")} 字，只送了头尾部分参与判读。`;
+});
+
+/**
+ * 判读的 token 用量。**读缓存时说的是「当初那次」的量**——缓存行里存的就是那一次的账，
+ * 写「本次消耗」会让人以为又花了一遍钱。
+ */
+const analysisUsage = computed(() => {
+  const entry = analysis.value;
+  const usage = entry?.meta.usage;
+  if (!entry || !usage) return "";
+  const tokens = usage.promptTokens + usage.completionTokens;
+  const parts = [`${formatTokenCount(tokens)} tokens`];
+  if (usage.cachedTokens > 0) parts.push(`命中缓存 ${usage.cachedTokens}`);
+  return `${entry.cached ? "缓存中那一次用了" : "本次消耗 "} ${parts.join(" · ")}`;
 });
 
 async function copyAnalysis() {
@@ -244,6 +266,7 @@ const diffSummary = computed(() => {
 
         <p v-if="analysis.analysis.sameNote" class="cmp-ai-note">{{ analysis.analysis.sameNote }}</p>
         <p v-if="analysisTruncated" class="cmp-ai-note">{{ analysisTruncated }}</p>
+        <p v-if="analysisUsage" class="cmp-ai-note tnum">{{ analysisUsage }}</p>
 
         <div class="cmp-ai-foot">
           <span class="cmp-panel-hint">AI 判读，可能不准；下面的指标与逐行差异是机械统计，可作对照。</span>

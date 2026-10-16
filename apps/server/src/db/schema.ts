@@ -1,4 +1,4 @@
-import { integer, sqliteTable, text } from "drizzle-orm/sqlite-core";
+import { integer, real, sqliteTable, text } from "drizzle-orm/sqlite-core";
 
 export const projects = sqliteTable("projects", {
   id: text("id").primaryKey(),
@@ -69,6 +69,18 @@ export const runs = sqliteTable("runs", {
   error: text("error"),
   /** 运行时的工程图快照，保证历史结果页的输入/输出溯源不被后续编辑影响。 */
   graphJson: text("graph_json"),
+  /**
+   * 单价快照：运行时设置页上的单价，**由运行开始时写入**。
+   *
+   * 为什么要快照（照抄 Langfuse / LibreChat / Dify / Lobe 的共同选择）："这次运行花了多少"
+   * 是一件历史事实，不该被之后改设置改写。四处单价都可空——**null 表示当时没快照过**
+   * （升级前的旧运行，或用户当时还没填单价），界面会退回用当前单价并写明口径。
+   */
+  priceInputPerMillion: real("price_input_per_million"),
+  priceOutputPerMillion: real("price_output_per_million"),
+  priceCachedInputPerMillion: real("price_cached_input_per_million"),
+  priceAudioPerMinute: real("price_audio_per_minute"),
+  priceCurrency: text("price_currency", { enum: ["CNY", "USD"] }),
 });
 
 export type RunRow = typeof runs.$inferSelect;
@@ -88,6 +100,26 @@ export const runNodeResults = sqliteTable("run_node_results", {
   outputText: text("output_text"),
   outputPath: text("output_path"),
   outputSize: integer("output_size"),
+  /**
+   * 外部 API 用量：这个节点本次（含重试）花掉的调用次数、token 与音频秒数。
+   * 全 0 表示「这次没调外部 API，或调了但厂商没返回用量」，不表示「不花钱」。
+   * 金额由单价另算，见 packages/shared 的 `estimateChatCost`。
+   */
+  usageCalls: integer("usage_calls").notNull().default(0),
+  promptTokens: integer("prompt_tokens").notNull().default(0),
+  completionTokens: integer("completion_tokens").notNull().default(0),
+  /** 命中上下文缓存的输入 token；四种厂商写法归一后的结果。 */
+  cachedTokens: integer("cached_tokens").notNull().default(0),
+  /** 显式缓存写入的 token（OpenAI / Moonshot / OpenRouter 报）。 */
+  cacheWriteTokens: integer("cache_write_tokens").notNull().default(0),
+  /** 推理 token，按输出价计费。 */
+  reasoningTokens: integer("reasoning_tokens").notNull().default(0),
+  audioSeconds: real("audio_seconds").notNull().default(0),
+  /**
+   * 厂商在响应里**直接报的金额**（目前只有 OpenRouter 这类网关）。
+   * **null 表示厂商没报**——与「报了 0」不是一回事，所以可空而不是默认 0。
+   */
+  billedCost: real("billed_cost"),
   updatedAt: integer("updated_at").notNull(),
 });
 

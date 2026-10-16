@@ -1,6 +1,6 @@
 import type { SearchProvider, TraceExternalCheck, TraceExternalSource, TraceReport, TraceSourceAuthority } from "@scribe-flow/shared";
 import { parseTraceReport, SEARCH_PROVIDER_LABELS } from "@scribe-flow/shared";
-import type { AiConfig } from "./ai";
+import type { AiConfig, ApiUsage } from "./ai";
 import { chatCompletion } from "./ai";
 import { parseJsonLoose } from "./recipe";
 import type { SearchConfig } from "./settings";
@@ -20,6 +20,13 @@ interface CollectedSources {
   queries: string[];
   /** 候选池里各权威档位的数量（不是最终选出的那几条）。 */
   authorityCounts: Partial<Record<TraceSourceAuthority, number>>;
+  /**
+   * 这次取来源真发出去的检索请求数。
+   *
+   * 检索渠道（智谱/Tavily）按调用次数计费，所以它要跟模型 token 一起进用量统计。
+   * 计的是**请求数**不是成功数：失败的那次也照样打到对方接口上了。
+   */
+  searchCalls: number;
 }
 
 interface ExternalCheckResult {
@@ -260,7 +267,9 @@ export async function collectSources(
   const used = queries.map((query) => query.trim()).filter(Boolean).slice(0, maxQueries);
   const pool: TraceExternalSource[] = [];
   const errors: string[] = [];
+  let searchCalls = 0;
   for (const query of used) {
+    searchCalls += 1;
     try {
       pool.push(...(await searchWeb(config, query, endpoints)));
     } catch (err) {
@@ -269,7 +278,7 @@ export async function collectSources(
   }
   if (used.length > 0 && errors.length === used.length) throw new Error(errors[0]);
   const { selected, counts } = rankSources(pool, config.maxResults);
-  return { sources: selected, queries: used, authorityCounts: counts };
+  return { sources: selected, queries: used, authorityCounts: counts, searchCalls };
 }
 
 /** 换个说法判定「这次失败值不值得再试一次」：上游 4xx（密钥/配额/参数问题）重试也没用，其它当抖动处理。 */
@@ -304,6 +313,8 @@ export interface ReferenceLookup {
    * 调用方拿它核对生成产物里的「参考链接」是不是真检索到过——模型编出来的链接不该出现在产物里。
    */
   sources: TraceExternalSource[];
+  /** 本次检索发出去的请求数（计费按次数，所以要进用量统计）。 */
+  searchCalls: number;
 }
 
 /**
@@ -332,12 +343,13 @@ export async function lookupReferenceSources(
 ): Promise<ReferenceLookup> {
   const maxQueries = options.maxQueries ?? DEFAULT_REFERENCE_QUERIES;
   const used = dedupeQueries(queries).slice(0, maxQueries);
-  if (used.length === 0) return { text: "", queries: [], sources: [] };
+  if (used.length === 0) return { text: "", queries: [], sources: [], searchCalls: 0 };
   const collected = await collectSourcesWithRetry(config, used, options.endpoints ?? {}, used.length);
   return {
     text: formatReferenceText(collected.sources, used),
     queries: used,
     sources: collected.sources,
+    searchCalls: collected.searchCalls,
   };
 }
 
@@ -566,6 +578,12 @@ export interface ExternalCheckOptions {
   onFetchPage?: (info: FetchPageLog) => void | Promise<void>;
   /** 核查进度回调：几十次检索要跑几分钟，不报进度界面看着像卡死。 */
   onProgress?: (done: number, total: number, phase: "search" | "fetch" | "judge") => void;
+  /**
+   * 每次真花出去的外部调用后回调一次（模型判断、联网检索各算各的）。
+   * 走回调而不是改返回类型，是因为这个函数的结果是**报告文本**，用量不是它的产物而是副作用；
+   * 而且它内部有"检索全军覆没就提前返回"的分支，返回一个用量对象会让那些分支都要编个假值。
+   */
+  onUsage?: (usage: Partial<ApiUsage>) => void;
 }
 
 /** 送给比对模型的来源：在检索结果之上补一段「本页正文里最相关的窗口」。 */
@@ -590,7 +608,7 @@ export async function enrichTraceReportWithExternalChecks(
   signal?: AbortSignal,
   options: ExternalCheckOptions = {},
 ): Promise<string> {
-  const { endpoints = {}, onProgress, onFetchPage } = options;
+  const { endpoints = {}, onProgress, onFetchPage, onUsage } = options;
   const report = parseTraceReport(reportText);
   if (!report) {
     // 调用方把两个参数写反时会落到这里（第一个参数是原文、第二个才是报告）。此时静默返回
@@ -619,8 +637,9 @@ export async function enrichTraceReportWithExternalChecks(
   if (planDeclared) {
     checks = planFromItems(report);
   } else {
-    const planRaw = await chatCompletion(aiConfig, buildPlanPrompt(), JSON.stringify(report), signal);
-    const planParsed = parseJsonLoose(planRaw) as { checks?: { id?: string; queries?: unknown; query?: unknown }[] };
+    const planResult = await chatCompletion(aiConfig, buildPlanPrompt(), JSON.stringify(report), signal);
+    onUsage?.(planResult.usage);
+    const planParsed = parseJsonLoose(planResult.content) as { checks?: { id?: string; queries?: unknown; query?: unknown }[] };
     checks = Array.isArray(planParsed?.checks)
       ? planParsed.checks
           .map((item) => {
@@ -657,6 +676,7 @@ export async function enrichTraceReportWithExternalChecks(
     try {
       const collected = await collectSourcesWithRetry(searchConfig, check.queries, endpoints);
       searchResults[check.id] = collected;
+      onUsage?.({ calls: collected.searchCalls });
       const targets = collected.sources.filter((source) => source.url?.trim()).slice(0, FETCH_PER_CHECK);
       const pages: { url: string; page: FetchedPage }[] = [];
       for (const source of targets) {
@@ -710,8 +730,9 @@ export async function enrichTraceReportWithExternalChecks(
         searchResults: Object.fromEntries(batch.map((check) => [check.id, withPageContent(check, searchResults[check.id], pagesByCheck[check.id] ?? [], report)])),
         originalTranscriptExcerpt: inputText.slice(0, 4000),
       });
-      const compareRaw = await chatCompletion(aiConfig, buildComparePrompt(), compareInput, signal);
-      const compareParsed = parseJsonLoose(compareRaw) as { checks?: ExternalCheckResult[] };
+      const compareResult = await chatCompletion(aiConfig, buildComparePrompt(), compareInput, signal);
+      onUsage?.(compareResult.usage);
+      const compareParsed = parseJsonLoose(compareResult.content) as { checks?: ExternalCheckResult[] };
       if (Array.isArray(compareParsed?.checks)) results.push(...compareParsed.checks);
       judged += batch.length;
       onProgress?.(judged, comparable.length, "judge");

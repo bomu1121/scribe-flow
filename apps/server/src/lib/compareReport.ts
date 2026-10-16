@@ -5,7 +5,7 @@ import {
   parseCompareAnalysis,
   type CompareAnalysis,
 } from "@scribe-flow/shared";
-import { chatCompletion, type AiConfig } from "./ai";
+import { chatCompletion, type AiConfig, type ApiUsage } from "./ai";
 
 /**
  * 「对照」的 AI 差异判读。
@@ -57,6 +57,12 @@ export interface CompareRunMeta {
   truncated: { left: boolean; right: boolean; maxChars: number };
   /** 送进模型的两侧原始字数（截断前）。 */
   chars: { left: number; right: number };
+  /**
+   * 这次判读花掉的用量。缓存命中的响应是**当初那次**的用量（它本来就随 meta JSON 一起落库），
+   * 界面上要说明「这是缓存的量，本次没花钱」，别让它看起来像又花了一次。
+   * 可选是因为升级前落库的缓存行里没有这一项——那时压根没记。
+   */
+  usage?: ApiUsage;
 }
 
 /** 拼用户消息：两侧各带标签与体量，便于模型判断「哪边更完整」。 */
@@ -90,8 +96,8 @@ export async function runCompareAnalysis(
   right: CompareSide,
   signal?: AbortSignal,
 ): Promise<CompareResult> {
-  const raw = await chatCompletion(config, COMPARE_SYSTEM, buildCompareUserMessage(left, right), signal);
-  const analysis = parseCompareAnalysis(raw);
+  const result = await chatCompletion(config, COMPARE_SYSTEM, buildCompareUserMessage(left, right), signal);
+  const analysis = parseCompareAnalysis(result.content);
   return {
     analysis,
     meta: {
@@ -101,6 +107,7 @@ export async function runCompareAnalysis(
         maxChars: COMPARE_MAX_CHARS,
       },
       chars: { left: measureText(left.text).chars, right: measureText(right.text).chars },
+      usage: result.usage,
     },
   };
 }

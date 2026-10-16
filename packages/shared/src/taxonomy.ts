@@ -14,6 +14,8 @@
  * 另外 Obsidian 的标签是**大小写不敏感**的，所以去重一律按小写比对。
  */
 
+import type { ApiUsage } from "./usage";
+
 /** 词库：一级分组 → 二级标签数组。二级为空数组表示该一级自己就是可用的标签。 */
 export type TagTaxonomy = Record<string, string[]>;
 
@@ -212,15 +214,6 @@ export function addTagToTaxonomy(taxonomy: TagTaxonomy, group: string, name: str
 
 /* ------------------------------------------------------------ 全库重打标的接口形状 */
 
-/** 一次模型调用的 token 用量；厂商没返回的字段按 0 记。 */
-export interface ChatUsage {
-  promptTokens: number;
-  completionTokens: number;
-  totalTokens: number;
-  /** 命中上下文缓存的提示词 token：批量打标靠它验证"固定前缀真被缓存了"。 */
-  cachedTokens: number;
-}
-
 /** 重打标要处理哪几类笔记。 */
 export type RetagNoteMode = "full" | "incremental" | "cleanup";
 
@@ -254,7 +247,7 @@ export interface RetagReportView {
   /** 本次由 AI 补进词库的新叶子标签。 */
   learnedTags: string[];
   calls: number;
-  usage: ChatUsage;
+  usage: ApiUsage;
 }
 
 export type RetagJobStatus = "running" | "done" | "error";

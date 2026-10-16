@@ -1,6 +1,7 @@
+import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import Database from "better-sqlite3";
-import { and, eq, notInArray } from "drizzle-orm";
+import { and, desc, eq, notInArray } from "drizzle-orm";
 import { drizzle, type BetterSQLite3Database } from "drizzle-orm/better-sqlite3";
 import * as schema from "./schema";
 
@@ -43,11 +44,71 @@ function interruptedSummary(db: AppDatabase, runId: string): string {
  *
  * 为什么不是 cancelled：`cancelled` 的语义是「人点了停止」，而这里是服务自己没了——
  * 两者混在一个状态里，运行记录就会把「我明明没取消，它却写着已取消」的账赖到用户头上。
+ *
+ * 收尾的同时往运行日志写一条「中断现场」：此前中断后日志里最后一条就是抓取/请求那一步，
+ * 之后一片空白，看不出「断在哪个节点的哪个阶段、沉默了多久」——而这正是排查的人第一眼要问的。
  */
-export function recoverInterruptedRuns(db: AppDatabase) {
-  const now = Date.now();
+
+/** 一次收尾的摘要，供调用方写进服务日志（谁被收了、断在哪）。 */
+export interface InterruptedRunBrief {
+  runId: string;
+  projectId: string;
+  /** 中断时正在跑的节点；一个节点结果都没有的运行时为 undefined。 */
+  nodeId?: string;
+  nodeLabel?: string;
+  /** 该节点最后写下的进度摘要（如「核查判断 30/34 96%」）。 */
+  progress?: string;
+  /** 本次被掐断的节点数（已完成/已失败/已跳过的都不算）。 */
+  cancelledNodes: number;
+}
+
+export interface RecoverInterruptedOptions {
+  /** 中断原因的首行标签；默认「服务重启」，备份恢复等场景传自己的说法。 */
+  reason?: string;
+  /** 服务日志文件路径；给出时写进运行日志，指路进程级死因（`lib/serviceLog.ts`）。 */
+  serviceLogPath?: string;
+  /** 注入的时间戳（测试用）。 */
+  now?: number;
+}
+
+function interruptedNotice(input: {
+  at: number;
+  reason: string;
+  nodeLabel: string;
+  progress?: string;
+  lastLogAt?: number;
+  doneCount: number;
+  serviceLogPath?: string;
+}): string {
+  const time = (ts: number) => new Date(ts).toLocaleString("zh-CN", { hour12: false });
+  const lines = [`${input.reason}：运行已中断（中断时间 ${time(input.at)}）。`];
+  lines.push(`中断时正在运行「${input.nodeLabel}」${input.progress ? `：${input.progress}。` : "。"}`);
+  if (input.lastLogAt) {
+    lines.push(`该节点最后一条日志写于 ${time(input.lastLogAt)}。`);
+  }
+  lines.push(
+    input.doneCount > 0
+      ? `中断之前完成的 ${input.doneCount} 个节点的产物都还在，可以从断掉的节点重跑。`
+      : "这次运行还没有跑完任何节点。",
+  );
+  if (input.serviceLogPath) {
+    lines.push(`服务进程的退出/重启原因见服务日志：${input.serviceLogPath}`);
+  }
+  return lines.join("\n");
+}
+
+export function recoverInterruptedRuns(db: AppDatabase, options: RecoverInterruptedOptions = {}): InterruptedRunBrief[] {
+  const now = options.now ?? Date.now();
+  const reason = options.reason ?? "服务重启";
   const running = db.select().from(schema.runs).where(eq(schema.runs.status, "running")).all();
+  const briefs: InterruptedRunBrief[] = [];
   for (const row of running) {
+    // 收尾前先抓「中断时正在跑的节点」：UPDATE 之后它就不再是 running 了。
+    const nodeRows = db.select().from(schema.runNodeResults).where(eq(schema.runNodeResults.runId, row.id)).all();
+    const active = nodeRows.find((node) => node.status === "running") ?? nodeRows.sort((a, b) => b.updatedAt - a.updatedAt)[0];
+    const doneCount = nodeRows.filter((node) => node.status === "done").length;
+    const cancelledNodes = nodeRows.filter((node) => !["done", "error", "cancelled", "skipped"].includes(node.status)).length;
+
     db.update(schema.runs)
       .set({
         status: "interrupted",
@@ -62,8 +123,47 @@ export function recoverInterruptedRuns(db: AppDatabase) {
       .set({ status: "cancelled", error: RUN_INTERRUPTED_ERROR, updatedAt: now })
       .where(and(eq(schema.runNodeResults.runId, row.id), notInArray(schema.runNodeResults.status, ["done", "error", "cancelled", "skipped"])))
       .run();
+
+    if (active) {
+      const lastLog = db
+        .select({ createdAt: schema.runNodeLogs.createdAt })
+        .from(schema.runNodeLogs)
+        .where(and(eq(schema.runNodeLogs.runId, row.id), eq(schema.runNodeLogs.nodeId, active.nodeId)))
+        .orderBy(desc(schema.runNodeLogs.createdAt))
+        .limit(1)
+        .all()[0];
+      db.insert(schema.runNodeLogs)
+        .values({
+          id: randomUUID(),
+          runId: row.id,
+          nodeId: active.nodeId,
+          kind: "error",
+          content: interruptedNotice({
+            at: now,
+            reason,
+            nodeLabel: active.nodeLabel ?? active.nodeType,
+            progress: active.summary ?? undefined,
+            lastLogAt: lastLog?.createdAt,
+            doneCount,
+            serviceLogPath: options.serviceLogPath,
+          }),
+          createdAt: now,
+        })
+        .run();
+      briefs.push({
+        runId: row.id,
+        projectId: row.projectId,
+        nodeId: active.nodeId,
+        nodeLabel: active.nodeLabel ?? active.nodeType,
+        progress: active.summary ?? undefined,
+        cancelledNodes,
+      });
+    } else {
+      briefs.push({ runId: row.id, projectId: row.projectId, cancelledNodes });
+    }
   }
   reclassifyInterruptedRuns(db);
+  return briefs;
 }
 
 /**
@@ -130,7 +230,12 @@ export function ensureSchema(sqlite: Database.Database) {
       name TEXT,
       summary TEXT,
       error TEXT,
-      graph_json TEXT
+      graph_json TEXT,
+      price_input_per_million REAL,
+      price_output_per_million REAL,
+      price_cached_input_per_million REAL,
+      price_audio_per_minute REAL,
+      price_currency TEXT
     );
 
     CREATE TABLE IF NOT EXISTS run_node_results (
@@ -148,6 +253,14 @@ export function ensureSchema(sqlite: Database.Database) {
       output_text TEXT,
       output_path TEXT,
       output_size INTEGER,
+      usage_calls INTEGER NOT NULL DEFAULT 0,
+      prompt_tokens INTEGER NOT NULL DEFAULT 0,
+      completion_tokens INTEGER NOT NULL DEFAULT 0,
+      cached_tokens INTEGER NOT NULL DEFAULT 0,
+      cache_write_tokens INTEGER NOT NULL DEFAULT 0,
+      reasoning_tokens INTEGER NOT NULL DEFAULT 0,
+      audio_seconds REAL NOT NULL DEFAULT 0,
+      billed_cost REAL,
       updated_at INTEGER NOT NULL
     );
 
@@ -334,6 +447,40 @@ export function ensureSchema(sqlite: Database.Database) {
   const resultColumns = sqlite.prepare("PRAGMA table_info(run_node_results)").all() as Array<{ name: string }>;
   if (!resultColumns.some((col) => col.name === "attempts")) {
     sqlite.exec("ALTER TABLE run_node_results ADD COLUMN attempts INTEGER NOT NULL DEFAULT 1");
+  }
+
+  // 用量记账：每个节点本次（含重试）花掉的外部 API token / 音频秒数。旧的运行记录没有这些列，
+  // 补成全 0——不等于"没花钱"，只等于"当时没记"，所以结果页对全 0 的节点不显示用量行。
+  const usageColumns: [string, string][] = [
+    ["usage_calls", "INTEGER NOT NULL DEFAULT 0"],
+    ["prompt_tokens", "INTEGER NOT NULL DEFAULT 0"],
+    ["completion_tokens", "INTEGER NOT NULL DEFAULT 0"],
+    ["cached_tokens", "INTEGER NOT NULL DEFAULT 0"],
+    ["cache_write_tokens", "INTEGER NOT NULL DEFAULT 0"],
+    ["reasoning_tokens", "INTEGER NOT NULL DEFAULT 0"],
+    ["audio_seconds", "REAL NOT NULL DEFAULT 0"],
+    // billed_cost 刻意可空：null 是「厂商没报金额」，0 是「厂商报了 0」，两者不能混。
+    ["billed_cost", "REAL"],
+  ];
+  for (const [name, definition] of usageColumns) {
+    if (!resultColumns.some((col) => col.name === name)) {
+      sqlite.exec(`ALTER TABLE run_node_results ADD COLUMN ${name} ${definition}`);
+    }
+  }
+
+  // 单价快照：运行时设置页上的单价。空值表示"那次运行发生时没快照过"（升级前的旧运行），
+  // 界面会退回当前单价并写明口径——不能拿 0 冒充"当时单价是 0"，两者显示出来完全不同。
+  const priceColumns: [string, string][] = [
+    ["price_input_per_million", "REAL"],
+    ["price_output_per_million", "REAL"],
+    ["price_cached_input_per_million", "REAL"],
+    ["price_audio_per_minute", "REAL"],
+    ["price_currency", "TEXT"],
+  ];
+  for (const [name, definition] of priceColumns) {
+    if (!runColumns.some((col) => col.name === name)) {
+      sqlite.exec(`ALTER TABLE runs ADD COLUMN ${name} ${definition}`);
+    }
   }
 
   // M8-1：prompt_blocks.recipe（配方 JSON）+ run_node_logs.step（配方步骤 id）。

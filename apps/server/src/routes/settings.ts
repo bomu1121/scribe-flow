@@ -10,6 +10,8 @@ import { GENERAL_LIMITS, MAX_EXTRACT_FIELDS, NODE_TYPE_ORDER, PRUNE_TARGETS } fr
 import type { NodeType, ObsidianFieldsResult, ObsidianTagUsageResult, ObsidianVaultCheck } from "@scribe-flow/shared";
 import type { AppDatabase } from "../db/client";
 import { chatCompletion, listAiModels, transcribeAudio } from "../lib/ai";
+import { detectBalanceProvider, fetchBalance } from "../lib/balance";
+import { lookupReferencePrice } from "../lib/price-lookup";
 import { getAiConfig, getAsrConfig, getNutstoreConfig, getSearchConfig, getSettings, updateSettings, withResolvedPaths } from "../lib/settings";
 import { badRequest } from "../lib/bad-request";
 import { runFfmpeg } from "../lib/media";
@@ -26,6 +28,11 @@ const updateSchema = z.object({
       baseUrl: z.string().trim().max(500).optional(),
       model: z.string().trim().max(200).optional(),
       apiKey: z.string().max(500).optional(),
+      // 单价上限给得宽松但有限：挡住手抖多打几个 0 之后折出来的天文数字。
+      inputPricePerMillion: z.number().min(0).max(1_000_000).optional(),
+      outputPricePerMillion: z.number().min(0).max(1_000_000).optional(),
+      cachedInputPricePerMillion: z.number().min(0).max(1_000_000).optional(),
+      priceCurrency: z.enum(["CNY", "USD"]).optional(),
     })
     .optional(),
   asr: z
@@ -34,6 +41,7 @@ const updateSchema = z.object({
       baseUrl: z.string().trim().max(500).optional(),
       model: z.string().trim().max(200).optional(),
       apiKey: z.string().max(500).optional(),
+      pricePerMinute: z.number().min(0).max(100_000).optional(),
     })
     .optional(),
   search: z
@@ -170,7 +178,8 @@ export function settingsApi(db: AppDatabase, engine: RunEngine, dataDir: string)
     const config = resolveAiTestConfig(db, parsed.data ?? {});
     if (!config.apiKey) return c.json({ error: "请先填写 AI 模型密钥" }, 400);
     try {
-      const content = await chatCompletion(config, "你是连接测试助手，只回复“连接正常”。", "测试连接");
+      const result = await chatCompletion(config, "你是连接测试助手，只回复“连接正常”。", "测试连接");
+      const content = result.content;
       let models: string[] = [];
       let modelsError: string | undefined;
       try {
@@ -200,6 +209,58 @@ export function settingsApi(db: AppDatabase, engine: RunEngine, dataDir: string)
     }
   });
 
+  /**
+   * 参考价目：按模型名从一份公开价目表里查一条，供设置页「一键填入」输入框。
+   *
+   * **不写设置、不参与算账**——查到的价只是填进输入框的初始值，仍由用户确认后随表单保存。
+   * 为什么不直接拿它算账：聚合表的价不等于用户实际付的价（OpenRouter 是转售价、DeepSeek 分峰谷、
+   * 智谱与 Moonshot 分缓存 TTL 档）。理由与逐条对比见 `lib/price-lookup.ts` 顶部。
+   */
+  api.post("/ai/price-lookup", async (c) => {
+    const raw = await c.req.json().catch(() => ({}));
+    const parsed = aiTestSchema.safeParse(raw ?? {});
+    if (!parsed.success) {
+      return badRequest(c, parsed);
+    }
+    const config = resolveAiTestConfig(db, parsed.data ?? {});
+    if (!config.model.trim()) return c.json({ error: "先填模型名再查参考价" }, 400);
+    try {
+      const reference = await lookupReferencePrice(config.model, config.provider);
+      if (!reference) {
+        // 不编一个默认价——调研的七家成熟项目里没有一家这么做（见研究文档 §4.3）。
+        return c.json({ error: `参考价目里没有「${config.model}」这一条，请按账单手填` }, 404);
+      }
+      return c.json({ ok: true, reference });
+    } catch (err) {
+      return c.json({ error: err instanceof Error ? err.message : "参考价目拉取失败" }, 400);
+    }
+  });
+
+  /**
+   * 余额对账：查一次账户余额，与本地累计估算并排看，回答「我们估的准不准」。
+   *
+   * 粒度是**账户级**的，不能分摊到某一次运行——界面文案必须写明，否则会被当成"每次运行的账单"。
+   * 渠道不支持时返回一段说明而不是通用报错，因为「哪几家有」这件事本身就是有用的信息。
+   */
+  api.post("/ai/balance", async (c) => {
+    const saved = getSettings(db);
+    const provider = detectBalanceProvider(saved.ai.baseUrl);
+    if (!provider) {
+      return c.json(
+        {
+          error: `暂无「${saved.ai.provider}」的余额接口。有余额查询的是 DeepSeek、Moonshot、OpenRouter 三家；OpenAI / Anthropic 的账单接口要 Admin Key，智谱官方没有接口。`,
+        },
+        400,
+      );
+    }
+    const config = getAiConfig(db);
+    try {
+      return c.json({ ok: true, balance: await fetchBalance(provider, config.baseUrl, config.apiKey) });
+    } catch (err) {
+      return c.json({ error: err instanceof Error ? err.message : "余额查询失败" }, 400);
+    }
+  });
+
   api.post("/test/asr", async (c) => {
     const raw = await c.req.json().catch(() => ({}));
     const parsed = asrTestSchema.safeParse(raw ?? {});
@@ -213,7 +274,7 @@ export function settingsApi(db: AppDatabase, engine: RunEngine, dataDir: string)
     try {
       await runFfmpeg(["-f", "lavfi", "-i", "anullsrc=r=16000:cl=mono", "-t", "1", "-c:a", "pcm_s16le", wav, "-y"]);
       const text = await transcribeAudio(config, wav);
-      return c.json({ ok: true, content: text });
+      return c.json({ ok: true, content: text.text });
     } catch (err) {
       return c.json({ error: err instanceof Error ? err.message : "ASR 连接失败" }, 400);
     } finally {

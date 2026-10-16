@@ -101,6 +101,7 @@ pnpm check:api:chain # B站 → 校对 → 全部开放提示词分支 → Obsid
 
 - [节点卡片上的「高级设置」怎么排](./docs/research/advanced-settings-card-styles.md)
 - [AI 加工节点内部多步链：收益调研与进阶实现方案](./docs/research/ai-node-multistep-research.md)
+- [从「只记 token」到「尽量接近账单」：能拿到什么、成熟项目怎么解](./docs/research/api-usage-cost-research.md)
 - [BibiGPT 的视频笔记提示词工程：原文提取、槽位框架与实测对照](./docs/research/bibigpt-note-prompt-engineering.md)
 - [视口裁剪的副作用实测：B 站来源卡片「拖出视野再拖回」会重解析一次](./docs/research/canvas-viewport-culling-remount.md)
 - [合集选集面板怎么排](./docs/research/collection-picker-research.md)

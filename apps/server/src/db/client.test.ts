@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { RUN_INTERRUPTED_ERROR, createDatabase, recoverInterruptedRuns, type AppDatabase } from "./client";
-import { runNodeResults, runs } from "./schema";
+import { runNodeLogs, runNodeResults, runs } from "./schema";
 
 const dirs: string[] = [];
 
@@ -25,15 +25,32 @@ type NodeStatusValue = "queued" | "running" | "done" | "error" | "cancelled" | "
 /** 造一条运行与它的节点结果。形状照着「4 个观点提炼跑成 2 个就被服务重启掐断」的那次。 */
 function seed(
   db: AppDatabase,
-  options: { id: string; status: RunStatusValue; error?: string; summary?: string; nodes: NodeStatusValue[] },
+  options: {
+    id: string;
+    status: RunStatusValue;
+    error?: string;
+    summary?: string;
+    nodes: Array<NodeStatusValue | { status: NodeStatusValue; label?: string; summary?: string }>;
+  },
 ) {
   const now = Date.now();
   db.insert(runs)
     .values({ id: options.id, projectId: "p1", status: options.status, scope: "all", createdAt: now - 1000, error: options.error, summary: options.summary })
     .run();
-  options.nodes.forEach((status, index) => {
+  options.nodes.forEach((node, index) => {
+    const shape = typeof node === "string" ? { status: node } : node;
     db.insert(runNodeResults)
-      .values({ id: `${options.id}:n${index}`, runId: options.id, nodeId: `n${index}`, nodeType: "process.prompt", status, elapsedMs: 0, updatedAt: now })
+      .values({
+        id: `${options.id}:n${index}`,
+        runId: options.id,
+        nodeId: `n${index}`,
+        nodeType: "process.prompt",
+        nodeLabel: shape.label,
+        status: shape.status,
+        summary: shape.summary,
+        elapsedMs: 0,
+        updatedAt: now,
+      })
       .run();
   });
 }
@@ -120,5 +137,77 @@ describe("recoverInterruptedRuns", () => {
 
     expect(readRun(db, "r_ok")).toMatchObject({ status: "success", summary: "视频转笔记(单线).md · 6753 字" });
     expect(readRun(db, "r_bad")).toMatchObject({ status: "error", error: "转写失败：请求超时" });
+  });
+});
+
+function readLogs(db: AppDatabase, runId: string) {
+  return db.select().from(runNodeLogs).all().filter((row) => row.runId === runId);
+}
+
+describe("收尾时写进运行日志的「中断现场」", () => {
+  it("记下断在哪个节点、什么进度、已完成多少、以及去哪里看服务日志", async () => {
+    const db = await setup();
+    seed(db, {
+      id: "r_scene",
+      status: "running",
+      nodes: ["done", "done", { status: "running", label: "信息溯源 · 上网查证", summary: "核查判断 30/34 96%" }, "queued"],
+    });
+
+    const briefs = recoverInterruptedRuns(db, { serviceLogPath: "D:\\data\\logs\\service.log", now: Date.now() });
+
+    const logs = readLogs(db, "r_scene");
+    expect(logs).toHaveLength(1);
+    expect(logs[0]).toMatchObject({ kind: "error", nodeId: "n2" });
+    expect(logs[0].content).toContain("服务重启：运行已中断");
+    expect(logs[0].content).toMatch(/中断时间 \d{4}\//);
+    expect(logs[0].content).toContain("中断时正在运行「信息溯源 · 上网查证」：核查判断 30/34 96%");
+    expect(logs[0].content).toContain("中断之前完成的 2 个节点的产物都还在");
+    expect(logs[0].content).toContain("D:\\data\\logs\\service.log");
+    expect(briefs).toEqual([
+      {
+        runId: "r_scene",
+        projectId: "p1",
+        nodeId: "n2",
+        nodeLabel: "信息溯源 · 上网查证",
+        progress: "核查判断 30/34 96%",
+        cancelledNodes: 2,
+      },
+    ]);
+  });
+
+  it("带上该节点最后一条日志的时间：中间沉默了多久是排查要看的第一件事", async () => {
+    const db = await setup();
+    const now = Date.now();
+    seed(db, { id: "r_quiet", status: "running", nodes: [{ status: "running", label: "转写" }] });
+    db.insert(runNodeLogs)
+      .values({ id: "log1", runId: "r_quiet", nodeId: "n0", kind: "info", content: "抓正文示例 成功", createdAt: now - 300_000 })
+      .run();
+
+    recoverInterruptedRuns(db, { now });
+
+    const content = readLogs(db, "r_quiet").find((row) => row.kind === "error")?.content ?? "";
+    expect(content).toContain("该节点最后一条日志写于");
+  });
+
+  it("没有任何节点结果的运行只收尾状态，不写指不到节点的日志", async () => {
+    const db = await setup();
+    seed(db, { id: "r_empty", status: "running", nodes: [] });
+
+    const briefs = recoverInterruptedRuns(db);
+
+    expect(readRun(db, "r_empty").status).toBe("interrupted");
+    expect(readLogs(db, "r_empty")).toHaveLength(0);
+    expect(briefs).toEqual([{ runId: "r_empty", projectId: "p1", cancelledNodes: 0 }]);
+  });
+
+  it("备份恢复用自己的说法，不把账记成服务重启", async () => {
+    const db = await setup();
+    seed(db, { id: "r_restore", status: "running", nodes: [{ status: "running", label: "AI 校对" }] });
+
+    recoverInterruptedRuns(db, { reason: "从备份恢复" });
+
+    const content = readLogs(db, "r_restore")[0]?.content ?? "";
+    expect(content).toContain("从备份恢复：运行已中断");
+    expect(content).not.toContain("服务重启");
   });
 });

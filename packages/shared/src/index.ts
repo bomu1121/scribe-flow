@@ -13,6 +13,7 @@ export * from "./recipe";
 export * from "./templates";
 export * from "./visibility";
 export * from "./taxonomy";
+export * from "./usage";
 export * from "./obsidian";
 export * from "./video";
 export * from "./media";

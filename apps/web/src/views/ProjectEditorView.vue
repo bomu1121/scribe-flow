@@ -8,6 +8,7 @@ import { Activity, Check, Copy, Download, History, LayoutPanelTop, ListOrdered, 
 import { collectMaterialOptions, emptyGraph, type NodeType, type RunDetail, type RunMeta, type RunNodeResult, type RunScope, type RunStatus, type SourceVideoItem, type WorkflowGraph } from "@scribe-flow/shared";
 import FlowCanvas from "@/components/canvas/FlowCanvas.vue";
 import SourcePickerDialog from "@/components/canvas/SourcePickerDialog.vue";
+import RunLogDialog from "@/components/RunLogDialog.vue";
 import BiliAccountButton from "@/components/auth/BiliAccountButton.vue";
 import { api } from "@/lib/api";
 import { subscribeRunEvents } from "@/lib/sse";
@@ -68,6 +69,12 @@ const activeTaskCount = computed(() => {
 });
 const biliPickerVisible = ref(false);
 
+/** 运行日志查看器：由卡片状态条上的「查看日志」入口打开，数据取自那次运行的详情。 */
+const logDialogOpen = ref(false);
+const logDialogRunId = ref("");
+const logDialogNodeId = ref("");
+const logDialogDetail = ref<RunDetail | null>(null);
+
 /**
  * 节点最近一次输出的解析缓存。
  * 悬停预览会高频触发，不能每次都在 runs 列表上逐条拉详情；
@@ -78,6 +85,8 @@ interface CachedNodeOutputMeta {
   nodeResult: RunNodeResult;
   /** 该节点产出被拆成的分段（一个输入一份结果时才有），供预览浮层直接切换。 */
   segments: RunSegment[];
+  /** 该次运行的完整详情：日志查看器要用它的节点表/输入明细/图快照。 */
+  detail: RunDetail;
 }
 const nodeOutputMetaCache = new Map<string, CachedNodeOutputMeta | null>();
 const nodeOutputTextCache = new Map<string, string>();
@@ -723,6 +732,7 @@ async function findLatestNodeOutput(nodeId: string): Promise<CachedNodeOutputMet
         run,
         nodeResult,
         segments: buildNodeSegments(nodeId, detail.inputs ?? [], resultMap, detail.graph),
+        detail,
       };
       nodeOutputMetaCache.set(nodeId, meta);
       return meta;
@@ -778,6 +788,29 @@ async function viewOutput(nodeId: string, segmentIndex?: number) {
     void router.push({ path: `/project/${projectId.value}/run/${run.id}`, query });
   } catch (err) {
     toast.error(err instanceof Error ? err.message : "打开结果页失败");
+  }
+}
+
+/**
+ * 画布卡片状态条上的「查看日志」：不跳页，就地把运行日志查看器打开在该节点上。
+ *
+ * 与 viewOutput 同一份查找口径（findLatestNodeOutput）：「卡片说它在哪次运行里出的结果」
+ * 与「日志打开的是哪次」不会各说各话。中断（服务重启）与失败的现场都在日志里——
+ * 画布上只留了一个入口，看到入口的人点一下就应该到。
+ */
+async function viewLogs(nodeId: string) {
+  try {
+    const found = await findLatestNodeOutput(nodeId);
+    if (!found) {
+      toast.warning("没有找到包含该节点的运行记录");
+      return;
+    }
+    logDialogRunId.value = found.run.id;
+    logDialogNodeId.value = nodeId;
+    logDialogDetail.value = found.detail;
+    logDialogOpen.value = true;
+  } catch (err) {
+    toast.error(err instanceof Error ? err.message : "打开运行日志失败");
   }
 }
 </script>
@@ -862,6 +895,7 @@ async function viewOutput(nodeId: string, segmentIndex?: number) {
           @select="selectedNodeId = $event"
           @run-request="(req) => startRun(req.scope, req.nodeId)"
           @view-output="viewOutput"
+          @view-logs="viewLogs"
         />
         <div v-else class="sf-editor-loading">
           <div v-if="saveState === 'error'" class="sf-editor-loading__hint">
@@ -879,6 +913,14 @@ async function viewOutput(nodeId: string, segmentIndex?: number) {
     </div>
 
     <SourcePickerDialog v-model:open="biliPickerVisible" @confirm="onBiliPickerConfirm" />
+    <RunLogDialog
+      v-model:open="logDialogOpen"
+      :run-id="logDialogRunId"
+      :nodes="logDialogDetail?.nodeResults ?? []"
+      :initial-node-id="logDialogNodeId"
+      :inputs="logDialogDetail?.inputs ?? []"
+      :graph="logDialogDetail?.graph"
+    />
   </div>
 </template>
 

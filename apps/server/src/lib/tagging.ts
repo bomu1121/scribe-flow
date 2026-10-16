@@ -25,7 +25,9 @@ import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import type { TagTaxonomy } from "@scribe-flow/shared";
 import {
+  addApiUsage,
   addTagToTaxonomy,
+  emptyApiUsage,
   isAutoTag,
   managedTags,
   normalizeNoteTag,
@@ -39,7 +41,7 @@ import {
 } from "@scribe-flow/shared";
 import type { AppDatabase } from "../db/client";
 import { appSettings, noteTagFingerprints } from "../db/schema";
-import { chatCompletionWithUsage, type AiConfig, type ChatUsage } from "./ai";
+import { chatCompletion, type AiConfig, type ApiUsage } from "./ai";
 import { canRewriteTags, extractFeatures, parseNoteTags, upsertFrontMatterTags, walkMarkdownFiles, type VaultFile } from "./note-markdown";
 
 /** 一次调用判定多少篇：越大越省（指令与词库被摊薄），但每篇的判定质量会降。 */
@@ -107,23 +109,10 @@ export interface RetagReport {
   /** 本次由 AI 补进词库的新叶子标签。 */
   learnedTags: string[];
   calls: number;
-  usage: ChatUsage;
+  usage: ApiUsage;
   /** AI 补过叶子后的词库；调用方负责落库。 */
   taxonomy: TagTaxonomy;
   taxonomyChanged: boolean;
-}
-
-function emptyUsage(): ChatUsage {
-  return { promptTokens: 0, completionTokens: 0, totalTokens: 0, cachedTokens: 0 };
-}
-
-function addUsage(total: ChatUsage, part: ChatUsage): ChatUsage {
-  return {
-    promptTokens: total.promptTokens + part.promptTokens,
-    completionTokens: total.completionTokens + part.completionTokens,
-    totalTokens: total.totalTokens + part.totalTokens,
-    cachedTokens: total.cachedTokens + part.cachedTokens,
-  };
 }
 
 /** 内容指纹：特征 + 当前标签集合。任一变化都意味着"上次的判定不再可信"。 */
@@ -402,7 +391,7 @@ interface ClassifyOutcome {
   nextTaxonomy: TagTaxonomy;
   learnedTags: string[];
   calls: number;
-  usage: ChatUsage;
+  usage: ApiUsage;
   failed: { key: string; reason: string }[];
 }
 
@@ -425,7 +414,7 @@ export async function classifyItems(
   taxonomy: TagTaxonomy,
   options: { allowNewTags: boolean; available: string[]; signal?: AbortSignal },
 ): Promise<ClassifyOutcome> {
-  const outcome: ClassifyOutcome = { tagsById: new Map(), nextTaxonomy: taxonomy, learnedTags: [], calls: 0, usage: emptyUsage(), failed: [] };
+  const outcome: ClassifyOutcome = { tagsById: new Map(), nextTaxonomy: taxonomy, learnedTags: [], calls: 0, usage: emptyApiUsage(), failed: [] };
   if (items.length === 0 || options.available.length === 0) return outcome;
 
   const system = buildSystemPrompt(options.available);
@@ -440,10 +429,10 @@ export async function classifyItems(
 
     let raw = "";
     try {
-      const result = await chatCompletionWithUsage(aiConfig, system, user, options.signal);
+      const result = await chatCompletion(aiConfig, system, user, options.signal);
       raw = result.content;
       outcome.calls += 1;
-      outcome.usage = addUsage(outcome.usage, result.usage);
+      outcome.usage = addApiUsage(outcome.usage, result.usage);
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error);
       for (const item of batch) outcome.failed.push({ key: item.key, reason });
@@ -493,7 +482,7 @@ export interface NoteTaggingOutcome {
   topicTags: string[];
   learnedTags: string[];
   taxonomy: TagTaxonomy;
-  usage: ChatUsage;
+  usage: ApiUsage;
   calls: number;
   error?: string;
 }
@@ -586,7 +575,7 @@ export async function runRetag(
     removedTags,
     learnedTags: [],
     calls: 0,
-    usage: emptyUsage(),
+    usage: emptyApiUsage(),
     taxonomy,
     taxonomyChanged: false,
   };
@@ -603,7 +592,7 @@ export async function runRetag(
       signal: options.signal,
     });
     report.calls += outcome.calls;
-    report.usage = addUsage(report.usage, outcome.usage);
+    report.usage = addApiUsage(report.usage, outcome.usage);
     report.failed.push(...outcome.failed.map((item) => ({ relPath: item.key, reason: item.reason })));
     workingTaxonomy = outcome.nextTaxonomy;
     report.learnedTags = [...outcome.learnedTags];
@@ -620,7 +609,7 @@ export async function runRetag(
       signal: options.signal,
     });
     report.calls += outcome.calls;
-    report.usage = addUsage(report.usage, outcome.usage);
+    report.usage = addApiUsage(report.usage, outcome.usage);
     report.failed.push(...outcome.failed.map((item) => ({ relPath: item.key, reason: item.reason })));
     workingTaxonomy = outcome.nextTaxonomy;
     for (const tag of outcome.learnedTags) {

@@ -2,10 +2,34 @@ import { serve } from "@hono/node-server";
 import { createApp } from "./app";
 import { loadEnv } from "./env";
 import { createDatabase, recoverInterruptedRuns } from "./db/client";
+import { formatServiceTime, guardServiceProcess, openServiceLog } from "./lib/serviceLog";
 
 const env = loadEnv();
+// 服务日志与墓碑要赶在数据库之前就位：它记录的是「进程自己」的生死，
+// 而上一次进程怎么死的，只有这一次启动时才发现得了（见 lib/serviceLog.ts）。
+const serviceLog = openServiceLog(env.dataDir);
+guardServiceProcess(serviceLog);
 const db = createDatabase(env.dataDir);
-recoverInterruptedRuns(db);
+const interruptedRuns = recoverInterruptedRuns(db, { serviceLogPath: serviceLog.file });
+
+if (serviceLog.previousRun) {
+  const previous = serviceLog.previousRun;
+  const identity =
+    previous.pid != null
+      ? `pid=${previous.pid}${previous.startedAt != null ? `，启动于 ${formatServiceTime(previous.startedAt)}` : ""}`
+      : "墓碑文件损坏，pid 与启动时间未知";
+  serviceLog.write(
+    `上次服务未正常退出（${identity}，没有留下退出记录）。` +
+      "常见原因：改了服务端/共享包代码触发 node --watch 重启、在终端里停掉了服务、或进程崩溃。",
+  );
+}
+serviceLog.write(`服务启动（pid=${process.pid}，端口 ${env.port}）`);
+for (const brief of interruptedRuns) {
+  serviceLog.write(
+    `收尾被中断的运行 ${brief.runId}${brief.nodeLabel ? `：中断时在「${brief.nodeLabel}」${brief.progress ? `，${brief.progress}` : ""}` : "（没有任何节点结果）"}`,
+  );
+}
+
 const app = createApp(db, {
   dataDir: env.dataDir,
   uploadsDir: env.uploadsDir,
@@ -36,6 +60,7 @@ const server = serve(
   (info) => {
     console.log(`[server] ScribeFlow 后端已启动：http://localhost:${info.port}`);
     console.log(`[server] 数据目录：${env.dataDir}`);
+    console.log(`[server] 服务日志：${serviceLog.file}`);
   },
 );
 

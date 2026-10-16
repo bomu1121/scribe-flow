@@ -120,7 +120,13 @@ POST /api/projects/:id/runs
 | --- | --- | --- |
 | 停止 | `engine.stop` | 内存标记 `cancelled` + abort 所有在途 HTTP；节点在下一个检查点退出，落 `cancelled` |
 | 强制结束 | `engine.forceStop` | 直接把 run 与未完成节点改 `cancelled` 并补发 `run.done`，即使运行已不在内存中 |
-| 服务重启 | `recoverInterruptedRuns`（`db/client.ts`，启动时调用） | 把残留的 `running` run 与节点标记为 `cancelled`，错误写「服务重启，运行已中断」 |
+| 服务重启 | `recoverInterruptedRuns`（`db/client.ts`，启动时调用） | 把残留的 `running` run 标记为 `interrupted`、未完成节点标记 `cancelled`，并往 `run_node_logs` 写一条「中断现场」（断在哪个节点、当时进度、该节点最后一条日志时间、服务日志路径） |
+
+**「服务为什么重启」写在 `data/logs/service.log`**（`lib/serviceLog.ts`）：进程启动 / 退出 / 收到信号 / 崩溃栈各记一行，
+并用墓碑文件 `service.running` 检测「上次没正常退出」——上一个进程正常退出时会删掉它，新进程启动时若看见它还在，
+说明上次是被替换 / 强杀 / 崩溃收走的。要墓碑是因为**实测 `node --watch` 重启子进程时子进程收不到信号、
+也不走 `exit`**（直接被替换），「服务在我眼皮底下没了」这件事只有下一个进程记录得了。
+中断收尾写进运行日志的那条「中断现场」末尾带着这个文件路径，排查从日志查看器里就能接着走。
 
 **没有断点续跑**：中断后要么整体重跑、要么用结果页的「重跑」按节点重跑。同工程同时只允许一个运行；
 运行中禁止删除工程与运行；坚果云恢复前也要求没有在跑的运行。
@@ -159,8 +165,8 @@ POST /api/projects/:id/runs
 | --- | --- | --- |
 | 工程 | `projects` | `graph_json`（工作流定义）、`folder_id` / `position`（工作台树与排序）、`schema_version` |
 | 工程 | `folders` | 多级文件夹树（`parent_id` / `position`） |
-| 运行 | `runs` | `status` / `scope` / `node_id` / `graph_json`（**运行时快照**）/ 耗时与摘要 |
-| 运行 | `run_node_results` | 主键 `${runId}:${nodeId}`；`status` / `attempts` / `output_kind` / `output_text` / `output_path` |
+| 运行 | `runs` | `status` / `scope` / `node_id` / `graph_json`（**运行时快照**）/ 耗时与摘要；**单价快照** `price_input_per_million` 等 5 列（见下） |
+| 运行 | `run_node_results` | 主键 `${runId}:${nodeId}`；`status` / `attempts` / `output_kind` / `output_text` / `output_path`；用量列 `usage_calls` / `prompt_tokens` / `completion_tokens` / `cached_tokens` / `cache_write_tokens` / `reasoning_tokens` / `audio_seconds` / `billed_cost`（见下） |
 | 运行 | `run_node_inputs` | 每个输入一行；`item_key`（段标识）/ `excluded` / `result_text` |
 | 运行 | `run_node_logs` | `kind`（input / ai-request / ai-response / info / error）/ `step` / `input_index` |
 | 配置 | `app_settings` | KV（键名形如 `ai.apiKey`、`nutstore.password`），密钥明文存库 |
@@ -178,6 +184,33 @@ POST /api/projects/:id/runs
 
 **没有外键约束**：连接上开了 `foreign_keys=ON`，但 schema 里没有声明任何 `references`，
 所以级联删除靠代码（如删工程时按 `project_id` 清理运行与产物）。
+
+**用量记账**：`run_node_results` 上那 8 个用量列由 `RunEngine` 的 `addNodeUsage` 在**每次真发出去请求之后**
+累加（挂在 `ActiveRun.usage` 这个 `nodeId → ApiUsage` 的 Map 上），`updateNode` 每次落库时把当前累计值写进去。
+字段名要认好几家的写法——缓存命中在 `prompt_tokens_details.cached_tokens`（OpenAI / 智谱 / 火山 / 阿里 /
+OpenRouter）、顶层的 `prompt_cache_hit_tokens`（DeepSeek）、顶层的 `cached_tokens`（Moonshot）三处都有，
+归一逻辑在 `lib/ai.ts` 的 `usageOf`。四条容易踩的边界：
+
+- **重试各记一笔**：累加发生在 `runNodeWithRetry` 的每次尝试里，所以一次失败的重跑会让这个节点记两次账
+  ——钱确实花了两次。
+- **失败也要记**：`chatCompletion` 在「返回 200 但正文为空」时把已经拿到的 `usage` 挂在抛出的错误上，
+  引擎用 `usageFromError` 取回来。网络层失败拿不到响应体，那一笔就记不上，这是已知的下限。
+- **`billed_cost` 可空**：厂商在响应里**直接报的金额**（目前只有 OpenRouter 这类网关）落在这一列，
+  `null` 是「厂商没报」、`0` 是「厂商报了 0」，两者不能混。界面据此把"账单"与"估算"分开显示。
+- **音频秒数优先用厂商报的**（MiMo 的 `usage.seconds`、`verbose_json` 的 `duration`），
+  都没有才退回 `wavDataSeconds` 从 WAV 头量。
+
+**单价快照**：`runs` 的 5 个 `price_*` 列在 `createRun` 时写入，值来自那一刻的设置页。
+`runUsageSummary` 优先用快照算金额，只有快照全空（升级前的旧运行）才退回当前设置页的单价，
+并用 `RunUsageSummary.priceSource` 把这个区别报给界面——同一个页面上，"当时的价"和"今天的价"不能长得一样。
+这条照抄 Langfuse / LibreChat / Dify / Lobe 的共同选择（四家都做快照），
+理由与出处见 [research/api-usage-cost-research.md](./research/api-usage-cost-research.md) §4.4。
+
+单价存在 `app_settings` 的 `ai.inputPricePerMillion` / `ai.outputPricePerMillion` /
+`ai.cachedInputPricePerMillion` / `ai.priceCurrency` 与 `asr.pricePerMinute`，单位一律是**每百万 token**
+（各家官网报价页的口径），读取时 0 与任何非法值都归一成 0（＝不折算金额）。
+**仓库里不内置任何价目表**；设置页的「从参考价目填入」是拉第三方的 LiteLLM 表把输入框填上、
+由用户确认后保存，不参与算账。理由见 [usage.md 的 §6.1](./usage.md)。
 
 ## 6. 媒体库（视频模块的底子）
 
@@ -221,7 +254,7 @@ ASR 支持两种引擎——MiMo 走 `input_audio` data URL（超过 7MB 自动�
 <!-- docs-gen:api:start -->
 <!-- 由 `pnpm docs:gen` 从 app.ts 与 routes/*.ts 生成，请勿手改 -->
 
-共 **86** 条接口。路径即挂载后的完整路径，可直接调用（Hono 会把子应用的 `/` 合并为前缀本身，故无尾斜杠）；
+共 **88** 条接口。路径即挂载后的完整路径，可直接调用（Hono 会把子应用的 `/` 合并为前缀本身，故无尾斜杠）；
 本服务**没有任何认证中间件**，CORS 默认放开，仅适合自托管或本机使用。
 
 | 方法 | 路径 | 实现 |
@@ -298,6 +331,8 @@ ASR 支持两种引擎——MiMo 走 `input_audio` data URL（超过 7MB 自动�
 | PUT | `/api/settings` | `routes/settings.ts` 的 `settingsApi` |
 | POST | `/api/settings/test/ai` | `routes/settings.ts` 的 `settingsApi` |
 | POST | `/api/settings/ai/models` | `routes/settings.ts` 的 `settingsApi` |
+| POST | `/api/settings/ai/price-lookup` | `routes/settings.ts` 的 `settingsApi` |
+| POST | `/api/settings/ai/balance` | `routes/settings.ts` 的 `settingsApi` |
 | POST | `/api/settings/test/asr` | `routes/settings.ts` 的 `settingsApi` |
 | POST | `/api/settings/test/search` | `routes/settings.ts` 的 `settingsApi` |
 | GET | `/api/settings/obsidian/folders` | `routes/settings.ts` 的 `settingsApi` |
