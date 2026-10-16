@@ -44,6 +44,8 @@ const FILES = [
   ["b1", "B1-只标真问题（未找到出处与有反证才上暖色）.md", "B1 · 只标真问题（暖色只留给未找到出处与反证）"],
   ["b2", "B2-全中性（核查块一律蓝、速览是唯一有色处）.md", "B2 · 全中性（核查块一律蓝）"],
   ["b3", "B3-不用 callout（零彩色，代价是不能折叠）.md", "B3 · 不用 callout（零彩色，不能折叠）"],
+  // B4：在 B1 的配色上把缩进也去掉（用户反馈「太狭窄」）
+  ["b4", "B4-平铺行（不缩进，引文在前；代价是行数变多）.md", "B4 · 平铺行（不缩进，引文在前）"],
   ["c", "C-语法用满（来源用脚注）.md", "C · 语法用满（来源用脚注）"],
   ["d", "D-只改样式（cssclasses）.md", "D · 只改样式（cssclasses + 片段）"],
   ["e", "E-折叠索引（一条一个块）.md", "E · 折叠索引（一条一个块）"],
@@ -296,7 +298,7 @@ function buildPage() {
   // 整篇那条只截首屏：三份整篇都两万像素上下，出一张两万六千像素高的图没法看，
   // 总高度以量出来的数为准（下面 measured 里那三行）。
   // 九套都进这一条：整篇高度与色彩负荷都是「这份笔记读起来什么样」的直接答案，缺一套就少一格
-  const fullStrip = ["baseline", "a", "b", "b1", "b2", "b3", "c", "d", "e"]
+  const fullStrip = ["baseline", "a", "b", "b1", "b2", "b4", "b3", "c", "d", "e"]
     .map(
       (id) =>
         `<div class="demo-col" data-shot="trace-export-full-${id}">${panel(`${by[id].label}　（只截首 700px）`, render(by[id].body), true)}</div>`,
@@ -305,7 +307,7 @@ function buildPage() {
   const cFoot = panel("C · 文末：37 条来源收成脚注", render(by.c.chunkFoot), true);
   const dTail = panel("D · 同一份 Markdown + 一行 cssclasses，靠片段改观感（条目区）", render(by.d.chunkItem, { extraClass: " scribeflow-trace" }), true);
   // 色彩那一档：同一段（首屏区 + 前三条），四档只差用了多少颜色
-  const toneStrip = ["b", "b1", "b2", "b3"]
+  const toneStrip = ["b", "b1", "b2", "b4"]
     .map((id) => panel(`${by[id].label}　（首屏区 + 前三条，跨两个分组；每格最多 1300px）`, render(by[id].chunkToneSample), true))
     .join("\n");
 
@@ -455,15 +457,33 @@ try {
   // 展开态：把所有折叠 callout 打开再量一遍（同一页，只改 open 属性）
   // 量完必须逐条还原：页面里本来就有「设计上就展开」的面板（②里的「A · 点开之后」），
   // 一律 false 收尾会把它一起关掉，后面量到的与截图里的都不是它该有的样子（踩过一次）。
+  //
+  // 顺便在同一趟里量**行宽**：折叠起来的 callout 里那些文字没有布局，宽度是 0（第一版就量到一片 0），
+  // 所以行宽必须在「全展开」这趟量——它问的是「点开之后，正文实际占多宽」。
   const expanded = await send("Runtime.evaluate", {
     expression: `(() => {
       const all = [...document.querySelectorAll("details.callout")];
       const before = all.map((el) => el.open);
       all.forEach((el) => { el.open = true; el.querySelector(".callout-fold")?.classList.remove("is-collapsed"); });
-      const lanes = [...document.querySelectorAll(".demo-col")].map((el) => ({
-        id: el.dataset.shot,
-        expanded: Math.round(el.querySelector(".markdown-preview-view").getBoundingClientRect().height),
-      }));
+      const lanes = [...document.querySelectorAll(".demo-col")].map((el) => {
+        const mv = el.querySelector(".markdown-preview-view");
+        const base = mv.getBoundingClientRect().width;
+        const blocks = [...mv.querySelectorAll("p, li, blockquote")]
+          .filter((e) => e.textContent.replace(/\\s/g, "").length >= 20)
+          .map((e) => ({ w: e.getBoundingClientRect().width, tag: e.tagName.toLowerCase() + (e.closest(".callout") ? "（callout 内）" : "") , text: e.textContent.trim().slice(0, 18) }));
+        const sorted = [...blocks].sort((a, b) => a.w - b.w);
+        const q = (p) => Math.round(sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * p))]?.w ?? 0);
+        const narrowest = sorted[0];
+        return {
+          id: el.dataset.shot,
+          expanded: Math.round(mv.getBoundingClientRect().height),
+          base: Math.round(base),
+          blocks: blocks.length,
+          med: q(0.5),
+          minBlock: Math.round(narrowest?.w ?? 0),
+          minWhere: narrowest ? narrowest.tag : "",
+        };
+      });
       all.forEach((el, i) => {
         el.open = before[i];
         el.querySelector(".callout-fold")?.classList.toggle("is-collapsed", !before[i]);
@@ -472,7 +492,8 @@ try {
     })()`,
     returnByValue: true,
   });
-  const expandedMap = Object.fromEntries(JSON.parse(expanded.result.value).map((l) => [l.id, l.expanded]));
+  const lanesFull = JSON.parse(expanded.result.value);
+  const expandedMap = Object.fromEntries(lanesFull.map((l) => [l.id, l.expanded]));
 
   // 速览区与单条的高度（各候选同一段）
   const parts = await send("Runtime.evaluate", {
@@ -533,10 +554,19 @@ try {
     })()`,
     returnByValue: true,
   });
-  lines.push("\\n=== 色彩负荷（折叠态：着色容器面积 / 正文面积；暖色 = 绿/橙/红那一类）===");
+  lines.push("\n=== 色彩负荷（折叠态：着色容器面积 / 正文面积；暖色 = 绿/橙/红那一类）===");
   for (const t of JSON.parse(tone.result.value)) {
     const types = Object.entries(t.byType).map(([k, v]) => `${k}×${v}`).join(" ");
     lines.push(`${t.label.padEnd(30)} 着色面积 ${String(t.coloredShare).padStart(5)}% · 暖色容器 ${String(t.warm).padStart(2)} 个　[${types}]`);
+  }
+
+  // 行宽：用「全展开」那趟量到的数（折叠态里 callout 内的文字没有布局，宽度会全是 0）
+  lines.push("\n=== 文字块行宽（全展开态；基准 = 正文栏宽 700px）===");
+  for (const w of lanesFull) {
+    const label = lanes.find((l) => l.id.replace("trace-export-full-", "") && l.id.endsWith(w.id))?.label ?? w.id;
+    lines.push(
+      `${label.padEnd(30)} 中位 ${w.med}px（${((w.med / w.base) * 100).toFixed(0)}%）· 最窄 ${w.minBlock}px（${((w.minBlock / w.base) * 100).toFixed(0)}%，${w.minWhere}）· 块数 ${w.blocks}`,
+    );
   }
   lines.push("\n=== 首屏区（正文开头 → 第一条）===");
   for (const p of JSON.parse(parts.result.value)["trace-export-overview"]) lines.push(`${p.label.padEnd(42)} ${p.h}px`);

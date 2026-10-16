@@ -13,6 +13,11 @@
  * 未在真实 Obsidian 里验证过（本轮交付的是预览近似，见调研文档的诚实清单）。
  */
 
+/* 栏宽：Obsidian 默认正文栏 700px（设置 → 编辑器 →「可读行宽」）。
+ * 「看着窄」有一半来自这个默认值——网页版结果页的正文栏是 716px 且没有 callout 内边距。
+ * 想让报告读起来更宽，把下面这行的注释去掉（或直接关掉「可读行宽」）： */
+:root { /* --file-line-width: 860px; */ }
+
 /* 条目标题（`### 11. [数据 · 待核实] …`）：做成卡片，左侧一条强调线 */
 .scribeflow-trace .markdown-preview-section h3,
 .scribeflow-trace h3 {

@@ -97,19 +97,41 @@ function sourceLine(source: TraceExternalSource): string {
   return `${authority}${publisher}${title}${url}${noFetch}`;
 }
 
-/** 联网核查的全部详情，逐行加 `> ` 前缀后塞进 callout。 */
-function externalCalloutBody(item: TraceItem): string[] {
+/** 联网核查的全部详情，逐行加 `> ` 前缀后塞进 callout。`flat` = 不用列表标记（用户反馈「太狭窄」）。 */
+function externalCalloutBody(item: TraceItem, flat = false): string[] {
   const ext = item.external!;
   const lines: string[] = [];
   if (ext.summary?.trim()) lines.push(ext.summary.trim(), "");
   for (const source of ext.sources ?? []) {
-    lines.push(`- ${sourceLine(source)}`);
-    for (const quote of source.quotes ?? []) lines.push(`  - 原文：“${quote.text.trim()}”${quote.note?.trim() ? ` —— ${quote.note.trim()}` : ""}`);
+    if (flat) {
+      // 列表标记 + 缩进会吃掉行宽：来源名与引文各占一行、都不缩进，最长的引文拿满栏宽
+      lines.push(`**${source.title?.trim() ?? source.url?.trim() ?? "来源"}**　${sourceMeta(source)}`);
+      for (const quote of source.quotes ?? []) lines.push(`　原文：“${quote.text.trim()}”`);
+      lines.push("");
+    } else {
+      lines.push(`- ${sourceLine(source)}`);
+      for (const quote of source.quotes ?? []) lines.push(`  - 原文：“${quote.text.trim()}”${quote.note?.trim() ? ` —— ${quote.note.trim()}` : ""}`);
+    }
   }
   const queries = queriesOf(item);
-  if (queries.length > 0) lines.push("", `检索词：${queries.join(" / ")}`);
-  if (ext.note?.trim()) lines.push("", `说明：${ext.note.trim()}`);
+  if (queries.length > 0) lines.push("", `**检索词**：${queries.join(" / ")}`);
+  if (ext.note?.trim()) lines.push("", `**说明**：${ext.note.trim()}`);
   return lines;
+}
+
+/** `判断依据：…` → `**判断依据：**…`；没有冒号的（不该出现，但别写出 `****`）原样返回。 */
+function boldLabel(line: string): string {
+  const at = line.indexOf("：");
+  if (at < 0) return line;
+  return `**${line.slice(0, at + 1)}**${line.slice(at + 1)}`;
+}
+
+/** 平铺版的来源行：标题已提到行首，这里只留权威度与链接。 */
+function sourceMeta(source: TraceExternalSource): string {
+  const authority = `[${source.authority ? TRACE_SOURCE_AUTHORITY_LABELS[source.authority] : "未判定"}]`;
+  const link = source.url?.trim() ? `<${source.url.trim()}>` : "（本次检索未返回链接）";
+  const noFetch = source.fetched === false && source.url ? "（本轮未抓正文）" : "";
+  return `${authority} ${link}${noFetch}`;
 }
 
 /** 核查结论做成 callout 的标题（「有原文引证」这类也带上，正文里就不再重复一遍状态）。 */
@@ -118,10 +140,18 @@ function externalCalloutTitle(item: TraceItem): string {
   return `联网核查 · ${statusOf(item)}${evidence}`;
 }
 
-/** 原文依据的行（与基线一致：`（来源 · 定位）“引文”`）。 */
-function evidenceLines(item: TraceItem): string[] {
+/**
+ * 原文依据的行。
+ * - 默认（基线口径）：`- （来源 · 定位）“引文”`——出处在前，读起来先知道是哪一段。
+ * - `flat`：**引文在前、出处用破折号跟在后面**（Readwise 的导出就是这个顺序），
+ *   且不用列表标记——引文那行能拿到满栏宽，这对「读得下去」比「先看出处」重要。
+ */
+function evidenceLines(item: TraceItem, flat = false): string[] {
   if (item.evidence.length === 0) return ["_本条无直接原文引用，需结合备注判断。_"];
-  return item.evidence.map((e) => `- （${e.source?.name ?? "原文"} · ${e.locator ?? e.source?.locator ?? "未标注"}）“${e.quote.trim()}”`);
+  return item.evidence.map((e) => {
+    const ref = `${e.source?.name ?? "原文"} · ${e.locator ?? e.source?.locator ?? "未标注"}`;
+    return flat ? `“${e.quote.trim()}”——（${ref}）` : `- （${ref}）“${e.quote.trim()}”`;
+  });
 }
 
 /** 归因 / 判断依据 / 备注 / 提及 —— 四类旁注，各候选的承载方式不同，内容取这里。 */
@@ -269,6 +299,11 @@ interface Tone {
   uncertainty: string;
   /** false = 完全不用 callout。 */
   callouts: boolean;
+  /**
+   * 平铺：来源与原文依据都不用列表标记、引文提到行首（用户反馈「太狭窄」——
+   * 容器缩进 + 列表标记层层吃行宽，最长的引文只剩约六成栏宽）。
+   */
+  flat?: boolean;
 }
 
 function buildGrouped(r: TraceReport, tone: Tone): string {
@@ -298,17 +333,20 @@ function buildGrouped(r: TraceReport, tone: Tone): string {
       const warm = item.external ? tone.warm(item.external.status) : undefined;
       const checkType = warm ?? tone.neutral;
       if (item.external && tone.callouts) {
-        out.push(...callout(checkType, externalCalloutTitle(item), externalCalloutBody(item)));
+        out.push(...callout(checkType, externalCalloutTitle(item), externalCalloutBody(item, tone.flat)));
       } else if (item.external) {
         // 不用 callout：核查信息变成「加粗标签 + 缩进 bullet」，结构靠缩进而不是容器
-        out.push(`**联网核查 · ${statusOf(item)}${item.external.evidence ? ` · ${TRACE_EVIDENCE_LABELS[item.external.evidence]}` : ""}**`, "", ...externalCalloutBody(item), "");
+        out.push(`**联网核查 · ${statusOf(item)}${item.external.evidence ? ` · ${TRACE_EVIDENCE_LABELS[item.external.evidence]}` : ""}**`, "", ...externalCalloutBody(item, tone.flat), "");
       }
       if (tone.callouts) {
-        out.push(...callout(tone.evidence, "原文依据", evidenceLines(item)));
+        out.push(...callout(tone.evidence, "原文依据", evidenceLines(item, tone.flat)));
       } else {
-        out.push("**原文依据**", "", ...evidenceLines(item), "");
+        out.push("**原文依据**", "", ...evidenceLines(item, tone.flat), "");
       }
-      for (const line of [side.attribution, side.basis, side.note, ...side.mentions].filter(Boolean)) out.push(`- ${line}`);
+      // 旁注：平铺版把字段名加粗（网页版里它们是彩色标签，这里是导出里能做到的「指引」）
+      for (const line of [side.attribution, side.basis, side.note, ...side.mentions].filter(Boolean)) {
+        out.push(tone.flat ? boldLabel(line) : `- ${line}`);
+      }
       out.push("");
     }
   };
@@ -515,6 +553,19 @@ const files: [string, string][] = [
   [
     "B2-全中性（核查块一律蓝、速览是唯一有色处）.md",
     buildGrouped(report, { warm: () => undefined, neutral: "info", evidence: "quote", mergeUncertainties: true, uncertainty: "info", callouts: true }),
+  ],
+  // B4：在 B1 的配色上把「缩进」也去掉——来源与引文都用平铺行，引文在前、出处跟后
+  [
+    "B4-平铺行（不缩进，引文在前；代价是行数变多）.md",
+    buildGrouped(report, {
+      warm: (status) => (status === "not_found" ? "failure" : status === "contradicted" ? "danger" : undefined),
+      neutral: "info",
+      evidence: "quote",
+      mergeUncertainties: true,
+      uncertainty: "question",
+      callouts: true,
+      flat: true,
+    }),
   ],
   [
     "B3-不用 callout（零彩色，代价是不能折叠）.md",
