@@ -167,6 +167,15 @@ interface ActiveRun {
   outputs: Map<string, NodeOutput[]>;
   /** 条件分支节点执行后的分支结果（true/false），用于下游按 handle 取数与跳过。 */
   branches: Map<string, "true" | "false">;
+  /**
+   * 历史产物所属运行时的工程图快照（runId → 图），按运行缓存。
+   *
+   * 用途只有一个：**归因要按「产物产出时的画布」算，而不是现在的画布**。
+   * 同一次运行内的产物就是 `active.graph`，不查这里。
+   */
+  graphSnapshots: Map<string, WorkflowGraph>;
+  /** 用户已确认「按旧素材继续」（换了素材但只重跑下游）：日志里要写明，别让它看起来像没发现。 */
+  staleMaterialConfirmed: boolean;
   nodeAborts: Map<string, AbortController>;
   startedAt: number;
 }
@@ -196,6 +205,13 @@ interface ResolvedInput {
   sourceMeta?: InputSourceMeta;
   /** 该输入承载的素材段标识（用于把身份传给下游，以及按挑选过滤）。 */
   itemKey?: string;
+  /**
+   * 这份产物**产出时**的工程图快照；同一次运行内的产物为空（等于 `active.graph`）。
+   *
+   * 下游（尤其写 Obsidian frontmatter 的作者/链接/发布日期）必须按它取来源：
+   * 卡片后来被换成别的视频时，读当前图会把笔记挂到另一条视频头上。
+   */
+  sourceGraph?: WorkflowGraph;
 }
 
 interface ResolvedInputs {
@@ -501,7 +517,14 @@ export class RunEngine {
   }
 
   /** 启动一次运行：run 行由调用方创建。 */
-  start(runId: string, projectId: string, graph: WorkflowGraph, scope: RunScope, nodeId?: string): void {
+  start(
+    runId: string,
+    projectId: string,
+    graph: WorkflowGraph,
+    scope: RunScope,
+    nodeId?: string,
+    options: { staleMaterialConfirmed?: boolean } = {},
+  ): void {
     // 与路由侧预检共用同一份口径（`nodeIdsForScope`）：预检放行的集合就是这里执行的集合。
     const nodeIds = nodeIdsForScope(graph, scope, nodeId);
     const order = this.topological(graph, nodeIds);
@@ -513,6 +536,8 @@ export class RunEngine {
       scope,
       nodeIds,
       order,
+      graphSnapshots: new Map(),
+      staleMaterialConfirmed: options.staleMaterialConfirmed === true,
       cancelled: false,
       finished: false,
       listeners: new Set(),
@@ -771,6 +796,27 @@ export class RunEngine {
 
   /** 单节点/局部运行：不在本次运行内的上游节点，从当前工程的最近一次成功结果取输入（支持多输出节点）。 */
   /**
+   * 某次运行开始时的工程图快照（`runs.graph_json`，创建运行时落库、之后不再变），按运行缓存。
+   *
+   * 只用于归因：读**产物产出时**的卡片，而不是现在的卡片。
+   * 快照读不到时返回 `undefined`，调用方退回当前图——宁可归因按现状算，也不要让整个节点失败。
+   */
+  private async graphOfRun(active: ActiveRun, runId: string): Promise<WorkflowGraph | undefined> {
+    const cached = active.graphSnapshots.get(runId);
+    if (cached) return cached;
+    const row = this.db.select({ graphJson: runs.graphJson }).from(runs).where(eq(runs.id, runId)).get();
+    if (!row?.graphJson) return undefined;
+    try {
+      const graph = JSON.parse(row.graphJson) as WorkflowGraph;
+      if (!Array.isArray(graph.nodes)) return undefined;
+      active.graphSnapshots.set(runId, graph);
+      return graph;
+    } catch {
+      return undefined;
+    }
+  }
+
+  /**
    * 上游不在运行范围内时，取它在本工程历次运行里最近一次的成功产物。
    *
    * `info` 是可选出参：把「这份产物来自什么时候」带出去，供调用方在运行日志里如实写一句——
@@ -780,7 +826,7 @@ export class RunEngine {
     nodeId: string,
     projectId: string,
     graph?: WorkflowGraph,
-    info?: { updatedAt?: number },
+    info?: { updatedAt?: number; runId?: string },
   ): Promise<NodeOutput[]> {
     const runIds = this.db
       .select({ id: runs.id })
@@ -797,7 +843,10 @@ export class RunEngine {
       .limit(1)
       .get();
     if (!row || !row.outputKind) return [];
-    if (info) info.updatedAt = row.updatedAt;
+    if (info) {
+      info.updatedAt = row.updatedAt;
+      info.runId = row.runId;
+    }
     if (
       row.nodeType === "process.transcribe" ||
       row.nodeType === "process.refine" ||
@@ -858,16 +907,18 @@ export class RunEngine {
     active: ActiveRun,
     nodeId: string,
     itemKey?: string,
+    graph?: WorkflowGraph,
   ): { source?: string; author?: string; url?: string; title?: string; pubDate?: string } {
+    const view = graph ?? active.graph;
     const queue = [nodeId];
     const seen = new Set<string>();
     while (queue.length > 0) {
       const current = queue.shift()!;
       if (seen.has(current)) continue;
       seen.add(current);
-      for (const edge of active.graph.edges) {
+      for (const edge of view.edges) {
         if (edge.target !== current) continue;
-        const source = active.graph.nodes.find((n) => n.id === edge.source);
+        const source = view.nodes.find((n) => n.id === edge.source);
         if (!source) continue;
         const data = source.data as Record<string, unknown>;
         if (source.type === "source.bili") {
@@ -908,13 +959,14 @@ export class RunEngine {
   }
 
   /** 收集一个输入最终来自哪些原始素材节点（B站/本地文件/文本），用于溯源配方写明“具体来源”。 */
-  private upstreamSourceMetas(active: ActiveRun, nodeId: string): InputSourceMetaItem[] {
+  private upstreamSourceMetas(active: ActiveRun, nodeId: string, graph?: WorkflowGraph): InputSourceMetaItem[] {
+    const view = graph ?? active.graph;
     const result: InputSourceMetaItem[] = [];
     const seen = new Set<string>();
     const visit = (id: string): void => {
       if (seen.has(id)) return;
       seen.add(id);
-      const node = active.graph.nodes.find((n) => n.id === id);
+      const node = view.nodes.find((n) => n.id === id);
       if (!node) return;
       const data = node.data as Record<string, unknown>;
       if (node.type === "source.bili") {
@@ -959,7 +1011,7 @@ export class RunEngine {
         });
         return;
       }
-      for (const edge of active.graph.edges) {
+      for (const edge of view.edges) {
         if (edge.target === id) visit(edge.source);
       }
     };
@@ -967,8 +1019,8 @@ export class RunEngine {
     return result;
   }
 
-  private describeInputSource(active: ActiveRun, nodeId: string): InputSourceMeta | undefined {
-    const items = this.upstreamSourceMetas(active, nodeId);
+  private describeInputSource(active: ActiveRun, nodeId: string, graph?: WorkflowGraph): InputSourceMeta | undefined {
+    const items = this.upstreamSourceMetas(active, nodeId, graph);
     if (items.length === 0) return undefined;
     const labels = items.map((item) => {
       if (item.sourceType === "bili") {
@@ -1003,15 +1055,18 @@ export class RunEngine {
       // 记下它来自哪一次：换了素材却只重跑下游，会拿旧素材的稿子当输入，而来源卡的元信息已经是新的
       // （实测：把来源卡换成另一个视频后只重跑溯源节点，溯源节点收到的是上一个视频的校对稿，
       // 报告会把那段内容归到新视频头上——这正是溯源最不能出的错）。这里如实写进运行日志。
-      const reuseInfo: { updatedAt?: number } = {};
+      const reuseInfo: { updatedAt?: number; runId?: string } = {};
       const reused = active.nodeIds.has(source.id) ? null : await this.previousOutputs(source.id, active.projectId, active.graph, reuseInfo);
       const outputs = reused ?? (active.outputs.get(source.id) ?? []);
+      // 沿用历史产物时，归因按**产出那份产物时**的图算：卡片后来被换成别的视频，
+      // 报告与笔记也必须写它真实的来源（2026-10-15 实测过整篇报告的证据来源全错一格）。
+      const sourceGraph = reuseInfo.runId ? await this.graphOfRun(active, reuseInfo.runId) : undefined;
       if (reused && outputs.length > 0) {
         const label = String(source.data.label ?? "").trim() || NODE_TYPE_LABELS[source.type];
         const when = reuseInfo.updatedAt ? new Date(reuseInfo.updatedAt).toLocaleString("zh-CN", { hour12: false }) : "更早的一次";
         reusedUpstream.push(`「${label}」（${when} 那次运行）`);
       }
-      const sourceMeta = this.describeInputSource(active, source.id);
+      const sourceMeta = this.describeInputSource(active, source.id, sourceGraph);
       for (const output of outputs) {
         const position = items.length;
         // 产物自带身份时沿用；否则按「来源+产出顺序」派生。转写/AI 等节点逐个素材产出，
@@ -1036,7 +1091,9 @@ export class RunEngine {
         node.id,
         "info",
         `上游 ${reusedUpstream.join("、")} 不在本次运行范围内，已沿用它们上一次的产物；` +
-          "若刚更换过素材，请先运行上游节点再重跑本节点，否则本节点算的是旧素材。",
+          (active.staleMaterialConfirmed
+            ? "这些产物用的是更换前的素材，**本次按你的确认继续**（报告会按文稿真实的来源写）。"
+            : "若刚更换过素材，请先运行上游节点再重跑本节点，否则本节点算的是旧素材。"),
       );
     }
 
@@ -1814,10 +1871,18 @@ export class RunEngine {
           ? textItems.map((item) => ({
               text: (item.output.text ?? "").trim(),
               // 段标识一并带下去：这一篇讲的是哪一集，发布日期就得按那一集取。
-              meta: this.upstreamSourceMeta(active, item.sourceNodeId, item.itemKey),
+              meta: this.upstreamSourceMeta(active, item.sourceNodeId, item.itemKey, item.sourceGraph),
               itemKey: item.itemKey,
             }))
-          : [{ text: inputs.text.trim(), meta: this.upstreamSourceMeta(active, node.id), itemKey: undefined as string | undefined }];
+          : [
+              {
+                text: inputs.text.trim(),
+                // 压平成一篇时也要按产出时的图取：多份输入混在一起时取第一份的快照，
+                // 与「作者/链接一直按第一项取」的既有口径一致。
+                meta: this.upstreamSourceMeta(active, node.id, undefined, inputs.items[0]?.sourceGraph),
+                itemKey: undefined as string | undefined,
+              },
+            ];
 
         /*
          * 先定文件名：名字必须在写盘前定死——下面每篇的读旧标签、关联扫描、记指纹三处都按最终名走，

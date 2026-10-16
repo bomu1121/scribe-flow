@@ -18,7 +18,7 @@ import type { AppDatabase } from "../db/client";
 import { projects, runNodeLogs, runNodeResults, runs, type RunRow } from "../db/schema";
 import { nextRunId, type RunEngine } from "../lib/engine";
 import { nodeIdsForScope } from "../lib/graph-scope";
-import { describeStaleMaterials, findStaleMaterials } from "../lib/material-staleness";
+import { describeStaleMaterials, findStaleMaterials, StaleMaterialError } from "../lib/material-staleness";
 import { defaultRunNameFor } from "../lib/run-name";
 import { resolveArtifactPath } from "../lib/storage";
 import { getAiConfig, getAsrConfig } from "../lib/settings";
@@ -29,6 +29,14 @@ const startSchema = z
   .object({
     scope: z.enum(["all", "fromNode", "node"]),
     nodeId: z.string().optional(),
+    /**
+     * 明确确认「按旧素材继续」。
+     *
+     * 换取素材后只重跑下游时，上游会沿用旧素材的产物。这不是跑不了，而是**要用户拍板**：
+     * 按当前文稿继续（报告会写文稿真实的来源），还是先重跑上游让它按新素材重算。
+     * 缺省不确认，就回 409 让前端说明并问一次（与 `confirmEmpty` 同一套做法）。
+     */
+    confirmStaleMaterial: z.boolean().optional(),
   })
   .refine((data) => data.scope === "all" || Boolean(data.nodeId), {
     message: "scope 为 fromNode/node 时必须提供 nodeId",
@@ -57,7 +65,13 @@ function rowToMeta(row: RunRow, projectName?: string): RunMeta {
   };
 }
 
-export function createRun(db: AppDatabase, projectId: string, scope: RunScope, nodeId?: string) {
+export function createRun(
+  db: AppDatabase,
+  projectId: string,
+  scope: RunScope,
+  nodeId?: string,
+  options: { confirmStaleMaterial?: boolean } = {},
+) {
   const project = db.select().from(projects).where(eq(projects.id, projectId)).get();
   if (!project) throw new Error("工程不存在");
   if (scope !== "all" && !nodeId) throw new Error("缺少节点 ID：scope 为 fromNode/node 时必须提供 nodeId");
@@ -89,10 +103,13 @@ export function createRun(db: AppDatabase, projectId: string, scope: RunScope, n
     throw new Error(`节点「${label}」的 B 站链接为空，请填写链接或删除该节点`);
   }
 
-  // 执行前预检：换了素材却只重跑下游时，上游会沿用旧素材的产物——报告会把旧素材的内容
-  // 归到新素材头上（2026-10-15 实际发生），而这一点从产物上完全看不出来。只能在启动前拦。
+  // 执行前预检：换了素材却只重跑下游时，上游会沿用旧素材的产物。报告会按**文稿真实的来源**
+  // 写（2026-10-15 起归因取产出时的图快照），所以这不是错误，而是要用户明确一次的事：
+  // 按当前文稿继续，还是先重跑上游。没确认就回 409（见下面的路由）。
   const stale = findStaleMaterials(db, graph, projectId, scope, nodeId);
-  if (stale.length > 0) throw new Error(describeStaleMaterials(stale, graph));
+  if (stale.length > 0 && !options.confirmStaleMaterial) {
+    throw new StaleMaterialError(describeStaleMaterials(stale, graph), stale);
+  }
 
   const id = nextRunId();
   const createdAt = Date.now();
@@ -114,10 +131,17 @@ export function projectRunsApi(db: AppDatabase, engine: RunEngine) {
       return badRequest(c, parsed);
     }
     try {
-      const { id, graph } = createRun(db, projectId, parsed.data.scope, parsed.data.nodeId);
-      engine.start(id, projectId, graph, parsed.data.scope, parsed.data.nodeId);
+      const { id, graph } = createRun(db, projectId, parsed.data.scope, parsed.data.nodeId, {
+        confirmStaleMaterial: parsed.data.confirmStaleMaterial === true,
+      });
+      engine.start(id, projectId, graph, parsed.data.scope, parsed.data.nodeId, {
+        staleMaterialConfirmed: parsed.data.confirmStaleMaterial === true,
+      });
       return c.json(engine.detail(id).run, 202);
     } catch (err) {
+      if (err instanceof StaleMaterialError) {
+        return c.json({ error: err.message, needConfirmStaleMaterial: true }, 409);
+      }
       return c.json({ error: err instanceof Error ? err.message : "启动运行失败" }, 400);
     }
   });

@@ -21,6 +21,20 @@ import type { AppDatabase } from "../db/client";
 import { runNodeInputs, runNodeResults, runs } from "../db/schema";
 import { nodeIdsForScope } from "./graph-scope";
 
+/**
+ * 「上游产物是用旧素材算的」——**抛这个而不是普通 Error**，路由据此回 409 + 需要确认，
+ * 前端才能把它和「真的失败了」分开：它是「要你拍板」，不是「跑不了」。
+ */
+export class StaleMaterialError extends Error {
+  constructor(
+    message: string,
+    readonly findings: StaleMaterialFinding[],
+  ) {
+    super(message);
+    this.name = "StaleMaterialError";
+  }
+}
+
 /** 一次「产物用的是旧素材」的发现。 */
 export interface StaleMaterialFinding {
   /** 承载那份产物的上游节点。 */

@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
 import { createApp } from "../app";
 import { createDatabase } from "../db/client";
-import { appSettings, runNodeInputs, runNodeResults, runs } from "../db/schema";
+import { appSettings, runNodeInputs, runNodeLogs, runNodeResults, runs } from "../db/schema";
 
 /**
  * 「换了素材却只重跑下游」的运行前预检。
@@ -99,6 +99,22 @@ function seedRefineHistory(db: ReturnType<typeof createDatabase>, projectId: str
   return runId;
 }
 
+/** 等到运行日志里出现某句话（引擎在进程内跑，轮询即可）。 */
+async function waitForLog(db: ReturnType<typeof createDatabase>, runId: string, needle: string) {
+  const deadline = Date.now() + 5000;
+  for (;;) {
+    const hit = db
+      .select()
+      .from(runNodeLogs)
+      .where(eq(runNodeLogs.runId, runId))
+      .all()
+      .some((row) => String(row.content).includes(needle));
+    if (hit) return;
+    if (Date.now() > deadline) throw new Error(`日志里没有等到：${needle}`);
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+}
+
 /** 停止该工程正在跑的运行：引擎按工程串行，留着会让下一条用例起不来。 */
 async function stopRun(app: App, projectId: string) {
   const latest = await (await app.request(`/api/runs?projectId=${projectId}&status=running&limit=1`)).json();
@@ -108,7 +124,10 @@ async function stopRun(app: App, projectId: string) {
 
 async function startRun(app: App, projectId: string, body: unknown) {
   const res = await json(app, `/api/projects/${projectId}/runs`, "POST", body);
-  return { status: res.status, body: (await res.json()) as { error?: string; id?: string } };
+  return {
+    status: res.status,
+    body: (await res.json()) as { error?: string; id?: string; needConfirmStaleMaterial?: boolean },
+  };
 }
 
 describe("换了素材只重跑下游：运行前预检", () => {
@@ -119,13 +138,29 @@ describe("换了素材只重跑下游：运行前预检", () => {
     seedRefineHistory(db, projectId, "bvid:BV1DTWw6UE1y:1");
 
     const { status, body } = await startRun(app, projectId, { scope: "fromNode", nodeId: "n_trace" });
-    expect(status).toBe(400);
+    // 409 而不是 400：这不是「跑不了」，是「要你拍板」（前端据此弹确认框）
+    expect(status).toBe(409);
+    expect(body.needConfirmStaleMaterial).toBe(true);
     expect(body.error).toContain("BV1DTWw6UE1y");
     expect(body.error).toContain("校对");
     // 起点必须说清：只说「运行上游节点」的话，只跑「校对」会被再拦一次（它上游的转写也是旧的）
     expect(body.error).toContain("请从「转写」开始跑");
     // 画布上会有好几个「AI 加工」，只说默认名等于没说：带上它选的提示词才定位得到
     expect(body.error).toContain("信息溯源 · 上网查证");
+  });
+
+  it("用户确认后放行：带 confirmStaleMaterial 重发即启动，运行日志写明「按你的确认继续」", async () => {
+    const { app, db } = await setup();
+    const projectId = await createProject(app, chainGraph("BV19JhW6vExZ"));
+    seedRefineHistory(db, projectId, "bvid:BV1DTWw6UE1y:1");
+
+    const first = await startRun(app, projectId, { scope: "fromNode", nodeId: "n_trace" });
+    expect(first.status).toBe(409);
+
+    const confirmed = await startRun(app, projectId, { scope: "fromNode", nodeId: "n_trace", confirmStaleMaterial: true });
+    expect(confirmed.status).toBe(202);
+    await waitForLog(db, confirmed.body.id ?? "", "按你的确认继续");
+    await stopRun(app, projectId);
   });
 
   it("拒绝发生在启动前：库里不会多出一条运行记录（而不是「跑起来立刻失败」）", async () => {

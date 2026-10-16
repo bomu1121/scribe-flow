@@ -124,6 +124,16 @@ describe("抓取一页正文", () => {
 
   beforeAll(async () => {
     server = createServer((req, res) => {
+      /*
+       * 每个响应都禁用 keep-alive。
+       *
+       * 背景：本文件的用例在全量跑时偶发失败过两次（机器忙的时候），随后 6 次连跑全过、
+       * 未能复现，所以**下面这条只是消掉一类可能机制，不是已证实的病因**：
+       * 全仓很多测试文件各起一个本地服务端，undici 按 origin 复用连接——端口被回收再分配时，
+       * 池子里的旧连接可能指向已经关掉的那一份，于是请求以 ECONNRESET 之类失败。
+       * 关掉 keep-alive 之后每次请求都用新连接，这条路径就不存在了。
+       */
+      res.setHeader("Connection", "close");
       if (req.url?.startsWith("/article")) {
         res.setHeader("Content-Type", "text/html; charset=utf-8");
         res.end(ARTICLE);

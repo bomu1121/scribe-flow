@@ -1,14 +1,24 @@
+import { ElMessageBox } from "element-plus/es/components/message-box/index.mjs";
 import { createPinia, setActivePinia } from "pinia";
 import { nextTick } from "vue";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { RunMeta, RunStatus } from "@scribe-flow/shared";
-import { api } from "@/lib/api";
+import { ApiError, api } from "@/lib/api";
 import { toast } from "@/lib/toast";
 import { useProjectsStore } from "@/stores/projects";
 import { useRunQueueStore } from "@/stores/run-queue";
 import { useRunsStore } from "@/stores/runs";
 
-vi.mock("@/lib/api", () => ({ api: { get: vi.fn(), post: vi.fn(), delete: vi.fn(), patch: vi.fn(), put: vi.fn(), upload: vi.fn() } }));
+/*
+ * 只替换网络调用，其余导出（`ApiError` 等）保留真身：
+ * 队列要靠 `err instanceof ApiError` 把「服务端要求确认」与「真失败」分开，
+ * 整块 mock 掉会让那个判断碰到未定义的导出、抛出 vi 自己的错误，把真实错因盖掉。
+ */
+vi.mock("element-plus/es/components/message-box/index.mjs", () => ({ ElMessageBox: { confirm: vi.fn() } }));
+vi.mock("@/lib/api", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/api")>()),
+  api: { get: vi.fn(), post: vi.fn(), delete: vi.fn(), patch: vi.fn(), put: vi.fn(), upload: vi.fn() },
+}));
 
 function makeRun(id: string, status: RunStatus, overrides: Partial<RunMeta> = {}): RunMeta {
   return { id, projectId: "p1", status, scope: "node", nodeId: "n1", createdAt: 1, ...overrides };
@@ -172,5 +182,52 @@ describe("清空", () => {
   it("没有排队时清空返回 0", () => {
     const { queue } = setup();
     expect(queue.clear("p1")).toBe(0);
+  });
+});
+
+/**
+ * 「换了素材只重跑下游」：服务端回 409 要求确认，而不是直接失败。
+ *
+ * 这条守卫存在的意义是「要用户拍板」，不是「跑不了」——所以用户选「继续」要继续跑得起来，
+ * 选「先去重跑上游」要安静出队、不报错（他不是失败，是换了个做法）。
+ */
+describe("排空：服务端要求确认「按旧素材继续」", () => {
+  const staleError = () =>
+    new ApiError("「AI 加工」要沿用的上游「AI 校对」的产物，是用 BV1DTWw6UE1y 第 1 集/分P 这个素材算的……", 409, {
+      needConfirmStaleMaterial: true,
+    });
+
+  it("用户选「继续」→ 带 confirmStaleMaterial 重发，运行真的起来", async () => {
+    const { queue, runsStore } = setup();
+    runsStore.runs = [];
+    vi.mocked(ElMessageBox.confirm).mockResolvedValue("confirm" as never);
+    vi.mocked(api.post)
+      .mockRejectedValueOnce(staleError())
+      .mockResolvedValueOnce(makeRun("run_b", "running", { scope: "node", nodeId: "n2" }));
+
+    queue.enqueue("p1", { scope: "node", nodeId: "n2", label: "「加工 B」" });
+    await settle();
+
+    expect(ElMessageBox.confirm).toHaveBeenCalledTimes(1);
+    expect(api.post).toHaveBeenCalledTimes(2);
+    expect(vi.mocked(api.post).mock.calls[1]?.[1]).toEqual({ scope: "node", nodeId: "n2", confirmStaleMaterial: true });
+    expect(runsStore.runs.map((run) => run.id)).toContain("run_b");
+    expect(queue.pendingCount("p1")).toBe(0);
+  });
+
+  it("用户选「先去重跑上游」→ 安静出队，不报错", async () => {
+    const { queue, runsStore } = setup();
+    runsStore.runs = [];
+    vi.mocked(ElMessageBox.confirm).mockRejectedValue(new Error("cancel"));
+    const errorToast = vi.spyOn(toast, "error").mockImplementation(() => 0);
+    vi.mocked(api.post).mockRejectedValueOnce(staleError());
+
+    queue.enqueue("p1", { scope: "node", nodeId: "n2", label: "「加工 B」" });
+    await settle();
+
+    expect(api.post).toHaveBeenCalledTimes(1);
+    expect(queue.pendingCount("p1")).toBe(0);
+    expect(errorToast).not.toHaveBeenCalled();
+    errorToast.mockRestore();
   });
 });

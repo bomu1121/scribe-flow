@@ -6,7 +6,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
 import { parseGraph, type WorkflowGraph } from "@scribe-flow/shared";
 import { createDatabase } from "../db/client";
-import { appSettings, projects, runNodeLogs, runNodeResults, runs } from "../db/schema";
+import { appSettings, projects, runNodeInputs, runNodeLogs, runNodeResults, runs } from "../db/schema";
 import { RunEngine } from "./engine";
 import { sleep } from "./sleep";
 
@@ -886,4 +886,119 @@ describe("AI 校对节点的素材信息注入", () => {
     expect(lastRefineSystem).not.toContain("当前素材信息");
     expect(lastRefineSystem).not.toContain(TITLE);
   });
+});
+
+/**
+ * 归因要按「产物**产出时**的画布」算，而不是现在的画布。
+ *
+ * 起因是一起实测：跑完《中美社保对比》后把来源卡换成《美联储加息，能压住利率吗？》，只重跑下游——
+ * 报告里**每一条** `evidence[].source` 都写成了《美联储…》，而引用的全是社保那篇的句子，
+ * 那份产物本来是要写进笔记库的。归因链是
+ * `{{source}}` ← `describeInputSource` ← `upstreamSourceMetas` ← **跑那一刻的卡片**，与内容从哪来无关。
+ *
+ * 这里种一份「旧图 + n_refine 的产物」，再拿「新图」跑下游：素材信息必须仍是旧图里那条视频。
+ * 文本产物的历史靠 `run_node_inputs`(kind=text) 还原（见 `previousOutputs`），所以种子行要写成那个形状。
+ *
+ * 同一次运行内的那条路径（上游在范围内 → 归因就是当前画布）由上面「AI 校对节点的素材信息注入」
+ * 那组用例覆盖：它断言 system 里出现的是当前来源卡的标题，本次改动没有动那条路。
+ */
+describe("归因按产出那份产物时的画布算", () => {
+  const TEXT = "本文先讲示例原文关键句甲，再讲示例原文关键句乙，最后给出结论数据 42。";
+  const OLD = { title: "中美社保对比，有哪些不同？", uploader: "内部看美国", url: "https://www.bilibili.com/video/BV1DTWw6UE1y", bvid: "BV1DTWw6UE1y" };
+  const NEW = { title: "美联储加息，能压住利率吗？", uploader: "看世界的另一面", url: "https://www.bilibili.com/video/BV19JhW6vExZ", bvid: "BV19JhW6vExZ" };
+
+  const graphWith = (video: typeof OLD) =>
+    parseGraph({
+      schemaVersion: 1,
+      nodes: [
+        {
+          id: "n_src",
+          type: "source.bili",
+          position: { x: 0, y: 0 },
+          data: { url: video.url, bvid: video.bvid, title: video.title, uploader: video.uploader, page: 1 },
+        },
+        { id: "n_asr", type: "process.transcribe", position: { x: 200, y: 0 }, data: {} },
+        { id: "n_refine", type: "process.refine", position: { x: 400, y: 0 }, data: { label: "AI 校对" } },
+        { id: "n_refine2", type: "process.refine", position: { x: 600, y: 0 }, data: { label: "AI 校对（下游）" } },
+      ],
+      edges: [
+        { id: "e1", source: "n_src", target: "n_asr", sourceHandle: "audio", targetHandle: "audio" },
+        { id: "e2", source: "n_asr", target: "n_refine", sourceHandle: "transcript", targetHandle: "transcript" },
+        { id: "e3", source: "n_refine", target: "n_refine2", sourceHandle: "transcript", targetHandle: "transcript" },
+      ],
+      viewport: { x: 0, y: 0, zoom: 1 },
+    });
+
+  async function seed(dataDir: string, runId: string) {
+    const db = createDatabase(dataDir);
+    const now = Date.now();
+    const projectId = "prj_attribution";
+    for (const [key, value] of [
+      ["ai.provider", "custom"],
+      ["ai.baseUrl", baseUrl.replace(/\/+$/, "")],
+      ["ai.model", "mock-model"],
+      ["ai.apiKey", "mock-key"],
+    ] as const) {
+      db.insert(appSettings).values({ key, value, updatedAt: now }).run();
+    }
+    const oldGraph = graphWith(OLD);
+    const newGraph = graphWith(NEW);
+    // 历史那次运行：图快照是「旧图」，产物是 n_refine 的文稿，输入行记着它消费的素材身份
+    db.insert(runs)
+      .values({ id: "run_old", projectId, status: "success", scope: "all", createdAt: now - 1000, graphJson: JSON.stringify(oldGraph) })
+      .run();
+    db.insert(runNodeResults)
+      .values({
+        id: "nnr_old",
+        runId: "run_old",
+        nodeId: "n_refine",
+        nodeType: "process.refine",
+        nodeLabel: "AI 校对",
+        status: "done",
+        outputKind: "text",
+        outputText: TEXT,
+        updatedAt: now - 1000,
+      })
+      .run();
+    db.insert(runNodeInputs)
+      .values({
+        id: "nni_old",
+        runId: "run_old",
+        targetNodeId: "n_refine",
+        sourceNodeId: "n_asr",
+        kind: "text",
+        text: TEXT,
+        itemKey: `bvid:${OLD.bvid}:1`,
+        position: 0,
+        createdAt: now - 1000,
+      })
+      .run();
+    // 当前工程图：来源卡已经换成另一条视频
+    db.insert(projects)
+      .values({ id: projectId, name: "归因用例", description: "", graphJson: JSON.stringify(newGraph), schemaVersion: 1, createdAt: now, updatedAt: now })
+      .run();
+    db.insert(runs)
+      .values({ id: runId, projectId, status: "running", scope: "fromNode", nodeId: "n_refine2", createdAt: now, graphJson: JSON.stringify(newGraph) })
+      .run();
+    return { db, engine: new RunEngine(db, dataDir), newGraph };
+  }
+
+  it("来源卡换成另一条视频后只重跑下游：system 里的素材信息仍是这条文稿真实的来源", async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), "scribe-attribution-"));
+    tmpDirs.push(dataDir);
+    const runId = "run_attribution";
+    const { db, engine, newGraph } = await seed(dataDir, runId);
+
+    lastRefineSystem = "";
+    engine.start(runId, "prj_attribution", newGraph, "fromNode", "n_refine2");
+    await waitFinished(db, runId);
+
+    // 这条文稿产出时来源卡是《中美社保…》，所以归因必须写它——写新卡片就是错误归因
+    expect(lastRefineSystem).toContain(OLD.title);
+    expect(lastRefineSystem).toContain(OLD.uploader);
+    expect(lastRefineSystem).toContain(OLD.url);
+    expect(lastRefineSystem).not.toContain(NEW.title);
+    expect(lastRefineSystem).not.toContain(NEW.url);
+  });
+
 });
