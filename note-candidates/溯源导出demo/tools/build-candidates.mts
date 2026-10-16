@@ -32,6 +32,9 @@ if (!report) throw new Error("source-report.json 解析失败");
 
 const TITLE = "《中美社保对比，有哪些不同？》 · 信息溯源";
 
+/** 主来源：只算一次，供 evidenceLines 判断「这条引文要不要附出处」。 */
+const PRIMARY_EVIDENCE = primarySourceKey(report);
+
 /* ------------------------------------------------------------------ 公共件 */
 
 /** front matter 与引擎写进库的那份逐字一致（另加 D 的 cssclasses）。 */
@@ -119,11 +122,18 @@ function externalCalloutBody(item: TraceItem, flat = false): string[] {
   return lines;
 }
 
-/** `判断依据：…` → `**判断依据：**…`；没有冒号的（不该出现，但别写出 `****`）原样返回。 */
+/**
+ * `判断依据：…` → `**判断依据**：…`。
+ *
+ * **冒号必须留在 `**` 外面**：写成 `**判断依据：**…` 时，闭合的 `**` 前面是全角冒号（属标点）、
+ * 后面紧跟汉字，按 CommonMark 的 flanking 规则不构成右闭合 → 整对星号原样漏进笔记
+ * （用户在实际笔记里抓到的 bug：字面显示 `**判断依据：**转写稿第 12 段…`）。
+ * 另外这些行之间要空一行，否则连续多行会被并成一段。
+ */
 function boldLabel(line: string): string {
   const at = line.indexOf("：");
   if (at < 0) return line;
-  return `**${line.slice(0, at + 1)}**${line.slice(at + 1)}`;
+  return `**${line.slice(0, at)}**${line.slice(at)}`;
 }
 
 /** 平铺版的来源行：标题已提到行首，这里只留权威度与链接。 */
@@ -141,16 +151,42 @@ function externalCalloutTitle(item: TraceItem): string {
 }
 
 /**
+ * 报告的主来源（按 evidence 里出现次数最多的那个来源判定）。
+ *
+ * 用途是**别再逐条重复视频名与「转写稿第 N 段」**：报告讲的就是这一段转写稿，
+ * 而转写稿基本不会落进笔记库（用户反馈：告知「第 N 段」没用、视频名一直重复）。
+ * 所以主来源的引文只留原文；**别的来源（文件、网页）才附出处**——那时出处是真信息。
+ */
+function primarySourceKey(r: TraceReport): string {
+  const count = new Map<string, number>();
+  for (const item of r.items) {
+    for (const e of item.evidence) {
+      const key = `${e.source?.name ?? ""}|${e.source?.url ?? ""}`;
+      count.set(key, (count.get(key) ?? 0) + 1);
+    }
+  }
+  let best = "";
+  let max = -1;
+  for (const [key, n] of count) {
+    if (n > max) {
+      max = n;
+      best = key;
+    }
+  }
+  return best;
+}
+
+/**
  * 原文依据的行。
- * - 默认（基线口径）：`- （来源 · 定位）“引文”`——出处在前，读起来先知道是哪一段。
- * - `flat`：**引文在前、出处用破折号跟在后面**（Readwise 的导出就是这个顺序），
- *   且不用列表标记——引文那行能拿到满栏宽，这对「读得下去」比「先看出处」重要。
+ * - 默认：`- “引文”`；只有非主来源才附 `（来源 · 定位）`。
+ * - `flat`：引文提到行首、不用列表标记（用户反馈：容器缩进层层吃行宽，最窄那层只剩 75% 栏宽）。
  */
 function evidenceLines(item: TraceItem, flat = false): string[] {
   if (item.evidence.length === 0) return ["_本条无直接原文引用，需结合备注判断。_"];
   return item.evidence.map((e) => {
-    const ref = `${e.source?.name ?? "原文"} · ${e.locator ?? e.source?.locator ?? "未标注"}`;
-    return flat ? `“${e.quote.trim()}”——（${ref}）` : `- （${ref}）“${e.quote.trim()}”`;
+    const isPrimary = `${e.source?.name ?? ""}|${e.source?.url ?? ""}` === PRIMARY_EVIDENCE;
+    const ref = isPrimary ? "" : `——（${e.source?.name ?? "原文"}${e.locator ?? e.source?.locator ? ` · ${e.locator ?? e.source?.locator}` : ""}）`;
+    return flat ? `“${e.quote.trim()}”${ref}` : `- “${e.quote.trim()}”${ref}`;
   });
 }
 
@@ -167,7 +203,8 @@ function sideLines(item: TraceItem): { attribution?: string; basis?: string; not
     attribution,
     basis: item.basis?.trim() ? `判断依据：${item.basis.trim()}` : undefined,
     note: item.note?.trim() ? `备注：${item.note.trim()}` : undefined,
-    mentions: (item.mentions ?? []).map((m) => `其他位置：${m.source?.locator ?? "未标注"}“${m.quote.trim()}”`),
+    // 不再写「转写稿第 N 段」：转写稿不会落进笔记库，那个定位对读者没用（用户反馈）
+    mentions: (item.mentions ?? []).map((m) => `另处提及：“${m.quote.trim()}”`),
   };
 }
 
@@ -343,9 +380,12 @@ function buildGrouped(r: TraceReport, tone: Tone): string {
       } else {
         out.push("**原文依据**", "", ...evidenceLines(item, tone.flat), "");
       }
-      // 旁注：平铺版把字段名加粗（网页版里它们是彩色标签，这里是导出里能做到的「指引」）
+      // 旁注：平铺版把字段名加粗（网页版里它们是彩色标签，这里是导出里能做到的「指引」）。
+      // **每行之间必须空一行**：Markdown 会把连续多行并成一段，加粗标记就跨行配对错乱，
+      // 结果是字面漏出 `**`（用户在实际笔记里抓到的 bug，只在 B4 这条分支上）。
       for (const line of [side.attribution, side.basis, side.note, ...side.mentions].filter(Boolean)) {
-        out.push(tone.flat ? boldLabel(line) : `- ${line}`);
+        if (tone.flat) out.push(boldLabel(line), "");
+        else out.push(`- ${line}`);
       }
       out.push("");
     }

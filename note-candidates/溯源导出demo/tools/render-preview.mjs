@@ -291,9 +291,9 @@ function buildPage() {
     .join("\n");
   const itemStrip = [
     panel("0 · 现状：一条主张 = 一屏扁平 bullet（此处展开的是第 11 条）", render(by.baseline.chunkItem), true),
-    panel("A · 折叠态（默认看到的样子）", render(by.a.chunkItem), true),
-    panel("A · 点开之后", render(by.a.chunkItem, { open: true }), true),
-    panel("E · 折叠索引里的同一条（标题带主张）", render(by.e.chunkItemE), true),
+    panel("B1 · 折叠态（默认看到的样子）", render(by.b1.chunkItem), true),
+    panel("B4 · 折叠态（平铺行 + 加粗标签）", render(by.b4.chunkItem), true),
+    panel("B4 · 点开之后（看引文与「判断依据」那几行）", render(by.b4.chunkItem, { open: true }), true),
   ].join("\n");
   // 整篇那条只截首屏：三份整篇都两万像素上下，出一张两万六千像素高的图没法看，
   // 总高度以量出来的数为准（下面 measured 里那三行）。
