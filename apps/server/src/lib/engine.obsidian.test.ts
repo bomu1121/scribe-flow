@@ -13,6 +13,7 @@ import { parseNoteTags } from "./note-markdown";
 import { readRelatedSectionNames } from "./related-notes";
 import { updateSettings } from "./settings";
 import { sleep } from "./sleep";
+import { readTraceSectionNames, TRACE_NOTE_TYPE } from "./trace-links";
 
 /**
  * Obsidian 笔记节点：保存目录里已有同名笔记时，是覆盖它还是退让成 `标题 (2).md`（**默认退让**）；
@@ -782,5 +783,92 @@ describe("Obsidian 笔记：上游是溯源报告时", () => {
     const files = await noteFiles(dir);
     const body = await readFile(join(dir, files[0]), "utf8");
     expect(body).toContain("这是一篇普通正文，不是 JSON。");
+  });
+});
+
+/**
+ * 「笔记 ←→ 溯源笔记」的互链：**谁后写谁补链**。
+ *
+ * 为什么不由溯源去读笔记：那会形成循环（溯源要参考笔记，笔记的链接又要指向溯源）。
+ * 改成写盘这一侧补链之后，两个顺序都成立——所以下面每个用例都用**同一个库跑两趟**：
+ * `runNote` 每次新建 dataDir/db，但库路径传同一个，于是「先写哪一篇」是确定的，不靠节点顺序碰运气。
+ */
+describe("Obsidian 笔记：与溯源笔记互链", () => {
+  const SOURCE_URL = "https://www.bilibili.com/video/BV1DTWw6UE1y";
+  const TRACE_REPORT = JSON.stringify({
+    schema: 1,
+    title: "信息溯源报告",
+    items: [],
+    uncertainties: [{ claim: "中国失业率5.2%的统计时点。", reason: "原文只给数字，未说明口径。" }],
+  });
+
+  it("先写笔记、后写溯源笔记 → 溯源那一趟把链接回补进已有笔记", async () => {
+    const { vault, dir } = await makeVault();
+    await runNote(vault, { url: SOURCE_URL, title: "观点笔记" }, "links-note-first", {}, "这是一篇观点笔记的正文。");
+    // 第一趟之后库里还没有溯源笔记，不该有任何链接
+    expect(await readFile(join(dir, "观点笔记.md"), "utf8")).not.toContain("[!note] 溯源");
+
+    await runNote(vault, { url: SOURCE_URL, title: undefined }, "links-trace-second", {}, TRACE_REPORT);
+
+    const after = await readFile(join(dir, "观点笔记.md"), "utf8");
+    expect(after).toContain("> [!note] 溯源");
+    expect(readTraceSectionNames(after)).toEqual(["信息溯源报告"]);
+  });
+
+  it("先写溯源笔记、后写笔记 → 笔记一次写就带上链接", async () => {
+    const { vault, dir } = await makeVault();
+    await runNote(vault, { url: SOURCE_URL, title: undefined }, "links-trace-first", {}, TRACE_REPORT);
+    await runNote(vault, { url: SOURCE_URL, title: "观点笔记" }, "links-note-second", {}, "这是一篇观点笔记的正文。");
+
+    const note = await readFile(join(dir, "观点笔记.md"), "utf8");
+    expect(note).toContain("> [!note] 溯源");
+    expect(readTraceSectionNames(note)).toEqual(["信息溯源报告"]);
+  });
+
+  it("溯源笔记的 `类型` 是「溯源笔记」——配对靠它，不靠翻正文猜", async () => {
+    const { vault, dir } = await makeVault();
+    await runNote(vault, { url: SOURCE_URL, title: undefined }, "links-type", {}, TRACE_REPORT);
+    expect(await readFile(join(dir, "信息溯源报告.md"), "utf8")).toContain(`类型: ${TRACE_NOTE_TYPE}`);
+  });
+
+  it("重跑不重复插：同名重写时链区仍只有一条", async () => {
+    const { vault, dir } = await makeVault();
+    await runNote(vault, { url: SOURCE_URL, title: "观点笔记" }, "links-idem-a", {}, "正文。");
+    await runNote(vault, { url: SOURCE_URL, title: undefined }, "links-idem-b", {}, TRACE_REPORT);
+    // 打开「同名直接覆盖」再跑一遍：才是「同一篇重写」而不是另写一篇 `(2)`
+    await runNote(vault, { url: SOURCE_URL, title: undefined, overwrite: true }, "links-idem-c", {}, TRACE_REPORT);
+
+    const note = await readFile(join(dir, "观点笔记.md"), "utf8");
+    expect(note.split("> [!note] 溯源").length - 1).toBe(1);
+    expect(readTraceSectionNames(note)).toEqual(["信息溯源报告"]);
+  });
+
+  it("同一素材跑出两份溯源报告时，两条都列（不是互相覆盖）", async () => {
+    const { vault, dir } = await makeVault();
+    await runNote(vault, { url: SOURCE_URL, title: "观点笔记" }, "links-two-traces-a", {}, "正文。");
+    await runNote(vault, { url: SOURCE_URL, title: undefined }, "links-two-traces-b", {}, TRACE_REPORT);
+    // 覆盖关闭 → 第二份溯源报告另写一篇
+    await runNote(vault, { url: SOURCE_URL, title: undefined }, "links-two-traces-c", {}, TRACE_REPORT);
+
+    const note = await readFile(join(dir, "观点笔记.md"), "utf8");
+    expect(readTraceSectionNames(note)).toEqual(["信息溯源报告", "信息溯源报告 (2)"]);
+  });
+
+  it("不同来源不互链——链错比少链一次糟得多", async () => {
+    const { vault, dir } = await makeVault();
+    await runNote(vault, { url: "https://www.bilibili.com/video/BV19JhW6vExZ", title: "另一篇" }, "links-other-note", {}, "另一条视频的笔记。");
+    await runNote(vault, { url: SOURCE_URL, title: undefined }, "links-other-trace", {}, TRACE_REPORT);
+
+    expect(await readFile(join(dir, "另一篇.md"), "utf8")).not.toContain("[!note] 溯源");
+  });
+
+  it("同源的两篇普通笔记之间不互链（只连另一侧：笔记 ↔ 溯源）", async () => {
+    const { vault, dir } = await makeVault();
+    await runNote(vault, { url: SOURCE_URL, title: "观点笔记甲" }, "links-two-a", {}, "第一篇。");
+    await runNote(vault, { url: SOURCE_URL, title: "观点笔记乙" }, "links-two-b", {}, "第二篇。");
+
+    for (const file of await noteFiles(dir)) {
+      expect(readTraceSectionNames(await readFile(join(dir, file), "utf8")), file).toEqual([]);
+    }
   });
 });

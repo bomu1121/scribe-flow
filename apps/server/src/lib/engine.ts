@@ -49,6 +49,7 @@ import { chatCompletion, transcribeAudio, type AiConfig } from "./ai";
 import { fetchBiliVideoDetail, formatPublishDate } from "./bilibili";
 import { buildDrill, buildDrillParams } from "./drill";
 import { nodeIdsForScope } from "./graph-scope";
+import { isTraceNoteType, linkName, sameSourceUrl, TRACE_LINK_FIELDS, TRACE_NOTE_TYPE, upsertTraceSection } from "./trace-links";
 import { countMindMapNodes, mindMapToMarkdown, parseMindMapJson } from "./mindmap";
 import { downloadBiliAudio, toAsrWav } from "./media";
 import {
@@ -176,6 +177,13 @@ interface ActiveRun {
    * 同一次运行内的产物就是 `active.graph`，不查这里。
    */
   graphSnapshots: Map<string, WorkflowGraph>;
+  /**
+   * 库内笔记索引（`库标识 → 笔记`），一次运行内只扫一遍。
+   *
+   * 用途是「笔记 ←→ 溯源笔记」的配对：每次落盘都扫全库代价太大（坚果云那边是一次 PROPFIND）；
+   * 而**同一轮里刚写完的笔记必须补进索引**，否则「先写笔记、后写溯源笔记」时会找不到对方。
+   */
+  vaultNoteIndex: Map<string, RelatedNoteSource[]>;
   /** 用户已确认「按旧素材继续」（换了素材但只重跑下游）：日志里要写明，别让它看起来像没发现。 */
   staleMaterialConfirmed: boolean;
   nodeAborts: Map<string, AbortController>;
@@ -539,6 +547,7 @@ export class RunEngine {
       nodeIds,
       order,
       graphSnapshots: new Map(),
+      vaultNoteIndex: new Map(),
       staleMaterialConfirmed: options.staleMaterialConfirmed === true,
       cancelled: false,
       finished: false,
@@ -1871,17 +1880,20 @@ export class RunEngine {
         const split = data.splitByInput !== false && textItems.length > 1;
         /** 溯源报告的 JSON 产物要先转成 Markdown：否则整篇 JSON 会被原样写进笔记库。 */
         let reportConverted = 0;
-        const noteBody = (text: string, fallbackTitle?: string): string => {
+        const noteBody = (text: string, fallbackTitle?: string): { text: string; isTraceReport: boolean } => {
           const report = parseTraceReport(text);
-          if (!report) return text;
+          if (!report) return { text, isTraceReport: false };
           reportConverted += 1;
-          return traceReportToMarkdown(report, { fallbackTitle });
+          return { text: traceReportToMarkdown(report, { fallbackTitle }), isTraceReport: true };
         };
         const pending = split
           ? textItems.map((item) => {
               const meta = this.upstreamSourceMeta(active, item.sourceNodeId, item.itemKey, item.sourceGraph);
+              const body = noteBody((item.output.text ?? "").trim(), meta.title ? `《${meta.title}》 · 信息溯源` : undefined);
               return {
-                text: noteBody((item.output.text ?? "").trim(), meta.title ? `《${meta.title}》 · 信息溯源` : undefined),
+                text: body.text,
+                // 「这一篇是溯源报告」要一路带到落盘那一步：它决定 frontmatter 的类型，也决定配对走哪一侧。
+                isTraceReport: body.isTraceReport,
                 // 段标识一并带下去：这一篇讲的是哪一集，发布日期就得按那一集取。
                 meta,
                 itemKey: item.itemKey,
@@ -1892,8 +1904,10 @@ export class RunEngine {
                 // 压平成一篇时也要按产出时的图取：多份输入混在一起时取第一份的快照，
                 // 与「作者/链接一直按第一项取」的既有口径一致。
                 const meta = this.upstreamSourceMeta(active, node.id, undefined, inputs.items[0]?.sourceGraph);
+                const body = noteBody(inputs.text.trim(), meta.title ? `《${meta.title}》 · 信息溯源` : undefined);
                 return {
-                  text: noteBody(inputs.text.trim(), meta.title ? `《${meta.title}》 · 信息溯源` : undefined),
+                  text: body.text,
+                  isTraceReport: body.isTraceReport,
                   meta,
                   itemKey: undefined as string | undefined,
                 };
@@ -1979,6 +1993,8 @@ export class RunEngine {
       title: string;
       fileName: string;
       meta: { source?: string; author?: string; url?: string; title?: string; pubDate?: string };
+      /** 正文是溯源报告（落盘前已转 Markdown）：决定 frontmatter 的 `类型`，也决定配对走哪一侧。 */
+      isTraceReport?: boolean;
     },
     target: {
       folder: string;
@@ -1996,7 +2012,13 @@ export class RunEngine {
     const url = String(data.url ?? "").trim() || meta.url || "";
     const pubDate = meta.pubDate ?? "";
     const created = new Date().toISOString().slice(0, 10);
-    const noteType = source === "文本" ? "学习笔记" : source === "B站" || source === "本地文件" ? "视频笔记" : "笔记";
+    const noteType = note.isTraceReport
+      ? TRACE_NOTE_TYPE
+      : source === "文本"
+        ? "学习笔记"
+        : source === "B站" || source === "本地文件"
+          ? "视频笔记"
+          : "笔记";
     const explicitTags = String(data.tags ?? "")
       .split(/[,，\s]+/)
       .map((tag) => normalizeTagSegment(tag))
@@ -2106,6 +2128,18 @@ export class RunEngine {
       if (relatedNames.length > 0) markdown = upsertRelatedSection(markdown, relatedNames).content;
     }
 
+    /*
+     * 溯源链接区：与「相关笔记」同一层，但配对键是**来源链接**而不是抽取字段，所以不受
+     * autoLink 开关约束（那是「按内容相似度自动找相关」的开关，与「这篇的溯源报告在哪」无关）。
+     * 谁后写谁补链：本篇是普通笔记就写进本篇；本篇是溯源笔记就回补进对端（见 traceLinkPlan）。
+     */
+    const tracePlan = await this.traceLinkPlan(active, target, {
+      name: fileName,
+      url,
+      isTrace: note.isTraceReport === true,
+    });
+    if (tracePlan.forSelf.length > 0) markdown = upsertTraceSection(markdown, tracePlan.forSelf).content;
+
     if (target.remote) {
       await writeRemoteFile(target.remote.config, outPath, markdown);
       await this.log(active, node.id, "info", `已写入坚果云 Obsidian：${outPath}`);
@@ -2118,6 +2152,9 @@ export class RunEngine {
         rememberNoteTags(this.db, target.vaultPath, [...segments, fileName].join("/"), markdown, tags, taxonomy);
       }
     }
+    // 本篇进索引（同轮后续笔记要能找到它），再把回补写出去。
+    this.rememberWrittenNote(active, target, { fileName, markdown });
+    await this.applyTraceBackfills(active, node, target, tracePlan.backfills);
     return { path: outPath, fileName, markdown, tags, relatedCount: relatedNames.length };
   }
 
@@ -2196,6 +2233,117 @@ ${list}
       // 与本地扫描同样先摘掉我们自己写的那一段，否则上次写的 `[[链接]]` 会变成下次判定的"证据"。
       content: stripRelatedSection(note.content).content,
     }));
+  }
+
+  /**
+   * 库内笔记索引（一次运行内只扫一遍，之后由 `rememberWrittenNote` 增量补）。
+   *
+   * 只读配对需要的两个 frontmatter 字段（见 `TRACE_LINK_FIELDS`）——与「相关笔记」那份扫描
+   * 各读各的：两件事的输入不同，读成一份以后任一方加字段都会牵动另一方。
+   */
+  private async vaultNoteIndex(
+    active: ActiveRun,
+    target: { vaultPath: string; remote?: { config: NutstoreConfig; remoteRoot: string } },
+  ): Promise<RelatedNoteSource[]> {
+    const key = target.remote ? `remote:${target.remote.remoteRoot}` : `local:${target.vaultPath}`;
+    const cached = active.vaultNoteIndex.get(key);
+    if (cached) return cached;
+    const notes = target.remote
+      ? await this.scanRemoteObsidianNotes(target.remote.config, target.remote.remoteRoot, TRACE_LINK_FIELDS)
+      : await scanVaultNotes(target.vaultPath, TRACE_LINK_FIELDS);
+    active.vaultNoteIndex.set(key, notes);
+    return notes;
+  }
+
+  /** 刚写完的一篇要进索引：同一轮里「先写溯源笔记、后写观点笔记」时，后者要靠它才找得到前者。 */
+  private rememberWrittenNote(
+    active: ActiveRun,
+    target: { vaultPath: string; folder: string; remote?: { config: NutstoreConfig; remoteRoot: string } },
+    note: { fileName: string; markdown: string },
+  ): void {
+    const key = target.remote ? `remote:${target.remote.remoteRoot}` : `local:${target.vaultPath}`;
+    const notes = active.vaultNoteIndex.get(key);
+    if (!notes) return;
+    // 名字统一按链接形态（去扩展名）存：库内扫描两种模式给的名字不一样，混着比会漏掉自己被重复计入。
+    const name = linkName(note.fileName);
+    const next = notes.filter((entry) => linkName(entry.name) !== name);
+    next.push({
+      // key 是**文件路径**，必须带扩展名（回补要照着它写文件）。
+      key: target.remote ? note.fileName : [target.folder, note.fileName].filter(Boolean).join("/"),
+      name,
+      fields: pickFields(note.markdown, TRACE_LINK_FIELDS),
+      content: stripRelatedSection(note.markdown).content,
+    });
+    active.vaultNoteIndex.set(key, next);
+  }
+
+  /**
+   * 配对「笔记 ←→ 溯源笔记」：同来源、两侧各取一份。
+   *
+   * **谁后写谁补链**，所以两个方向都要处理：
+   * - 本篇是普通笔记 → 找出同源的溯源笔记，把链接写进本篇；
+   * - 本篇是溯源笔记 → 找出同源的普通笔记，把链接**回补**进那些文件。
+   * 收录的链接始终是「扫描到的完整集合」（`upsertTraceSection` 是替换语义），
+   * 所以溯源笔记被删掉之后链接会自己消失，不会留一条指向不存在文件的死链。
+   */
+  private async traceLinkPlan(
+    active: ActiveRun,
+    target: { vaultPath: string; folder: string; remote?: { config: NutstoreConfig; remoteRoot: string } },
+    self: { name: string; url: string; isTrace: boolean },
+  ): Promise<{ forSelf: string[]; backfills: { key: string; name: string; content: string; changed: boolean }[] }> {
+    const empty = { forSelf: [] as string[], backfills: [] };
+    if (!self.url) return empty;
+    const notes = await this.vaultNoteIndex(active, target);
+    if (notes.length === 0) return empty;
+
+    // 比较与索引都按去扩展名的链接形态走：库内扫描在本地/坚果云两种模式下给的名字不一样（见 linkName）。
+    const selfName = linkName(self.name);
+    const sameSource = notes.filter(
+      (entry) => linkName(entry.name) !== selfName && sameSourceUrl(entry.fields["原始链接"]?.[0], self.url),
+    );
+    const counterparts = sameSource.filter((entry) => isTraceNoteType(entry.fields["类型"]) !== self.isTrace);
+    if (counterparts.length === 0) return empty;
+
+    // 本篇是普通笔记：链接直接进本篇（一次写就带上）。
+    if (!self.isTrace) return { forSelf: counterparts.map((entry) => entry.name), backfills: [] };
+
+    /*
+     * 本篇是溯源笔记：往回补。回补名单要包含「同源的全部溯源笔记（含本篇）」——
+     * 因为 upsert 是替换语义，只传本篇会把之前的其它溯源笔记从对端抹掉。
+     */
+    const traceNames = [
+      self.name,
+      ...sameSource.filter((entry) => isTraceNoteType(entry.fields["类型"])).map((entry) => entry.name),
+    ];
+    const backfills = counterparts.map((entry) => {
+      const updated = upsertTraceSection(entry.content, traceNames);
+      return { key: entry.key, name: entry.name, content: updated.content, changed: updated.changed };
+    });
+    return { forSelf: [], backfills };
+  }
+
+  /**
+   * 执行回补：把链接写进对端笔记（本地或坚果云）。
+   * 内容没变就不写——回补动的是整个库，不能让 mtime 无谓地变一遍（`related-notes.ts` 立的规矩）。
+   */
+  private async applyTraceBackfills(
+    active: ActiveRun,
+    node: GraphNode,
+    target: { vaultPath: string; folder: string; remote?: { config: NutstoreConfig; remoteRoot: string } },
+    backfills: { key: string; name: string; content: string; changed: boolean }[],
+  ): Promise<number> {
+    let written = 0;
+    for (const backfill of backfills) {
+      if (!backfill.changed) continue;
+      if (target.remote) await writeRemoteFile(target.remote.config, `${target.remote.remoteRoot}/${backfill.key}`, backfill.content);
+      else await writeFile(join(target.vaultPath, backfill.key), backfill.content, "utf8");
+      written += 1;
+      this.rememberWrittenNote(active, target, { fileName: backfill.name, markdown: backfill.content });
+    }
+    if (written > 0) {
+      await this.log(active, node.id, "info", `已在 ${written} 篇同源笔记里补上指向溯源笔记的链接`);
+    }
+    return written;
   }
 
   private async progress(active: ActiveRun, nodeId: string, progress: number, message: string) {
