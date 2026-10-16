@@ -2268,8 +2268,12 @@ ${list}
     const name = linkName(note.fileName);
     const next = notes.filter((entry) => linkName(entry.name) !== name);
     next.push({
-      // key 是**文件路径**，必须带扩展名（回补要照着它写文件）。
-      key: target.remote ? note.fileName : [target.folder, note.fileName].filter(Boolean).join("/"),
+      /*
+       * key 是**相对库根的路径**，必须带扩展名：回补照着它写文件（本地 `join(vaultPath, key)`、
+       * 坚果云 `remoteRoot/key`）。此处曾漏掉目录（坚果云分支只写文件名），
+       * 于是同一轮里被回补的笔记会被写到库根目录去。
+       */
+      key: [target.folder, note.fileName].filter(Boolean).join("/"),
       name,
       fields: pickFields(note.markdown, TRACE_LINK_FIELDS),
       content: stripRelatedSection(note.markdown).content,
