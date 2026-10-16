@@ -1001,7 +1001,8 @@ const promptOptions = computed(() =>
 );
 
 /**
- * 当前选的模版会不会做联网核查（v2 是可选、v3 是必需）：是的话节点上直接显示渠道与密钥状态。
+ * 当前选的模版会不会做联网核查（v2 是可选、v3 是必需）：决定「提示词」那一行要不要挂「联网」标记。
+ * 渠道名与密钥状态本身不再上卡片（见 `promptNet`）。
  */
 const selectedSearchBlock = computed(() => {
   const block = promptsStore.allBlocks.find((item) => item.id === promptBlockId.value);
@@ -1041,29 +1042,41 @@ const outletPlan = computed(() => {
 });
 
 /**
- * 检索渠道名。这里读的是设置页「联网检索」里那一份，和「AI 模型」的密钥不是同一个东西，
- * 所以节点上把渠道与配置状态摊开显示，省得去设置页猜该填哪个 key。
+ * 检索渠道名。只在标记的悬停说明里用到——卡片上不再常驻渠道与密钥状态：
+ * 「已配置」是没有动作可做的成功态，而渠道属于工作区设置（设置页「联网检索」里已经写着）。
  */
 const searchChannelLabel = computed(() => {
   const provider = settingsStore.settings?.search.provider;
   return provider ? SEARCH_PROVIDER_LABELS[provider] : "读取中";
 });
 
-const searchTesting = ref(false);
+/**
+ * 联网标记：**这枚卡会不会联网**——提示词的属性，所以挂在「提示词」那一行上，缺密钥时连同一行警示。
+ *
+ * 这块原先是一个灰底块（`联网核查 | 渠道 | 密钥已配置` + 两个按钮），占溯源卡 33% 的高度，
+ * 而里面**一条可配置项都没有**。改成「常态零占用、只在异常时说」的评估与先例见
+ * docs/research/search-status-block-research.md（同理：测试连接只留在设置页）。
+ */
+const promptNet = computed(() => {
+  const block = selectedSearchBlock.value;
+  if (!block) return undefined;
+  const required = block.externalCheck === "required";
+  return {
+    hint: `会联网核查 · 渠道 ${searchChannelLabel.value}`,
+    warning: required
+      ? "未配置联网检索密钥（该提示词需要它，已从可选列表里隐去），本次不会联网核查"
+      : "未配置联网检索密钥，本次只做原文核对，不联网核查",
+  };
+});
 
-async function testTraceSearch() {
-  searchTesting.value = true;
-  try {
-    const result = await settingsStore.testSearch();
-    const authority = Object.entries(result.authorityCounts ?? {});
-    const authorityText = authority.length > 0 ? `（${authority.map(([tier, count]) => `${tier} ${count}`).join("、")}）` : "";
-    toast.success(`检索连通，可用来源 ${result.count} 条${authorityText}`);
-  } catch (err) {
-    toast.error(err instanceof Error ? err.message : "检索失败");
-  } finally {
-    searchTesting.value = false;
-  }
-}
+/**
+ * 练一练的联网找同类题：**加分项**，缺密钥只是退化成纯原文出题（配方那一步自动跳过），
+ * 所以缺配置时也用中性灰、不加警示色——它不是警告。
+ */
+const drillNet = computed(() => ({
+  hint: `出题前上网找同类练习题供参考 · 渠道 ${searchChannelLabel.value}`,
+  label: searchReady.value ? "联网找同类题" : "未配置检索密钥，本次不联网找题",
+}));
 
 function openSearchSettings() {
   void router.push({ path: "/settings", query: { group: "search" } });
@@ -1549,7 +1562,15 @@ const themeOptions = [
 
           <template v-else-if="nodeType === 'process.prompt'">
             <div class="sf-node-field">
-              <span class="sf-node-field-label">提示词</span>
+              <div class="sf-node-field-head">
+                <span class="sf-node-field-label">提示词</span>
+                <span
+                  v-if="promptNet"
+                  class="sf-node-net"
+                  :class="{ 'is-missing': !searchReady }"
+                  :title="promptNet.hint"
+                >联网</span>
+              </div>
               <ModelSelect
                 v-model="promptBlockId"
                 :options="promptOptions"
@@ -1559,30 +1580,11 @@ const themeOptions = [
                 placeholder="选择提示词"
                 :prefix-icon="PhSparkle"
               />
-            </div>
-            <div v-if="selectedSearchBlock" class="sf-node-search">
-              <div class="sf-node-search-head">
-                <span class="sf-node-field-label">联网核查</span>
-                <span class="sf-node-chip">{{ searchChannelLabel }}</span>
-                <span class="sf-node-chip" :class="searchReady ? 'is-ready' : 'is-missing'">
-                  {{ searchReady ? "密钥已配置" : "密钥未配置" }}
-                </span>
-              </div>
-              <p v-if="!searchReady" class="sf-node-search-note">
-                未配置时不会联网核查{{ selectedSearchBlock.externalCheck === "required" ? "（该模版需要检索密钥，已从可选列表里隐去）" : "，原文核对照常" }}。
-                用的是设置页「联网检索」里的搜索服务密钥，与「AI 模型」的密钥不是同一个。
+              <!-- 缺密钥才出声：这是「你选的做法里有一步跑不了」，不是常态 -->
+              <p v-if="promptNet && !searchReady" class="sf-node-net-note">
+                {{ promptNet.warning }} ·
+                <button type="button" class="sf-node-net-link nodrag" @click="openSearchSettings">去设置</button>
               </p>
-              <div class="sf-node-search-actions">
-                <button
-                  type="button"
-                  class="sf-node-search-btn nodrag"
-                  :disabled="!searchReady || searchTesting"
-                  @click="testTraceSearch"
-                >
-                  {{ searchTesting ? "测试中…" : "测试连接" }}
-                </button>
-                <button type="button" class="sf-node-search-btn nodrag" @click="openSearchSettings">去设置</button>
-              </div>
             </div>
           </template>
 
@@ -1638,34 +1640,11 @@ const themeOptions = [
               :focus="data.focus"
               @update="patchDrill"
             />
-            <!-- 练一练与溯源共用同一份检索渠道：这里显示状态，省得去设置页猜该填哪个 key。 -->
-            <div class="sf-node-search">
-              <div class="sf-node-search-head">
-                <span class="sf-node-field-label">联网找同类题</span>
-                <span class="sf-node-chip">{{ searchChannelLabel }}</span>
-                <span class="sf-node-chip" :class="searchReady ? 'is-ready' : 'is-missing'">
-                  {{ searchReady ? "密钥已配置" : "密钥未配置" }}
-                </span>
-              </div>
-              <p class="sf-node-search-note">
-                {{
-                  searchReady
-                    ? "抽点后会拿知识点的检索词上网找同类练习题，参考它们的考察角度与干扰项设计；题目答案与原文依据仍只认原文。"
-                    : "未配置时完全依据原文出题（不联网）。用的是设置页「联网检索」里的搜索服务密钥，与「AI 模型」的密钥不是同一个。"
-                }}
-              </p>
-              <div class="sf-node-search-actions">
-                <button
-                  type="button"
-                  class="sf-node-search-btn nodrag"
-                  :disabled="!searchReady || searchTesting"
-                  @click="testTraceSearch"
-                >
-                  {{ searchTesting ? "测试中…" : "测试连接" }}
-                </button>
-                <button type="button" class="sf-node-search-btn nodrag" @click="openSearchSettings">去设置</button>
-              </div>
-            </div>
+            <!-- 联网找同类题：与溯源共用同一份检索渠道，但它是加分项，所以一行中性灰、缺配置也不报警 -->
+            <p class="sf-node-net-line" :title="drillNet.hint">
+              {{ drillNet.label }}
+              <template v-if="!searchReady">· <button type="button" class="sf-node-net-link nodrag" @click="openSearchSettings">去设置</button></template>
+            </p>
           </template>
 
           <template v-else-if="nodeType === 'process.merge'">
@@ -2228,7 +2207,7 @@ const themeOptions = [
 
 /**
  * 产物徽章：标题右侧的「笔记 / 报告」，说明这枚卡做出来的是哪一类东西。
- * 与 `.sf-node-chip`（节点体内的状态小字）分开：这里是标题行的一部分，尺寸按标题行高（22px）配。
+ * 尺寸按标题行高（22px）配，是标题行的一部分，不是正文里的字段。
  */
 .sf-node-artifact {
   flex-shrink: 0;
@@ -2372,76 +2351,56 @@ const themeOptions = [
   color: var(--color-success);
 }
 
-.sf-node-search {
-  margin-top: 8px;
-  padding: 8px 10px;
-  background: var(--color-surface-muted);
-  border-radius: var(--radius-sm);
-}
-
-.sf-node-search-head {
+/*
+ * 联网标记（常态零占用、只在异常时出声）。
+ *
+ * 它取代了原先那个灰底块（`.sf-node-search`：胶囊 + 渠道 + 「密钥已配置」+ 测试连接/去设置），
+ * 那一块占溯源卡 33% 的高度，而里面一条可配置项都没有。评估与先例见
+ * docs/research/search-status-block-research.md。
+ */
+.sf-node-field-head {
   display: flex;
   align-items: center;
-  gap: 6px;
-  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 8px;
 }
 
-.sf-node-chip {
-  padding: 1px 6px;
-  border: 1px solid var(--color-border);
-  border-radius: 3px;
-  background: var(--color-surface);
-  color: var(--color-text-secondary);
+.sf-node-net {
+  flex-shrink: 0;
+  color: var(--color-text-tertiary);
   font-size: 11px;
   line-height: 16px;
+  cursor: help;
 }
 
-.sf-node-chip.is-ready {
-  border-color: var(--color-success-border);
-  background: var(--color-success-soft);
-  color: var(--color-success);
-}
-
-.sf-node-chip.is-missing {
-  border-color: var(--color-warning-border);
-  background: var(--color-warning-soft);
+.sf-node-net.is-missing {
   color: var(--color-warning);
 }
 
-.sf-node-search-note {
-  margin: 6px 0 0;
+/* 缺密钥那一行：警告色 + 一个动作。行内按钮做成文字链，不再出现第二个同权重按钮 */
+.sf-node-net-note {
+  margin: 0;
+  color: var(--color-warning);
+  font-size: 11px;
+  line-height: 17px;
+}
+
+.sf-node-net-link {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--color-info);
+  font: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+
+.sf-node-net-line {
+  margin: 0;
   color: var(--color-text-tertiary);
   font-size: 11px;
-  line-height: 1.6;
-}
-
-.sf-node-search-actions {
-  display: flex;
-  gap: 6px;
-  margin-top: 8px;
-}
-
-.sf-node-search-btn {
-  height: 24px;
-  padding: 0 10px;
-  border: 1px solid var(--color-border-strong);
-  border-radius: var(--radius-sm);
-  background: var(--color-surface);
-  color: var(--color-text);
-  font-family: inherit;
-  font-size: 11px;
-  white-space: nowrap;
-  cursor: pointer;
-  transition: background-color var(--dur-1) var(--ease-out), border-color var(--dur-1) var(--ease-out);
-}
-
-.sf-node-search-btn:hover:not(:disabled) {
-  background: var(--color-ink-soft);
-}
-
-.sf-node-search-btn:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
+  line-height: 16px;
 }
 
 .sf-node-run-btn {
