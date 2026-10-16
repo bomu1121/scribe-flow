@@ -14,6 +14,13 @@ export interface ModelSelectOption {
    * 那种「一个下拉里带分组标题」的做法，不是先选系列再选成员的两段式。
    */
   group?: string;
+  /**
+   * 选项右侧的短后缀（画布提示词下拉用它标产物类别：「笔记」「报告」）。
+   *
+   * 它回答「选这个会得到什么东西」，而 `label` 回答「这是哪个做法」——两件事，所以分两处写：
+   * 拼进 `label` 就没法只按做法名搜索了，而那个下拉是 filterable 的。
+   */
+  suffix?: string;
 }
 
 const props = withDefaults(
@@ -170,6 +177,7 @@ function choose(option: ModelSelectOption) {
                   <component :is="option.icon" :size="15" />
                 </span>
                 <span class="sf-model-select__option-label">{{ option.label }}</span>
+                <span v-if="option.suffix" class="sf-model-select__option-suffix">{{ option.suffix }}</span>
                 <Check :size="14" class="sf-model-select__check" />
               </button>
             </template>
@@ -378,6 +386,19 @@ function choose(option: ModelSelectOption) {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.sf-model-select__option-suffix {
+  flex-shrink: 0;
+  margin-left: 6px;
+  padding: 0 6px;
+  border: 1px solid var(--color-info-border);
+  border-radius: 4px;
+  background: var(--color-info-soft);
+  color: var(--color-text-secondary);
+  font-size: 10px;
+  font-weight: 500;
+  line-height: 16px;
 }
 
 .sf-model-select__check {

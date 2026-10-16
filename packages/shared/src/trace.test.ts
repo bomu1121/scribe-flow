@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseTraceReport, parseTraceReports, traceReportToMarkdown, type TraceReport } from "./trace";
+import { isTraceReportProduct, parseTraceReport, parseTraceReports, traceReportToMarkdown, type TraceReport } from "./trace";
 
 const SAMPLE: TraceReport = {
   schema: 1,
@@ -243,5 +243,25 @@ describe("溯源报告的 Markdown 落盘形态（写 Obsidian 用）", () => {
     expect(traceReportToMarkdown(named, { fallbackTitle: "《中美社保对比》 · 信息溯源" })).toContain("# 社保说法溯源清单");
     // 没有兜底值时保持原样
     expect(traceReportToMarkdown({ ...report, title: undefined })).toContain("# 信息溯源报告");
+  });
+});
+
+describe("isTraceReportProduct：一份产物算不算溯源报告", () => {
+  it("产出方声明了报告就算，正文是不是 JSON 都算", () => {
+    expect(isTraceReportProduct(JSON.stringify(SAMPLE), "trace-report")).toBe(true);
+    // 声明了但正文不是那份 JSON（模型没按格式出）：仍按报告处理，由落盘那一步决定降级
+    expect(isTraceReportProduct("这是一段散文。", "trace-report")).toBe(true);
+  });
+
+  it("没声明时按正文格式兜底——文本来源里直接粘一篇报告也算（否则整篇 JSON 会进笔记库）", () => {
+    expect(isTraceReportProduct(JSON.stringify(SAMPLE))).toBe(true);
+    expect(isTraceReportProduct("这是一篇普通笔记。")).toBe(false);
+    /*
+     * 兜底的边界（实测了四种拼法）：报告前后接一段散文都还能解析（解析器从第一个 `{` 取到最后一个 `}`），
+     * 但**两份报告拼在一起就解析不了**——第一份的 `{` 到第二份的 `}` 不是一个合法 JSON。
+     * 这正是它当不了主判据的原因：两份报告合成一篇时兜底落空，只能靠产出方的声明。
+     */
+    expect(isTraceReportProduct(`${JSON.stringify(SAMPLE)}\n\n这是一篇普通笔记。`)).toBe(true);
+    expect(isTraceReportProduct(`${JSON.stringify(SAMPLE)}\n\n${JSON.stringify(SAMPLE)}`)).toBe(false);
   });
 });

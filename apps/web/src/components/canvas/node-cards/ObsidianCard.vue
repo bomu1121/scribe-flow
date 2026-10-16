@@ -3,11 +3,26 @@ import { computed, inject, ref } from "vue";
 import { ElButton } from "element-plus/es/components/button/index.mjs";
 import { ElOption, ElSelect } from "element-plus/es/components/select/index.mjs";
 import { RefreshCw } from "lucide-vue-next";
+import { PROMPT_ARTIFACT_FULL_LABELS } from "@scribe-flow/shared";
 import { useSettingsStore } from "@/stores/settings";
 import NodeFieldLabel from "../NodeFieldLabel.vue";
+import type { OutletPlan } from "@/utils/artifact-plan";
 
-defineProps<{ folder?: string }>();
+const props = defineProps<{ folder?: string; plan?: OutletPlan }>();
 const emit = defineEmits<{ update: [value: { folder?: string }] }>();
+
+/**
+ * 预告文案：一份输入一行（带做法名）。一份里混着几类（两份产物先合并再进来）就把几类都写出来。
+ *
+ * 措辞是「本次将写入」而不是「已写入」：这是照着画布算的，不是在读运行结果。
+ */
+const planLines = computed(() =>
+  (props.plan?.pieces ?? []).map((piece) => ({
+    key: piece.nodeId,
+    label: piece.kinds.map((kind) => PROMPT_ARTIFACT_FULL_LABELS[kind]).join(" + "),
+    name: piece.blockName,
+  })),
+);
 
 /**
  * 画布缩放（由节点外壳 provide）：这个 el-select 的浮层会被 Teleport 到 body，
@@ -74,6 +89,22 @@ function onFolderChange(value: string | number | undefined) {
         </ElButton>
       </div>
     </div>
+
+    <!--
+      「本次将写入什么」：这一张卡是整条链路的出口，用户在这上面才第一次看到产物是几篇、几类。
+      两类同时存在时补一句互链——那是落盘时真会做的配对（溯源报告 ←→ 同源笔记），不看预告就只能等跑完才知道。
+    -->
+    <div v-if="plan && planLines.length > 0" class="sf-obsidian-plan">
+      <p class="sf-obsidian-plan-head">
+        本次将写入 <b>{{ plan.count }}</b> 篇<template v-if="!plan.perPiece && plan.pieces.length > 1">（{{ plan.pieces.length }} 份输入合成一篇）</template>：
+      </p>
+      <ul class="sf-obsidian-plan-list">
+        <li v-for="line in planLines" :key="line.key">
+          {{ line.label }}<template v-if="line.name"> · {{ line.name }}</template>
+        </li>
+      </ul>
+      <p v-if="plan.interlink" class="sf-obsidian-plan-link">写入后两篇会互相链接（Obsidian 双链）</p>
+    </div>
   </div>
 </template>
 
@@ -88,5 +119,47 @@ function onFolderChange(value: string | number | undefined) {
   display: flex;
   align-items: center;
   gap: 4px;
+}
+
+/**
+ * 预告块。刻意比目录那一段轻：它是一句说明，不是又一个要填的控件。
+ * 色只用 `--color-text-secondary/tertiary` 与分隔用的 `--color-border`，不引入新令牌。
+ */
+.sf-obsidian-plan {
+  padding-top: 6px;
+  border-top: 1px dashed var(--color-border);
+}
+
+.sf-obsidian-plan-head {
+  margin: 0;
+  color: var(--color-text-secondary);
+  font-size: 11px;
+  line-height: 16px;
+}
+
+.sf-obsidian-plan-head b {
+  font-weight: 600;
+}
+
+.sf-obsidian-plan-list {
+  margin: 2px 0 0;
+  padding: 0;
+  list-style: none;
+  color: var(--color-text-secondary);
+  font-size: 11px;
+  line-height: 16px;
+}
+
+.sf-obsidian-plan-list li {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sf-obsidian-plan-link {
+  margin: 2px 0 0;
+  color: var(--color-text-tertiary);
+  font-size: 11px;
+  line-height: 16px;
 }
 </style>

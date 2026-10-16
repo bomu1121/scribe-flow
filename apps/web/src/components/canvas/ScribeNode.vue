@@ -13,7 +13,7 @@ import { ChevronDown, CircleAlert } from "lucide-vue-next";
 import { toast } from "@/lib/toast";
 import { Handle, Position, useVueFlow, type NodeProps } from "@vue-flow/core";
 import { ContextMenuContent, ContextMenuItem, ContextMenuPortal, ContextMenuRoot, ContextMenuSeparator, ContextMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuPortal, DropdownMenuRoot, DropdownMenuSeparator, DropdownMenuTrigger, PopoverContent, PopoverPortal, PopoverRoot, PopoverTrigger } from "reka-ui";
-import { aiPromptBlocks, COMMON_EXTRACT_FIELDS, extractBiliUrl, groupPromptBlocks, MAX_EXTRACT_FIELDS, NODE_PORTS, NODE_TYPE_LABELS, SEARCH_PROVIDER_LABELS, type NodePick, type NodeType, type UploadedFile, type VideoPreview } from "@scribe-flow/shared";
+import { aiPromptBlocks, blockArtifact, COMMON_EXTRACT_FIELDS, extractBiliUrl, groupPromptBlocks, MAX_EXTRACT_FIELDS, NODE_PORTS, NODE_TYPE_LABELS, PROMPT_ARTIFACT_LABELS, SEARCH_PROVIDER_LABELS, type NodePick, type NodeType, type UploadedFile, type VideoPreview } from "@scribe-flow/shared";
 import ModelSelect from "../ModelSelect.vue";
 import NodeFieldLabel from "./NodeFieldLabel.vue";
 import IfCard from "./node-cards/IfCard.vue";
@@ -25,6 +25,7 @@ import DrillCard from "./node-cards/DrillCard.vue";
 import PickCard from "./node-cards/PickCard.vue";
 import PickFields from "./node-cards/PickFields.vue";
 import { useSegmentPick } from "@/composables/useSegmentPick";
+import { buildOutletPlan } from "@/utils/artifact-plan";
 import { renderMarkdown } from "@/lib/markdown";
 import { cachePreview, readCachedPreview } from "@/utils/bili-preview-cache";
 import { PICKER_COPY, collapsesAfterRun, pickerKey, pickerSummary, readPickerOpen, writePickerOpen, type PickerKind } from "@/utils/bili-picker";
@@ -993,6 +994,8 @@ const promptOptions = computed(() =>
       label: block.builtin ? block.name : `${block.name} · 我的`,
       value: block.id,
       group: group.members.length > 1 ? group.series : undefined,
+      // 选的时候就标出产物类别：同一系列里未必同类，而用户是在这一刻做的决定
+      suffix: PROMPT_ARTIFACT_LABELS[blockArtifact(block)],
     })),
   ),
 );
@@ -1003,6 +1006,38 @@ const promptOptions = computed(() =>
 const selectedSearchBlock = computed(() => {
   const block = promptsStore.allBlocks.find((item) => item.id === promptBlockId.value);
   return block?.externalCheck ? block : undefined;
+});
+
+/**
+ * 标题旁的产物徽章：这枚卡做出来的是哪一类东西。
+ *
+ * 起因是两张并排的「AI 加工」卡——一张出观点笔记、一张出溯源报告——在画布上长得一模一样，
+ * 用户根本看不出产物是两类（详见 docs/research/trace-artifact-visibility-research.md）。
+ * 判据是提示词自己声明的 `produces`：**每一枚 AI 加工卡都标**，包括默认的「笔记」——
+ * 只标异常的那一枚的话，「没徽章」到底是笔记还是"这个功能上线前的旧卡"，看的人分不出来。
+ */
+const artifactBadge = computed(() => {
+  if (nodeType.value !== "process.prompt") return undefined;
+  const block = promptsStore.allBlocks.find((item) => item.id === promptBlockId.value);
+  if (!block) return undefined;
+  return PROMPT_ARTIFACT_LABELS[blockArtifact(block)];
+});
+
+/**
+ * 出口卡（Obsidian 笔记）的「本次将写入什么」预告：几篇、哪几类、会不会互链。
+ * 只读画布（连线与各卡选的提示词），不跑引擎也不写任何状态，改一条线就跟着变。
+ */
+const outletPlan = computed(() => {
+  if (nodeType.value !== "process.obsidian") return undefined;
+  const graph = data.value.ctx?.getGraph?.();
+  if (!graph) return undefined;
+  return buildOutletPlan({
+    nodeId: props.id,
+    nodes: graph.nodes,
+    edges: graph.edges,
+    blocks: promptsStore.allBlocks,
+    splitByInput: data.value.splitByInput,
+  });
 });
 
 /**
@@ -1317,6 +1352,12 @@ const themeOptions = [
               <component :is="typeIcon" :size="17" />
             </span>
             <span class="sf-node-title" :title="label" :aria-label="`节点名称：${label}`">{{ label }}</span>
+            <span
+              v-if="artifactBadge"
+              class="sf-node-artifact"
+              :title="`这枚卡的产物：${artifactBadge}（由所选提示词自己声明）`"
+              :aria-label="`产物类别：${artifactBadge}`"
+            >{{ artifactBadge }}</span>
             <el-tooltip v-if="data.status === 'error'" :content="data.summary || '节点运行失败'" placement="top" effect="dark" :show-after="120" :hide-after="0">
               <span class="sf-node-error-trigger" tabindex="0" aria-label="错误详情">
                 <CircleAlert :size="14" />
@@ -1585,7 +1626,7 @@ const themeOptions = [
           </template>
 
           <template v-else-if="nodeType === 'process.obsidian'">
-            <ObsidianCard :folder="data.folder" @update="patchObsidian" />
+            <ObsidianCard :folder="data.folder" :plan="outletPlan" @update="patchObsidian" />
           </template>
 
           <template v-else-if="nodeType === 'process.drill'">
@@ -2182,6 +2223,26 @@ const themeOptions = [
   font-size: 13px;
   font-weight: 500;
   cursor: grab;
+  user-select: none;
+}
+
+/**
+ * 产物徽章：标题右侧的「笔记 / 报告」，说明这枚卡做出来的是哪一类东西。
+ * 与 `.sf-node-chip`（节点体内的状态小字）分开：这里是标题行的一部分，尺寸按标题行高（22px）配。
+ */
+.sf-node-artifact {
+  flex-shrink: 0;
+  height: 16px;
+  padding: 0 6px;
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid var(--color-info-border);
+  border-radius: 4px;
+  background: var(--color-info-soft);
+  color: var(--color-text-secondary);
+  font-size: 10px;
+  font-weight: 500;
+  line-height: 1;
   user-select: none;
 }
 

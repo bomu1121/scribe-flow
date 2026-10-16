@@ -784,6 +784,47 @@ describe("Obsidian 笔记：上游是溯源报告时", () => {
     const body = await readFile(join(dir, files[0]), "utf8");
     expect(body).toContain("这是一篇普通正文，不是 JSON。");
   });
+
+  it("关掉「每个输入一篇」把报告与笔记合成一篇时，报告也要先转成 Markdown（不能以 JSON 混进正文）", async () => {
+    const { vault, dir } = await makeVault();
+    await runNoteMulti(
+      vault,
+      [
+        { id: "n_a", text: REPORT },
+        { id: "n_b", text: "这是一篇观点笔记的正文。" },
+      ],
+      { title: "合成稿", splitByInput: false },
+      "trace-merge",
+    );
+
+    const body = await readFile(join(dir, "合成稿.md"), "utf8");
+    // 报告那一份转过来了：正文里是它的标题与条目，没有 JSON 残骸
+    expect(body).toContain("信息溯源报告");
+    expect(body).not.toContain('"schema": 1');
+    // 另一份原样在
+    expect(body).toContain("这是一篇观点笔记的正文。");
+    // 合成稿混着两类内容，没有单一类别可写：类型不写「溯源笔记」，也就不参与配对
+    expect(body).not.toContain(`类型: ${TRACE_NOTE_TYPE}`);
+  });
+
+  it("两份报告合成一篇：各自转各自的（整段判会两份都落成 JSON——解析器只认单份报告）", async () => {
+    const { vault, dir } = await makeVault();
+    const second = JSON.stringify({ schema: 1, title: "第二份溯源报告", items: [], uncertainties: [] });
+    await runNoteMulti(
+      vault,
+      [
+        { id: "n_a", text: REPORT },
+        { id: "n_b", text: second },
+      ],
+      { title: "两份报告", splitByInput: false },
+      "trace-merge-two",
+    );
+
+    const body = await readFile(join(dir, "两份报告.md"), "utf8");
+    expect(body).toContain("信息溯源报告");
+    expect(body).toContain("第二份溯源报告");
+    expect(body).not.toContain('"schema": 1');
+  });
 });
 
 /**

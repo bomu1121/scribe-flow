@@ -3,13 +3,15 @@ import {
   BUILTIN_PROMPT_BLOCKS,
   aiPromptBlocks,
   availablePromptBlocks,
+  blockArtifact,
   blockSeriesName,
   compareVersion,
   currentPromptBlock,
   groupPromptBlocks,
-  isTraceBlock,
+  nodeArtifact,
   promptBlockVersions,
   variantTitle,
+  type PromptBlock,
 } from "./prompt";
 
 describe("builtin prompt blocks", () => {
@@ -421,12 +423,29 @@ describe("系列 / 成员 / 版本（两级身份 + 一个迭代号）", () => {
     expect(promptBlockVersions(BUILTIN_PROMPT_BLOCKS, other).map((block) => block.id)).toEqual(["builtin.insight.v4"]);
   });
 
-  it("isTraceBlock：只认「信息溯源」系列（结果页靠它把溯源报告从普通笔记里分流）", () => {
+  it("blockArtifact：溯源的做法自己声明产物类别（结果页、落盘、画布徽章都读这一句）", () => {
     const byId = (id: string) => BUILTIN_PROMPT_BLOCKS.find((block) => block.id === id)!;
-    expect(isTraceBlock(byId("builtin.trace"))).toBe(true);
-    expect(isTraceBlock(byId("builtin.trace.v3"))).toBe(true);
-    expect(isTraceBlock(byId("builtin.insight"))).toBe(false);
-    // 自定义提示词没有 series：名字碰巧叫「信息溯源」也不能误判
-    expect(isTraceBlock({ id: "c", name: "信息溯源", prompt: "x", builtin: false })).toBe(false);
+    // 三个溯源做法（含不再推荐的旧两版）都要声明，否则旧工程一重跑就会被当成普通笔记
+    expect(["builtin.trace", "builtin.trace.v2", "builtin.trace.v3"].map((id) => blockArtifact(byId(id)))).toEqual([
+      "trace-report",
+      "trace-report",
+      "trace-report",
+    ]);
+    // 没声明的做法＝普通笔记，而不是「未知」：自定义提示词一个字都不用改
+    expect(blockArtifact(byId("builtin.insight"))).toBe("note");
+    expect(blockArtifact(undefined)).toBe("note");
+  });
+
+  it("nodeArtifact：自定义提示词的名字里带「溯源」也不能误判，认的是 id 查到的块", () => {
+    const custom: PromptBlock[] = [{ id: "c", name: "信息溯源", prompt: "x", builtin: false }];
+    expect(nodeArtifact(custom, { type: "process.prompt", data: { promptBlockId: "c" } })).toBe("note");
+    expect(nodeArtifact(custom, { type: "process.prompt", data: { promptBlockId: "builtin.trace.v3" } })).toBe("note");
+    // 内置块要由调用方传进来：结果页传「内置 + 自定义」，服务端传内置那一份
+    expect(nodeArtifact(BUILTIN_PROMPT_BLOCKS, { type: "process.prompt", data: { promptBlockId: "builtin.trace.v3" } })).toBe(
+      "trace-report",
+    );
+    // 非 AI 加工作节点一律普通笔记，哪怕 data 里恰好有个指向溯源块的 id
+    expect(nodeArtifact(BUILTIN_PROMPT_BLOCKS, { type: "process.refine", data: { promptBlockId: "builtin.trace.v3" } })).toBe("note");
+    expect(nodeArtifact(BUILTIN_PROMPT_BLOCKS, { type: "process.prompt", data: {} })).toBe("note");
   });
 });

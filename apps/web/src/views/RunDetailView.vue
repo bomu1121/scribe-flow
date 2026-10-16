@@ -30,11 +30,11 @@ import {
 } from "lucide-vue-next";
 import type { ProjectMeta, RunDetail, RunNodeInput, RunNodeResult, RunMediaView, TraceReport, WorkflowGraph } from "@scribe-flow/shared";
 import {
-  BUILTIN_PROMPT_BLOCKS,
   MULTI_PRODUCT_SEPARATOR,
   NODE_TYPE_LABELS,
   RUN_NAME_MAX_LENGTH,
-  isTraceBlock,
+  isTraceReportProduct,
+  nodeArtifact,
   parseTraceReports,
   traceReportToMarkdown,
 } from "@scribe-flow/shared";
@@ -45,9 +45,10 @@ import { RUN_STATUS_META, runDisplayName, resolveRenameRequest } from "@/lib/run
 import { buildNodeSegments, fmtCharCount, fmtDuration, type RunSegment } from "@/utils/run-segments";
 import { chainRowMeta, chainStageTitle, chainTypeSuffix } from "@/utils/run-chain";
 import { buildCompareOptions, pickDefaultComparePair } from "@/utils/run-compare";
-import { isDrillOutput, looksLikeTraceReport } from "@/utils/run-output";
+import { isDrillOutput } from "@/utils/run-output";
 import { subscribeRunEvents } from "@/lib/sse";
 import { useProjectsStore } from "@/stores/projects";
+import { usePromptsStore } from "@/stores/prompts";
 import { useRunsStore } from "@/stores/runs";
 import { useSettingsStore } from "@/stores/settings";
 import MindMapViewer from "@/components/MindMapViewer.vue";
@@ -63,6 +64,7 @@ const router = useRouter();
 const projectsStore = useProjectsStore();
 const runsStore = useRunsStore();
 const settingsStore = useSettingsStore();
+const promptsStore = usePromptsStore();
 const run = ref<RunDetail | null>(null);
 const loading = ref(false);
 const activeTab = ref<DetailTab>("result");
@@ -333,33 +335,30 @@ const graph = computed<WorkflowGraph | undefined>(() => run.value?.graph);
 const nodeResultMap = computed(() => new Map((run.value?.nodeResults ?? []).map((n) => [n.nodeId, n])));
 
 /**
- * 画布中配置了信息溯源块的 AI 节点；它们的结构化报告需要作为独立输出展示。
- *
- * 判定走 shared 的 `isTraceBlock`，不在这里写系列名字面量：写在这儿的话，系列一改名，这里会
- * **静默**失效（分类不对、不报错、也掉不了任何测试）。
+ * 每个节点做出来的是哪一类产物：读它选的提示词自己声明的那一句（`nodeArtifact`）。
+ * 这里不写系列名字面量——系列改名、或报告里多一个字段，都不该让结果页静默换一套渲染。
  */
-const traceNodeIds = computed(() => {
-  const ids = new Set<string>();
-  const traceBlockIds = new Set(
-    BUILTIN_PROMPT_BLOCKS.filter((block) => isTraceBlock(block)).map((block) => block.id),
+const nodeArtifacts = computed(
+  () => new Map((graph.value?.nodes ?? []).map((node) => [node.id, nodeArtifact(promptsStore.allBlocks, node)])),
+);
+
+/**
+ * 这份产物算不算一份溯源报告：与落盘那一步**同一句判据**（`isTraceReportProduct`）——
+ * 节点声明了报告，或正文本身就是一份可解析的报告 JSON（文本来源里直接粘进来的那种）。
+ * 两处各写一套的话，会出现「结果页当报告读、库里写进去却是 JSON」这类看不见的分歧。
+ */
+function isTraceDoc(result: RunNodeResult): boolean {
+  return isTraceReportProduct(
+    result.output?.text ?? "",
+    nodeArtifacts.value.get(result.nodeId) ?? "note",
   );
-  for (const node of graph.value?.nodes ?? []) {
-    const data = asRecord(node.data);
-    const blockId = String(data.promptBlockId ?? "");
-    if (node.type === "process.prompt" && traceBlockIds.has(blockId)) ids.add(node.id);
-  }
-  return ids;
-});
+}
 
 const outputNodes = computed<OutputDoc[]>(() => {
   const all = (run.value?.nodeResults ?? []).filter((n) => !isDrillOutput(n));
   const docs = all.filter((n) => n.output?.kind === "noteDoc");
-  const traceDocs = all.filter(
-    (n) =>
-      (traceNodeIds.value.has(n.nodeId) || looksLikeTraceReport(n.output?.text ?? "")) &&
-      (n.output?.kind === "noteBlock" || n.output?.kind === "text"),
-  );
-  const fallback = docs.length > 0 ? [] : all.filter((n) => (n.output?.kind === "text" || n.output?.kind === "noteBlock") && !traceNodeIds.value.has(n.nodeId)).slice(-3);
+  const traceDocs = all.filter((n) => isTraceDoc(n) && (n.output?.kind === "noteBlock" || n.output?.kind === "text"));
+  const fallback = docs.length > 0 ? [] : all.filter((n) => (n.output?.kind === "text" || n.output?.kind === "noteBlock") && !isTraceDoc(n)).slice(-3);
   const list = [...traceDocs, ...docs, ...fallback];
   return list.map((n) => ({
     node: n,
@@ -925,7 +924,7 @@ const chainGroups = computed(() => {
           typeSuffix: chainTypeSuffix(title, chainTypeShort(doc.node.nodeType)),
           meta: doc.node.summary || "",
           error: doc.node.error,
-          trace: traceNodeIds.value.has(doc.node.nodeId),
+          trace: isTraceDoc(doc.node),
           marker: mark.text,
           markerKind: mark.kind,
           active: !viewingInput.value && index === selectedOutputIndex.value,
@@ -1038,12 +1037,7 @@ function ensureActiveSegmentVisible() {
 }
 
 // 产物形态判定（溯源报告 / 练一练 / 结构化）统一在 utils/run-output.ts，与对照视图共用同一份实现。
-const isTraceOutput = computed(() =>
-  Boolean(
-    currentOutput.value &&
-      (traceNodeIds.value.has(currentOutput.value.node.nodeId) || looksLikeTraceReport(markdown.value)),
-  ),
-);
+const isTraceOutput = computed(() => Boolean(currentOutput.value && isTraceDoc(currentOutput.value.node)));
 const traceReports = computed<TraceReport[]>(() => (isTraceOutput.value ? parseTraceReports(markdown.value) : []));
 /** 溯源产物同样按分段收敛：选中某一段时只展示该段的报告，而不是 8 个视频的报告叠在一起。 */
 const activeTraceReports = computed<TraceReport[]>(() =>

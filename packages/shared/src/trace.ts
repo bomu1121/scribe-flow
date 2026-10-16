@@ -5,6 +5,8 @@
  * 这份 JSON 直接由前端溯源报告阅读器消费；也保留一份 Markdown 导出，便于复制/下载。
  */
 
+import type { PromptArtifact } from "./prompt";
+
 export type TraceCategory =
   | "fact"
   | "data"
@@ -388,6 +390,25 @@ export function parseTraceReports(raw: string): TraceReport[] {
     if (report) reports.push(report);
   }
   return reports;
+}
+
+/**
+ * 一份产物该不该按「溯源报告」处理——结果页给它套哪个阅读器、落盘要不要先转 Markdown、frontmatter 写不写
+ * `类型: 溯源笔记`、与同源笔记要不要配对，都由这一句决定。结果页与落盘读的就是它，没有第二套判据。
+ *
+ * 两个来源，顺序固定：
+ * 1. **产出方声明**（`PromptArtifact`）：这是契约。同一枚 AI 加工卡可以出两类产物，只有做法自己说得清；
+ * 2. **正文格式兜底**：产出方没声明、而正文本身就是一份可解析的报告 JSON 时也算。给「文本来源节点里
+ *    直接粘了一篇报告」「脚本把报告写进了文件」这类**没法声明**的入口兜底——它们进库时同样是报告，
+ *    不兜的话整篇 JSON 会原样落进笔记库。这与 `maybeDrillToMarkdown`（练习集 JSON 不许原样进文档）
+ *    是同一条下游规矩，只是那边没有「做法声明」这一层可读。
+ *
+ * 注意兜底只回答「这段文本是什么格式」，**不回答「这枚卡在做什么」**：画布徽章与出口卡预告只读声明，
+ * 所以一个普通笔记节点不会因为正文里恰好有份报告 JSON 就被标成「报告」。
+ */
+export function isTraceReportProduct(text: string, artifact: PromptArtifact = "note"): boolean {
+  if (artifact === "trace-report") return true;
+  return parseTraceReport(text) !== null;
 }
 
 export const TRACE_CATEGORY_LABELS: Record<TraceCategory, string> = {

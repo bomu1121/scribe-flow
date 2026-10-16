@@ -12,6 +12,8 @@ import {
   fileSegmentKey,
   isAutoTag,
   isSourceOutputNeeded,
+  isTraceReportProduct,
+  nodeArtifact,
   maybeDrillToMarkdown,
   normalizeTagSegment,
   originSourceNodeId,
@@ -30,6 +32,7 @@ import {
   type GraphNode,
   type NodeOutput,
   type NodePick,
+  type PromptArtifact,
   type Recipe,
   type RecipeStep,
   type ResultDelta,
@@ -1049,6 +1052,20 @@ export class RunEngine {
     return { label: labels.join("；"), items };
   }
 
+  /**
+   * 某个上游节点做出来的是哪一类产物：读它选的提示词自己报的那一句（`nodeArtifact`）。
+   *
+   * 落盘分派靠它，而不是靠 `parseTraceReport` 去猜正文——正文解析只能回答「这段文本恰好是 JSON」，
+   * 回答不了「这是一篇溯源报告」（模型的报告少一个字段、或一份报告与一份笔记合并之后，它就答错）。
+   * 图取产出那一刻的快照：沿用历史产物时，卡片后来换过提示词也不该改这一篇的类别。
+   */
+  private artifactOf(active: ActiveRun, nodeId: string, graph?: WorkflowGraph): PromptArtifact {
+    const view = graph ?? active.graph;
+    const node = view.nodes.find((n) => n.id === nodeId);
+    if (!node) return "note";
+    return nodeArtifact(BUILTIN_PROMPT_BLOCKS, node);
+  }
+
   private async resolveInputs(active: ActiveRun, node: GraphNode): Promise<ResolvedInputs> {
     const items: ResolvedInput[] = [];
     /** 本次沿用历史产物的上游节点（逐条列在运行日志里，供「换了素材却只重跑下游」时定位）。 */
@@ -1878,18 +1895,30 @@ export class RunEngine {
          */
         const textItems = inputs.items.filter((item) => item.output.kind !== "audio" && (item.output.text ?? "").trim());
         const split = data.splitByInput !== false && textItems.length > 1;
+        /**
+         * 这一份输入是溯源报告吗——产出方声明的类别说了算，正文本身是可解析的报告 JSON 时也算
+         * （文本来源里直接粘了一篇报告这类没法声明的入口）。判据本身只有一份，见 `isTraceReportProduct`。
+         */
+        const isTraceItem = (item: ResolvedInput) =>
+          isTraceReportProduct((item.output.text ?? "").trim(), this.artifactOf(active, item.sourceNodeId, item.sourceGraph));
         /** 溯源报告的 JSON 产物要先转成 Markdown：否则整篇 JSON 会被原样写进笔记库。 */
         let reportConverted = 0;
-        const noteBody = (text: string, fallbackTitle?: string): { text: string; isTraceReport: boolean } => {
+        let reportUnparsed = 0;
+        const noteBody = (text: string, trace: boolean, fallbackTitle?: string): { text: string; isTraceReport: boolean } => {
+          if (!trace) return { text, isTraceReport: false };
           const report = parseTraceReport(text);
-          if (!report) return { text, isTraceReport: false };
+          if (!report) {
+            // 声明说要出报告、正文却不是那份 JSON：当普通笔记写，但别静默——用户会读到一篇 JSON 残骸。
+            reportUnparsed += 1;
+            return { text, isTraceReport: false };
+          }
           reportConverted += 1;
           return { text: traceReportToMarkdown(report, { fallbackTitle }), isTraceReport: true };
         };
         const pending = split
           ? textItems.map((item) => {
               const meta = this.upstreamSourceMeta(active, item.sourceNodeId, item.itemKey, item.sourceGraph);
-              const body = noteBody((item.output.text ?? "").trim(), meta.title ? `《${meta.title}》 · 信息溯源` : undefined);
+              const body = noteBody((item.output.text ?? "").trim(), isTraceItem(item), meta.title ? `《${meta.title}》 · 信息溯源` : undefined);
               return {
                 text: body.text,
                 // 「这一篇是溯源报告」要一路带到落盘那一步：它决定 frontmatter 的类型，也决定配对走哪一侧。
@@ -1904,10 +1933,29 @@ export class RunEngine {
                 // 压平成一篇时也要按产出时的图取：多份输入混在一起时取第一份的快照，
                 // 与「作者/链接一直按第一项取」的既有口径一致。
                 const meta = this.upstreamSourceMeta(active, node.id, undefined, inputs.items[0]?.sourceGraph);
-                const body = noteBody(inputs.text.trim(), meta.title ? `《${meta.title}》 · 信息溯源` : undefined);
+                /*
+                 * 合成一篇时**逐份**转换再拼：一份报告加一份笔记拼起来的整段文本谁也解析不了，
+                 * 报告会以 JSON 原样混进正文——旧实现按整段判，正是这个后果。已经转换过的正文是
+                 * Markdown，再进一次 noteBody 也不会被误认（`trace: false`）。
+                 */
+                const merged = textItems.map((item) => {
+                  const itemMeta = this.upstreamSourceMeta(active, item.sourceNodeId, item.itemKey, item.sourceGraph);
+                  const itemBody = noteBody(
+                    (item.output.text ?? "").trim(),
+                    isTraceItem(item),
+                    itemMeta.title ? `《${itemMeta.title}》 · 信息溯源` : undefined,
+                  );
+                  return itemBody;
+                });
+                /*
+                 * 这一篇算不算溯源报告：**只有一份输入时才可能算**——那一份就是这一篇。
+                 * 两份以上拼起来的文件混着不同类别，没有单一类别可写，配对（笔记 ←→ 溯源报告）
+                 * 也不参与：一份混着报告与笔记的文件不该被两边同时认领。
+                 */
+                const single = merged.length === 1 ? merged[0] : undefined;
                 return {
-                  text: body.text,
-                  isTraceReport: body.isTraceReport,
+                  text: merged.map((item) => item.text).join("\n\n"),
+                  isTraceReport: single?.isTraceReport === true,
                   meta,
                   itemKey: undefined as string | undefined,
                 };
@@ -1919,6 +1967,17 @@ export class RunEngine {
             node.id,
             "info",
             `已把 ${reportConverted} 份溯源报告转成 Markdown 写入笔记（原产物是 JSON，直接落盘会得到一篇 JSON 文本）`,
+            undefined,
+            inputs.items[0] ? { index: inputs.items[0].position, total: textItems.length } : undefined,
+          );
+        }
+        if (reportUnparsed > 0) {
+          await this.log(
+            active,
+            node.id,
+            // 和「可播放视频下载失败（不影响转写）」同一档：节点没失败，但用户拿到的这一篇与预期不符
+            "error",
+            `有 ${reportUnparsed} 份输入的提示词声明产出溯源报告，但正文不是可解析的报告 JSON，已按普通笔记写入（报告可能没按格式生成，可重跑该节点）`,
             undefined,
             inputs.items[0] ? { index: inputs.items[0].position, total: textItems.length } : undefined,
           );

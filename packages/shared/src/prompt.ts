@@ -17,6 +17,21 @@ import type { Recipe } from "./recipe";
  * 背景：2026-10 之前 `version` 被同时当成「写法」与「迭代」——详尽版=v2、逐段核对=v3、成文版=v4，
  * 于是每张卡片都挂一个版本徽章，可它们其实不是同一个提示词的迭代。
  */
+/**
+ * 一个做法做出来的产物是**哪一类东西**。
+ *
+ * 目前只有两档：普通笔记，与溯源报告（落盘时 frontmatter 写 `类型: 溯源笔记` 的那一类——
+ * 正文先是结构化 JSON、写入前要转成 Markdown，并且会与同源笔记互链）。
+ *
+ * 这个声明是**唯一**判据，三处都读它：结果页分流（哪些产物交给溯源阅读器）、
+ * 落盘转换（哪些要由 JSON 转 Markdown）、画布上的徽章与出口卡预告。
+ * 之前前两处各猜各的——结果页按系列名（是不是「信息溯源」）、落盘按正文能不能被
+ * `parseTraceReport` 解析——同一个事实两份实现，改个系列名就会静默失效。
+ *
+ * 缺省＝`note`：自定义提示词与绝大多数内置做法不必声明。
+ */
+export type PromptArtifact = "note" | "trace-report";
+
 export interface PromptBlock {
   id: string;
   /** 成员名（系列内的一种写法）。单成员系列里即完整名字。 */
@@ -24,6 +39,8 @@ export interface PromptBlock {
   prompt: string;
   builtin: boolean;
   description?: string;
+  /** 这个做法做出来的产物类别；缺省＝普通笔记。见 `PromptArtifact`。 */
+  produces?: PromptArtifact;
   /** 系列名（意图）：把同一目标下的几种写法归成一组。 */
   series?: string;
   /** 该成员的迭代号，如 v1 / v2；缺省＝只有一代、没被改过。 */
@@ -1700,6 +1717,8 @@ export const BUILTIN_PROMPT_BLOCKS: PromptBlock[] = [
     prompt: PROMPT_TRACE,
     builtin: true,
     series: "信息溯源",
+    /** 产物是溯源报告：结果页、落盘、画布徽章都按这一句走，不再认系列名。 */
+    produces: "trace-report",
     description: "提取事实与观点，并为每条信息标注原文来源。",
   },
   {
@@ -1708,6 +1727,7 @@ export const BUILTIN_PROMPT_BLOCKS: PromptBlock[] = [
     prompt: PROMPT_TRACE,
     builtin: true,
     series: "信息溯源",
+    produces: "trace-report",
     description: "多步核对版：通读抽取 → 回文核对 → 结构化成稿，输出可直接以卡片/原文定位展示的证据清单 JSON。约 3 次调用且每步携带原文。",
     recipe: RECIPE_TRACE_V2,
     /** 联网核查需要检索密钥，但该模板没有密钥也照样能出结构化报告。 */
@@ -1719,6 +1739,7 @@ export const BUILTIN_PROMPT_BLOCKS: PromptBlock[] = [
     prompt: PROMPT_TRACE,
     builtin: true,
     series: "信息溯源",
+    produces: "trace-report",
     recommended: true,
     description: "联网核查版：抽取时就为每条可核查信息写好检索词，跑完自动联网核对，按来源权威度给出「外部可印证 / 仅非权威来源 / 有反证 / 未找到出处」。需要先在设置页「联网检索」配置检索渠道。",
     recipe: RECIPE_TRACE_V3,
@@ -1961,11 +1982,38 @@ export function groupPromptBlocks(blocks: PromptBlock[]): PromptSeriesGroup[] {
 }
 
 /**
- * 这条提示词产出的是「结构化溯源报告」吗——结果页要靠它把溯源节点从普通笔记里分流出来。
+ * 这条提示词做出来的产物类别。没声明就是普通笔记。
  *
- * 之前这处判断是 `block.series === "信息溯源"` 的字面量，散在 `RunDetailView.vue` 里：系列一改名就
- * 静默失效（既不报错也不掉测试）。收在这里，改名只动这一处，且有测试钉住。
+ * 取代了原先的 `isTraceBlock`（按系列名判「是不是溯源」）：那种判法只对结果页够用，
+ * 而画布徽章与出口卡要用的是**类别**，还得区分「笔记 / 报告 / 以后的第三类」，
+ * 不是一个布尔。`PromptArtifact` 的注释里有这一处的由来。
  */
-export function isTraceBlock(block: PromptBlock): boolean {
-  return blockSeriesName(block) === "信息溯源";
+export function blockArtifact(block: PromptBlock | undefined): PromptArtifact {
+  return block?.produces ?? "note";
+}
+
+/** 产物类别的短名，给卡片徽章这类寸土寸金的地方。 */
+export const PROMPT_ARTIFACT_LABELS: Record<PromptArtifact, string> = {
+  note: "笔记",
+  "trace-report": "报告",
+};
+
+/** 产物类别的完整名，给出口卡预告、结果页这类有余量的地方。 */
+export const PROMPT_ARTIFACT_FULL_LABELS: Record<PromptArtifact, string> = {
+  note: "笔记",
+  "trace-report": "溯源报告",
+};
+
+/**
+ * 某个节点做出来的产物类别：读它选的提示词自己报的那一句。
+ *
+ * 只认 `process.prompt`：其余节点（转写、校对、章节切分、合并…）的产物都是普通笔记。
+ * 传 `blocks` 而不是在内部拼内置列表，是因为结果页与画布都要把自己那份（内置 + 用户自定义）
+ * 传进来，两处的块集合本来就不一样。
+ */
+export function nodeArtifact(blocks: PromptBlock[], node: { type?: string; data?: unknown }): PromptArtifact {
+  if (node.type !== "process.prompt") return "note";
+  const data = node.data as { promptBlockId?: unknown } | undefined;
+  const blockId = typeof data?.promptBlockId === "string" ? data.promptBlockId : "";
+  return blockArtifact(blocks.find((block) => block.id === blockId));
 }
