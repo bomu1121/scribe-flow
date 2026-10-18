@@ -111,6 +111,7 @@ pnpm check:api:chain # B站 → 校对 → 全部开放提示词分支 → Obsid
 - [节点结果预览展示调研与方案](./docs/research/node-result-preview-research.md)
 - [新功能该加一张卡片，还是加一个提示词](./docs/research/node-vs-prompt-block-boundary.md)
 - [Obsidian 笔记排版：现在为什么难看、成熟做法是什么、四套可选方案](./docs/research/obsidian-note-typography.md)
+- [后续开发方案：从证据链到知识闭环（2026-10）](./docs/research/product-development-plan-2026-10.md)
 - [全项目审计（2026-09-27）](./docs/research/project-audit-2026-09-27.md)
 - [R1 桌面研究报告：市场工作流产品功能地图 v1](./docs/research/r1-desktop-research.md)
 - [仓库可读性与过度工程：外部证据与本仓处置建议](./docs/research/repo-legibility-and-over-engineering.md)
