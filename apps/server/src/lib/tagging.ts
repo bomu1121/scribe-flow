@@ -42,7 +42,8 @@ import {
 import type { AppDatabase } from "../db/client";
 import { appSettings, noteTagFingerprints } from "../db/schema";
 import { chatCompletion, type AiConfig, type ApiUsage } from "./ai";
-import { canRewriteTags, extractFeatures, parseNoteTags, upsertFrontMatterTags, walkMarkdownFiles, type VaultFile } from "./note-markdown";
+import { canRewriteTags, extractFeatures, parseNoteTags, parseYamlScalar, upsertFrontMatterTags, walkMarkdownFiles, type VaultFile } from "./note-markdown";
+import { TRACE_NOTE_TYPE } from "./trace-links";
 
 /** 一次调用判定多少篇：越大越省（指令与词库被摊薄），但每篇的判定质量会降。 */
 const CLASSIFY_BATCH = 20;
@@ -67,6 +68,8 @@ interface NoteDecision {
   candidateTags: string[];
   /** 写入 front matter 的最终标签；未参与本次处理的笔记为 undefined。 */
   tagsOverride?: string[];
+  /** 溯源笔记在「不写标签」模式下的清空：连人写/自动写的标签一起清掉（见 `skipTraceNotes`）。 */
+  clearTags?: boolean;
 }
 
 export interface RetagProgress {
@@ -253,7 +256,7 @@ async function decide(
   db: AppDatabase,
   vaultPath: string,
   taxonomy: TagTaxonomy,
-  options: { deep?: boolean },
+  options: { deep?: boolean; skipTraceNotes?: boolean },
 ): Promise<DecideResult> {
   await assertVaultPath(vaultPath);
   const files = await walkMarkdownFiles(vaultPath);
@@ -288,6 +291,23 @@ async function decide(
       continue;
     }
 
+    /*
+     * 「溯源笔记不写标签」打开时（设置页开关关闭），重打标也要跳过它——否则刚清掉的标签会被这一轮又贴回去。
+     * 已有标签的顺带清空（纯本地改写，不调模型）：这个开关的语义是这篇不要标签，不留「历史标签」例外。
+     */
+    if (options.skipTraceNotes && parseYamlScalar(file.content, "类型") === TRACE_NOTE_TYPE) {
+      decisions.push({
+        file,
+        features,
+        currentTags,
+        ownedPrevious,
+        mode: currentTags.length > 0 ? "cleanup" : "skip",
+        candidateTags: [],
+        clearTags: true,
+      });
+      continue;
+    }
+
     // 我们管得着的标签 = 词库里现在还留着的（含一级）+ 历史上我们写过的（词库删条目后仍要能清理）。
     // **两个自动标签（来源 / UP 主）永远不在清理范围内**：老指纹里可能记着它们（那时它们还属于词库），
     // 但产品上它们归元数据管，删了就找不回来了——用户要改自己改。
@@ -319,7 +339,7 @@ export async function planRetag(
   db: AppDatabase,
   vaultPath: string,
   taxonomy: TagTaxonomy,
-  options: { deep?: boolean } = {},
+  options: { deep?: boolean; skipTraceNotes?: boolean } = {},
 ): Promise<RetagPlan> {
   const { decisions, addedTags, removedTags } = await decide(db, vaultPath, taxonomy, options);
   const byMode = (mode: NoteMode) => decisions.filter((d) => d.mode === mode);
@@ -556,7 +576,7 @@ export async function runRetag(
   aiConfig: AiConfig,
   vaultPath: string,
   taxonomy: TagTaxonomy,
-  options: { allowNewTags: boolean; deep?: boolean; signal?: AbortSignal; onProgress?: (progress: RetagProgress) => void },
+  options: { allowNewTags: boolean; deep?: boolean; skipTraceNotes?: boolean; signal?: AbortSignal; onProgress?: (progress: RetagProgress) => void },
 ): Promise<RetagReport> {
   const emit = options.onProgress ?? (() => undefined);
   emit({ stage: "scan", processed: 0, total: 0, message: "扫描笔记库…" });
@@ -620,7 +640,8 @@ export async function runRetag(
 
   // 纯本地改写：删掉已从词库移除的标签。不调模型，所以对全库跑也不花钱。
   for (const note of decisions.filter((d) => d.mode === "cleanup")) {
-    note.tagsOverride = mergeTopicTags(note, [], workingTaxonomy, true);
+    // 溯源笔记在「不写标签」模式下是清空，而不是只清词库删除项。
+    note.tagsOverride = note.clearTags ? [] : mergeTopicTags(note, [], workingTaxonomy, true);
   }
 
   const toWrite = decisions.filter((d) => d.mode === "full" || d.mode === "incremental" || d.mode === "cleanup");

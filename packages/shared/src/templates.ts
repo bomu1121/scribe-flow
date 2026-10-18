@@ -1,5 +1,5 @@
 import { NODE_CARD_WIDTH, NODE_PORTS, type GraphEdge, type GraphNode, type NodeType, type PageRef, type WorkflowGraph } from "./graph";
-import { aiPromptBlocks, variantTitle, type PromptBlock } from "./prompt";
+import { aiPromptBlocks, BUILTIN_PROMPT_BLOCKS, variantTitle, type PromptBlock } from "./prompt";
 
 /**
  * 内置链路的组织方式：**模板 = 加工路径的形状，来源在新建时选**。
@@ -90,6 +90,20 @@ const ALL_PROMPT_STAGES: TemplateStage[] = OPEN_PROMPT_BLOCKS.map((block, index)
 }));
 
 /**
+ * 按 id 取内置提示词：模板引用的提示词改名/删除时在这里当场失败，而不是建出一条空分支。
+ * 分支卡片的标题也跟着 `variantTitle` 走，不手写字符串。
+ */
+function builtinBlock(id: string): PromptBlock {
+  const block = BUILTIN_PROMPT_BLOCKS.find((item) => item.id === id);
+  if (!block) throw new Error(`模板引用了不存在的内置提示词：${id}`);
+  return block;
+}
+
+/** 「速览与溯源」的两条分支：一条给扫读，一条给查证。 */
+const OVERVIEW_PROMPT = builtinBlock("builtin.insight.v6");
+const TRACE_PROMPT = builtinBlock("builtin.trace.v3");
+
+/**
  * 模板的描述**只讲结果**，不讲步骤：步骤由对话框按当前来源展开成一行小字
  * （同一句话在三种来源下的步骤并不一样，写进描述里必错一个）。
  */
@@ -118,6 +132,37 @@ export const WORKFLOW_TEMPLATES: WorkflowTemplate[] = [
       // 两条分支的卡片长一样：给个名字，用户才分得清哪个是哪个（改名只在画布上显示，不影响链路）。
       { key: "left", type: "process.prompt", from: ["refine"], dy: -110, label: "AI 加工 A" },
       { key: "right", type: "process.prompt", from: ["refine"], dy: 110, label: "AI 加工 B" },
+    ],
+  },
+  {
+    id: "template.overview-trace",
+    name: "速览与溯源",
+    // 两条分支各自绑死提示词：这里不是让用户挑提示词的链路，而是「同一份内容要两种产物」——
+    // 一份扫读、一份查证。分支卡片默认全叫「AI 加工」，所以名字要写清楚是哪一版。
+    description: "同一份内容并行两套：一版速览用来扫读，一份溯源报告用来查证，两份各写一篇 Obsidian 笔记",
+    group: "通用",
+    defaultSource: "bili",
+    stages: [
+      { key: "refine", type: "process.refine" },
+      {
+        key: "overview",
+        type: "process.prompt",
+        from: ["refine"],
+        dy: -110,
+        label: variantTitle(OVERVIEW_PROMPT),
+        data: { promptBlockId: OVERVIEW_PROMPT.id },
+      },
+      {
+        key: "trace",
+        type: "process.prompt",
+        from: ["refine"],
+        dy: 110,
+        label: variantTitle(TRACE_PROMPT),
+        data: { promptBlockId: TRACE_PROMPT.id },
+      },
+      // 两份产物各写一篇笔记（默认 splitByInput，不写 data.splitByInput）；
+      // 不写 data.folder / traceFolder：跟随设置页，节点上写死会永久压住用户的目录选择。
+      { key: "obsidian", type: "process.obsidian", from: ["overview", "trace"] },
     ],
   },
   {

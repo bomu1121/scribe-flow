@@ -322,6 +322,14 @@ export interface AppSettings {
      */
     upTagEnabled: boolean;
     /**
+     * 要不要给**溯源笔记**写标签（默认关）。
+     *
+     * 溯源笔记是证据清单，标签会跟着进 Obsidian 的搜索与标签面板，反而干扰按正文找内容。
+     * 关掉时：来源 / UP 主标签、AI 话题标签都不写，节点上手填的标签也不写，且不为它调用打标模型；
+     * 全库重打标同样跳过溯源笔记（并清掉它已有的标签）。人自己写的笔记不受影响。
+     */
+    tagTraceNotes: boolean;
+    /**
      * 允许 AI 往词库里**新增**标签（默认关）。
      * 关掉时模型只能从词库里挑——聚合口径不会被模型自己长出来的新写法冲散。
      */
@@ -391,6 +399,8 @@ export interface UpdateSettingsRequest {
     autoTagEnabled?: boolean;
     sourceTagEnabled?: boolean;
     upTagEnabled?: boolean;
+    /** 给溯源笔记写标签；缺省/关闭＝不写（见 AppSettings.obsidian.tagTraceNotes）。 */
+    tagTraceNotes?: boolean;
     allowNewTags?: boolean;
     /** 从正文额外抽取的属性名；空数组表示不抽。 */
     extractFields?: string[];

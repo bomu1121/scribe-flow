@@ -257,6 +257,39 @@ tags:
     expect(tags).toContain("UP：某人");
   });
 
+  it("关掉「给溯源笔记打标签」：重打标跳过它，并把已有标签清空（普通笔记照判）", async () => {
+    const vault = await makeVault({
+      "normal.md": note("普通笔记", "讲智能体开发。"),
+      "trace.md": `---
+标题: 信息溯源报告
+类型: 溯源笔记
+tags:
+  - 文本
+  - 领域/AI
+  - 我自己的标签
+---
+
+# 信息溯源报告
+
+证据清单。
+`,
+    });
+    const taxonomy: TagTaxonomy = { 领域: ["AI"] };
+    respond = () => ["领域/AI"];
+
+    const plan = await planRetag(db, vault, taxonomy, { skipTraceNotes: true });
+    expect(plan.fullNotes).toEqual(["normal.md"]);
+    expect(plan.cleanupNotes).toEqual(["trace.md"]);
+    expect(plan.estimatedCalls).toBe(1);
+
+    const report = await runRetag(db, aiConfig(), vault, taxonomy, { allowNewTags: false, skipTraceNotes: true });
+    // 两篇都写了：普通笔记打标 + 溯源笔记清空；模型只判了普通笔记那一篇
+    expect(report.written).toBe(2);
+    expect(report.calls).toBe(1);
+    expect(parseNoteTags(await readFile(join(vault, "trace.md"), "utf8")).frontmatter).toEqual([]);
+    expect(parseNoteTags(await readFile(join(vault, "normal.md"), "utf8")).frontmatter).toEqual(["领域/AI"]);
+  });
+
   it("笔记缺 UP 主 / 来源标签时，回补不会顺手补上（那是入库时按元数据写的事）", async () => {
     const vault = await makeVault({
       "old.md": `---

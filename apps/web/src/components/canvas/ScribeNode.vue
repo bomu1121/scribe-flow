@@ -13,8 +13,9 @@ import { ChevronDown, CircleAlert } from "lucide-vue-next";
 import { toast } from "@/lib/toast";
 import { Handle, Position, useVueFlow, type NodeProps } from "@vue-flow/core";
 import { ContextMenuContent, ContextMenuItem, ContextMenuPortal, ContextMenuRoot, ContextMenuSeparator, ContextMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuPortal, DropdownMenuRoot, DropdownMenuSeparator, DropdownMenuTrigger, PopoverContent, PopoverPortal, PopoverRoot, PopoverTrigger } from "reka-ui";
-import { aiPromptBlocks, blockArtifact, COMMON_EXTRACT_FIELDS, extractBiliUrl, formatSeconds, formatTokenCount, groupPromptBlocks, MAX_EXTRACT_FIELDS, NODE_PORTS, NODE_TYPE_LABELS, PROMPT_ARTIFACT_LABELS, SEARCH_PROVIDER_LABELS, type NodePick, type NodeType, type UploadedFile, type VideoPreview } from "@scribe-flow/shared";
+import { aiPromptBlocks, blockArtifact, COMMON_EXTRACT_FIELDS, extractBiliUrl, formatSeconds, formatTokenCount, groupPromptBlocks, MAX_EXTRACT_FIELDS, NODE_PORTS, NODE_TYPE_LABELS, parseTraceReports, PROMPT_ARTIFACT_LABELS, SEARCH_PROVIDER_LABELS, type NodePick, type NodeType, type UploadedFile, type VideoPreview } from "@scribe-flow/shared";
 import ModelSelect from "../ModelSelect.vue";
+import TraceReportPreview from "../TraceReportPreview.vue";
 import NodeFieldLabel from "./NodeFieldLabel.vue";
 import IfCard from "./node-cards/IfCard.vue";
 import TextToolCard from "./node-cards/TextToolCard.vue";
@@ -30,6 +31,7 @@ import { renderMarkdown } from "@/lib/markdown";
 import { cachePreview, readCachedPreview } from "@/utils/bili-preview-cache";
 import { PICKER_COPY, collapsesAfterRun, pickerKey, pickerSummary, readPickerOpen, writePickerOpen, type PickerKind } from "@/utils/bili-picker";
 import { fmtCharCount, fmtDuration } from "@/utils/run-segments";
+import { looksLikeTraceReport } from "@/utils/run-output";
 import { showsRunLogEntry } from "@/utils/run-log";
 import { usePromptsStore } from "@/stores/prompts";
 import { useSettingsStore } from "@/stores/settings";
@@ -825,7 +827,26 @@ const previewSegment = computed(
 /** 分段下拉的展开态（浮层内联列表，不做二级 Portal，避免嵌套浮层互相关闭）。 */
 const segmentListOpen = ref(false);
 const previewFullChars = computed(() => (previewOutput.value?.text ?? "").replace(/\s/g, "").length);
-const previewText = computed(() => previewSegment.value?.text || previewOutput.value?.text || data.value.preview || "");
+/**
+ * 这枚 AI 加工卡声明产出的是不是溯源报告（读提示词自己的 `produces`）。
+ *
+ * 用途只有一个：完整输出回来之前 `data.preview` 只有 320 字，而报告正文是 JSON，
+ * 那一小截既解析不了也读不了。知道它是报告，就可以先显示「载入中」而不是闪一段原始 JSON。
+ */
+const isTraceReportNode = computed(() => {
+  if (nodeType.value !== "process.prompt") return false;
+  const block = promptsStore.allBlocks.find((item) => item.id === data.value.promptBlockId);
+  return blockArtifact(block) === "trace-report";
+});
+const previewText = computed(() => {
+  const full = previewSegment.value?.text || previewOutput.value?.text || "";
+  if (full) return full;
+  const placeholder = data.value.preview || "";
+  if (placeholder && (isTraceReportNode.value || looksLikeTraceReport(placeholder))) return "";
+  return placeholder;
+});
+/** 正文本身能解析成溯源报告时才走结构化摘要；模型没按 JSON 交付时仍按普通文本展示。 */
+const previewTraceReports = computed(() => (previewText.value ? parseTraceReports(previewText.value) : []));
 const renderedPreviewText = computed(() => (previewText.value ? renderMarkdown(previewText.value) : ""));
 const previewTitle = computed(() => previewOutput.value?.nodeLabel || label.value);
 const previewRunLabel = computed(() => (previewOutput.value?.runId ? `运行 #${previewOutput.value.runId.slice(-6)}` : ""));
@@ -834,6 +855,13 @@ const previewCharLabel = computed(() => {
   if (!text) return "";
   const count = text.replace(/\s/g, "").length;
   return count >= 1000 ? `${(count / 1000).toFixed(1)}k 字` : `${count} 字`;
+});
+/** 结构化的报告不再报 JSON 字符数（43.3k 字是字段噪音的量），改报主张条数。 */
+const previewMetaLabel = computed(() => {
+  const reports = previewTraceReports.value;
+  if (reports.length === 0) return previewCharLabel.value;
+  const total = reports.reduce((sum, report) => sum + report.items.length, 0);
+  return reports.length > 1 ? `${reports.length} 份报告 · ${total} 条主张` : `${total} 条主张`;
 });
 
 /** 打开浮层时先落到第 1 段：默认视图本身就是「一个视频的完整结果」。 */
@@ -1674,7 +1702,7 @@ const themeOptions = [
           </template>
 
           <template v-else-if="nodeType === 'process.obsidian'">
-            <ObsidianCard :folder="data.folder" :plan="outletPlan" @update="patchObsidian" />
+            <ObsidianCard :folder="data.folder" :trace-folder="data.traceFolder" :plan="outletPlan" @update="patchObsidian" />
           </template>
 
           <template v-else-if="nodeType === 'process.drill'">
@@ -1923,7 +1951,7 @@ const themeOptions = [
             <PopoverPortal>
               <PopoverContent
                 class="sf-node-result-preview"
-                :class="{ 'is-mindmap': isMindMapNode }"
+                :class="{ 'is-mindmap': isMindMapNode, 'is-trace': previewTraceReports.length > 0 }"
                 side="top"
                 align="start"
                 :side-offset="6"
@@ -2014,11 +2042,13 @@ const themeOptions = [
                   <div v-else-if="previewText && isMindMapNode" class="sf-node-result-preview__mindmap">
                     <MindMapPreview :markdown="previewText" :animated="false" height="min(250px, calc(100vh - 212px))" />
                   </div>
+                  <!-- 溯源报告的正文是 JSON：按报告摘要展示（条数 / 问题 / 重点条目），完整报告留给结果页 -->
+                  <TraceReportPreview v-else-if="previewText && previewTraceReports.length > 0" :reports="previewTraceReports" />
                   <div v-else-if="previewText" class="sf-node-result-preview__markdown markdown-body" v-html="renderedPreviewText" />
                   <div v-else class="sf-node-result-preview__hint">该节点暂无文本输出</div>
                 </div>
                 <footer class="sf-node-result-preview__foot">
-                  <span v-if="previewCharLabel" class="sf-node-result-preview__meta tnum">{{ previewCharLabel }}</span>
+                  <span v-if="previewMetaLabel" class="sf-node-result-preview__meta tnum">{{ previewMetaLabel }}</span>
                   <span v-else-if="previewRunLabel" class="sf-node-result-preview__meta tnum">{{ previewRunLabel }}</span>
                   <button type="button" class="sf-node-result-preview__open" @click.stop="openFullPreview">查看完整输出</button>
                 </footer>
@@ -3653,6 +3683,12 @@ const themeOptions = [
 /* 思维导图节点预览：浮层加宽给导图留足横向空间，内嵌渲染器与画布/详情页同源 */
 .sf-node-result-preview.is-mindmap {
   width: min(440px, calc(100vw - 16px));
+}
+
+/* 溯源报告摘要比一段文字高：给「统计 + 分布 + 摘要 + 3 条重点」留出完整一屏，
+   否则最后一条会被底部按钮压掉半行。分段选择器的 42px 也算在这里。 */
+.sf-node-result-preview.is-trace {
+  max-height: min(500px, calc(100vh - 24px));
 }
 
 .sf-node-result-preview__mindmap {

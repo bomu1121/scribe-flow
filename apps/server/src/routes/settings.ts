@@ -77,6 +77,7 @@ const updateSchema = z.object({
       autoTagEnabled: z.boolean().optional(),
       sourceTagEnabled: z.boolean().optional(),
       upTagEnabled: z.boolean().optional(),
+      tagTraceNotes: z.boolean().optional(),
       allowNewTags: z.boolean().optional(),
       extractFields: z.array(z.string()).max(MAX_EXTRACT_FIELDS).optional(),
       tagMinCount: z.number().int().min(1).max(20).optional(),

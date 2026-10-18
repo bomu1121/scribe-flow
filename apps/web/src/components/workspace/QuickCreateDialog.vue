@@ -130,18 +130,39 @@ const hasPromptNode = computed(
 /**
  * 这里选提示词有没有意义：要有「AI 加工」节点，且**节点自己没带提示词**。
  *
- * 有节点但块已经绑好的是「全提示词对照」——每条分支各绑一个（`buildTemplateGraph` 里模板写死的提示词优先），
- * 在这里选一个会以为生效了，其实一个都不会被覆盖。
+ * 有节点但块已经绑好的是「速览与溯源」「全提示词对照」——每条分支各绑一个
+ * （`buildTemplateGraph` 里模板写死的提示词优先），在这里选一个会以为生效了，其实一个都不会被覆盖。
  */
 const promptSelectable = computed(() => {
   const nodes = buildTemplateGraph(templateId.value, { source: "bili" })?.nodes ?? [];
   return nodes.some((node) => node.type === "process.prompt" && !(node.data as { promptBlockId?: string }).promptBlockId);
 });
+/**
+ * 提示词不可选时，框里要显示链路**实际绑定**的那几个，而不是用户上次选的。
+ *
+ * 之前这里是一个禁用的下拉、值仍是上次的选择：选了「速览与溯源」却显示「成文版」，
+ * 看起来就像这条链路会跑成文版。禁用不等于没有值——显示错的值比留空更误导。
+ */
+const boundPromptTitles = computed(() => {
+  const nodes = buildTemplateGraph(templateId.value, { source: "bili" })?.nodes ?? [];
+  return nodes
+    .filter((node) => node.type === "process.prompt")
+    .map((node) => {
+      const label = String((node.data as { label?: string }).label ?? "").trim();
+      if (label) return label;
+      const blockId = String((node.data as { promptBlockId?: string }).promptBlockId ?? "");
+      return promptOptions.value.find((block) => block.id === blockId)?.name ?? "AI 加工";
+    });
+});
+/** 不可选时框里的文字：有绑定分支就念出来，没有 AI 加工节点就说清是节点自带。 */
+const promptFieldText = computed(() =>
+  hasPromptNode.value ? boundPromptTitles.value.join(" + ") : "该链路的加工节点自带提示词",
+);
 /** 选择框下面那行小字：说明这里选的提示词会不会生效，以及为什么。 */
 const promptHint = computed(() => {
   if (promptSelectable.value) return selectedBlock.value?.description || "该提示词没有说明文案，可在设置页查看正文。";
   return hasPromptNode.value
-    ? "该链路的每条 AI 加工分支都已各自绑好提示词，这里选了不会覆盖（进画布可逐个改）。"
+    ? "该链路的每条 AI 加工分支都已各自绑好提示词，不能在新建时更换（进画布可逐个改）。"
     : "该链路没有 AI 加工节点，加工节点自带提示词。";
 });
 const selectedBlock = computed(() => promptOptions.value.find((block) => block.id === promptBlockId.value));
@@ -289,7 +310,7 @@ async function submit() {
     const graph = buildTemplateGraph(templateId.value, {
       source: "bili",
       bili: buildBiliSource(url, info),
-      promptBlockId: promptBlockId.value || undefined,
+      promptBlockId: promptSelectable.value ? promptBlockId.value || undefined : undefined,
     });
 
     const project = graph
@@ -377,7 +398,7 @@ async function startRun(projectId: string, projectName: string) {
 
       <label class="qc-field">
         <span class="qc-field-label">AI 加工提示词</span>
-        <el-select v-model="promptBlockId" size="default" class="qc-select" :disabled="!promptSelectable">
+        <el-select v-if="promptSelectable" v-model="promptBlockId" size="default" class="qc-select">
           <el-option label="不预选（进画布再选）" :value="NO_PROMPT" />
           <template v-for="group in promptGroups" :key="group.series">
             <el-option-group v-if="group.members.length > 1" :label="group.series">
@@ -388,6 +409,7 @@ async function startRun(projectId: string, projectName: string) {
             </template>
           </template>
         </el-select>
+        <el-input v-else class="qc-select" :model-value="promptFieldText" readonly />
         <span class="qc-field-hint">{{ promptHint }}</span>
       </label>
     </div>

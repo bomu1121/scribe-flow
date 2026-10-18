@@ -71,7 +71,10 @@ export function taxonomyApi(db: AppDatabase, engine: RunEngine) {
     } catch (error) {
       return c.json({ error: error instanceof Error ? error.message : "库路径不可用" }, 400);
     }
-    const plan = await planRetag(db, vaultPath, obsidian.tagTaxonomy, { deep: Boolean(body.deep) });
+    const plan = await planRetag(db, vaultPath, obsidian.tagTaxonomy, {
+      deep: Boolean(body.deep),
+      skipTraceNotes: !obsidian.tagTraceNotes,
+    });
     return c.json(toPlanView(plan));
   });
 
@@ -108,6 +111,7 @@ export function taxonomyApi(db: AppDatabase, engine: RunEngine) {
     void runRetag(db, aiConfig, vaultPath, settings.obsidian.tagTaxonomy, {
       allowNewTags: settings.obsidian.allowNewTags,
       deep: Boolean(body.deep),
+      skipTraceNotes: !settings.obsidian.tagTraceNotes,
       onProgress,
     }).then(
       (report) => {

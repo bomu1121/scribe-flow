@@ -162,6 +162,15 @@ describe("「Obsidian」分组设置", () => {
     expect(await obsidianOf(app)).toMatchObject({ autoLinkMax: 0 });
   });
 
+  it("给溯源笔记打标签默认关，打开后能读回来", async () => {
+    const { app } = await setup();
+    expect((await obsidianOf(app)).tagTraceNotes).toBe(false);
+    await put(app, "/api/settings", { obsidian: { tagTraceNotes: true } });
+    expect((await obsidianOf(app)).tagTraceNotes).toBe(true);
+    await put(app, "/api/settings", { obsidian: { tagTraceNotes: false } });
+    expect((await obsidianOf(app)).tagTraceNotes).toBe(false);
+  });
+
   /**
    * 属性名建议的来源接口。
    *

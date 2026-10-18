@@ -77,6 +77,8 @@ const form = reactive({
   /** 两个自动标签的开关（来源 / UP 主）：标签由元数据写，用户只决定写不写。 */
   obsidianSourceTagEnabled: true,
   obsidianUpTagEnabled: true,
+  /** 溯源笔记默认不打标签：它是证据清单，标签会干扰按正文检索。 */
+  obsidianTagTraceNotes: false,
   obsidianAllowNewTags: false,
   obsidianExtractFields: [] as string[],
   obsidianTagMinCount: 5,
@@ -1058,6 +1060,7 @@ function fillForm() {
   form.obsidianAutoTagEnabled = store.settings.obsidian.autoTagEnabled;
   form.obsidianSourceTagEnabled = store.settings.obsidian.sourceTagEnabled;
   form.obsidianUpTagEnabled = store.settings.obsidian.upTagEnabled;
+  form.obsidianTagTraceNotes = store.settings.obsidian.tagTraceNotes;
   form.obsidianAllowNewTags = store.settings.obsidian.allowNewTags;
   form.obsidianExtractFields = [...store.settings.obsidian.extractFields];
   taxonomy.value = JSON.parse(JSON.stringify(store.settings.obsidian.tagTaxonomy ?? {})) as TagTaxonomy;
@@ -1241,6 +1244,7 @@ async function saveAll() {
         autoTagEnabled: form.obsidianAutoTagEnabled,
         sourceTagEnabled: form.obsidianSourceTagEnabled,
         upTagEnabled: form.obsidianUpTagEnabled,
+        tagTraceNotes: form.obsidianTagTraceNotes,
         allowNewTags: form.obsidianAllowNewTags,
         extractFields: form.obsidianExtractFields,
         tagMinCount: form.obsidianTagMinCount,
@@ -2079,6 +2083,16 @@ async function restoreNutstoreBackup(backup: { path: string; name: string }) {
               要改就让旧笔记自己在 Obsidian 里改。节点卡片上可以按这一篇单独覆盖。
             </p>
           </div>
+
+          <label class="sf-field sf-field-row">
+            <span class="sf-field-label">给溯源笔记也打标签<em class="sf-field-note">默认关</em></span>
+            <el-switch v-model="form.obsidianTagTraceNotes" />
+          </label>
+          <p class="sf-hint">
+            溯源笔记是证据清单，标签会进入 Obsidian 的搜索与标签面板、干扰按正文找内容。关掉时：来源 / UP 主标签与
+            AI 话题标签都不写进溯源笔记，节点上手填的标签也不写，也不会为它调用打标模型；全库重打标会跳过溯源笔记，
+            并清掉它已有的标签。<strong>普通笔记不受影响。</strong>
+          </p>
 
           <p class="sf-settings-desc">
             下面这一栏是<strong>你自己维护的话题词库</strong>：一级是分类、二级是具体标签。

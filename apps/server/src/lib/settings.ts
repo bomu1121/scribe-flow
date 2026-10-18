@@ -41,6 +41,8 @@ const OBSIDIAN_DEFAULTS: Record<string, string> = {
   "obsidian.autoTagEnabled": "true",
   "obsidian.sourceTagEnabled": "true",
   "obsidian.upTagEnabled": "true",
+  // 默认关：溯源笔记是证据清单，标签会干扰按正文检索（见 run.ts 的 tagTraceNotes）。
+  "obsidian.tagTraceNotes": "false",
   "obsidian.allowNewTags": "false",
   "obsidian.extractFields": JSON.stringify(DEFAULT_EXTRACT_FIELDS),
   "obsidian.tagMinCount": "5",
@@ -240,6 +242,7 @@ export function getSettings(db: AppDatabase): AppSettings {
       autoTagEnabled: raw(db, "obsidian.autoTagEnabled", OBSIDIAN_DEFAULTS["obsidian.autoTagEnabled"]) === "true",
       sourceTagEnabled: raw(db, "obsidian.sourceTagEnabled", OBSIDIAN_DEFAULTS["obsidian.sourceTagEnabled"]) === "true",
       upTagEnabled: raw(db, "obsidian.upTagEnabled", OBSIDIAN_DEFAULTS["obsidian.upTagEnabled"]) === "true",
+      tagTraceNotes: raw(db, "obsidian.tagTraceNotes", OBSIDIAN_DEFAULTS["obsidian.tagTraceNotes"]) === "true",
       allowNewTags: raw(db, "obsidian.allowNewTags", OBSIDIAN_DEFAULTS["obsidian.allowNewTags"]) === "true",
       extractFields: sanitizeExtractFields(rawJson<unknown>(db, "obsidian.extractFields", DEFAULT_EXTRACT_FIELDS)),
       tagMinCount: Number(raw(db, "obsidian.tagMinCount", OBSIDIAN_DEFAULTS["obsidian.tagMinCount"]) ?? 5) || 5,
@@ -406,6 +409,7 @@ export function updateSettings(db: AppDatabase, patch: UpdateSettingsRequest) {
     if (patch.obsidian.autoTagEnabled !== undefined) set(db, "obsidian.autoTagEnabled", patch.obsidian.autoTagEnabled ? "true" : "false");
     if (patch.obsidian.sourceTagEnabled !== undefined) set(db, "obsidian.sourceTagEnabled", patch.obsidian.sourceTagEnabled ? "true" : "false");
     if (patch.obsidian.upTagEnabled !== undefined) set(db, "obsidian.upTagEnabled", patch.obsidian.upTagEnabled ? "true" : "false");
+    if (patch.obsidian.tagTraceNotes !== undefined) set(db, "obsidian.tagTraceNotes", patch.obsidian.tagTraceNotes ? "true" : "false");
     if (patch.obsidian.allowNewTags !== undefined) set(db, "obsidian.allowNewTags", patch.obsidian.allowNewTags ? "true" : "false");
     // 空数组是合法值（＝不抽），但 set() 会跳过空串，所以这里序列化成 "[]" 才存得进去。
     if (patch.obsidian.extractFields !== undefined) {

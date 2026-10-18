@@ -229,7 +229,7 @@ describe("buildTemplateGraph", () => {
    * 会往库里写文件的模板也在同一份名单里盯着：新增一条必须显式加进来，
    * 免得「某个模板开始往用户的库里写东西」这件事悄悄发生。
    */
-  const OBSIDIAN_TEMPLATES = ["template.obsidian", ALL_PROMPTS];
+  const OBSIDIAN_TEMPLATES = ["template.obsidian", "template.overview-trace", ALL_PROMPTS];
 
   it("会写 Obsidian 库的模板就名单里那几条，且都不写死保存目录", () => {
     const seen = new Set<string>();
@@ -239,6 +239,8 @@ describe("buildTemplateGraph", () => {
         seen.add(template.id);
         expect(OBSIDIAN_TEMPLATES, template.id).toContain(template.id);
         expect(node.data.folder ?? "").toBe("");
+        // 溯源报告目录同理：留空跟随设置页，不能在链路里替用户决定。
+        expect(node.data.traceFolder ?? "").toBe("");
         expect(source).toBeTruthy();
       }
     }
@@ -274,6 +276,27 @@ describe("buildTemplateGraph", () => {
       .map((node) => (node.data as { promptBlockId?: string }).promptBlockId);
     expect(ids).toEqual(open.map((block) => block.id));
     expect(new Set(ids).size).toBe(ids.length);
+  });
+
+  it("「速览与溯源」两条分支各自绑好提示词，末端各写一篇 Obsidian", () => {
+    const graph = buildTemplateGraph("template.overview-trace", { source: "text" })!;
+    const branches = graph.nodes.filter((node) => node.type === "process.prompt");
+    // 这条链路的提示词是写死的：在快捷新建里选提示词不会覆盖它（与「全提示词对照」同一口径）。
+    expect(branches.map((node) => (node.data as { promptBlockId?: string }).promptBlockId)).toEqual([
+      "builtin.insight.v6",
+      "builtin.trace.v3",
+    ]);
+    expect(branches.map((node) => node.data.label)).toEqual(["观点提炼 · 速览版", "信息溯源 · 上网查证"]);
+    expect(new Set(branches.map((node) => node.position.y)).size).toBe(2);
+
+    // 两条分支都从校对出来（并行，不是串成一条）
+    const refine = graph.nodes.find((node) => node.type === "process.refine")!;
+    expect(graph.edges.filter((edge) => edge.source === refine.id)).toHaveLength(2);
+
+    // 收敛到同一张出口卡；不写 splitByInput，默认「每个输入一篇」＝速览一篇、溯源报告一篇。
+    const obsidian = graph.nodes.find((node) => node.type === "process.obsidian")!;
+    expect(graph.edges.filter((edge) => edge.target === obsidian.id)).toHaveLength(2);
+    expect(obsidian.data.splitByInput).toBeUndefined();
   });
 
   it("多路对照不在末端合并：差异由结果页的「对照」标签页承担", () => {

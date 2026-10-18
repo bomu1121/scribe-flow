@@ -119,6 +119,8 @@ const nodeDataByType = {
     author: z.string().optional(),
     url: z.string().optional(),
     folder: z.string().optional(),
+    // 溯源报告的单独目录；缺省跟 `folder` 同一个目录（见 graph.ts 的 ObsidianData）。
+    traceFolder: z.string().optional(),
     overwrite: z.boolean().optional(),
     // 缺省＝开（多个输入各写一篇）；关掉才合并成一篇（见 graph.ts 的 ObsidianData）。
     splitByInput: z.boolean().optional(),

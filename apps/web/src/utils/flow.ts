@@ -84,6 +84,8 @@ export interface ScribeNodeData {
   source?: string;
   author?: string;
   folder?: string;
+  /** 溯源报告单独保存目录；留空＝跟 `folder` 同一个目录。 */
+  traceFolder?: string;
   /** 保存目录里已有同名笔记时是否整篇重写它；缺省关＝退让成「标题 (2).md」。 */
   overwrite?: boolean;
   /** 一次运行收到多个输入时，每个输入各写一篇笔记（缺省＝开；关掉才合并成一篇）。 */

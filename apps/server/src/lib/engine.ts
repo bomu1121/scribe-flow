@@ -1895,29 +1895,49 @@ export class RunEngine {
         let config: NutstoreConfig | undefined;
         let vaultPath = "";
         let dir = "";
+        let traceDir = "";
         let remoteObsidianRoot = "";
         let remoteDir = "";
-        const folder = (String(data.folder ?? "").trim() || settings.obsidian.folder || "00-Inbox").replace(/^[\\/]+|[\\/]+$/g, "");
-        const segments = folder.split(/[\\/]+/).filter(Boolean);
-        if (segments.some((segment) => segment === "..")) throw new Error("Obsidian 保存目录不能包含 ..");
+        let traceRemoteDir = "";
+        /** 子目录统一去掉首尾斜杠；`..` 在下面两处一起校验。 */
+        const normalizeFolder = (value: string) => value.replace(/^[\\/]+|[\\/]+$/g, "");
+        const folderSegments = (value: string) => value.split(/[\\/]+/).filter(Boolean);
+        const folder = normalizeFolder(String(data.folder ?? "").trim() || settings.obsidian.folder || "00-Inbox");
+        /*
+         * 溯源报告的落盘目录：节点上可以单独选一个和普通笔记隔绝的文件夹（例如 99-溯源），
+         * **留空＝跟普通笔记同一个目录**——老工程不填这个字段时行为与改动前完全一致。
+         */
+        const traceFolder = normalizeFolder(String(data.traceFolder ?? "").trim()) || folder;
+        for (const candidate of new Set([folder, traceFolder])) {
+          if (folderSegments(candidate).some((segment) => segment === "..")) throw new Error("Obsidian 保存目录不能包含 ..");
+        }
         if (nutstoreMode) {
           config = getNutstoreConfig(this.db);
           if (!config.account || !config.password) throw new Error("坚果云账号或应用密码为空，请到设置页填写");
           remoteObsidianRoot = (settings.nutstore.obsidianRemotePath || "/我的坚果云/ScribeFlow/Obsidian").replace(/\/+$/, "");
-          remoteDir = segments.length ? `${remoteObsidianRoot}/${segments.join("/")}` : remoteObsidianRoot;
+          const remotePathFor = (value: string) => {
+            const segments = folderSegments(value);
+            return segments.length ? `${remoteObsidianRoot}/${segments.join("/")}` : remoteObsidianRoot;
+          };
+          remoteDir = remotePathFor(folder);
+          traceRemoteDir = remotePathFor(traceFolder);
           await ensureRemoteDirectory(config, remoteDir);
+          if (traceRemoteDir !== remoteDir) await ensureRemoteDirectory(config, traceRemoteDir);
         } else {
           vaultPath = settings.obsidian.vaultPath.trim();
           if (!vaultPath) throw new Error("未配置 Obsidian 库路径，请到设置页填写");
-          dir = join(vaultPath, ...segments);
+          dir = join(vaultPath, ...folderSegments(folder));
+          traceDir = join(vaultPath, ...folderSegments(traceFolder));
           await mkdir(dir, { recursive: true });
+          if (traceDir !== dir) await mkdir(traceDir, { recursive: true });
         }
-        const target = {
-          folder,
+        /** 一篇笔记该写进哪个目录：按它是不是溯源报告分流。 */
+        const targetFor = (isTrace: boolean) => ({
+          folder: isTrace ? traceFolder : folder,
           vaultPath,
-          dir,
-          remote: config ? { config, remoteDir, remoteRoot: remoteObsidianRoot } : undefined,
-        };
+          dir: isTrace ? traceDir : dir,
+          remote: config ? { config, remoteDir: isTrace ? traceRemoteDir : remoteDir, remoteRoot: remoteObsidianRoot } : undefined,
+        });
 
         /*
          * 「每个输入一篇」：同一个文稿挂了几个提示词配方（详尽版 / 成文版 / 速览版…）时，
@@ -2029,11 +2049,33 @@ export class RunEngine {
          * `taken`＝保存目录里已有的文件名。**默认不覆盖**（`overwrite` 缺省＝关，与卡片上的开关同一套口径）：
          * 缺省这一趟得先把目录读出来，已有的同名笔记才不会被盖掉——要省这一次目录列举（坚果云模式是一次
          * PROPFIND）就在节点上打开「同名笔记直接覆盖」（`data.overwrite === true`）。
+         *
+         * 两个目录各列一遍：溯源报告与普通笔记分开存时，「同名」也只在各自目录里算——两篇同名不同目录
+         * 本来就该共存，共用一个 `taken` 会把溯源那篇白白挤成 `(2)`。
          */
         const explicitTitle = String(data.title ?? "").trim();
-        const taken = data.overwrite === true ? undefined : await this.takenNoteNames(config ? { config, remoteDir } : undefined, dir);
-        const used = new Set<string>();
+        const targetsByFolder = new Map<string, ReturnType<typeof targetFor>>();
+        targetsByFolder.set(folder, targetFor(false));
+        // 没有溯源报告要写就不去列那个目录（坚果云模式下这是一次多余的 PROPFIND）。
+        if (traceFolder !== folder && pending.some((note) => note.isTraceReport)) targetsByFolder.set(traceFolder, targetFor(true));
+        const takenByFolder = new Map<string, Set<string>>();
+        if (data.overwrite !== true) {
+          await Promise.all(
+            [...targetsByFolder].map(async ([targetFolder, target]) => {
+              const taken = await this.takenNoteNames(
+                target.remote ? { config: target.remote.config, remoteDir: target.remote.remoteDir } : undefined,
+                target.dir,
+              );
+              takenByFolder.set(targetFolder, taken);
+            }),
+          );
+        }
+        const usedByFolder = new Map<string, Set<string>>();
         const planned = pending.map((note) => {
+          const noteFolder = note.isTraceReport ? traceFolder : folder;
+          const taken = takenByFolder.get(noteFolder);
+          const used = usedByFolder.get(noteFolder) ?? new Set<string>();
+          usedByFolder.set(noteFolder, used);
           const heading = note.text.match(/^#\s+(.+)$/m)?.[1]?.trim() ?? "";
           const title = split
             ? heading || explicitTitle || note.meta.title || "未命名笔记"
@@ -2045,7 +2087,7 @@ export class RunEngine {
 
         const written: { path: string; fileName: string; markdown: string; tags: string[]; relatedCount: number }[] = [];
         for (const note of planned) {
-          written.push(await this.writeObsidianNote(active, node, settings, note, target, signal));
+          written.push(await this.writeObsidianNote(active, node, settings, note, targetFor(note.isTraceReport === true), signal));
         }
 
         const label = nutstoreMode ? "坚果云 Obsidian" : "Obsidian";
@@ -2059,9 +2101,24 @@ export class RunEngine {
         // 多篇时标签按去重后的总数目报（每篇的标签各自写在自己那篇的 front matter 里）。
         const tagCount = split ? new Set(written.flatMap((note) => note.tags)).size : written[0]!.tags.length;
         const relatedTotal = written.reduce((sum, note) => sum + note.relatedCount, 0);
+        /*
+         * 目标目录：单篇直接报「目录/文件名」；分篇时如果两类落进了不同目录，逐个报「目录/ N 篇」，
+         * 否则沿用原来的「目录/」——用户看一眼摘要就知道溯源那几篇去了哪儿。
+         */
+        const folderLabel = (value: string) => (value ? `${value}/` : "/");
+        const folderCounts = new Map<string, number>();
+        for (const note of planned) {
+          const targetFolder = note.isTraceReport ? traceFolder : folder;
+          folderCounts.set(targetFolder, (folderCounts.get(targetFolder) ?? 0) + 1);
+        }
+        const destination = split
+          ? folderCounts.size > 1
+            ? [...folderCounts].map(([targetFolder, count]) => `${folderLabel(targetFolder)} ${count} 篇`).join("、")
+            : folderLabel(folder)
+          : `${folderLabel(planned[0]!.isTraceReport ? traceFolder : folder)}${written[0]!.fileName}`;
         return {
           outputs,
-          summary: `${split ? `已保存 ${written.length} 篇` : "已保存"}到 ${label}：${split ? `${folder}/` : `${folder}/${written[0]!.fileName}`}${
+          summary: `${split ? `已保存 ${written.length} 篇` : "已保存"}到 ${label}：${destination}${
             tagCount > 0 ? ` · ${tagCount} 个标签` : ""
           }${relatedTotal > 0 ? ` · 关联 ${relatedTotal} 篇` : ""}`,
         };
@@ -2113,10 +2170,20 @@ export class RunEngine {
         : source === "B站" || source === "本地文件"
           ? "视频笔记"
           : "笔记";
-    const explicitTags = String(data.tags ?? "")
-      .split(/[,，\s]+/)
-      .map((tag) => normalizeTagSegment(tag))
-      .filter(Boolean);
+    /**
+     * 溯源笔记默认不写任何标签（设置页 `obsidian.tagTraceNotes`，默认关）。
+     *
+     * 溯源笔记是证据清单，标签会跟着进 Obsidian 的搜索与标签面板、干扰按正文检索。
+     * 关掉时**连节点上手填的标签也不写**：这个开关的语义是「这篇不要标签」，留一个例外就会让搜索结果继续变脏。
+     * 正文与属性抽取不受影响（那些不是标签）。
+     */
+    const traceTagsOff = note.isTraceReport === true && settings.obsidian.tagTraceNotes !== true;
+    const explicitTags = traceTagsOff
+      ? []
+      : String(data.tags ?? "")
+          .split(/[,，\s]+/)
+          .map((tag) => normalizeTagSegment(tag))
+          .filter(Boolean);
     const outPath = target.remote ? `${target.remote.remoteDir}/${fileName}` : join(target.dir, fileName);
 
     /*
@@ -2145,11 +2212,11 @@ export class RunEngine {
      */
     const sourceName = normalizeTagSegment(source);
     const upName = normalizeTagSegment(author);
-    const wantSourceTag = data.sourceTag === undefined ? settings.obsidian.sourceTagEnabled : data.sourceTag === true;
-    const wantUpTag = data.upTag === undefined ? settings.obsidian.upTagEnabled : data.upTag === true;
+    const wantSourceTag = !traceTagsOff && (data.sourceTag === undefined ? settings.obsidian.sourceTagEnabled : data.sourceTag === true);
+    const wantUpTag = !traceTagsOff && (data.upTag === undefined ? settings.obsidian.upTagEnabled : data.upTag === true);
     let taxonomy = settings.obsidian.tagTaxonomy;
     let topicTags: string[] = [];
-    if (aiNote && Object.keys(taxonomy).length > 0) {
+    if (!traceTagsOff && aiNote && Object.keys(taxonomy).length > 0) {
       const aiConfig = getAiConfig(this.db);
       if (aiConfig.apiKey) {
         const tagged = await tagNoteContent(aiConfig, taxonomy, {
@@ -2170,7 +2237,7 @@ export class RunEngine {
       }
     }
     // 入库是"再写一次"：目标文件已存在时，保留人手补过的标签，别把人的劳动抹掉。
-    const existing = nutstoreMode ? "" : await readFile(outPath, "utf8").catch(() => "");
+    const existing = traceTagsOff || nutstoreMode ? "" : await readFile(outPath, "utf8").catch(() => "");
     const ours = new Set(managedTags(taxonomy).map((tag) => tag.toLowerCase()));
     const humanTags = existing
       ? parseNoteTags(existing).frontmatter.filter((tag) => !ours.has(tag.toLowerCase()) && !isAutoTag(tag))

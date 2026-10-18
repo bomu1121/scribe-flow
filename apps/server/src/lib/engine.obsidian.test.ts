@@ -110,7 +110,7 @@ async function runNote(
   });
   // 前置断言：工程图校验不能把这些节点字段吃掉。少了它，下面的用例会静默退化成"跟随设置"，
   // 看起来是绿的实际什么都没验到。
-  for (const key of ["overwrite", "autoTag", "extractFields", "sourceTag", "upTag"]) {
+  for (const key of ["overwrite", "autoTag", "extractFields", "sourceTag", "upTag", "traceFolder"]) {
     if (data[key] === undefined) continue;
     const kept = (graph.nodes.find((node) => node.id === "n_note")?.data as Record<string, unknown> | undefined)?.[key];
     expect(kept, `parseGraph 丢掉了 ${key}`).toEqual(data[key]);
@@ -156,7 +156,7 @@ async function runNoteMulti(
   });
   // 前置断言：这两个字段若在图校验里被吃掉，下面的用例会静默退化成产品默认（各写一篇、不覆盖），
   // 看着是绿的实际什么都没验。
-  for (const key of ["splitByInput", "overwrite"]) {
+  for (const key of ["splitByInput", "overwrite", "traceFolder"]) {
     if (data[key] === undefined) continue;
     const kept = (graph.nodes.find((node) => node.id === "n_note")?.data as Record<string, unknown> | undefined)?.[key];
     expect(kept, `parseGraph 丢掉了 ${key}`).toEqual(data[key]);
@@ -825,6 +825,113 @@ describe("Obsidian 笔记：上游是溯源报告时", () => {
     expect(body).toContain("信息溯源报告");
     expect(body).toContain("第二份溯源报告");
     expect(body).not.toContain('"schema": 1');
+  });
+});
+
+/**
+ * 溯源报告单独目录：把报告与普通笔记放进两个隔绝的文件夹（用户大概率会把所有溯源内容集中到一处）。
+ * 留空时行为必须与改动前完全一致（同一目录、同一套避让）——由上面那些用例继续覆盖。
+ */
+describe("Obsidian 笔记：溯源报告单独目录", () => {
+  const TRACE_FOLDER = "99-溯源";
+  const REPORT = JSON.stringify({
+    schema: 1,
+    title: "信息溯源报告",
+    items: [{ category: "fact", claim: "人社部提出用数据找人去动员参保。", confidence: "confirmed", evidence: [] }],
+  });
+
+  it("只有溯源报告时写进 traceFolder，普通目录一个文件都不多", async () => {
+    const { vault, dir } = await makeVault();
+    // title 置空：让篇名走报告自己的 H1，这篇才有可辨认的名字
+    const result = await runNote(vault, { folder: FOLDER, traceFolder: TRACE_FOLDER, title: undefined }, "trace-folder-only", {}, REPORT);
+
+    expect(result.status).toBe("done");
+    expect(await noteFiles(dir)).toEqual([]);
+    expect(await noteFiles(join(vault, TRACE_FOLDER))).toEqual(["信息溯源报告.md"]);
+    // 摘要报的是实际落盘路径，用户不用猜报告去了哪儿
+    expect(result.summary).toContain(`${TRACE_FOLDER}/信息溯源报告.md`);
+  });
+
+  it("两类同批写入：各进自己的目录，同名也互不挤成 (2)", async () => {
+    const { vault, dir } = await makeVault();
+    const result = await runNoteMulti(
+      vault,
+      [
+        { id: "n_a", text: "这是一篇观点笔记的正文。" },
+        { id: "n_b", text: REPORT },
+      ],
+      // 两边都叫「信息溯源报告」：放同一目录会撞名，正因如此才要验证避让是按目录各算的
+      { title: "信息溯源报告", folder: FOLDER, traceFolder: TRACE_FOLDER },
+      "trace-folder-split",
+    );
+
+    expect(result.status).toBe("done");
+    expect(await noteFiles(dir)).toEqual(["信息溯源报告.md"]);
+    expect(await noteFiles(join(vault, TRACE_FOLDER))).toEqual(["信息溯源报告.md"]);
+    expect(await readFile(join(dir, "信息溯源报告.md"), "utf8")).toContain("这是一篇观点笔记的正文。");
+    expect(await readFile(join(vault, TRACE_FOLDER, "信息溯源报告.md"), "utf8")).toContain("信息溯源");
+    // 摘要分别报两个目录，而不是只报一个
+    expect(result.summary).toContain(`${FOLDER}/ 1 篇`);
+    expect(result.summary).toContain(`${TRACE_FOLDER}/ 1 篇`);
+  });
+
+  it("跨目录互链照常：笔记在 00-Inbox、报告在 99-溯源，回补仍写进笔记那一篇", async () => {
+    const { vault, dir } = await makeVault();
+    const url = "https://www.bilibili.com/video/BV1DTWw6UE1y";
+    const data = { folder: FOLDER, traceFolder: TRACE_FOLDER, url };
+
+    await runNote(vault, { ...data, title: "观点笔记" }, "trace-folder-link-note", {}, "这是一篇观点笔记的正文。");
+    await runNote(vault, { ...data, title: undefined }, "trace-folder-link-trace", {}, REPORT);
+
+    const note = await readFile(join(dir, "观点笔记.md"), "utf8");
+    expect(note).toContain("> [!note] 溯源");
+    expect(readTraceSectionNames(note)).toEqual(["信息溯源报告"]);
+    // 报告自己那一篇也落到了单独目录
+    expect(await readFile(join(vault, TRACE_FOLDER, "信息溯源报告.md"), "utf8")).toContain(`类型: ${TRACE_NOTE_TYPE}`);
+  });
+});
+
+/**
+ * 溯源笔记的标签由设置页的 `tagTraceNotes` 决定（默认关）。
+ *
+ * 关掉的语义是「这篇不要标签」：来源 / UP 主、AI 话题、节点上手填的一律不写，
+ * 也不为打标调用模型——溯源笔记要的是正文可检索，标签反而把它弄脏。
+ */
+describe("Obsidian 笔记：溯源笔记的标签开关", () => {
+  const REPORT = JSON.stringify({
+    schema: 1,
+    title: "信息溯源报告",
+    items: [{ category: "fact", claim: "人社部提出用数据找人去动员参保。", confidence: "confirmed", evidence: [] }],
+  });
+
+  it("默认关：一个标签都不写（含节点上填的），也不为打标调用模型", async () => {
+    const { vault, dir } = await makeVault();
+    chatCalls = 0;
+
+    const run = await runNote(vault, { folder: FOLDER, title: "信息溯源报告", tags: "自定义" }, "trace-tags-off", {}, REPORT);
+
+    expect(run.status).toBe("done");
+    const body = await readFile(join(dir, "信息溯源报告.md"), "utf8");
+    expect(parseNoteTags(body).frontmatter).toEqual([]);
+    expect(body).not.toContain("自定义");
+    // 属性抽取也没开（测试默认 `extractFields: []`），所以这次运行一次模型都不该调
+    expect(chatCalls).toBe(0);
+  });
+
+  it("打开后恢复旧行为：来源标签照写", async () => {
+    const { vault, dir } = await makeVault();
+
+    const run = await runNote(
+      vault,
+      { folder: FOLDER, title: "信息溯源报告" },
+      "trace-tags-on",
+      { tagTraceNotes: true },
+      REPORT,
+    );
+
+    expect(run.status).toBe("done");
+    const body = await readFile(join(dir, "信息溯源报告.md"), "utf8");
+    expect(parseNoteTags(body).frontmatter).toContain("文本");
   });
 });
 
