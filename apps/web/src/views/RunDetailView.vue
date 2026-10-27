@@ -655,6 +655,10 @@ const traceSources = computed(() => {
   // 越靠近当前溯源节点的输入越接近模型真正看到的原文，优先用于定位高亮。
   const ordered = [...inputItems.value].sort((a, b) => b.depth - a.depth);
   for (const item of ordered) {
+    // 溯源节点自己的产物也会作为下游「输出」节点的输入出现在 inputItems 里（n_trace → n_trace_out）。
+    // 它是报告 JSON，不是原文；不过滤的话引文会在 JSON 里命中，展开「原文上下文」看到的是一串字段。
+    // 文本来源本身可能就是一份报告——那确实是模型看到的输入，保留。
+    if (item.nodeType !== "source.text" && item.text && isTraceReportProduct(item.text)) continue;
     const label = originLabelForInput(item);
     if (item.segments && item.segments.length > 1) {
       for (const segment of item.segments) {

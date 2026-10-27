@@ -228,13 +228,14 @@ export interface AsrSettings {
   pricePerMinute: number;
 }
 
-/** 外部溯源检索渠道：智谱 BigModel 联网搜索、Tavily Search API。 */
-export type SearchProvider = "zhipu" | "tavily";
+/** 外部检索渠道：智谱 BigModel 联网搜索、Tavily Search API、DeepSeek Search API。 */
+export type SearchProvider = "zhipu" | "tavily" | "deepseek";
 
 /** 渠道展示名，服务端错误信息与设置页共用一份。 */
 export const SEARCH_PROVIDER_LABELS: Record<SearchProvider, string> = {
   zhipu: "智谱",
   tavily: "Tavily",
+  deepseek: "DeepSeek",
 };
 
 /** 外部溯源检索服务配置。 */
@@ -304,6 +305,13 @@ export interface AppSettings {
     vaultPath: string;
     /** vault 内保存笔记的相对子目录，例如 00-Inbox。 */
     folder: string;
+    /**
+     * 溯源报告的默认保存目录；空＝跟随 `folder`。
+     *
+     * 节点上的 `traceFolder` 优先于它——这里只是「节点没单独指定时写哪儿」的默认值，
+     * 与 `folder` 之于普通笔记是同一层语义。
+     */
+    traceFolder: string;
     /** 受控标签词表：维度 -> 标签数组。 */
     tagTaxonomy: Record<string, string[]>;
     /** 词库编辑器的显示样式（纯展示，不改数据）。 */
@@ -394,6 +402,8 @@ export interface UpdateSettingsRequest {
   obsidian?: {
     vaultPath?: string;
     folder?: string;
+    /** 溯源报告默认目录；空串表示清空（＝跟随 `folder`）。 */
+    traceFolder?: string;
     tagTaxonomy?: Record<string, string[]>;
     tagView?: TagViewMode;
     autoTagEnabled?: boolean;

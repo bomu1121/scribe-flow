@@ -92,6 +92,20 @@ describe("常规：产物落盘", () => {
     expect(await readFile(join(ctx.dataDir, expected), "utf8")).toContain("用于验收的正文内容。");
   });
 
+  it("autoSave=false 的末端笔记不写输出目录，正文仍在节点结果里", async () => {
+    const ctx = await makeProject("不落盘测试", ["合并"]);
+    const merge = ctx.graph.nodes.find((node) => node.type === "process.merge")!;
+    merge.data.autoSave = false;
+
+    const { runId, paths } = await runOnce(ctx);
+    expect(paths).toEqual([]);
+    const row = ctx.db.select().from(runNodeResults).where(eq(runNodeResults.runId, runId)).all()
+      .find((item) => item.nodeType === "process.merge")!;
+    expect(row.outputText).toContain("用于验收的正文内容。");
+    expect(row.outputPath).toBeNull();
+    await expect(stat(join(ctx.dataDir, "outputs", runId))).rejects.toThrow();
+  });
+
   it("多份产物且模板没写 {node} 时自动补节点名，节点同名也不互相覆盖", async () => {
     const ctx = await makeProject("多产物测试", ["提炼", "提炼"]);
     updateSettings(ctx.db, { general: { fileNameTemplate: "{project}" } });

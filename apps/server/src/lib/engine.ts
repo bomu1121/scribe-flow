@@ -1904,10 +1904,10 @@ export class RunEngine {
         const folderSegments = (value: string) => value.split(/[\\/]+/).filter(Boolean);
         const folder = normalizeFolder(String(data.folder ?? "").trim() || settings.obsidian.folder || "00-Inbox");
         /*
-         * 溯源报告的落盘目录：节点上可以单独选一个和普通笔记隔绝的文件夹（例如 99-溯源），
-         * **留空＝跟普通笔记同一个目录**——老工程不填这个字段时行为与改动前完全一致。
+         * 溯源报告的落盘目录，优先级：节点上单独选的 > 设置页的溯源默认目录 > 普通笔记目录。
+         * 两处都留空时行为与改动前完全一致（老工程不填这个字段时跟普通笔记同目录）。
          */
-        const traceFolder = normalizeFolder(String(data.traceFolder ?? "").trim()) || folder;
+        const traceFolder = normalizeFolder(String(data.traceFolder ?? "").trim() || settings.obsidian.traceFolder) || folder;
         for (const candidate of new Set([folder, traceFolder])) {
           if (folderSegments(candidate).some((segment) => segment === "..")) throw new Error("Obsidian 保存目录不能包含 ..");
         }
@@ -2806,13 +2806,18 @@ ${list}
    */
   private async saveRunDocuments(active: ActiveRun, rows: (typeof runNodeResults)["$inferSelect"][]) {
     const withDownstream = new Set(active.graph.edges.filter((e) => active.nodeIds.has(e.source)).map((e) => e.source));
-    const docs = rows.filter(
-      (r) =>
+    const nodeById = new Map(active.graph.nodes.map((node) => [node.id, node]));
+    const docs = rows.filter((r) => {
+      const node = nodeById.get(r.nodeId);
+      return (
         r.status === "done" &&
         !withDownstream.has(r.nodeId) &&
         r.nodeType !== "process.output" &&
-        (r.outputKind === "noteBlock" || r.outputKind === "noteDoc"),
-    );
+        (r.outputKind === "noteBlock" || r.outputKind === "noteDoc") &&
+        // 缺省/true 仍按旧行为落盘；只有显式 false 才跳过这条最终快照。
+        node?.data?.autoSave !== false
+      );
+    });
     if (docs.length === 0) return [];
 
     const general = getGeneralSettings(this.db, this.dataDir);
@@ -2828,7 +2833,7 @@ ${list}
     for (const row of docs) {
       const raw = await this.readResultText(row);
       if (!raw.trim()) continue;
-      const node = active.graph.nodes.find((n) => n.id === row.nodeId);
+      const node = nodeById.get(row.nodeId);
       const label = node ? nodeLabel(node) : row.nodeId;
       const base = renderFileNameTemplate(template, { project: active.projectName, node: label, now });
       const stem = suffixWithNode ? `${base}-${sanitizeFileName(label)}` : base;

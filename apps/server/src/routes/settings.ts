@@ -46,7 +46,7 @@ const updateSchema = z.object({
     .optional(),
   search: z
     .object({
-      provider: z.enum(["zhipu", "tavily"]).optional(),
+      provider: z.enum(["zhipu", "tavily", "deepseek"]).optional(),
       apiKey: z.string().max(500).optional(),
       maxResults: z.number().int().min(1).max(10).optional(),
     })
@@ -72,6 +72,7 @@ const updateSchema = z.object({
     .object({
       vaultPath: z.string().trim().max(500).optional(),
       folder: z.string().trim().max(200).optional(),
+      traceFolder: z.string().trim().max(200).optional(),
       tagTaxonomy: z.record(z.string(), z.array(z.string())).optional(),
       tagView: z.enum(["color", "plain", "list"]).optional(),
       autoTagEnabled: z.boolean().optional(),
@@ -113,7 +114,7 @@ const asrTestSchema = z.object({
 });
 
 const searchTestSchema = z.object({
-  provider: z.enum(["zhipu", "tavily"]).optional(),
+  provider: z.enum(["zhipu", "tavily", "deepseek"]).optional(),
   apiKey: z.string().max(500).optional(),
   maxResults: z.number().int().min(1).max(10).optional(),
 });

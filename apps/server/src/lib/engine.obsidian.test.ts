@@ -852,6 +852,39 @@ describe("Obsidian 笔记：溯源报告单独目录", () => {
     expect(result.summary).toContain(`${TRACE_FOLDER}/信息溯源报告.md`);
   });
 
+  it("节点没填 traceFolder 时，用设置页的溯源默认目录", async () => {
+    const { vault, dir } = await makeVault();
+    const result = await runNote(
+      vault,
+      { folder: FOLDER, title: undefined },
+      "trace-folder-global",
+      { traceFolder: TRACE_FOLDER },
+      REPORT,
+    );
+
+    expect(result.status).toBe("done");
+    expect(await noteFiles(dir)).toEqual([]);
+    expect(await noteFiles(join(vault, TRACE_FOLDER))).toEqual(["信息溯源报告.md"]);
+    expect(result.summary).toContain(`${TRACE_FOLDER}/信息溯源报告.md`);
+  });
+
+  it("节点上单独填的目录优先于设置页的默认目录", async () => {
+    const { vault } = await makeVault();
+    const nodeFolder = "98-节点指定";
+    const result = await runNote(
+      vault,
+      { folder: FOLDER, traceFolder: nodeFolder, title: undefined },
+      "trace-folder-node-override",
+      { traceFolder: TRACE_FOLDER },
+      REPORT,
+    );
+
+    expect(result.status).toBe("done");
+    expect(await noteFiles(join(vault, nodeFolder))).toEqual(["信息溯源报告.md"]);
+    // 全局默认目录没被创建，说明节点上的选择确实压过了设置页的默认值。
+    await expect(noteFiles(join(vault, TRACE_FOLDER))).rejects.toThrow();
+  });
+
   it("两类同批写入：各进自己的目录，同名也互不挤成 (2)", async () => {
     const { vault, dir } = await makeVault();
     const result = await runNoteMulti(

@@ -33,7 +33,12 @@ describe("模板清单", () => {
     expect(new Set(ids).size).toBe(ids.length);
     for (const template of WORKFLOW_TEMPLATES) {
       expect(["通用", "垂直"]).toContain(template.group);
-      expect(template.stages.length).toBeGreaterThan(0);
+      // 「只到转写」在来源轴补完转写节点后就结束，是唯一允许空 stages 的模板。
+      if (template.id === "template.transcript-only") {
+        expect(template.stages).toHaveLength(0);
+      } else {
+        expect(template.stages.length).toBeGreaterThan(0);
+      }
     }
   });
 
@@ -75,6 +80,25 @@ describe("buildTemplateGraph", () => {
   it("模板不支持该来源时返回 null，而不是悄悄换一个来源", () => {
     expect(buildTemplateGraph("template.pick-segments", { source: "bili" })).not.toBeNull();
     expect(buildTemplateGraph("template.pick-segments", { source: "text" })).toBeNull();
+  });
+
+  it("「只到转写」「只到校对」保持最小链路，且转写模板不接受文稿来源", () => {
+    const transcript = buildTemplateGraph("template.transcript-only", { source: "bili" })!;
+    expect(transcript.nodes.map((node) => node.type)).toEqual(["source.bili", "process.transcribe"]);
+    expect(transcript.edges).toHaveLength(1);
+    expect(buildTemplateGraph("template.transcript-only", { source: "text" })).toBeNull();
+
+    const refine = buildTemplateGraph("template.refine-only", { source: "bili" })!;
+    expect(refine.nodes.map((node) => node.type)).toEqual([
+      "source.bili",
+      "process.transcribe",
+      "process.refine",
+    ]);
+    expect(refine.edges).toHaveLength(2);
+    expect(refine.edges[1]).toMatchObject({
+      sourceHandle: "transcript",
+      targetHandle: "transcript",
+    });
   });
 
   it("每种来源都建出合法图，来源节点与转写节点按来源种类补齐", () => {

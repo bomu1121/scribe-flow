@@ -181,6 +181,43 @@ describe("graph", () => {
     });
     expect(result.success).toBe(false);
   });
+
+  it("保留 autoSave 标志，不能被 schema 静默 strip", () => {
+    const result = safeParseGraph({
+      schemaVersion: 1,
+      nodes: [
+        {
+          id: "a",
+          type: "process.merge",
+          position: { x: 0, y: 0 },
+          data: { autoSave: false },
+        },
+      ],
+      edges: [],
+      viewport: { x: 0, y: 0, zoom: 1 },
+    });
+    expect(result.success).toBe(true);
+    if (!result.success) return;
+    const node = result.data.nodes[0] as { data: { autoSave?: boolean } };
+    expect(node.data.autoSave).toBe(false);
+  });
+
+  it("拒绝非布尔 autoSave", () => {
+    const result = safeParseGraph({
+      schemaVersion: 1,
+      nodes: [
+        {
+          id: "a",
+          type: "process.merge",
+          position: { x: 0, y: 0 },
+          data: { autoSave: "no" },
+        },
+      ],
+      edges: [],
+      viewport: { x: 0, y: 0, zoom: 1 },
+    });
+    expect(result.success).toBe(false);
+  });
 });
 
 describe("templates", () => {

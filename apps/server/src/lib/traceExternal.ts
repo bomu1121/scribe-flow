@@ -39,11 +39,14 @@ interface ExternalCheckResult {
 
 const TAVILY_SEARCH_ENDPOINT = "https://api.tavily.com/search";
 const ZHIPU_SEARCH_ENDPOINT = "https://open.bigmodel.cn/api/paas/v4/web_search";
+const DEEPSEEK_SEARCH_ENDPOINT = "https://api.deepseek.com/v1/tools/search";
 /**
  * 文档标注智谱 search_query 最长 70 字符。实测超长不会被拒（200 字符仍正常返回结果），
  * 这里仍按文档上限截断，避免依赖未定义行为。
  */
 const ZHIPU_QUERY_MAX = 70;
+/** DeepSeek Search API 的 query 上限（官方文档 1-128 字符）。 */
+const DEEPSEEK_QUERY_MAX = 128;
 /** 单条结果接受的摘要上限，避免把整页正文塞进后续比对提示词。 */
 const SNIPPET_MAX = 500;
 /** 上游错误原文的保留长度：够定位问题，又不至于把整页 HTML 带进日志与界面。 */
@@ -233,10 +236,38 @@ export async function zhipuSearch(
   }));
 }
 
+/** DeepSeek Search API：返回精简后的网页结果。 */
+export async function deepseekSearch(
+  config: SearchConfig,
+  query: string,
+  endpoint = DEEPSEEK_SEARCH_ENDPOINT,
+): Promise<TraceExternalSource[]> {
+  const res = await fetch(endpoint, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${config.apiKey}` },
+    body: JSON.stringify({
+      query: sliceAtCharBoundary(query, DEEPSEEK_QUERY_MAX),
+      count: POOL_SIZE,
+    }),
+    signal: AbortSignal.timeout(20_000),
+  });
+  const text = await res.text().catch(() => "");
+  if (!res.ok) throw searchHttpError("DeepSeek", res.status, text);
+  // `summary` 是面向模型的长摘要（实测 300-1700 字），比 `snippet`（给界面看的短句）更适合核查；
+  // 两者都没有时留空，不拿标题冒充摘要。
+  return readResultList("DeepSeek", parseJsonBody("DeepSeek", text), "results", ["title", "url", "summary"]).map((item) => ({
+    title: clip(item.title),
+    url: sanitizeSourceUrl(clip(item.url)),
+    snippet: clip(item.summary) ?? clip(item.snippet),
+    publisher: clip(item.site_name, 60),
+  }));
+}
+
 /** 各渠道的默认检索端点。新增渠道时这个 Record 会强制补全。 */
 const SEARCH_ENDPOINTS: Record<SearchProvider, string> = {
   zhipu: ZHIPU_SEARCH_ENDPOINT,
   tavily: TAVILY_SEARCH_ENDPOINT,
+  deepseek: DEEPSEEK_SEARCH_ENDPOINT,
 };
 
 /**
@@ -249,7 +280,14 @@ export async function searchWeb(
   endpoints: Partial<Record<SearchProvider, string>> = {},
 ): Promise<TraceExternalSource[]> {
   const endpoint = endpoints[config.provider] ?? SEARCH_ENDPOINTS[config.provider];
-  return config.provider === "tavily" ? tavilySearch(config, query, endpoint) : zhipuSearch(config, query, endpoint);
+  switch (config.provider) {
+    case "tavily":
+      return tavilySearch(config, query, endpoint);
+    case "deepseek":
+      return deepseekSearch(config, query, endpoint);
+    default:
+      return zhipuSearch(config, query, endpoint);
+  }
 }
 
 /**
@@ -284,6 +322,9 @@ export async function collectSources(
 /** 换个说法判定「这次失败值不值得再试一次」：上游 4xx（密钥/配额/参数问题）重试也没用，其它当抖动处理。 */
 function isRetryableSearchError(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error);
+  // DeepSeek 的 429 是明确的「调太快」（账号级 5 QPS），等一会儿就能过；408 是服务端读请求体超时。
+  // 其余 4xx（密钥无效、余额不足、参数错误、抓取页 404）重试也不会变对。
+  if (/HTTP (408|429)\b/.test(message)) return true;
   return !/HTTP 4\d\d/.test(message);
 }
 

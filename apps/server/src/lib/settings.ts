@@ -37,6 +37,8 @@ const GENERAL_DEFAULTS: Record<string, string> = {
 const OBSIDIAN_DEFAULTS: Record<string, string> = {
   "obsidian.vaultPath": "",
   "obsidian.folder": "00-Inbox",
+  // 空＝溯源报告跟随普通笔记目录；节点上的 traceFolder 优先于它。
+  "obsidian.traceFolder": "",
   "obsidian.tagView": DEFAULT_TAG_VIEW,
   "obsidian.autoTagEnabled": "true",
   "obsidian.sourceTagEnabled": "true",
@@ -121,7 +123,7 @@ function migrateNutstorePath(value: string, fallback: string): string {
   return value;
 }
 
-const SEARCH_PROVIDERS: SearchProvider[] = ["zhipu", "tavily"];
+const SEARCH_PROVIDERS: SearchProvider[] = ["zhipu", "tavily", "deepseek"];
 
 /**
  * 读取外部检索渠道。
@@ -237,6 +239,7 @@ export function getSettings(db: AppDatabase): AppSettings {
     obsidian: {
       vaultPath: raw(db, "obsidian.vaultPath", OBSIDIAN_DEFAULTS["obsidian.vaultPath"]) ?? "",
       folder: raw(db, "obsidian.folder", OBSIDIAN_DEFAULTS["obsidian.folder"]) ?? "00-Inbox",
+      traceFolder: raw(db, "obsidian.traceFolder", OBSIDIAN_DEFAULTS["obsidian.traceFolder"]) ?? "",
       tagView: readTagView(db),
       tagTaxonomy: readTagTaxonomy(db),
       autoTagEnabled: raw(db, "obsidian.autoTagEnabled", OBSIDIAN_DEFAULTS["obsidian.autoTagEnabled"]) === "true",
@@ -324,6 +327,16 @@ function set(db: AppDatabase, key: string, value: string) {
   db.insert(appSettings).values({ key, value, updatedAt: Date.now() }).onConflictDoUpdate({ target: appSettings.key, set: { value, updatedAt: Date.now() } }).run();
 }
 
+/**
+ * 删掉一个键，回到默认值。
+ *
+ * `set()` 会跳过空串（空串对多数设置等于「没填」），但溯源默认目录的空串是一个**有意义的合法值**：
+ * 跟随普通笔记目录。清空下拉时如果还用 `set()`，旧目录会留在库里、界面看起来清空了却仍在生效。
+ */
+function clear(db: AppDatabase, key: string) {
+  db.delete(appSettings).where(eq(appSettings.key, key)).run();
+}
+
 function clamp(value: number, range: { min: number; max: number }): number {
   if (!Number.isFinite(value)) return range.min;
   return Math.min(range.max, Math.max(range.min, Math.trunc(value)));
@@ -400,6 +413,11 @@ export function updateSettings(db: AppDatabase, patch: UpdateSettingsRequest) {
   if (patch.obsidian) {
     if (patch.obsidian.vaultPath !== undefined) set(db, "obsidian.vaultPath", patch.obsidian.vaultPath.trim().replace(/[\\/]+$/, ""));
     if (patch.obsidian.folder !== undefined) set(db, "obsidian.folder", patch.obsidian.folder.trim().replace(/^[\\/]+|[\\/]+$/g, "") || "00-Inbox");
+    if (patch.obsidian.traceFolder !== undefined) {
+      const value = patch.obsidian.traceFolder.trim().replace(/^[\\/]+|[\\/]+$/g, "");
+      if (value) set(db, "obsidian.traceFolder", value);
+      else clear(db, "obsidian.traceFolder");
+    }
     // 显示样式只认三种已知值：不认识的输入直接丢掉，别把设置页写成一个打不开的状态
     const nextTagView = patch.obsidian.tagView;
     if (nextTagView !== undefined && TAG_VIEW_MODES.some((mode) => mode.id === nextTagView)) {

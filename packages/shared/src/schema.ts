@@ -42,6 +42,8 @@ const baseDataSchema = z.object({
   retry: retrySchema,
   /** 素材挑选：来源节点 id → 选中的素材段标识。 */
   pick: z.record(z.string(), z.array(z.string())).optional(),
+  /** 运行收尾是否把末端笔记快照写进输出目录；缺省 true。 */
+  autoSave: z.boolean().optional(),
 });
 
 const nodeDataByType = {
@@ -119,7 +121,7 @@ const nodeDataByType = {
     author: z.string().optional(),
     url: z.string().optional(),
     folder: z.string().optional(),
-    // 溯源报告的单独目录；缺省跟 `folder` 同一个目录（见 graph.ts 的 ObsidianData）。
+    // 溯源报告的单独目录；缺省跟设置页的溯源默认目录，设置页也没填才跟 `folder` 同一目录（见 graph.ts 的 ObsidianData）。
     traceFolder: z.string().optional(),
     overwrite: z.boolean().optional(),
     // 缺省＝开（多个输入各写一篇）；关掉才合并成一篇（见 graph.ts 的 ObsidianData）。

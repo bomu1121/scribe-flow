@@ -71,6 +71,8 @@ const form = reactive({
   hiddenNodes: [] as NodeType[],
   obsidianVaultPath: "",
   obsidianFolder: "00-Inbox",
+  /** 溯源报告的默认目录；空＝跟随普通笔记目录。 */
+  obsidianTraceFolder: "",
   /** 词库编辑器的显示样式（纯展示）：三种由用户自己挑，见 TAG_VIEW_MODES。 */
   obsidianTagView: DEFAULT_TAG_VIEW as TagViewMode,
   obsidianAutoTagEnabled: true,
@@ -128,6 +130,7 @@ const asrOptions = [
 const searchProviderOptions: { label: string; value: SearchProvider; keyPlaceholder: string }[] = [
   { label: "智谱 BigModel", value: "zhipu", keyPlaceholder: "在 open.bigmodel.cn 的 API Keys 页创建" },
   { label: "Tavily", value: "tavily", keyPlaceholder: "tvly-…" },
+  { label: "DeepSeek", value: "deepseek", keyPlaceholder: "sk-…（与 DeepSeek 模型同一个 Key）" },
 ];
 
 const searchKeyPlaceholder = computed(
@@ -1056,6 +1059,7 @@ function fillForm() {
   form.hiddenNodes = [...(store.settings.visibility?.hiddenNodes ?? [])];
   form.obsidianVaultPath = store.settings.obsidian.vaultPath;
   form.obsidianFolder = store.settings.obsidian.folder;
+  form.obsidianTraceFolder = store.settings.obsidian.traceFolder ?? "";
   form.obsidianTagView = store.settings.obsidian.tagView;
   form.obsidianAutoTagEnabled = store.settings.obsidian.autoTagEnabled;
   form.obsidianSourceTagEnabled = store.settings.obsidian.sourceTagEnabled;
@@ -1239,6 +1243,8 @@ async function saveAll() {
       obsidian: {
         vaultPath: form.obsidianVaultPath,
         folder: form.obsidianFolder,
+        // 清空要落成空串：空串才表示「跟随普通目录」，undefined 会被服务端当成「没传」而保留旧值。
+        traceFolder: form.obsidianTraceFolder ?? "",
         tagView: form.obsidianTagView,
         tagTaxonomy: taxonomy.value,
         autoTagEnabled: form.obsidianAutoTagEnabled,
@@ -1730,8 +1736,8 @@ async function restoreNutstoreBackup(backup: { path: string; name: string }) {
           哪些节点会用到它，节点卡上会直接显示渠道与密钥状态。没配置也能跑：溯源跳过外部核查，练一练完全依据原文出题。
         </p>
         <p class="sf-settings-desc">
-          注意：它和「AI 模型」页里那个跑模型的密钥不是同一个。即使两边都用智谱，也各自需要一个单独的 Key——
-          模型 Key 用来生成内容，这里的 Key 只用来检索网页。两边都不用填对方的值。
+          注意：它和「AI 模型」页里那个跑模型的密钥分开保存。DeepSeek 的检索与模型是同一个平台的 Key，可以填同一个值；
+          其它渠道请按各自控制台创建检索 Key——模型 Key 用来生成内容，这里的 Key 只用来检索网页。
         </p>
         <div class="sf-settings-form">
           <label class="sf-field">
@@ -1741,8 +1747,8 @@ async function restoreNutstoreBackup(backup: { path: string; name: string }) {
             </el-select>
           </label>
           <p class="sf-settings-desc">
-            智谱 BigModel 为国内渠道（支付宝/微信充值），密钥在 open.bigmodel.cn 的「API Keys」页创建；Tavily 需要国外支付方式。
-            切换渠道后请重新填写该渠道的密钥。
+            智谱 BigModel 为国内渠道（支付宝/微信充值），密钥在 open.bigmodel.cn 的「API Keys」页创建；Tavily 需要国外支付方式；
+            DeepSeek 用 api.deepseek.com 的 Key（与 DeepSeek 模型同一个 Key）。切换渠道后请重新填写该渠道的密钥。
           </p>
           <label class="sf-field">
             <span class="sf-field-label">
@@ -1951,6 +1957,27 @@ async function restoreNutstoreBackup(backup: { path: string; name: string }) {
               真正决定去向的是链路里「Obsidian 笔记」节点卡片上的「保存目录」——那里选了就按那里，
               <strong>只有留空的节点才用这里</strong>。库已读到 {{ store.obsidianFolders.length }} 个文件夹，
               跟着库路径自动刷新；也可以直接输入一个新名字。
+            </p>
+          </label>
+
+          <label class="sf-field">
+            <span class="sf-field-label">默认把溯源报告写进哪个文件夹<em class="sf-field-note">只是默认值</em></span>
+            <el-select
+              v-model="form.obsidianTraceFolder"
+              class="sf-field-control"
+              filterable
+              clearable
+              allow-create
+              default-first-option
+              :value-on-clear="''"
+              placeholder="留空＝跟普通笔记同一个目录"
+            >
+              <el-option v-for="dir in store.obsidianFolders" :key="dir" :label="dir" :value="dir" />
+            </el-select>
+            <p class="sf-hint">
+              只对「这一篇纯粹是溯源报告」生效；合成稿里混着报告与笔记时仍按普通笔记目录。节点卡片上的「溯源报告目录」选了就按那里，
+              <strong>只有留空的节点才用这里</strong>；这里也留空＝跟普通笔记同一个目录。
+              库已读到 {{ store.obsidianFolders.length }} 个文件夹，也可以直接输入一个新名字。
             </p>
           </label>
 

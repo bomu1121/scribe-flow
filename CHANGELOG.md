@@ -12,6 +12,47 @@
 
 ## [Unreleased]
 
+### 2026-10-20
+
+#### 新增
+
+- **机器人自动化的最小链路与「不落盘」开关**（`packages/shared/src/templates.ts`、`packages/shared/src/graph.ts`、
+  `packages/shared/src/schema.ts`、`apps/server/src/lib/engine.ts`、`apps/server/src/routes/health.ts`）：
+  - 新增 `template.transcript-only`（音视频 → 转写即结束）与 `template.refine-only`（音视频 → 转写 → 校对），
+    两条链路的末端产物都是 `text`，本来就不会被运行收尾写进 `outputs/<runId>/`。
+  - 节点数据新增可选 `autoSave`（缺省 true）。运行收尾的 `saveRunDocuments()` 在末端节点显式
+    `autoSave:false` 时跳过最终 Markdown 快照；正文仍保存在 `run_node_results.output_text` 里。
+    它只控制最终快照，不阻止 ASR 中间文件、老「输出」节点或 Obsidian 节点自己写库。
+  - `/api/health` 增加 `capabilities`（`autoSave`、模板 id、输出 kind），供自动化客户端做能力探测；
+    旧客户端忽略新增字段即可。
+  - 测试：`templates.test.ts` 覆盖两条新链路；`schema.test.ts` 覆盖 `autoSave` 不被 strip；
+    `engine.general.test.ts` 覆盖「末端 `autoSave:false` 不写文件、正文仍在」；新增 `health.test.ts`。
+
+### 2026-10-19
+
+#### 新增
+
+- **联网检索新增 DeepSeek 渠道**（`packages/shared/src/run.ts`、`apps/server/src/lib/traceExternal.ts`、
+  `apps/server/src/lib/settings.ts`、`apps/server/src/routes/settings.ts`、`apps/web/src/views/SettingsView.vue`）：
+  接入 DeepSeek 自研搜索的 `/v1/tools/search`，与智谱、Tavily 共用同一套「多检索词合并候选池 → 按来源权威度重排」的链路；
+  设置页可切换，密钥与 DeepSeek 模型共用同一个平台的 Key。
+  - 适配层把 `results[].summary`（面向模型的长摘要）优先作为统一来源的 `snippet`，没有时回落到 `snippet`；
+    `query` 按官方上限截到 128 字符。
+  - **429 / 408 现在会重试一次**：DeepSeek 账号级限流是 5 QPS，原来的「所有 4xx 都不重试」会把一次并发抖动
+    变成整条核查失败。密钥无效、余额不足、参数错误、抓取页 404 仍然不重试。
+  - 真机验收（B 站 10 分钟视频全链路）：溯源报告的 70 条来源全部带链接，其中权威来源 37 条；
+    同 66 条检索词受控对比，DeepSeek 1,291/1,291 条带链接（100%），智谱 632/1,201 条（52.6%）。
+    配置、限制与全部数字见 [`docs/research/deepseek-search-integration.md`](./docs/research/deepseek-search-integration.md)。
+
+- **设置页新增「默认把溯源报告写进哪个文件夹」**（`packages/shared/src/run.ts`、`apps/server/src/lib/settings.ts`、
+  `apps/server/src/lib/engine.ts`、`apps/server/src/routes/settings.ts`、`apps/web/src/views/SettingsView.vue`、
+  `apps/web/src/components/canvas/node-cards/ObsidianCard.vue`）：
+  上周末的溯源报告保存目录只能逐节点填，现在补一个全局默认值，与「默认写进库里哪个文件夹」并排放在 Obsidian 组里。
+  - 取值链：**节点上的「溯源报告目录」→ 设置页的溯源默认目录 → 普通笔记目录**；两处都留空时行为与改动前完全一致。
+  - 清空下拉是有效操作（空＝跟随普通目录）。`set()` 会跳过空串，所以这一项清空时删键回默认，
+    避免界面看起来清空了、旧目录仍在生效。
+  - 节点卡片上的「溯源报告目录」占位与提示跟着显示实际会用的默认目录，不再固定写「和普通笔记放一起」。
+
 ### 2026-10-18
 
 #### 新增

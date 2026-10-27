@@ -171,6 +171,17 @@ describe("「Obsidian」分组设置", () => {
     expect((await obsidianOf(app)).tagTraceNotes).toBe(false);
   });
 
+  it("溯源默认目录：默认空（跟随普通目录），保存后能读回，清空能回到空", async () => {
+    const { app } = await setup();
+    expect((await obsidianOf(app)).traceFolder).toBe("");
+    // 存进去时去掉首尾斜杠，避免设置页整表回写把「/99-溯源/」当成另一个目录。
+    await put(app, "/api/settings", { obsidian: { traceFolder: "/99-溯源/" } });
+    expect((await obsidianOf(app)).traceFolder).toBe("99-溯源");
+    // 空串是合法值（＝跟随普通目录），不能被 set() 跳过而留下旧值。
+    await put(app, "/api/settings", { obsidian: { traceFolder: "" } });
+    expect((await obsidianOf(app)).traceFolder).toBe("");
+  });
+
   /**
    * 属性名建议的来源接口。
    *

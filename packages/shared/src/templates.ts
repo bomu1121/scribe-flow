@@ -120,6 +120,24 @@ export const WORKFLOW_TEMPLATES: WorkflowTemplate[] = [
     ],
   },
   {
+    id: "template.transcript-only",
+    name: "只到转写",
+    description: "音视频只转成文稿，不做 AI 加工；适合交给外部模型自己消化",
+    group: "通用",
+    defaultSource: "bili",
+    sources: ["bili", "file"],
+    // 转写节点由来源轴自动补；这条链路在转写后就结束，所以没有任何 stage。
+    stages: [],
+  },
+  {
+    id: "template.refine-only",
+    name: "只到校对",
+    description: "音视频转写后再做一次 AI 校对，输出校对稿，不生成笔记文件",
+    group: "通用",
+    defaultSource: "bili",
+    stages: [{ key: "refine", type: "process.refine" }],
+  },
+  {
     id: "template.multi-branch",
     name: "多路对照",
     // 不在链路末端放「合并」：两份内容首尾相接只是拼在一起，看不出差异；
